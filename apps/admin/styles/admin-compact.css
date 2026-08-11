@@ -1,0 +1,1543 @@
+/* Admin paneli: bej/espresso kompakt kabuk ve ortak bilesen yogunlugu. */
+:root,
+body[data-panel-theme="dark"] {
+  --sidebar-width: 224px;
+  --sidebar-closed-width: 68px;
+  --page: var(--panel-canvas);
+  --surface: var(--panel-surface);
+  --surface-soft: var(--panel-surface-soft);
+  --ink: var(--panel-ink);
+  --muted: var(--panel-muted);
+  --line: var(--panel-line);
+  --brand: var(--panel-coffee);
+  --brand-2: rgba(90, 47, 29, 0.09);
+  --on-brand: #fffaf3;
+  --danger: var(--panel-danger);
+  --shadow: var(--panel-shadow);
+}
+
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body,
+body[data-panel-theme="dark"] {
+  background: var(--panel-canvas);
+  color: var(--panel-ink);
+  font-family: var(--panel-font-ui);
+  font-size: var(--panel-body-size);
+}
+
+body:has(.admin-shell[data-active-section]:not([hidden])) {
+  background: var(--panel-canvas);
+  color: var(--panel-ink);
+}
+
+body:has(.admin-shell[data-active-section]:not([hidden]))::before {
+  background: radial-gradient(circle at 80% 4%, rgba(255, 255, 249, 0.78), transparent 30%);
+  opacity: 1;
+}
+
+body::before {
+  background: radial-gradient(circle at 80% 4%, rgba(255, 255, 249, 0.78), transparent 30%);
+  opacity: 1;
+}
+
+.admin-shell,
+.admin-shell[data-active-section] {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: var(--panel-canvas);
+}
+
+.admin-shell.is-sidebar-collapsed,
+.admin-shell[data-active-section].is-sidebar-collapsed {
+  grid-template-columns: var(--sidebar-closed-width) minmax(0, 1fr);
+}
+
+.admin-sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 170;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: rgba(44, 22, 9, 0.42);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.admin-shell .sidebar,
+.admin-shell[data-active-section] .sidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  position: sticky;
+  top: 0;
+  width: var(--sidebar-width);
+  height: 100dvh;
+  min-height: 100svh;
+  gap: 10px;
+  padding: 14px 12px;
+  overflow: visible;
+  border-right: 1px solid var(--panel-line);
+  background: linear-gradient(180deg, #fffaf3 0%, #f7ecdf 100%);
+  box-shadow: 7px 0 22px rgba(62, 31, 15, 0.04);
+}
+
+.admin-shell.is-sidebar-collapsed .sidebar,
+.admin-shell[data-active-section].is-sidebar-collapsed .sidebar {
+  width: var(--sidebar-closed-width);
+  padding-inline: 8px;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+.panel-icon-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.admin-shell .sidebar-scroll-region {
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.admin-shell .sidebar-scroll-region::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.admin-shell .sidebar-scroll-region:focus {
+  outline: none;
+}
+
+.admin-shell .sidebar-scroll-region:focus-visible {
+  border-radius: var(--panel-control-radius);
+  outline: 2px solid rgba(185, 80, 45, .28);
+  outline-offset: -2px;
+}
+
+.admin-shell .brand-block,
+.admin-shell:not([hidden]) .brand-block,
+.admin-shell:not([hidden]) .sidebar .brand-block {
+  min-height: 62px;
+  gap: 9px;
+  padding: 2px 5px 11px;
+}
+
+.admin-shell .sidebar-logo-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-shell .sidebar-logo-toggle:hover {
+  background: rgba(255, 250, 243, 0.62);
+}
+
+.admin-shell .sidebar-logo-toggle:focus-visible {
+  border-radius: var(--panel-control-radius);
+  outline: 3px solid color-mix(in srgb, var(--panel-accent) 34%, transparent);
+  outline-offset: 2px;
+}
+
+.admin-shell .brand-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.admin-shell .brand-block .admin-brand-logo,
+.admin-shell:not([hidden]) .brand-block .admin-brand-logo,
+.admin-shell:not([hidden]) .sidebar .admin-brand-logo {
+  width: 46px;
+  height: 46px;
+  max-height: 46px;
+}
+
+.admin-shell .brand-block .eyebrow,
+.admin-shell:not([hidden]) .brand-block .eyebrow {
+  font-size: var(--panel-kicker-size);
+  letter-spacing: 0.16em;
+}
+
+.admin-shell .brand-block h1,
+.admin-shell:not([hidden]) .brand-block h1,
+.admin-shell .brand-block .brand-title {
+  display: block;
+  color: var(--panel-ink);
+  font-family: var(--panel-font-ui);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+}
+
+.admin-shell.is-sidebar-collapsed .brand-block,
+.admin-shell[data-active-section].is-sidebar-collapsed .brand-block {
+  grid-template-columns: 46px;
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.admin-shell.is-sidebar-collapsed .brand-block > div,
+.admin-shell[data-active-section].is-sidebar-collapsed .brand-block > div,
+.admin-shell.is-sidebar-collapsed .brand-copy,
+.admin-shell[data-active-section].is-sidebar-collapsed .brand-copy {
+  display: none;
+}
+
+.admin-shell .panel-nav,
+.admin-shell[data-active-section] .panel-nav {
+  gap: 3px;
+}
+
+.admin-shell .panel-nav a,
+.admin-shell[data-active-section] .panel-nav a,
+.admin-shell[data-active-section="stock"] .panel-nav a {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--panel-control-radius);
+  color: var(--panel-coffee);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-shell[data-active-section] .panel-nav a::before {
+  display: none;
+  content: none;
+}
+
+.admin-shell .panel-nav a > svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.admin-shell.is-sidebar-collapsed .panel-nav a,
+.admin-shell[data-active-section].is-sidebar-collapsed .panel-nav a {
+  width: 48px;
+  min-width: 48px;
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.admin-shell.is-sidebar-collapsed .panel-nav-label,
+.admin-shell[data-active-section].is-sidebar-collapsed .panel-nav-label {
+  display: none;
+}
+
+.admin-shell .panel-nav a:hover,
+.admin-shell[data-active-section] .panel-nav a:hover,
+.admin-shell .panel-nav a:focus-visible {
+  border-color: var(--panel-line);
+  background: rgba(255, 250, 243, 0.82);
+  color: var(--panel-coffee);
+}
+
+.admin-shell .panel-nav a.is-active,
+.admin-shell[data-active-section] .panel-nav a.is-active,
+.admin-shell[data-active-section="stock"] .panel-nav a[data-panel-section="stock"].is-active,
+.admin-shell[data-active-section="site"] .panel-nav a.is-active {
+  border-color: var(--panel-coffee);
+  background: var(--panel-coffee);
+  color: #fffaf3;
+  box-shadow: 0 7px 16px rgba(61, 28, 13, 0.16);
+}
+
+.admin-shell .sidebar-profile,
+.admin-shell[data-active-section] .sidebar-profile {
+  min-height: 48px;
+  margin-top: auto;
+  padding: 8px;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--panel-card-radius);
+  background: rgba(255, 250, 243, 0.78);
+  color: var(--panel-ink);
+  font-family: var(--panel-font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-shell.is-sidebar-collapsed .sidebar-profile,
+.admin-shell[data-active-section].is-sidebar-collapsed .sidebar-profile {
+  width: 48px;
+  min-width: 48px;
+  justify-content: center;
+  padding: 6px;
+}
+
+.admin-shell.is-sidebar-collapsed .sidebar-profile > div,
+.admin-shell[data-active-section].is-sidebar-collapsed .sidebar-profile > div {
+  display: none;
+}
+
+.admin-shell .admin-profile-wrap {
+  position: relative;
+}
+
+.admin-shell .admin-profile-menu {
+  position: absolute;
+  inset: auto 0 calc(100% + 8px) 0;
+}
+
+.admin-shell.is-sidebar-collapsed .admin-profile-menu,
+.admin-shell[data-active-section].is-sidebar-collapsed .admin-profile-menu {
+  inset: auto auto 0 calc(100% + 8px);
+}
+
+.admin-shell .workspace,
+.admin-shell[data-active-section] .workspace,
+.admin-shell[data-active-section="stock"] .workspace {
+  width: 100%;
+  min-width: 0;
+  height: 100dvh;
+  padding: 0 var(--panel-page-padding) 30px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background: var(--panel-canvas);
+}
+
+.admin-shell .workspace > .topbar,
+.admin-shell .workspace > .content-grid {
+  width: min(100%, 1680px);
+  margin-inline: auto;
+}
+
+.admin-shell .topbar,
+.admin-shell[data-active-section] .topbar,
+.admin-shell[data-active-section="staffAccess"] .topbar,
+.admin-shell[data-active-section="stock"] .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  min-height: 56px;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 4px 0;
+  overflow: visible;
+  border-bottom: 1px solid var(--panel-line);
+  background: rgba(251, 246, 238, 0.94);
+  backdrop-filter: blur(12px);
+}
+
+.admin-shell .topbar-main {
+  gap: 11px;
+}
+
+.admin-shell .topbar .eyebrow {
+  color: #8b5630;
+  font-size: var(--panel-kicker-size);
+  letter-spacing: 0.16em;
+}
+
+.admin-shell .topbar h1,
+.admin-shell .topbar h2,
+.admin-shell[data-active-section] .topbar h1,
+.admin-shell[data-active-section] .topbar h2,
+.admin-shell[data-active-section="staffAccess"] .topbar h1,
+.admin-shell[data-active-section="staffAccess"] .topbar h2,
+.admin-shell[data-active-section="stock"] .topbar h1,
+.admin-shell[data-active-section="stock"] .topbar h2 {
+  margin: 0;
+  color: var(--panel-ink);
+  font-family: var(--panel-font-display);
+  font-size: var(--panel-page-title);
+  font-weight: 600;
+  line-height: 1.02;
+  letter-spacing: -0.025em;
+}
+
+.admin-shell .topbar-description,
+.admin-shell[data-active-section] .topbar-description,
+.admin-shell[data-active-section="staffAccess"] .topbar-description {
+  display: none;
+}
+
+.admin-shell .topbar-actions {
+  gap: 8px;
+}
+
+.admin-shell .topbar-save-button {
+  min-width: 142px;
+  min-height: var(--panel-control-height);
+}
+
+.admin-shell[data-active-section] .primary-action,
+.admin-shell[data-active-section] .topbar-save-button {
+  border-color: var(--panel-coffee);
+  background: var(--panel-coffee);
+  color: #fffaf3;
+  box-shadow: 0 6px 14px rgba(90, 47, 29, 0.16);
+}
+
+.admin-shell[data-active-section] :is(.line-action, .soft-action) {
+  border-color: var(--panel-line);
+  background: var(--panel-surface);
+  color: var(--panel-coffee);
+  box-shadow: none;
+}
+
+.admin-shell[data-active-section] .topbar-save-button,
+.admin-shell[data-active-section] .save-state {
+  height: var(--panel-control-height);
+  min-height: var(--panel-control-height);
+}
+
+.admin-shell .save-state {
+  min-height: var(--panel-control-height);
+  padding: 8px 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--panel-control-radius);
+  background: var(--panel-surface);
+  color: var(--panel-muted);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-shell .save-state[data-save-status="dirty"],
+.admin-shell .save-state[data-save-status="saving"] {
+  border-color: color-mix(in srgb, var(--panel-warning) 32%, transparent);
+  background: var(--panel-warning-soft);
+  color: var(--panel-warning);
+}
+
+.admin-shell .save-state[data-save-status="published"] {
+  border-color: color-mix(in srgb, var(--panel-success) 32%, transparent);
+  background: var(--panel-success-soft);
+  color: var(--panel-success);
+}
+
+.admin-shell .save-state[data-save-status="error"],
+.admin-shell .save-state[data-save-status="conflict"] {
+  border-color: color-mix(in srgb, var(--panel-danger) 32%, transparent);
+  background: var(--panel-danger-soft);
+  color: var(--panel-danger);
+}
+
+.admin-shell .save-state.is-saved {
+  border-color: rgba(102, 115, 62, 0.28);
+  background: var(--panel-success-soft);
+  color: var(--panel-success);
+}
+
+.admin-shell .icon-button,
+.admin-shell .sidebar-toggle,
+.admin-shell[data-active-section] .icon-button,
+.admin-shell[data-active-section] .sidebar-toggle {
+  width: 40px;
+  height: 40px;
+  flex-basis: 40px;
+  border-color: var(--panel-line);
+  border-radius: var(--panel-control-radius);
+  background: var(--panel-surface);
+  color: var(--panel-coffee);
+}
+
+.admin-shell :where(input, select, textarea),
+.admin-shell[data-active-section] input,
+.admin-shell[data-active-section] select,
+.admin-shell[data-active-section] textarea,
+.admin-shell[data-active-section="staffAccess"] :where(input, select, textarea) {
+  border-color: var(--panel-line);
+  border-radius: var(--panel-control-radius);
+  background: #fffdf9;
+  color: var(--panel-ink);
+  font-size: 12px;
+}
+
+body[data-panel-theme="dark"] .admin-shell :where(input, select, textarea) {
+  border-color: var(--panel-line);
+  background: #fffdf9;
+  color: var(--panel-ink);
+}
+
+.admin-shell :where(input:not([type="checkbox"]):not([type="radio"]), select) {
+  min-height: var(--panel-control-height);
+}
+
+.admin-shell textarea {
+  min-height: 82px;
+}
+
+.admin-shell :where(.panel-card, .staff-box, .settings-menu, .choice-dialog) {
+  border-color: var(--panel-line);
+  border-radius: var(--panel-card-radius);
+  background: var(--panel-surface);
+  box-shadow: var(--panel-shadow);
+}
+
+.admin-shell .card-head h3,
+.admin-shell .section-title h2 {
+  font-family: var(--panel-font-ui);
+  font-size: var(--panel-card-title);
+}
+
+/* Ortak akordiyon geometrisi: numara, baslik ve ok ayni eksende kalir. */
+.admin-shell :is(
+  .banner-card-head,
+  .category-accordion-head,
+  .recipe-card-head,
+  .product-card-head,
+  .stock-accordion > summary,
+  .settings-accordion > summary,
+  .staff-accordion-head
+) {
+  min-width: 0;
+  min-height: 60px;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-shell :is(.banner-card-head, .category-accordion-head, .product-card-head, .stock-accordion > summary, .settings-accordion > summary) {
+  padding: 10px 14px;
+}
+
+.admin-shell :is(.recipe-card-head, .product-card-head) {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+}
+
+.admin-shell .product-selection-card .product-card-head {
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
+}
+
+.admin-shell :is(.banner-step, .category-step, .recipe-step, .product-step, .stock-step, .staff-step),
+.admin-shell .settings-accordion > summary > span:first-child {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  flex-basis: 32px;
+  font-size: 14px;
+}
+
+.admin-shell :is(
+  .banner-card-head h3,
+  .banner-card-head strong,
+  .category-accordion-copy strong,
+  .recipe-card-head h3,
+  .product-card-head h3,
+  .stock-accordion > summary strong,
+  .settings-accordion > summary strong,
+  .staff-accordion-head h4
+) {
+  min-width: 0;
+  margin: 0;
+  font-family: var(--panel-font-ui);
+  font-size: var(--panel-card-title);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.admin-shell :is(
+  .banner-card-head p,
+  .banner-card-head small,
+  .category-accordion-copy small,
+  .recipe-card-head p,
+  .product-card-head p,
+  .stock-accordion > summary small,
+  .staff-accordion-head p
+) {
+  min-width: 0;
+  white-space: normal;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
+.admin-shell :is(
+  .banner-card-head i,
+  .category-accordion-head i,
+  .recipe-card-head > i,
+  .recipe-accordion-chevron,
+  .product-accordion-chevron,
+  .stock-accordion > summary i,
+  .settings-accordion > summary i,
+  .staff-accordion-chevron
+) {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  justify-self: end;
+  margin-left: auto;
+}
+
+.admin-shell :is(.panel-card, .staff-box, .workforce-card, .settings-accordion) :is(p, small, strong, span),
+.admin-shell :is(.chip, .pill, [class*="-chip"], [class*="-pill"]) {
+  overflow-wrap: anywhere;
+}
+
+/* Personel ana akordiyonlari dogal sayfa akisinda buyur. */
+.admin-shell[data-active-section="staffAccess"] .staff-access-panel {
+  gap: var(--panel-gap);
+  overflow: visible;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-overview-grid {
+  gap: 12px;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-overview-grid article {
+  min-height: 96px;
+  gap: 12px;
+  padding: 14px 16px;
+  border-color: var(--panel-line);
+  border-radius: var(--panel-card-radius);
+  background: var(--panel-surface);
+  box-shadow: var(--panel-shadow);
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-overview-grid article > span {
+  width: 46px;
+  height: 46px;
+  flex-basis: 46px;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-overview-grid p {
+  font-size: 12px;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-overview-grid strong {
+  font-family: var(--panel-font-display);
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-overview-grid small {
+  font-size: 11px;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-layout {
+  gap: 10px;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-accordion {
+  overflow: visible;
+  border-color: var(--panel-line);
+  border-radius: var(--panel-card-radius);
+  background: var(--panel-surface);
+  box-shadow: var(--panel-shadow);
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-accordion-head {
+  grid-template-columns: 38px minmax(0, 1fr) 18px;
+  min-height: 60px;
+  gap: 12px;
+  padding: 10px 15px;
+  border-radius: var(--panel-card-radius);
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-record-head {
+  grid-template-columns: 32px minmax(200px, 0.55fr) minmax(420px, 1.45fr) 18px;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-record-head .staff-summary-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(86px, 1fr));
+  gap: 6px;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-record-head .staff-summary-grid article {
+  display: flex;
+  min-width: 0;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  padding: 5px 7px;
+  border-radius: 8px;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-record-head .staff-summary-grid span {
+  font-size: 9px;
+  line-height: 1.15;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-record-head .staff-summary-grid strong {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-step {
+  width: 32px;
+  height: 32px;
+  font-size: 15px;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-accordion-head h4 {
+  font-family: var(--panel-font-display);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-accordion-head p {
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-accordion-body {
+  gap: 12px;
+  padding: 14px;
+  overflow: visible;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-account-grid {
+  grid-template-columns: minmax(280px, 0.8fr) minmax(400px, 1.2fr);
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-account-form {
+  padding-right: 14px;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-user-list,
+.admin-shell[data-active-section="staffAccess"] .staff-assignment-list,
+.admin-shell[data-active-section="staffAccess"] .staff-activity-list,
+.admin-shell[data-active-section="staffAccess"] .workforce-person-options {
+  scrollbar-gutter: stable;
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-user-list,
+.admin-shell[data-active-section="staffAccess"] .staff-assignment-list,
+.admin-shell[data-active-section="staffAccess"] .staff-activity-list {
+  max-height: min(44dvh, 390px);
+}
+
+.admin-shell[data-active-section="staffAccess"] .staff-filter button {
+  min-height: 40px;
+  border-radius: var(--panel-control-radius);
+  font-size: 12px;
+}
+
+/* Admin workforce butonlari ve form yogunlugu. */
+.workforce-panel {
+  overflow: visible;
+  border-radius: var(--panel-card-radius);
+  color: var(--panel-ink);
+  background: var(--panel-surface);
+  font-family: var(--panel-font-ui);
+}
+
+.workforce-panel h3,
+.workforce-panel h4 {
+  font-family: var(--panel-font-display);
+}
+
+.workforce-panel legend {
+  font-family: var(--panel-font-ui);
+}
+
+.workforce-section-tabs {
+  gap: 6px;
+  padding: 10px 14px 0;
+  overflow-x: auto;
+  border-bottom-color: var(--panel-line);
+  background: var(--panel-surface-soft);
+}
+
+.workforce-section-tabs button {
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 10px 10px 0 0;
+  font-size: 12px;
+}
+
+.workforce-task-view-tabs button {
+  min-height: 40px;
+  padding-inline: 13px;
+  font-size: 12px;
+}
+
+.workforce-task-view-tabs {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.workforce-task-view-tabs button {
+  flex: 0 0 auto;
+}
+
+.workforce-panel-heading {
+  gap: 12px;
+  padding: 16px 18px;
+  background: var(--panel-surface);
+}
+
+.workforce-panel-heading h3 {
+  font-size: var(--panel-section-title);
+  line-height: 1.08;
+}
+
+.workforce-panel-heading p,
+.workforce-list-heading p,
+.workforce-detail-head p {
+  margin-top: 3px;
+  font-size: 11px;
+}
+
+.workforce-task-layout {
+  grid-template-columns: minmax(0, 1.25fr) minmax(330px, 0.75fr);
+  min-height: 0;
+}
+
+.workforce-task-builder,
+.workforce-active-tasks {
+  padding: 16px;
+}
+
+.workforce-task-builder {
+  gap: 12px;
+}
+
+.workforce-field {
+  gap: 5px;
+}
+
+.workforce-field > span {
+  font-size: 12px;
+}
+
+.workforce-field input,
+.workforce-field select,
+.workforce-field textarea,
+.workforce-task-item input,
+.workforce-request-card textarea {
+  min-height: var(--panel-control-height);
+  padding: 8px 10px;
+  border-radius: var(--panel-control-radius);
+}
+
+.workforce-fieldset {
+  padding: 12px;
+  border-radius: var(--panel-card-radius);
+}
+
+.workforce-task-item {
+  grid-template-columns: 32px minmax(0, 1fr) repeat(3, 40px);
+  margin-bottom: 7px;
+}
+
+.workforce-task-item > span {
+  width: 30px;
+  height: 30px;
+}
+
+.workforce-task-item button,
+.workforce-detail-head > button,
+.workforce-person-chips button {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+}
+
+.workforce-add-item {
+  min-height: 40px;
+}
+
+.workforce-person-chips {
+  min-height: var(--panel-control-height);
+  padding: 6px;
+}
+
+.workforce-person-options {
+  max-height: 154px;
+}
+
+.workforce-form-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workforce-assignment-summary,
+.workforce-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.workforce-assignment-summary {
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--panel-control-radius);
+  background: var(--panel-surface-soft);
+}
+
+.workforce-assignment-summary b {
+  margin-right: auto;
+  color: var(--panel-ink);
+}
+
+.workforce-assignment-summary span,
+.workforce-detail-meta span {
+  padding: 5px 8px;
+  border-radius: var(--panel-pill-radius);
+  color: var(--panel-muted);
+  background: var(--panel-surface);
+  font-size: 11px;
+}
+
+.workforce-manager-note,
+.workforce-task-activity {
+  margin-block: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--panel-control-radius);
+  background: var(--panel-surface-soft);
+}
+
+.workforce-manager-note p,
+.workforce-task-activity p {
+  margin: 4px 0 0;
+  color: var(--panel-muted);
+  font-size: 12px;
+}
+
+.workforce-completed-items {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workforce-task-activity p {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workforce-task-activity time {
+  white-space: nowrap;
+}
+
+.workforce-active-tasks {
+  background: var(--panel-surface-soft);
+}
+
+.workforce-list-heading {
+  margin-bottom: 10px;
+}
+
+.workforce-list-heading h3 {
+  font-size: 19px;
+}
+
+.workforce-task-list {
+  gap: 8px;
+}
+
+.workforce-task-card {
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px;
+  border-radius: var(--panel-card-radius);
+}
+
+.workforce-task-card-title strong {
+  font-size: 15px;
+}
+
+.workforce-detail-card {
+  margin-top: 10px;
+  padding: 13px;
+  border-radius: var(--panel-card-radius);
+}
+
+.workforce-rule {
+  margin: 12px 14px;
+}
+
+.workforce-operation-stats {
+  gap: 10px;
+  padding: 0 14px 14px;
+}
+
+.workforce-operation-stats article {
+  min-height: 88px;
+  padding: 12px;
+  border-radius: var(--panel-card-radius);
+}
+
+.workforce-operation-stats strong {
+  font-size: 23px;
+}
+
+/* Sevkiyat: liste ve detay iki kolon, tablo yalniz yatay kayar. */
+.workforce-shipment-layout {
+  grid-template-columns: minmax(300px, 0.78fr) minmax(500px, 1.42fr);
+  min-height: 0;
+}
+
+.workforce-shipment-list,
+.workforce-shipment-detail {
+  padding: 15px;
+}
+
+.workforce-shipment-list {
+  background: var(--panel-surface-soft);
+}
+
+.workforce-shipment-card {
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 9px;
+  margin-bottom: 8px;
+  padding: 10px;
+  border-radius: var(--panel-card-radius);
+}
+
+.workforce-shipment-detail {
+  gap: 12px;
+}
+
+.workforce-detail-head h3 {
+  font-size: 20px;
+}
+
+.workforce-shipment-table {
+  overflow-x: auto;
+  overflow-y: visible;
+  border-radius: var(--panel-control-radius);
+}
+
+.workforce-shipment-table-head,
+.workforce-shipment-table-row {
+  min-width: 640px;
+  padding: 8px 10px;
+}
+
+.workforce-decision-actions {
+  grid-template-columns: minmax(130px, 0.42fr) minmax(220px, 1fr);
+}
+
+/* Shift: sablon, yatay cizelge ve talep kolonu. */
+.workforce-shift-toolbar {
+  gap: 12px;
+  padding: 13px 14px;
+}
+
+.workforce-week-picker,
+.workforce-shift-actions {
+  gap: 7px;
+}
+
+.workforce-week-picker > button,
+.workforce-week-picker label {
+  min-height: 40px;
+  height: 40px;
+  border-radius: var(--panel-control-radius);
+}
+
+.workforce-week-picker > button {
+  width: 40px;
+}
+
+.workforce-shift-templates,
+.workforce-request-list,
+.workforce-shift-schedule {
+  padding: 12px;
+}
+
+.workforce-shift-templates > label,
+.workforce-shift-templates > div:not(.workforce-list-heading) {
+  gap: 6px;
+  margin-bottom: 7px;
+  padding: 9px;
+  border-radius: var(--panel-control-radius);
+}
+
+.workforce-shift-grid {
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-inline: contain;
+  border-radius: var(--panel-card-radius);
+}
+
+.workforce-shift-grid-head > span {
+  min-height: 48px;
+  font-size: 11px;
+}
+
+.workforce-shift-grid-head > span:first-child,
+.workforce-shift-person {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--panel-surface-soft);
+  box-shadow: 1px 0 0 var(--panel-line);
+}
+
+.workforce-shift-person {
+  z-index: 2;
+  background: var(--panel-surface);
+}
+
+.workforce-shift-cell {
+  min-height: 74px;
+  padding: 6px;
+}
+
+.workforce-shift-cell select {
+  min-height: 34px;
+  font-size: 10px;
+}
+
+.workforce-shift-cell.is-unassigned {
+  border-style: dashed;
+  color: var(--panel-muted);
+  background: color-mix(in srgb, var(--panel-surface-soft) 72%, transparent);
+}
+
+.workforce-auto-proposal {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--panel-control-radius);
+  background: var(--panel-surface-soft);
+}
+
+.workforce-auto-proposal p,
+.workforce-auto-proposal small,
+.workforce-auto-proposal em {
+  margin: 0;
+  color: var(--panel-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.workforce-auto-proposal em {
+  color: var(--panel-warning);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.workforce-request-list {
+  max-height: 660px;
+}
+
+.workforce-request-card {
+  margin-bottom: 8px;
+  padding: 10px;
+  border-radius: var(--panel-card-radius);
+}
+
+.workforce-request-card > div:last-child button {
+  min-height: 40px;
+}
+
+.workforce-request-card > div:last-child button.ui-button--primary {
+  color: var(--panel-surface);
+  background: var(--panel-coffee);
+  border-color: var(--panel-coffee);
+}
+
+.workforce-request-card > div:last-child button.ui-button--danger {
+  color: var(--panel-danger);
+  background: color-mix(in srgb, var(--panel-danger) 10%, var(--panel-surface));
+  border-color: color-mix(in srgb, var(--panel-danger) 36%, transparent);
+}
+
+.workforce-empty {
+  min-height: 140px;
+  padding: 22px;
+  border-radius: var(--panel-card-radius);
+}
+
+/* Personel kalici silme: tek odakli, geri bildirimli karar modali. */
+.staff-delete-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 460;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  overflow-y: auto;
+  background: rgba(44, 22, 9, .52);
+  backdrop-filter: blur(7px);
+}
+
+.staff-delete-modal[hidden] {
+  display: none;
+}
+
+body.is-staff-delete-open .admin-shell > .workspace {
+  overflow-y: hidden;
+}
+
+.staff-delete-dialog {
+  width: min(520px, 100%);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--panel-danger) 28%, var(--panel-line));
+  border-radius: var(--panel-card-radius);
+  background: var(--panel-surface);
+  box-shadow: 0 28px 72px rgba(44, 22, 9, .24);
+}
+
+.staff-delete-dialog__head {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 12px;
+  padding: 17px 18px;
+  border-bottom: 1px solid var(--panel-line);
+  background: color-mix(in srgb, var(--panel-danger) 5%, var(--panel-surface));
+}
+
+.staff-delete-dialog__head h2 {
+  margin: 2px 0 0;
+  color: var(--panel-ink);
+  font-family: var(--panel-font-display);
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.staff-delete-dialog__icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel-danger) 12%, var(--panel-surface));
+  color: var(--panel-danger);
+}
+
+.staff-delete-dialog__icon svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.staff-delete-dialog__body {
+  display: grid;
+  gap: 13px;
+  padding: 18px;
+  color: var(--panel-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.staff-delete-dialog__body strong,
+.staff-delete-dialog__body #staffDeleteUsername {
+  color: var(--panel-ink);
+}
+
+.staff-delete-dialog__body ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.staff-delete-dialog__consent {
+  display: flex;
+  align-items: center;
+  min-height: var(--panel-control-height, 40px);
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--panel-danger) 26%, var(--panel-line));
+  border-radius: var(--panel-control-radius, 10px);
+  background: color-mix(in srgb, var(--panel-danger) 4%, var(--panel-surface));
+  color: var(--panel-ink);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.staff-delete-dialog__consent input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  accent-color: var(--panel-danger);
+}
+
+.staff-delete-dialog__consent:has(input:focus-visible) {
+  outline: 3px solid color-mix(in srgb, var(--panel-danger) 24%, transparent);
+  outline-offset: 2px;
+}
+
+.staff-delete-modal.is-busy .staff-delete-dialog__consent {
+  opacity: .64;
+  cursor: wait;
+}
+
+.staff-delete-dialog__error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--panel-danger) 34%, transparent);
+  border-radius: var(--panel-control-radius);
+  background: color-mix(in srgb, var(--panel-danger) 8%, var(--panel-surface));
+  color: var(--panel-danger);
+  font-weight: 700;
+}
+
+.staff-delete-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  padding: 14px 18px 18px;
+  border-top: 1px solid var(--panel-line);
+}
+
+.staff-delete-dialog__actions .ui-button--danger {
+  min-width: 190px;
+}
+
+@media (max-width: 1250px) {
+  .workforce-task-layout,
+  .workforce-shipment-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-shell[data-active-section="staffAccess"] .staff-record-head {
+    grid-template-columns: 38px minmax(0, 1fr) 18px;
+  }
+
+  .admin-shell[data-active-section="staffAccess"] .staff-record-head .staff-summary-grid {
+    display: none;
+  }
+}
+
+@media (max-width: 1024px) {
+  .admin-shell[data-active-section="staffAccess"] .staff-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-shell[data-active-section="staffAccess"] .staff-account-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-shell[data-active-section="staffAccess"] .staff-account-form {
+    padding: 0 0 14px;
+    border-right: 0;
+    border-bottom: 1px solid var(--panel-line);
+  }
+
+  .workforce-shift-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workforce-shift-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 900px) {
+  .admin-shell,
+  .admin-shell[data-active-section],
+  .admin-shell.is-sidebar-collapsed,
+  .admin-shell[data-active-section].is-sidebar-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-shell .sidebar,
+  .admin-shell[data-active-section] .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 180;
+    width: min(236px, 86vw);
+    transform: translateX(0);
+    transition: transform 180ms ease, opacity 180ms ease;
+  }
+
+  .admin-shell.is-sidebar-collapsed .sidebar,
+  .admin-shell[data-active-section].is-sidebar-collapsed .sidebar {
+    grid-template-rows: auto;
+    width: 68px;
+    height: 70px;
+    min-height: 70px;
+    padding: 10px;
+    border-right: 0;
+    background: transparent;
+    box-shadow: none;
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+
+  .admin-shell.is-sidebar-collapsed .sidebar-scroll-region,
+  .admin-shell.is-sidebar-collapsed .admin-profile-wrap,
+  .admin-shell[data-active-section].is-sidebar-collapsed .sidebar-scroll-region,
+  .admin-shell[data-active-section].is-sidebar-collapsed .admin-profile-wrap {
+    display: none;
+  }
+
+  .admin-shell.is-sidebar-collapsed .sidebar-logo-toggle,
+  .admin-shell[data-active-section].is-sidebar-collapsed .sidebar-logo-toggle {
+    width: 48px;
+    min-height: 48px;
+    padding: 1px;
+    border: 1px solid var(--panel-line);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--panel-surface) 94%, transparent);
+    box-shadow: var(--panel-shadow);
+  }
+
+  .admin-shell.is-sidebar-collapsed .sidebar-logo-toggle .admin-brand-logo,
+  .admin-shell[data-active-section].is-sidebar-collapsed .sidebar-logo-toggle .admin-brand-logo {
+    width: 44px;
+    height: 44px;
+  }
+
+  .admin-shell.is-sidebar-collapsed .topbar,
+  .admin-shell[data-active-section].is-sidebar-collapsed .topbar {
+    padding-left: 76px;
+  }
+
+  body.is-admin-drawer-open .admin-sidebar-overlay {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  body.is-admin-drawer-open .admin-shell .workspace {
+    overflow-y: hidden;
+  }
+
+  .admin-shell .workspace,
+  .admin-shell[data-active-section] .workspace {
+    grid-column: 1;
+  }
+
+  .workforce-request-list {
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .admin-shell .workspace,
+  .admin-shell[data-active-section] .workspace,
+  .admin-shell[data-active-section="staffAccess"] .workspace,
+  .admin-shell[data-active-section="stock"] .workspace {
+    padding: 0 14px 24px;
+  }
+
+  .admin-shell .topbar,
+  .admin-shell[data-active-section] .topbar,
+  .admin-shell[data-active-section="staffAccess"] .topbar,
+  .admin-shell[data-active-section="stock"] .topbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding-block: 8px;
+  }
+
+  .admin-shell .topbar-main {
+    width: 100%;
+  }
+
+  .admin-shell .topbar-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .admin-shell .topbar-save-button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .admin-shell[data-active-section="staffAccess"] .staff-overview-grid,
+  .admin-shell[data-active-section="staffAccess"] .staff-assignment-grid,
+  .workforce-operation-stats,
+  .workforce-form-row,
+  .workforce-decision-actions,
+  .workforce-request-list {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-shell[data-active-section="staffAccess"] .staff-accordion-head {
+    grid-template-columns: 34px minmax(0, 1fr) 18px;
+    padding: 10px 12px;
+  }
+
+  .admin-shell[data-active-section="staffAccess"] .staff-accordion-body,
+  .workforce-panel-heading,
+  .workforce-task-builder,
+  .workforce-active-tasks,
+  .workforce-shipment-list,
+  .workforce-shipment-detail,
+  .workforce-shift-schedule {
+    padding: 12px;
+  }
+
+  .workforce-panel-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workforce-shift-actions > button {
+    width: 100%;
+  }
+
+  .workforce-task-item {
+    grid-template-columns: 32px minmax(0, 1fr) repeat(3, 40px);
+  }
+
+  .workforce-task-item input {
+    grid-column: 2 / -1;
+  }
+
+  .workforce-task-item > span {
+    grid-row: 1 / span 2;
+  }
+
+  .workforce-task-item button:first-of-type {
+    grid-column: 3;
+  }
+}
+
+@media (max-width: 480px) {
+  .admin-shell[data-active-section="staffAccess"] .staff-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workforce-section-tabs button {
+    min-width: 145px;
+  }
+
+  .workforce-task-card,
+  .workforce-shipment-card {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+}

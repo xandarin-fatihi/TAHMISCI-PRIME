@@ -1,0 +1,598 @@
+"use strict";
+
+const crypto = require("crypto");
+const express = require("express");
+const { readWorkbook } = require("./simple-xlsx");
+const { serializeLegacyMenuState } = require("./pricing");
+const {
+  WORKBOOKS,
+  analyzeDataImport,
+  catalogFingerprint,
+  catalogSnapshot,
+  importRevision,
+  legacyCatalogFingerprint,
+  productCodeFingerprint,
+  restoreCatalogSnapshot
+} = require("./data-import");
+
+const DRAFT_TTL_MS = 30 * 60 * 1000;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 60 * 1024 * 1024;
+
+function registerDataImportRoutes(options) {
+  const {
+    app, store, auth, requireAdminRequestOrigin,
+    riskOperationLimiter = (_req, _res, next) => next(),
+    broadcastMenuUpdate, broadcastRecipeUpdate, broadcastStockUpdate, broadcastPublicUpdate
+  } = options;
+
+  app.get("/api/admin/data-imports/history", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+    try {
+      const data = await store.read();
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit || 50)));
+      const history = (data.dataImportHistory || []).slice().reverse().slice(0, limit).map(publicHistory);
+      res.json({ ok: true, revision: importRevision(data), history });
+    } catch (error) { next(error); }
+  });
+
+  app.post("/api/admin/data-imports/analyze", requireAdminRequestOrigin, auth.requireAdmin, riskOperationLimiter, express.json({ limit: "82mb", strict: true }), async (req, res, next) => {
+    try {
+      const parsed = parseFiles(req.body && req.body.files);
+      const requestId = requestIdentifier(req, req.body || {});
+      const actor = actorFromRequest(req);
+      const scope = `data-import:analyze:${actor}`;
+      const analysisId = `data-import-analysis-${crypto.randomUUID()}`;
+      const createdAt = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + DRAFT_TTL_MS).toISOString();
+      let replay = false;
+      let response;
+      await store.update((data) => {
+        const previous = idempotentResponse(data, scope, requestId);
+        if (previous) { replay = true; response = previous; return data; }
+        const analysis = analyzeDataImport(data, parsed, { analysisId, now: createdAt });
+        const draft = { ...analysis, actor, createdAt, expiresAt };
+        data.dataImportDrafts = activeDrafts(data.dataImportDrafts).concat(draft).slice(-20);
+        const analysisStatus = analysis.report.errorCount === 0 && analysis.report.changeCount === 0
+          ? "unchanged"
+          : "analyzed";
+        data.dataImportHistory = (data.dataImportHistory || []).concat({
+          id: analysisId,
+          importId: analysisId,
+          analysisId,
+          kind: "analyze",
+          actor,
+          requestId,
+          files: analysis.files,
+          scopes: analysis.scopes,
+          importScope: analysis.scopes,
+          report: analysis.report,
+          changeCount: analysis.changes.length,
+          revisionBefore: analysis.expectedRevision,
+          revisionAfter: analysis.expectedRevision,
+          fingerprintVersion: analysis.fingerprintVersion,
+          beforeFingerprint: analysis.expectedFingerprint,
+          beforeProductCodeFingerprint: analysis.expectedProductCodeFingerprint,
+          createdAt,
+          status: analysisStatus,
+          validationStatus: analysisStatus === "unchanged" ? "not_required" : "analyzed"
+        }).slice(-100);
+        response = {
+          ok: true, analysisId, createdAt, expiresAt,
+          expectedRevision: analysis.expectedRevision,
+          files: analysis.files, scopes: analysis.scopes, report: analysis.report,
+          changes: analysis.changes, issues: analysis.issues, canApply: analysis.report.canApply
+        };
+        rememberIdempotency(data, scope, requestId, response, createdAt);
+        return data;
+      });
+      res.status(replay ? 200 : 201).json(response);
+    } catch (error) { routeError(error, res, next); }
+  });
+
+  app.post("/api/admin/data-imports/apply", requireAdminRequestOrigin, auth.requireAdmin, riskOperationLimiter, async (req, res, next) => {
+    try {
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      const analysisId = String(body.analysisId || "").trim();
+      if (!/^data-import-analysis-[a-z0-9-]{20,}$/i.test(analysisId)) throw clientError(400, "Geçerli bir analiz kaydı gerekli.");
+      const requestId = requestIdentifier(req, body);
+      const expectedRevision = requiredRevision(body.expectedRevision);
+      const actor = actorFromRequest(req);
+      const scope = `data-import:apply:${analysisId}`;
+      let replay = false;
+      let response;
+      let rollbackSnapshot = null;
+      const committedState = await store.update((data) => {
+        const previous = idempotentResponse(data, scope, requestId);
+        if (previous) { replay = true; response = previous; return data; }
+        data.dataImportDrafts = activeDrafts(data.dataImportDrafts);
+        const draft = data.dataImportDrafts.find((item) => item.id === analysisId || item.analysisId === analysisId);
+        if (!draft) throw clientError(404, "Analiz kaydı bulunamadı veya süresi doldu. Dosyaları yeniden analiz edin.");
+        if (draft.actor !== actor) throw clientError(403, "Bu analiz kaydını uygulama yetkiniz yok.");
+        if (!draft.report || draft.report.canApply !== true) throw clientError(409, "Kritik analiz hataları giderilmeden aktarım uygulanamaz.");
+        if (draft.report.requiresArchiveConfirmation === true && body.confirmArchiveImpact !== true) {
+          throw clientError(409, "Bu aktarım katalog kayıtlarının önemli bir bölümünü arşivleyecek. Arşiv etkisini açıkça onaylayın.");
+        }
+        if (expectedRevision !== draft.expectedRevision || importRevision(data) !== expectedRevision) throw clientError(409, "Veri revizyonu analizden sonra değişti. Yeniden analiz edin.");
+        const currentFingerprint = Number(draft.fingerprintVersion || 0) >= 2
+          ? catalogFingerprint(data, draft.scopes)
+          : legacyCatalogFingerprint(data);
+        if (currentFingerprint !== draft.expectedFingerprint) throw clientError(409, "Katalog analizden sonra değişti. Yeniden analiz edin.");
+        if (draft.expectedProductCodeFingerprint
+          && productCodeFingerprint(data, draft.scopes) !== draft.expectedProductCodeFingerprint) {
+          throw clientError(409, "Ürün kodu bağlantıları analizden sonra değişti. Yeniden analiz edin.");
+        }
+
+        const now = new Date().toISOString();
+        const operationId = `data-import-${crypto.randomUUID()}`;
+        const before = catalogSnapshot(data);
+        rollbackSnapshot = structuredClone(before);
+        const revisionBefore = importRevision(data);
+        const publishRevisionBefore = Number(data.revisions && data.revisions.publish || 0);
+        const pricingRevisionBefore = Number(data.revisions && data.revisions.pricing || 0);
+        const beforeFingerprint = catalogFingerprint(data, draft.scopes);
+        const beforeProductCodeFingerprint = productCodeFingerprint(data, draft.scopes);
+        applyPlan(data, draft.plan, draft.scopes);
+        stampImportedMetadata(data, operationId, now, draft.scopes);
+        data.revisions.dataImport = revisionBefore + 1;
+        data.revisions.publish = Number(data.revisions.publish || 0) + 1;
+        if (draft.scopes.includes("pricing")) data.revisions.pricing = Number(data.revisions.pricing || 0) + 1;
+        if (draft.scopes.includes("menu") || draft.scopes.includes("pricing") || draft.scopes.includes("recipes")) data.menuUpdatedAt = now;
+        if (draft.scopes.includes("pricing")) data.pricingUpdatedAt = now;
+        if (draft.scopes.includes("recipes")) data.recipeUpdatedAt = now;
+        if (draft.scopes.includes("stock")) data.stockUpdatedAt = now;
+        const backupId = `data-import-backup-${crypto.randomUUID()}`;
+        const history = {
+          id: operationId, importId: operationId, kind: "apply", requestId, analysisId, actor, files: draft.files,
+          scopes: draft.scopes, report: draft.report, changeCount: draft.changes.length,
+          importScope: draft.scopes, fingerprintVersion: 2,
+          revisionBefore, revisionAfter: data.revisions.dataImport,
+          publishRevisionBefore, pricingRevisionBefore,
+          publishRevisionAfter: data.revisions.publish,
+          pricingRevisionAfter: data.revisions.pricing,
+          beforeFingerprint, beforeProductCodeFingerprint,
+          afterFingerprint: "", afterProductCodeFingerprint: "",
+          committedFingerprint: "", persistedFingerprint: "",
+          committedProductCodeFingerprint: "", persistedProductCodeFingerprint: "",
+          validationStatus: "pending", validationFailureReason: "",
+          appliedAt: now, rolledBackAt: null, rollbackReason: "", rollbackVerified: null,
+          backupId, createdAt: now, status: "applied", undoneAt: null, undoneBy: "", undoOperationId: ""
+        };
+        data.dataImportBackups = (data.dataImportBackups || []).concat({ id: backupId, operationId, createdAt: now, snapshot: before }).slice(-10);
+        data.dataImportHistory = (data.dataImportHistory || []).concat(history).slice(-100);
+        data.dataImportDrafts = data.dataImportDrafts.filter((item) => item !== draft);
+        response = {
+          ok: true, operationId, analysisId, revision: data.revisions.dataImport,
+          publishRevision: data.revisions.publish, pricingRevision: data.revisions.pricing,
+          changedScopes: draft.scopes, report: draft.report, changedCount: draft.changes.length,
+          canUndo: true, validationStatus: "pending", updatedAt: now
+        };
+        rememberIdempotency(data, scope, requestId, response, now);
+        return data;
+      }, {
+        backupLabel: `excel-import-${analysisId}-${requestId}`,
+        shouldBackup: (data) => !(data.dataImportIdempotency || []).some((item) => item.scope === scope && item.requestId === requestId)
+      });
+      if (!replay || response.validationStatus !== "verified") {
+        const readback = await store.read();
+        const validationDetails = buildReadbackValidation(
+          committedState,
+          readback,
+          response.changedScopes,
+          response.operationId,
+          response.revision
+        );
+        if (!validationDetails.valid) {
+          const committedHistory = findImportHistory(committedState, response.operationId)
+            || findImportHistory(readback, response.operationId);
+          rollbackSnapshot = rollbackSnapshot || findImportBackupSnapshot(committedState, response.operationId);
+          const rolledBackAt = new Date().toISOString();
+          const rollbackReason = validationDetails.failureReason;
+          console.error("[data-import] apply readback validation failed", {
+            operationId: response.operationId,
+            analysisId,
+            requestId,
+            validation: validationDetails
+          });
+
+          if (!rollbackSnapshot || !committedHistory) {
+            throw clientError(500, `Aktarım doğrulaması başarısız oldu (${rollbackReason}); güvenli geri alma kaydı bulunamadı.`);
+          }
+
+          const rollbackCommitted = await store.update((data) => {
+            restoreCatalogSnapshot(data, rollbackSnapshot);
+            data.revisions.dataImport = Number(committedHistory.revisionBefore || 0);
+            data.revisions.publish = Number(committedHistory.publishRevisionBefore || 0);
+            data.revisions.pricing = Number(committedHistory.pricingRevisionBefore || 0);
+            let failed = findImportHistory(data, response.operationId);
+            if (!failed) {
+              failed = structuredClone(committedHistory);
+              data.dataImportHistory = (data.dataImportHistory || []).concat(failed).slice(-100);
+            }
+            if (failed) {
+              applyReadbackAudit(failed, validationDetails);
+              failed.status = "failed_readback";
+              failed.failedAt = rolledBackAt;
+              failed.undoneAt = rolledBackAt;
+              failed.rolledBackAt = rolledBackAt;
+              failed.rollbackReason = rollbackReason;
+              failed.rollbackApplied = true;
+              failed.rollbackVerified = null;
+            }
+            data.dataImportIdempotency = (data.dataImportIdempotency || [])
+              .filter((item) => !(item.scope === scope && item.requestId === requestId));
+            return data;
+          });
+          const rollbackReadback = await store.read();
+          const rollbackValidation = buildRollbackValidation(
+            rollbackCommitted,
+            rollbackReadback,
+            response.changedScopes,
+            committedHistory
+          );
+          await store.update((data) => {
+            const failed = findImportHistory(data, response.operationId);
+            if (failed) {
+              failed.rollbackVerified = rollbackValidation.verified;
+              failed.rollbackValidation = rollbackValidation;
+            }
+            return data;
+          });
+          const suffix = rollbackValidation.verified
+            ? "katalog güvenli yedekten geri yüklendi ve doğrulandı"
+            : "katalog geri yüklendi ancak rollback readback doğrulaması eşleşmedi";
+          throw clientError(500, `Aktarım yazma doğrulaması başarısız oldu (${rollbackReason}); ${suffix}.`);
+        }
+
+        response = { ...response, validationStatus: "verified" };
+        const validatedAt = new Date().toISOString();
+        const validatedState = await store.update((data) => {
+          const history = findImportHistory(data, response.operationId);
+          if (history) {
+            applyReadbackAudit(history, validationDetails);
+            history.status = "applied";
+            history.validationStatus = "verified";
+            history.validatedAt = validatedAt;
+            history.afterFingerprint = validationDetails.committedFingerprint;
+            history.afterProductCodeFingerprint = validationDetails.committedProductCodeFingerprint;
+          }
+          updateIdempotentResponse(data, scope, requestId, response);
+          return data;
+        });
+        broadcastImport(validatedState, response.changedScopes, response.updatedAt, options);
+      }
+      res.json(response);
+    } catch (error) { routeError(error, res, next); }
+  });
+
+  app.post("/api/admin/data-imports/:id/undo", requireAdminRequestOrigin, auth.requireAdmin, riskOperationLimiter, async (req, res, next) => {
+    try {
+      const operationId = String(req.params.id || "").trim();
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      const requestId = requestIdentifier(req, body);
+      const expectedRevision = requiredRevision(body.expectedRevision);
+      const actor = actorFromRequest(req);
+      const scope = `data-import:undo:${operationId}`;
+      let replay = false;
+      let response;
+      const committedUndo = await store.update((data) => {
+        const previous = idempotentResponse(data, scope, requestId);
+        if (previous) { replay = true; response = previous; return data; }
+        if (importRevision(data) !== expectedRevision) throw clientError(409, "Veri revizyonu değişti. Geçmişi yenileyin.");
+        const source = (data.dataImportHistory || []).find((item) => item.id === operationId && item.kind === "apply");
+        if (!source) throw clientError(404, "Aktarım geçmişi bulunamadı.");
+        if (source.undoneAt) throw clientError(409, "Bu aktarım daha önce geri alındı.");
+        const sourceFingerprint = Number(source.fingerprintVersion || 0) >= 2
+          ? catalogFingerprint(data, source.scopes)
+          : legacyCatalogFingerprint(data);
+        if (sourceFingerprint !== source.afterFingerprint) throw clientError(409, "Aktarımdan sonra manuel değişiklik yapıldığı için güvenli geri alma mümkün değil.");
+        if (source.afterProductCodeFingerprint
+          && productCodeFingerprint(data, source.scopes) !== source.afterProductCodeFingerprint) {
+          throw clientError(409, "Aktarımdan sonra ürün kodu bağlantıları değiştiği için güvenli geri alma mümkün değil.");
+        }
+        const backup = (data.dataImportBackups || []).find((item) => item.id === source.backupId && item.operationId === source.id);
+        if (!backup || !backup.snapshot) throw clientError(409, "Geri alma yedeği bulunamadı.");
+        const now = new Date().toISOString();
+        const undoOperationId = `data-import-undo-${crypto.randomUUID()}`;
+        restoreCatalogSnapshot(data, backup.snapshot);
+        data.revisions.dataImport = expectedRevision + 1;
+        data.revisions.publish = Number(data.revisions.publish || 0) + 1;
+        if (source.scopes.includes("pricing")) data.revisions.pricing = Number(data.revisions.pricing || 0) + 1;
+        if (source.scopes.includes("menu") || source.scopes.includes("pricing") || source.scopes.includes("recipes")) data.menuUpdatedAt = now;
+        if (source.scopes.includes("pricing")) data.pricingUpdatedAt = now;
+        if (source.scopes.includes("recipes")) data.recipeUpdatedAt = now;
+        if (source.scopes.includes("stock")) data.stockUpdatedAt = now;
+        source.undoneAt = now; source.undoneBy = actor; source.undoOperationId = undoOperationId;
+        const undoHistory = {
+          id: undoOperationId, kind: "undo", sourceOperationId: source.id, requestId, actor,
+          scopes: source.scopes, importScope: source.scopes, fingerprintVersion: 2,
+          revisionBefore: expectedRevision, revisionAfter: data.revisions.dataImport,
+          publishRevisionAfter: data.revisions.publish, createdAt: now, status: "undone", changeCount: source.changeCount,
+          afterFingerprint: "", afterProductCodeFingerprint: "", validationStatus: "pending"
+        };
+        data.dataImportHistory = data.dataImportHistory.concat(undoHistory).slice(-100);
+        response = { ok: true, operationId: undoOperationId, sourceOperationId: source.id, revision: data.revisions.dataImport, publishRevision: data.revisions.publish, changedScopes: source.scopes, updatedAt: now };
+        rememberIdempotency(data, scope, requestId, response, now);
+        return data;
+      });
+      if (!replay) {
+        const readback = await store.read();
+        const undo = (readback.dataImportHistory || []).find((item) => item.id === response.operationId);
+        const committedFingerprint = catalogFingerprint(committedUndo, response.changedScopes);
+        const persistedFingerprint = catalogFingerprint(readback, response.changedScopes);
+        const committedProductCodeFingerprint = productCodeFingerprint(committedUndo, response.changedScopes);
+        const persistedProductCodeFingerprint = productCodeFingerprint(readback, response.changedScopes);
+        if (!undo || committedFingerprint !== persistedFingerprint
+          || committedProductCodeFingerprint !== persistedProductCodeFingerprint) {
+          throw clientError(500, "Geri alma yazma doğrulaması başarısız oldu.");
+        }
+        const validatedUndo = await store.update((data) => {
+          const history = findImportHistory(data, response.operationId);
+          if (history) {
+            history.afterFingerprint = committedFingerprint;
+            history.afterProductCodeFingerprint = committedProductCodeFingerprint;
+            history.committedFingerprint = committedFingerprint;
+            history.persistedFingerprint = persistedFingerprint;
+            history.committedProductCodeFingerprint = committedProductCodeFingerprint;
+            history.persistedProductCodeFingerprint = persistedProductCodeFingerprint;
+            history.validationStatus = "verified";
+          }
+          return data;
+        });
+        broadcastImport(validatedUndo, response.changedScopes, response.updatedAt, options);
+      }
+      res.json(response);
+    } catch (error) { routeError(error, res, next); }
+  });
+}
+
+function parseFiles(input) {
+  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const workbooks = {};
+  const files = {};
+  let total = 0;
+  for (const key of WORKBOOKS) {
+    if (!source[key]) continue;
+    const filename = String(source[key].filename || `TAHMISCI-${key}.xlsx`).trim().slice(0, 180);
+    if (!/\.xlsx$/i.test(filename)) throw clientError(400, `${filename}: yalnızca .xlsx dosyası desteklenir.`);
+    const rawContent = String(source[key].contentBase64 || "");
+    const dataUrl = rawContent.match(/^data:([^;,]+);base64,/i);
+    const declaredMime = String(source[key].mimeType || source[key].type || dataUrl && dataUrl[1] || "").trim().toLowerCase();
+    if (declaredMime && !new Set([
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/octet-stream"
+    ]).has(declaredMime)) {
+      throw clientError(400, `${filename}: MIME türü XLSX dosyasıyla uyuşmuyor.`);
+    }
+    const encoded = rawContent.replace(/^data:[^,]+,/, "").replace(/\s+/g, "");
+    if (!encoded || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+      throw clientError(400, `${filename}: dosya içeriği geçersiz.`);
+    }
+    let buffer;
+    try { buffer = Buffer.from(encoded, "base64"); } catch (_error) { throw clientError(400, `${filename}: dosya içeriği geçersiz.`); }
+    if (!buffer.length) throw clientError(400, `${filename}: dosya boş.`);
+    if (buffer.length > MAX_FILE_BYTES) throw clientError(413, `${filename}: dosya 20 MB sınırını aşıyor.`);
+    if (!isXlsxSignature(buffer)) throw clientError(400, `${filename}: dosya imzası geçerli bir XLSX arşivi değil.`);
+    total += buffer.length;
+    if (total > MAX_TOTAL_BYTES) throw clientError(413, "Toplam Excel boyutu 60 MB sınırını aşıyor.");
+    try { workbooks[key] = readWorkbook(buffer); } catch (_error) { throw clientError(400, `${filename}: Excel dosyası okunamadı.`); }
+    if (!workbooks[key].SheetNames.length) throw clientError(400, `${filename}: çalışma sayfası bulunamadı.`);
+    files[key] = { filename, size: buffer.length, hash: crypto.createHash("sha256").update(buffer).digest("hex") };
+  }
+  if (!Object.keys(files).length) throw clientError(400, "Analiz için en az bir Excel dosyası seçin.");
+  return { workbooks, files };
+}
+
+function isXlsxSignature(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) return false;
+  return new Set([0x04034b50, 0x06054b50, 0x08074b50]).has(buffer.readUInt32LE(0));
+}
+
+function applyPlan(data, plan, scopes) {
+  if (scopes.includes("menu") || scopes.includes("pricing")) {
+    data.menuState = structuredClone(plan.menuState);
+    data.pricing = structuredClone(plan.pricing);
+  }
+  if (scopes.includes("recipes")) {
+    data.menuState = structuredClone(plan.menuState);
+    data.recipeState = structuredClone(plan.recipeState);
+    data.recipeCatalog = structuredClone(plan.recipeCatalog);
+    data.recipeLinkReview = structuredClone(plan.recipeLinkReview || []);
+  }
+  if (scopes.includes("stock")) data.stockState = structuredClone(plan.stockState);
+  data.dataImportMappings = structuredClone(plan.mappings);
+  applyReferenceRewrites(data, plan.referenceRewrites);
+}
+
+function applyReferenceRewrites(data, rewritesInput) {
+  const rewrites = rewritesInput && typeof rewritesInput === "object" ? rewritesInput : {};
+  const menuProducts = rewrites.menuProducts || {};
+  const menuCategories = rewrites.menuCategories || {};
+  const stockProducts = rewrites.stockProducts || {};
+  const stockCategories = rewrites.stockCategories || {};
+
+  rewriteMenuReferences(data.siteState, menuProducts, menuCategories);
+  for (const revision of data.siteRevisions || []) rewriteMenuReferences(revision, menuProducts, menuCategories);
+  for (const shipment of data.workforceShipments || []) {
+    for (const item of shipment.items || shipment.lines || []) {
+      if (stockProducts[String(item.productId)]) item.productId = stockProducts[String(item.productId)];
+      if (stockCategories[String(item.categoryId)]) item.categoryId = stockCategories[String(item.categoryId)];
+    }
+  }
+}
+
+function rewriteMenuReferences(value, productRewrites, categoryRewrites) {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    value.forEach((item) => rewriteMenuReferences(item, productRewrites, categoryRewrites));
+    return;
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "productId" && productRewrites[String(entry)]) value[key] = productRewrites[String(entry)];
+    else if (key === "categoryId" && categoryRewrites[String(entry)]) value[key] = categoryRewrites[String(entry)];
+    else if (key === "productIds" && Array.isArray(entry)) value[key] = [...new Set(entry.map((id) => productRewrites[String(id)] || id))];
+    else rewriteMenuReferences(entry, productRewrites, categoryRewrites);
+  }
+}
+
+function stampImportedMetadata(data, operationId, now, scopes) {
+  const stamp = (item) => {
+    if (item && typeof item === "object" && item.sourceType === "excel") {
+      item.lastImportedAt = now;
+      item.lastImportOperationId = operationId;
+    }
+  };
+  if (scopes.includes("menu") || scopes.includes("pricing")) for (const category of data.menuState.categories || []) { stamp(category); (category.products || []).forEach(stamp); }
+  if (scopes.includes("recipes")) for (const products of Object.values(data.recipeState || {})) for (const sizes of Object.values(products || {})) for (const item of Object.values(sizes || {})) stamp(item);
+  if (scopes.includes("stock")) { (data.stockState.categories || []).forEach(stamp); (data.stockState.products || []).forEach(stamp); }
+  for (const entries of Object.values(data.dataImportMappings || {})) for (const mapping of entries || []) { mapping.lastImportedAt = now; mapping.lastImportOperationId = operationId; }
+}
+
+function broadcastImport(data, scopes, updatedAt, options) {
+  const set = new Set(scopes || []);
+  if ((set.has("menu") || set.has("pricing") || set.has("recipes")) && typeof options.broadcastMenuUpdate === "function") options.broadcastMenuUpdate(serializeLegacyMenuState(data.menuState, data.pricing), updatedAt, data.pricing, data.revisions.pricing);
+  if (set.has("recipes") && typeof options.broadcastRecipeUpdate === "function") options.broadcastRecipeUpdate(data.recipeState, updatedAt, data.recipeCatalog || []);
+  if (set.has("stock") && typeof options.broadcastStockUpdate === "function") options.broadcastStockUpdate(data.stockState, updatedAt);
+  if ((set.has("menu") || set.has("pricing") || set.has("recipes")) && typeof options.broadcastPublicUpdate === "function") options.broadcastPublicUpdate(data, "data-import");
+}
+
+function buildReadbackValidation(committed, persisted, scopes, operationId, expectedRevision) {
+  const committedHistory = findImportHistory(committed, operationId);
+  const persistedHistory = findImportHistory(persisted, operationId);
+  const committedFingerprint = catalogFingerprint(committed, scopes);
+  const persistedFingerprint = catalogFingerprint(persisted, scopes);
+  const committedProductCodeFingerprint = productCodeFingerprint(committed, scopes);
+  const persistedProductCodeFingerprint = productCodeFingerprint(persisted, scopes);
+  const catalogMatches = committedFingerprint === persistedFingerprint;
+  const productCodesMatch = committedProductCodeFingerprint === persistedProductCodeFingerprint;
+  const metadataMatches = Boolean(
+    committedHistory
+    && persistedHistory
+    && Number(committedHistory.revisionAfter) === Number(expectedRevision)
+    && Number(persistedHistory.revisionAfter) === Number(expectedRevision)
+    && importRevision(committed) === Number(expectedRevision)
+    && importRevision(persisted) === Number(expectedRevision)
+  );
+  const reasons = [];
+  if (!catalogMatches) reasons.push("katalog fingerprint eşleşmedi");
+  if (!productCodesMatch) reasons.push("ürün kodu fingerprint eşleşmedi");
+  if (!metadataMatches) reasons.push("işlem metadata veya revizyon kaydı eşleşmedi");
+  return {
+    importId: operationId,
+    importScope: Array.isArray(scopes) ? [...scopes] : [],
+    revisionAfter: Number(expectedRevision),
+    committedFingerprint,
+    persistedFingerprint,
+    committedProductCodeFingerprint,
+    persistedProductCodeFingerprint,
+    catalogMatches,
+    productCodesMatch,
+    metadataMatches,
+    valid: reasons.length === 0,
+    validationStatus: reasons.length === 0 ? "verified" : "failed",
+    failureReason: reasons.join("; ")
+  };
+}
+
+function applyReadbackAudit(history, details) {
+  history.committedFingerprint = details.committedFingerprint;
+  history.persistedFingerprint = details.persistedFingerprint;
+  history.committedProductCodeFingerprint = details.committedProductCodeFingerprint;
+  history.persistedProductCodeFingerprint = details.persistedProductCodeFingerprint;
+  history.validationStatus = details.valid ? "verified" : "failed";
+  history.validationFailureReason = details.failureReason || "";
+  history.validationDetails = { ...details };
+}
+
+function buildRollbackValidation(committed, persisted, scopes, sourceHistory) {
+  const committedFingerprint = catalogFingerprint(committed, scopes);
+  const persistedFingerprint = catalogFingerprint(persisted, scopes);
+  const committedProductCodeFingerprint = productCodeFingerprint(committed, scopes);
+  const persistedProductCodeFingerprint = productCodeFingerprint(persisted, scopes);
+  const expectedFingerprint = String(sourceHistory.beforeFingerprint || "");
+  const expectedProductCodeFingerprint = String(sourceHistory.beforeProductCodeFingerprint || "");
+  const catalogMatches = committedFingerprint === persistedFingerprint
+    && (!expectedFingerprint || persistedFingerprint === expectedFingerprint);
+  const productCodesMatch = committedProductCodeFingerprint === persistedProductCodeFingerprint
+    && (!expectedProductCodeFingerprint || persistedProductCodeFingerprint === expectedProductCodeFingerprint);
+  const revisionMatches = importRevision(committed) === Number(sourceHistory.revisionBefore || 0)
+    && importRevision(persisted) === Number(sourceHistory.revisionBefore || 0)
+    && Number(committed.revisions && committed.revisions.publish || 0) === Number(sourceHistory.publishRevisionBefore || 0)
+    && Number(persisted.revisions && persisted.revisions.publish || 0) === Number(sourceHistory.publishRevisionBefore || 0)
+    && Number(committed.revisions && committed.revisions.pricing || 0) === Number(sourceHistory.pricingRevisionBefore || 0)
+    && Number(persisted.revisions && persisted.revisions.pricing || 0) === Number(sourceHistory.pricingRevisionBefore || 0);
+  return {
+    expectedFingerprint,
+    committedFingerprint,
+    persistedFingerprint,
+    expectedProductCodeFingerprint,
+    committedProductCodeFingerprint,
+    persistedProductCodeFingerprint,
+    catalogMatches,
+    productCodesMatch,
+    revisionMatches,
+    verified: catalogMatches && productCodesMatch && revisionMatches
+  };
+}
+
+function findImportHistory(data, operationId) {
+  return (data && data.dataImportHistory || []).find((item) => item && item.id === operationId) || null;
+}
+
+function findImportBackupSnapshot(data, operationId) {
+  const backup = (data && data.dataImportBackups || []).find((item) => item && item.operationId === operationId);
+  return backup && backup.snapshot ? structuredClone(backup.snapshot) : null;
+}
+
+function updateIdempotentResponse(data, scope, requestId, response) {
+  const entry = (data.dataImportIdempotency || []).find((item) => item.scope === scope && item.requestId === requestId);
+  if (entry) entry.response = structuredClone(response);
+}
+
+function publicHistory(item) {
+  return {
+    id: item.id, kind: item.kind, sourceOperationId: item.sourceOperationId || "", files: item.files || [],
+    scopes: item.scopes || [], report: item.report || null, changeCount: Number(item.changeCount || 0),
+    revision: item.revisionAfter, revisionBefore: item.revisionBefore, revisionAfter: item.revisionAfter, actor: item.actor,
+    createdAt: item.createdAt, undoneAt: item.undoneAt || null, undoOperationId: item.undoOperationId || "",
+    status: item.status || item.kind, canUndo: item.kind === "apply" && item.status !== "failed_readback" && !item.undoneAt,
+    importId: item.importId || item.id, importScope: item.importScope || item.scopes || [],
+    validationStatus: item.validationStatus || "", validationFailureReason: item.validationFailureReason || "",
+    validationDetails: item.validationDetails && typeof item.validationDetails === "object"
+      ? structuredClone(item.validationDetails)
+      : null,
+    committedFingerprint: item.committedFingerprint || "", persistedFingerprint: item.persistedFingerprint || "",
+    committedProductCodeFingerprint: item.committedProductCodeFingerprint || "",
+    persistedProductCodeFingerprint: item.persistedProductCodeFingerprint || "",
+    appliedAt: item.appliedAt || item.createdAt || null, rolledBackAt: item.rolledBackAt || null,
+    validatedAt: item.validatedAt || null, failedAt: item.failedAt || null,
+    rollbackReason: item.rollbackReason || "", rollbackApplied: item.rollbackApplied === true,
+    rollbackVerified: item.rollbackVerified === true,
+    rollbackValidation: item.rollbackValidation && typeof item.rollbackValidation === "object"
+      ? structuredClone(item.rollbackValidation)
+      : null,
+    fingerprintVersion: Number(item.fingerprintVersion || 0)
+  };
+}
+
+function activeDrafts(items) { const now = Date.now(); return (Array.isArray(items) ? items : []).filter((item) => item && Date.parse(item.expiresAt) > now); }
+function actorFromRequest(req) { return String(req.admin && (req.admin.sessionId || req.admin.sub) || "admin"); }
+function requestIdentifier(req, body) { const value = String(req.header("Idempotency-Key") || req.header("X-Request-ID") || body.requestId || "").trim(); if (!/^[a-zA-Z0-9._:-]{8,180}$/.test(value)) throw clientError(400, "Geçerli requestId veya Idempotency-Key gerekli."); return value; }
+function requiredRevision(value) { const number = Number(value); if (!Number.isInteger(number) || number < 0) throw clientError(400, "Geçerli expectedRevision gerekli."); return number; }
+function idempotentResponse(data, scope, requestId) {
+  const matches = (data.dataImportIdempotency || []).filter((entry) => entry.requestId === requestId);
+  const item = matches.find((entry) => entry.scope === scope);
+  if (item) return structuredClone(item.response);
+  if (matches.length) throw clientError(409, "Bu requestId daha önce farklı bir Excel işlemi için kullanıldı.");
+  return null;
+}
+function rememberIdempotency(data, scope, requestId, response, createdAt) { data.dataImportIdempotency = (data.dataImportIdempotency || []).concat({ scope, requestId, response: structuredClone(response), createdAt }).slice(-500); }
+function clientError(status, message) { const error = new Error(message); error.status = status; return error; }
+function routeError(error, res, next) {
+  if (error && (error.type === "entity.too.large" || Number(error.status) === 413)) {
+    return res.status(413).json({ ok: false, message: "Excel yükleme isteği izin verilen boyut sınırını aşıyor." });
+  }
+  if (error && Number(error.status) >= 400 && Number(error.status) < 600) return res.status(Number(error.status)).json({ ok: false, message: error.message });
+  return next(error);
+}
+
+module.exports = { isXlsxSignature, parseFiles, registerDataImportRoutes };

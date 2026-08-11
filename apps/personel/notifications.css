@@ -1,0 +1,596 @@
+/* Personel bildirim merkezi ve kanal tercihleri. */
+.personel-dashboard .workspace-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.personel-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.personel-notification-trigger,
+.personel-notification-close {
+  position: relative;
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--panel-control-radius);
+  color: var(--panel-coffee);
+  background: var(--panel-surface);
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.personel-notification-trigger:hover,
+.personel-notification-close:hover {
+  border-color: rgba(90, 47, 29, .32);
+  box-shadow: var(--panel-shadow);
+  transform: translateY(-1px);
+}
+
+.personel-notification-trigger:active,
+.personel-notification-close:active {
+  transform: none;
+}
+
+.personel-notification-trigger:focus-visible,
+.personel-notification-close:focus-visible,
+.personel-notification-filters button:focus-visible,
+.personel-notification-card button:focus-visible {
+  outline: 3px solid rgba(185, 80, 45, .24);
+  outline-offset: 2px;
+}
+
+.personel-notification-trigger svg,
+.personel-notification-close svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.personel-notification-badge {
+  position: absolute;
+  inset: -6px -7px auto auto;
+  display: inline-grid;
+  min-width: 21px;
+  height: 21px;
+  place-items: center;
+  padding-inline: 5px;
+  border: 2px solid var(--panel-canvas);
+  border-radius: 999px;
+  color: #fffaf3;
+  background: var(--panel-accent);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.personel-notification-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 420;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: rgba(44, 22, 9, .34);
+  backdrop-filter: blur(2px);
+  cursor: default;
+}
+
+.personel-notification-drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 430;
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+  width: min(430px, 100vw);
+  min-width: 0;
+  height: 100dvh;
+  min-height: 100svh;
+  overflow: hidden;
+  border-left: 1px solid var(--panel-line);
+  color: var(--panel-ink);
+  background: var(--panel-canvas);
+  box-shadow: -20px 0 52px rgba(44, 22, 9, .16);
+}
+
+.personel-notification-drawer__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 18px 16px;
+  border-bottom: 1px solid var(--panel-line);
+  background: var(--panel-surface);
+}
+
+.personel-notification-drawer__head h2 {
+  margin: 3px 0 2px;
+  font: 700 28px/1.1 var(--panel-font-display);
+}
+
+.personel-notification-drawer__head p {
+  margin: 0;
+  color: var(--panel-muted);
+  font-size: 12px;
+}
+
+.personel-notification-drawer__head .eyebrow {
+  color: var(--panel-accent);
+  font-size: 10px;
+}
+
+.personel-notification-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px 8px;
+}
+
+.personel-notification-toolbar > label {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  color: var(--panel-muted);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.personel-notification-toolbar input,
+.notification-preference-group input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  min-height: 17px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--panel-coffee);
+}
+
+.personel-notification-filters {
+  display: flex;
+  gap: 7px;
+  padding: 4px 16px 10px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.personel-notification-filters button {
+  min-width: max-content;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: 999px;
+  color: var(--panel-coffee);
+  background: var(--panel-surface);
+  font: 700 11px/1 var(--panel-font-ui);
+  cursor: pointer;
+}
+
+.personel-notification-filters button.is-active {
+  border-color: var(--panel-coffee);
+  color: #fffaf3;
+  background: var(--panel-coffee);
+}
+
+.personel-notification-message {
+  min-height: 0;
+  margin: 0 16px;
+  color: var(--panel-muted);
+  font-size: 12px;
+}
+
+.personel-notification-message:not(:empty) {
+  margin-bottom: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--panel-line);
+  border-radius: 9px;
+  background: var(--panel-surface-soft);
+}
+
+.personel-notification-message.is-error {
+  border-color: rgba(151, 47, 39, .22);
+  color: var(--panel-danger);
+  background: rgba(151, 47, 39, .07);
+}
+
+.personel-notification-list {
+  min-height: 0;
+  padding: 4px 14px 18px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(90, 47, 29, .28) transparent;
+}
+
+.personel-notification-list::-webkit-scrollbar {
+  width: 7px;
+}
+
+.personel-notification-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(90, 47, 29, .25);
+}
+
+.personel-notification-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-top: 9px;
+  padding: 13px 11px;
+  border: 1px solid var(--panel-line);
+  border-radius: 13px;
+  background: var(--panel-surface);
+  box-shadow: 0 8px 20px rgba(62, 31, 15, .035);
+}
+
+.personel-notification-card.is-unread {
+  border-color: rgba(185, 80, 45, .30);
+  background: linear-gradient(135deg, rgba(255, 250, 243, 1), rgba(247, 236, 223, .84));
+}
+
+.personel-notification-card.is-unread::before {
+  content: "";
+  position: absolute;
+  inset: 11px auto auto 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--panel-accent);
+}
+
+.personel-notification-card__icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--panel-coffee);
+  background: var(--panel-surface-soft);
+}
+
+.personel-notification-card__icon svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.personel-notification-card.is-success .personel-notification-card__icon {
+  color: #51633b;
+  background: rgba(91, 113, 65, .12);
+}
+
+.personel-notification-card.is-warning .personel-notification-card__icon {
+  color: #8a5a19;
+  background: rgba(190, 126, 36, .13);
+}
+
+.personel-notification-card.is-critical .personel-notification-card__icon {
+  color: #97352e;
+  background: rgba(151, 53, 46, .11);
+}
+
+.personel-notification-card__copy {
+  min-width: 0;
+}
+
+.personel-notification-card__open {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--panel-ink);
+  text-align: left;
+  background: transparent;
+  font: 700 14px/1.35 var(--panel-font-ui);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.personel-notification-card__copy p {
+  margin: 4px 0 0;
+  color: var(--panel-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.personel-notification-card__copy time {
+  display: block;
+  margin-top: 7px;
+  color: rgba(90, 47, 29, .68);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.personel-notification-card__actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.personel-notification-card__actions button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--panel-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.personel-notification-card__actions button:hover {
+  border-color: var(--panel-line);
+  color: var(--panel-coffee);
+  background: var(--panel-surface-soft);
+}
+
+.personel-notification-card__actions svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.personel-notification-empty,
+.personel-notification-loading {
+  display: grid;
+  min-height: 240px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--panel-muted);
+  text-align: center;
+}
+
+.personel-notification-empty svg,
+.personel-notification-loading svg {
+  width: 34px;
+  height: 34px;
+  fill: none;
+  stroke: var(--panel-coffee);
+  stroke-width: 1.5;
+}
+
+.personel-notification-empty strong,
+.personel-notification-loading strong {
+  color: var(--panel-ink);
+  font-family: var(--panel-font-display);
+  font-size: 18px;
+}
+
+.personel-notification-drawer__footer {
+  padding: 10px 14px max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--panel-line);
+  background: var(--panel-surface);
+}
+
+body.is-personel-notification-open {
+  overflow: hidden;
+}
+
+/* Profil içindeki kalıcı tercih formu. */
+.personel-dashboard .profile-section {
+  display: grid;
+  gap: 16px;
+  padding: var(--panel-page-padding);
+}
+
+.personel-dashboard .profile-section[hidden] {
+  display: none;
+}
+
+.notification-preferences-card {
+  width: min(920px, 100%);
+  padding: 18px;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--panel-card-radius);
+  background: var(--panel-surface);
+  box-shadow: var(--panel-shadow);
+}
+
+.notification-preferences-card > header,
+.notification-preferences-card > footer,
+.notification-push-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.notification-preferences-card h3 {
+  margin: 2px 0 3px;
+  font: 700 22px/1.15 var(--panel-font-display);
+}
+
+.notification-preferences-card p {
+  margin: 0;
+  color: var(--panel-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.notification-preferences-state {
+  min-width: 0;
+  color: var(--panel-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.notification-preferences-state.is-error {
+  color: var(--panel-danger);
+}
+
+.notification-preferences-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.notification-field--wide {
+  grid-column: 1 / -1;
+}
+
+.notification-field > span {
+  font-size: 12px;
+}
+
+.notification-preference-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: 11px;
+  background: var(--panel-surface-soft);
+}
+
+.notification-preference-group legend {
+  padding-inline: 5px;
+  color: var(--panel-coffee);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.notification-preference-group > label {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  color: var(--panel-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.notification-preference-group .notification-time-field {
+  display: grid;
+  grid-template-columns: auto minmax(96px, 1fr);
+}
+
+.notification-time-field input {
+  min-height: 36px;
+}
+
+.notification-push-card {
+  min-height: 64px;
+  padding: 11px 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: 11px;
+  background: var(--panel-surface-soft);
+}
+
+.notification-push-card > div {
+  display: grid;
+  gap: 3px;
+}
+
+.notification-push-card strong {
+  font-size: 13px;
+}
+
+.notification-push-card span {
+  color: var(--panel-muted);
+  font-size: 11px;
+}
+
+.notification-preferences-card > footer {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--panel-line);
+}
+
+@media (max-width: 760px) {
+  .personel-notification-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .personel-notification-toolbar > label {
+    align-self: flex-start;
+  }
+
+  .notification-preferences-grid,
+  .notification-preference-group {
+    grid-template-columns: 1fr;
+  }
+
+  .notification-preference-group .notification-time-field {
+    grid-template-columns: 1fr;
+  }
+
+  .notification-preferences-card > header,
+  .notification-preferences-card > footer,
+  .notification-push-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .notification-preferences-state {
+    text-align: left;
+  }
+}
+
+@media (max-width: 540px) {
+  .personel-notification-drawer {
+    width: 100vw;
+    border-left: 0;
+  }
+
+  .personel-notification-drawer__head {
+    padding-top: max(16px, env(safe-area-inset-top));
+  }
+
+  .personel-notification-card {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .personel-notification-card__actions {
+    grid-column: 2;
+    justify-content: flex-end;
+  }
+
+  .personel-dashboard .workspace-head {
+    grid-template-columns: minmax(0, 1fr) 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .personel-notification-trigger,
+  .personel-notification-close {
+    transition: none;
+  }
+}

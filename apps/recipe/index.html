@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <!-- Developer: Uzeyir | System Key: xandar | Source integrity marker -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#f4ede4">
+  <title>TAHMİSÇİ Reçete</title>
+  <link rel="icon" type="image/png" href="/assets/brand/favicon.png?v=20260714">
+  <link rel="stylesheet" href="styles/recipe.css?v=20260802-prephase4-vintage-hotfix">
+  <script src="scripts/app.js?v=20260802-prephase4-vintage-hotfix" defer></script>
+</head>
+<body class="recipe-locked">
+  <section class="recipe-gate" id="recipeGate">
+    <form class="recipe-gate-card" id="recipeGateForm">
+      <img src="/assets/brand/logo-large.png" alt="TAHMİSÇİ">
+      <p>TAHMİSÇİ Coffee</p>
+      <h1>Reçete Girişi</h1>
+      <label>
+        <span>Reçete şifresi</span>
+        <input id="recipeGatePassword" type="password" autocomplete="current-password" placeholder="Şifre">
+      </label>
+      <button type="submit">Giriş Yap</button>
+      <a class="recipe-reset-link" href="/password-reset/">Şifremi unuttum</a>
+      <small id="recipeGateError" hidden>Şifre hatalı. Lütfen tekrar deneyin.</small>
+    </form>
+  </section>
+
+  <main class="recipe-shell">
+    <header class="recipe-header">
+      <div class="recipe-topbar">
+        <a class="recipe-logo-box" href="/" aria-label="Menü ana sayfası">
+          <img src="/assets/brand/logo-large.png" alt="TAHMİSÇİ">
+        </a>
+        <div class="recipe-title-block">
+          <p>TAHMİSÇİ COFFEE</p>
+          <h1>REÇETE</h1>
+        </div>
+        <button class="theme-toggle" type="button" data-action="theme" aria-label="Tema değiştir">
+          <svg id="recipeModeIcon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path id="recipeModeIconPath" d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="recipe-person-row">
+        <span>BARİSTA</span>
+        <strong id="recipeBaristaName">Personel</strong>
+      </div>
+
+      <div class="recipe-tools">
+        <div class="recipe-search">
+          <span class="search-icon" aria-hidden="true"></span>
+          <input id="recipeSearch" type="search" autocomplete="off" placeholder="reçetede ara" aria-label="Reçetede ara">
+          <div class="recipe-suggestions" id="recipeSuggestions" hidden></div>
+        </div>
+      </div>
+
+      <nav class="recipe-tabs" id="recipeTabs" aria-label="Reçete kategorileri"></nav>
+    </header>
+
+    <section class="recipe-home" id="recipeHome" aria-live="polite"></section>
+    <section class="recipe-grid" id="recipeGrid" aria-live="polite"></section>
+    <p class="empty-state" id="recipeEmpty" hidden>Henüz veri aktarılmadı.</p>
+  </main>
+
+  <div class="recipe-modal-overlay" id="recipeModal" aria-hidden="true">
+    <article class="recipe-modal" role="dialog" aria-modal="true" aria-labelledby="recipeModalTitle">
+      <button class="recipe-close" type="button" data-action="close-recipe" aria-label="Kapat">&times;</button>
+      <p class="recipe-modal-kicker" id="recipeModalCategory"></p>
+      <h2 id="recipeModalTitle"></h2>
+      <span class="recipe-size-pill" id="recipeModalSize"></span>
+      <div class="recipe-modal-actions" id="recipeModalActions" hidden>
+        <button class="recipe-modal-tab is-active" type="button" data-action="recipe-content">İçerik</button>
+        <button class="recipe-modal-tab" type="button" data-action="recipe-preparation">Hazırlanışı</button>
+      </div>
+      <h3 class="recipe-section-title" id="recipeSectionTitle">İçerik</h3>
+      <ul class="recipe-steps" id="recipeModalSteps"></ul>
+    </article>
+  </div>
+
+  <noscript>Reçete ekranının çalışması için JavaScript etkin olmalıdır.</noscript>
+</body>
+</html>

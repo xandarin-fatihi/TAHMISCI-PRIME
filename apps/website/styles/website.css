@@ -1,0 +1,2659 @@
+@font-face {
+  font-family: "Tahmisci Poppins";
+  src: url("../assets/fonts/poppins-regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Tahmisci Poppins";
+  src: url("../assets/fonts/poppins-semibold.ttf") format("truetype");
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Tahmisci Poppins";
+  src: url("../assets/fonts/poppins-bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+
+:root {
+  --espresso: #24150f;
+  --coffee: #4a2c1d;
+  --cream: #f4ebdc;
+  --paper: #fffaf1;
+  --copper: #b7773d;
+  --olive: #6d7255;
+  --muted: #88776a;
+  --radius-sm: 8px;
+  --radius-card: 18px;
+  --radius-feature: 30px;
+  --color-primary: var(--espresso);
+  --color-secondary: var(--coffee);
+  --color-accent: var(--copper);
+  --color-background: var(--cream);
+  --color-surface: var(--paper);
+  --color-text: var(--espresso);
+  --color-text-muted: var(--muted);
+  --color-border: rgba(74, 44, 29, 0.16);
+  --color-primary-rgb: 36, 21, 15;
+  --color-text-primary: var(--espresso);
+  --color-text-secondary: var(--muted);
+  --color-bg-primary: var(--paper);
+  --color-bg-secondary: var(--cream);
+  --color-white: var(--paper);
+  --shadow-soft: 0 10px 32px rgba(36, 21, 15, 0.08);
+  --shadow-medium: 0 20px 54px rgba(36, 21, 15, 0.14);
+  --tahmisci-header-height: 78px;
+  --tahmisci-filter-height: 0px;
+  --tahmisci-watermark-logo: url("/assets/brand/logo-large.png");
+  --tahmisci-watermark-opacity: 0.12;
+  --tahmisci-watermark-size: 58vw;
+  --tahmisci-watermark-x: 50%;
+  --tahmisci-watermark-y: 50%;
+}
+
+html {
+  min-height: 100%;
+  height: auto;
+  overflow-x: clip;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(var(--tahmisci-header-height) + 18px);
+}
+
+body.tahmisci-static-menu {
+  min-width: 0;
+  min-height: 100%;
+  height: auto;
+  margin: 0;
+  padding-top: var(--tahmisci-header-height);
+  overflow-x: clip;
+  overflow-y: auto;
+  background: var(--paper);
+  color: var(--espresso);
+  font-family: Manrope, "Tahmisci Poppins", Poppins, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body.tahmisci-static-menu .homepage-main {
+  min-height: 0;
+  height: auto;
+  overflow: visible;
+}
+
+body.tahmisci-static-menu.has-brand-watermark::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--tahmisci-watermark-logo);
+  background-repeat: no-repeat;
+  background-position: var(--tahmisci-watermark-x) var(--tahmisci-watermark-y);
+  background-size: min(var(--tahmisci-watermark-size), 760px);
+  opacity: var(--tahmisci-watermark-opacity);
+}
+
+body.tahmisci-static-menu > * {
+  position: relative;
+  z-index: 1;
+}
+
+.tahmisci-static-menu .loading-screen {
+  background:
+    radial-gradient(circle at center, rgba(199, 178, 140, 0.32), transparent 42%),
+    var(--cream);
+  color: var(--espresso);
+  gap: 14px;
+}
+
+.tahmisci-static-menu .loading-brand {
+  width: min(220px, 58vw);
+  aspect-ratio: 2.2 / 1;
+  display: grid;
+  place-items: center;
+  animation: tahmisciLoaderReveal 760ms ease both;
+}
+
+.tahmisci-static-menu .loading-logo {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 12px 24px rgba(36, 21, 15, 0.14));
+}
+
+.tahmisci-static-menu .loading-screen .loading-spinner {
+  width: 34px;
+  height: 34px;
+  border-color: rgba(74, 44, 29, 0.16);
+  border-top-color: var(--coffee);
+}
+
+@keyframes tahmisciLoaderReveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.tahmisci-static-menu *,
+.tahmisci-static-menu *::before,
+.tahmisci-static-menu *::after {
+  box-sizing: border-box;
+}
+
+.tahmisci-static-menu img,
+.tahmisci-static-menu iframe {
+  max-width: 100%;
+}
+
+.tahmisci-static-menu h1,
+.tahmisci-static-menu h2,
+.tahmisci-static-menu .section-title,
+.tahmisci-static-menu .menu-catalog-heading h2,
+.tahmisci-static-menu .footer-logo h3 {
+  font-family: Fraunces, Georgia, serif;
+  font-variation-settings: "opsz" 96;
+}
+
+.tahmisci-static-menu a,
+.tahmisci-static-menu button,
+.tahmisci-static-menu input,
+.tahmisci-static-menu select,
+.tahmisci-static-menu textarea {
+  font: inherit;
+}
+
+.tahmisci-static-menu button,
+.tahmisci-static-menu a.btn {
+  min-height: 44px;
+}
+
+.tahmisci-static-menu :is(a, button, input, select, textarea):focus-visible {
+  outline: 3px solid rgba(183, 119, 61, 0.7);
+  outline-offset: 3px;
+}
+
+.tahmisci-static-menu #top,
+.tahmisci-static-menu #menu,
+.tahmisci-static-menu #about,
+.tahmisci-static-menu #qr-menu,
+.tahmisci-static-menu #contact {
+  scroll-margin-top: calc(var(--tahmisci-header-height) + 16px);
+}
+
+/* Header */
+.tahmisci-static-menu .header {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 1200;
+  height: 78px !important;
+  background: rgba(255, 250, 241, 0.9);
+  border-bottom: 1px solid rgba(74, 44, 29, 0.12);
+  box-shadow: 0 6px 24px rgba(36, 21, 15, 0.05);
+  backdrop-filter: blur(18px) saturate(125%);
+  transform: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  transition: height 220ms ease, background-color 220ms ease, box-shadow 220ms ease;
+}
+
+.tahmisci-static-menu .header.scrolled {
+  height: 66px !important;
+  background: rgba(255, 250, 241, 0.96);
+  box-shadow: 0 10px 32px rgba(36, 21, 15, 0.1);
+}
+
+.tahmisci-static-menu .header .container,
+.tahmisci-static-menu .header-content {
+  height: 100% !important;
+}
+
+.tahmisci-static-menu .header .container {
+  width: min(calc(100% - 32px), 1320px);
+  max-width: 1320px;
+  margin-inline: auto;
+  padding-inline: 0;
+}
+
+.tahmisci-static-menu .header-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(10px, 1.35vw, 20px);
+  min-height: 0 !important;
+}
+
+.tahmisci-static-menu .header-logo,
+.tahmisci-static-menu .header-logo .logo-link,
+.tahmisci-static-menu .header-logo .logo-image-wrapper {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  align-items: center;
+}
+
+.tahmisci-static-menu .header-logo .logo-link {
+  width: 156px;
+  min-width: 118px;
+  flex: 0 1 156px;
+}
+
+.tahmisci-static-menu .header-logo .logo-image-wrapper {
+  width: 100%;
+  overflow: hidden;
+}
+
+.tahmisci-static-menu .header-logo .logo-image {
+  display: block;
+  width: 100%;
+  height: 68px;
+  object-fit: contain;
+  transform: scale(2.08);
+  transition: height 220ms ease;
+}
+
+.tahmisci-static-menu .header.scrolled .header-logo .logo-image {
+  height: 58px;
+}
+
+.tahmisci-static-menu .header-nav {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.tahmisci-static-menu .nav-links {
+  display: flex;
+  gap: clamp(10px, 1.55vw, 24px);
+  align-items: center;
+  margin: 0;
+  padding: 0;
+}
+
+.tahmisci-static-menu .nav-link {
+  position: relative;
+  min-height: 44px;
+  color: var(--coffee);
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.tahmisci-static-menu .nav-link::after {
+  content: "";
+  position: absolute;
+  right: 50%;
+  bottom: 5px;
+  left: 50%;
+  height: 2px;
+  background: var(--copper);
+  transition: right 200ms ease, left 200ms ease;
+}
+
+.tahmisci-static-menu .nav-link:hover,
+.tahmisci-static-menu .nav-link.active {
+  border-color: transparent !important;
+  background: transparent !important;
+  color: var(--copper);
+  box-shadow: none !important;
+}
+
+.tahmisci-static-menu .nav-link:hover::after,
+.tahmisci-static-menu .nav-link.active::after {
+  right: 0;
+  left: 0;
+}
+
+.tahmisci-static-menu .header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: max-content;
+  gap: 8px;
+  align-items: center;
+}
+
+.tahmisci-static-menu .header .mobile-contact-btn,
+.tahmisci-static-menu .header .mobile-menu-btn {
+  display: none !important;
+}
+
+.tahmisci-static-menu .language-btn,
+.tahmisci-static-menu .profile-menu-btn,
+.tahmisci-static-menu .mobile-contact-btn,
+.tahmisci-static-menu .mobile-cart-btn,
+.tahmisci-static-menu .mobile-menu-btn {
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid rgba(74, 44, 29, 0.15);
+  border-radius: 999px;
+  background: rgba(255, 250, 241, 0.78);
+  color: var(--espresso);
+  box-shadow: none;
+}
+
+.tahmisci-static-menu .language-btn:hover,
+.tahmisci-static-menu .profile-menu-btn:hover,
+.tahmisci-static-menu .mobile-contact-btn:hover,
+.tahmisci-static-menu .mobile-cart-btn:hover,
+.tahmisci-static-menu .mobile-menu-btn:hover {
+  border-color: var(--copper);
+  color: var(--copper);
+}
+
+.tahmisci-static-menu .language-dropdown,
+.tahmisci-static-menu .profile-menu-dropdown,
+.tahmisci-static-menu .mobile-language-dropdown {
+  overflow: hidden;
+  border: 1px solid rgba(74, 44, 29, 0.12);
+  border-radius: var(--radius-card);
+  background: var(--paper);
+  box-shadow: var(--shadow-medium);
+}
+
+.tahmisci-static-menu .language-option,
+.tahmisci-static-menu .profile-menu-item,
+.tahmisci-static-menu .mobile-language-option {
+  min-height: 44px;
+  color: var(--coffee);
+}
+
+.tahmisci-static-menu .language-option:hover,
+.tahmisci-static-menu .language-option.active,
+.tahmisci-static-menu .profile-menu-item:hover,
+.tahmisci-static-menu .mobile-language-option:hover,
+.tahmisci-static-menu .mobile-language-option.active {
+  background: var(--cream);
+  color: var(--copper);
+}
+
+.tahmisci-static-menu .auth-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.tahmisci-static-menu .btn-auth {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid rgba(74, 44, 29, 0.18);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--coffee);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.tahmisci-static-menu .btn-auth:hover,
+.tahmisci-static-menu .btn-register {
+  border-color: var(--espresso);
+  background: var(--espresso);
+  color: var(--paper);
+}
+
+.tahmisci-static-menu .btn-register:hover {
+  border-color: var(--copper);
+  background: var(--copper);
+}
+
+.tahmisci-static-menu .mobile-cart-count,
+.tahmisci-static-menu .cart-badge {
+  background: var(--copper);
+  color: var(--paper);
+}
+
+.tahmisci-static-menu .header .mobile-cart-btn {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+.tahmisci-static-menu .desktop-cart-btn {
+  display: none !important;
+}
+
+.tahmisci-static-menu .mobile-nav {
+  background: var(--paper);
+}
+
+.tahmisci-static-menu .mobile-nav-logo .logo-image {
+  width: 132px;
+  height: 68px;
+  object-fit: contain;
+}
+
+.tahmisci-static-menu .mobile-nav-link {
+  min-height: 48px;
+  color: var(--coffee);
+}
+
+.tahmisci-static-menu .mobile-nav-link:hover,
+.tahmisci-static-menu .mobile-nav-link.active {
+  color: var(--copper);
+}
+
+/* Shared controls */
+.tahmisci-static-menu .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0.75rem 1.25rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-weight: 800;
+  text-decoration: none;
+  transition: transform 200ms ease, background-color 200ms ease, border-color 200ms ease, color 200ms ease;
+}
+
+.tahmisci-static-menu .btn-primary,
+.tahmisci-static-menu .product-add-btn {
+  border-color: var(--espresso);
+  background: var(--espresso);
+  color: var(--paper);
+}
+
+.tahmisci-static-menu .btn-primary:hover,
+.tahmisci-static-menu .product-add-btn:hover {
+  border-color: var(--copper);
+  background: var(--copper);
+  color: var(--paper);
+  transform: translateY(-1px);
+}
+
+.tahmisci-static-menu .btn-outline {
+  border-color: rgba(74, 44, 29, 0.28);
+  background: transparent;
+  color: var(--coffee);
+}
+
+.tahmisci-static-menu .btn-outline:hover {
+  border-color: var(--copper);
+  color: var(--copper);
+}
+
+/* Hero */
+.tahmisci-static-menu .hero-section {
+  position: relative;
+  height: 64svh;
+  min-height: 520px;
+  max-height: 760px;
+  margin: 0;
+  overflow: hidden;
+  background: var(--espresso);
+}
+
+.tahmisci-static-menu .hero-slider-wrapper,
+.tahmisci-static-menu .hero-slider-track,
+.tahmisci-static-menu .hero-slide {
+  height: 100%;
+}
+
+.tahmisci-static-menu .hero-slider-track {
+  display: flex;
+  transition: transform 260ms ease;
+}
+
+.tahmisci-static-menu .hero-slide {
+  position: relative;
+  flex: 0 0 100%;
+  background-position: center 55%;
+  background-size: cover;
+}
+
+.tahmisci-static-menu .hero-media-stage {
+  position: absolute;
+  top: 50%;
+  right: max(24px, calc((100vw - 1320px) / 2));
+  z-index: 3;
+  display: grid;
+  grid-template-columns: clamp(138px, 13.2vw, 192px) auto;
+  grid-template-rows: 1fr 1fr;
+  column-gap: 20px;
+  align-items: center;
+  justify-content: end;
+  width: clamp(460px, 44vw, 640px);
+  height: calc(100% - 58px);
+  max-height: 620px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.tahmisci-static-menu .hero-main-media,
+.tahmisci-static-menu .hero-product-media,
+.tahmisci-static-menu .hero-barista-media {
+  position: absolute;
+  overflow: hidden;
+  margin: 0;
+  border: 1px solid rgba(255, 250, 241, 0.3);
+  background: #18100c;
+  box-shadow: 0 24px 56px rgba(18, 10, 7, 0.38);
+}
+
+.tahmisci-static-menu .hero-main-media {
+  position: relative;
+  inset: auto;
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  justify-self: end;
+  width: auto;
+  height: min(100%, clamp(480px, 66vh, 650px));
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 9 / 16;
+  border-radius: var(--radius-feature);
+  transform: none;
+}
+
+.tahmisci-static-menu .hero-product-media,
+.tahmisci-static-menu .hero-barista-media {
+  position: relative;
+  inset: auto;
+  grid-column: 1;
+  z-index: 2;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  border: 2px solid rgba(255, 250, 241, 0.72);
+  border-radius: 20px;
+}
+
+.tahmisci-static-menu .hero-product-media {
+  grid-row: 1;
+  align-self: start;
+}
+
+.tahmisci-static-menu .hero-barista-media {
+  grid-row: 2;
+  align-self: end;
+}
+
+.tahmisci-static-menu .hero-main-video,
+.tahmisci-static-menu .hero-main-image,
+.tahmisci-static-menu .hero-product-media img,
+.tahmisci-static-menu .hero-barista-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.tahmisci-static-menu .hero-product-media img {
+  object-position: center 58%;
+}
+
+.tahmisci-static-menu .hero-barista-media img {
+  object-position: center 52%;
+}
+
+.tahmisci-static-menu .public-data-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 22px;
+  padding: 14px 18px;
+  border: 1px solid rgba(183, 119, 61, 0.4);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 250, 241, 0.92);
+  color: var(--coffee);
+}
+
+.tahmisci-static-menu .public-data-error[hidden] {
+  display: none;
+}
+
+.tahmisci-static-menu .public-data-error p {
+  margin: 0;
+}
+
+.tahmisci-static-menu .public-data-error button {
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--copper);
+  color: var(--paper);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tahmisci-static-menu .hero-slide--editorial .hero-slide-content {
+  padding-right: clamp(470px, 47vw, 680px);
+}
+
+.tahmisci-static-menu .hero-slider-wrapper.is-single-slide .hero-slider-nav,
+.tahmisci-static-menu .hero-slider-wrapper.is-single-slide .hero-slider-dots {
+  display: none !important;
+}
+
+.tahmisci-static-menu .hero-slide::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(36, 21, 15, 0.9) 0%, rgba(36, 21, 15, 0.62) 42%, rgba(36, 21, 15, 0.2) 78%),
+    linear-gradient(0deg, rgba(36, 21, 15, 0.28), transparent 48%);
+}
+
+.tahmisci-static-menu .hero-slide-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  width: min(1180px, calc(100% - 48px));
+  height: 100%;
+  margin: 0 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  text-align: left;
+}
+
+.tahmisci-static-menu .hero-slide-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  color: #ead6ba;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.tahmisci-static-menu .hero-slide-brand::before {
+  content: "";
+  width: 36px;
+  height: 1px;
+  background: var(--copper);
+}
+
+.tahmisci-static-menu .hero-slide-title {
+  max-width: 720px;
+  margin: 0;
+  color: var(--paper);
+  font-size: clamp(3rem, 6vw, 5.9rem);
+  font-weight: 600;
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.tahmisci-static-menu .hero-slide-description {
+  max-width: 600px;
+  margin: 22px 0 0;
+  color: rgba(255, 250, 241, 0.86);
+  font-size: clamp(1rem, 1.35vw, 1.18rem);
+  line-height: 1.7;
+}
+
+.tahmisci-static-menu .hero-slide-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 30px;
+}
+
+.tahmisci-static-menu .hero-slide-actions .btn {
+  min-width: 154px;
+}
+
+.tahmisci-static-menu .hero-slide-actions .btn-primary {
+  border-color: var(--copper);
+  background: var(--copper);
+}
+
+.tahmisci-static-menu .hero-slide-actions .btn-primary:hover {
+  border-color: #d09864;
+  background: #d09864;
+}
+
+.tahmisci-static-menu .hero-about-btn {
+  border-color: rgba(255, 250, 241, 0.52);
+  background: rgba(255, 250, 241, 0.06);
+  color: var(--paper);
+  backdrop-filter: blur(10px);
+}
+
+.tahmisci-static-menu .hero-about-btn:hover {
+  border-color: var(--paper);
+  background: var(--paper);
+  color: var(--espresso);
+}
+
+.tahmisci-static-menu .hero-slider-nav {
+  display: none;
+  width: 46px;
+  height: 46px;
+  border: 1px solid rgba(255, 250, 241, 0.34);
+  border-radius: 999px;
+  background: rgba(36, 21, 15, 0.22);
+  color: var(--paper);
+  backdrop-filter: blur(8px);
+  transition: background-color 200ms ease, border-color 200ms ease;
+}
+
+.tahmisci-static-menu .hero-slider-nav:hover {
+  border-color: var(--copper);
+  background: var(--copper);
+}
+
+.tahmisci-static-menu .hero-slider-dots {
+  display: none;
+  bottom: 22px;
+}
+
+.tahmisci-static-menu .hero-slider-dot {
+  width: 28px;
+  height: 4px;
+  border-radius: 99px;
+  background: rgba(255, 250, 241, 0.4);
+}
+
+.tahmisci-static-menu .hero-slider-dot.active {
+  background: var(--copper);
+}
+
+/* Featured products */
+.tahmisci-static-menu .homepage-main > .products-section {
+  margin: 0;
+  padding: clamp(64px, 7vw, 100px) 0;
+  background: var(--paper);
+}
+
+.tahmisci-static-menu .section-header {
+  margin-bottom: 30px;
+  text-align: left;
+}
+
+.tahmisci-static-menu .section-title {
+  margin: 0;
+  color: var(--espresso);
+  font-size: clamp(2.2rem, 4vw, 4rem);
+  font-weight: 600;
+  line-height: 1.06;
+  letter-spacing: -0.025em;
+}
+
+.tahmisci-static-menu .products-slider-wrapper {
+  overflow: visible;
+}
+
+.tahmisci-static-menu .products-slider-track {
+  gap: 22px;
+}
+
+.tahmisci-static-menu .products-slider-track .product-card {
+  display: flex;
+  flex: 0 0 clamp(240px, 22vw, 300px);
+  overflow: hidden;
+  flex-direction: column;
+  border: 1px solid rgba(74, 44, 29, 0.12);
+  border-radius: var(--radius-feature);
+  background: var(--paper);
+  box-shadow: var(--shadow-soft);
+  transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
+}
+
+.tahmisci-static-menu .products-slider-track .product-card:hover {
+  border-color: rgba(183, 119, 61, 0.55);
+  box-shadow: var(--shadow-medium);
+  transform: translateY(-5px);
+}
+
+.tahmisci-static-menu .products-slider-track .product-image {
+  height: 220px;
+  overflow: hidden;
+  background: var(--cream);
+}
+
+.tahmisci-static-menu .products-slider-track .product-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 260ms ease;
+}
+
+.tahmisci-static-menu .products-slider-track .product-card:hover .product-image img {
+  transform: scale(1.035);
+}
+
+.tahmisci-static-menu .products-slider-track .product-content {
+  display: flex;
+  min-height: 178px;
+  padding: 18px;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.tahmisci-static-menu .products-slider-track .product-name {
+  margin: 0;
+  color: var(--espresso);
+  font-family: Fraunces, Georgia, serif;
+  font-size: 1.35rem;
+  line-height: 1.15;
+}
+
+.tahmisci-static-menu .products-slider-track .product-description {
+  display: -webkit-box;
+  min-height: 2.8em;
+  margin: 8px 0 14px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.tahmisci-static-menu .products-slider-track .product-footer {
+  display: flex;
+  position: relative;
+  z-index: 2;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  overflow: visible;
+}
+
+.tahmisci-static-menu .products-slider-track .product-add-btn {
+  position: relative;
+  z-index: 3;
+  display: inline-flex !important;
+  min-width: 96px;
+  min-height: 44px;
+  padding: 0 16px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+.tahmisci-static-menu .products-slider-track .product-card--no-media .product-content {
+  min-height: 210px;
+}
+
+.tahmisci-static-menu .product-price {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.tahmisci-static-menu .product-price .current-price {
+  color: var(--coffee);
+  font-size: 1.08rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.tahmisci-static-menu .product-price .old-price {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-decoration: line-through;
+}
+
+.tahmisci-static-menu .product-badge {
+  top: 14px;
+  left: 14px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--copper);
+  color: var(--paper);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  box-shadow: 0 8px 18px rgba(36, 21, 15, 0.18);
+}
+
+.tahmisci-static-menu .product-badge-out {
+  background: var(--espresso);
+}
+
+.tahmisci-static-menu .slider-nav-btn {
+  width: 46px;
+  height: 46px;
+  border: 1px solid rgba(74, 44, 29, 0.14);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--espresso);
+  box-shadow: var(--shadow-soft);
+}
+
+.tahmisci-static-menu .slider-nav-btn:hover {
+  border-color: var(--copper);
+  color: var(--copper);
+}
+
+/* Menu */
+.tahmisci-static-menu .menu-catalog {
+  width: 100%;
+  background:
+    radial-gradient(circle at 8% 20%, rgba(109, 114, 85, 0.08), transparent 23%),
+    var(--cream);
+}
+
+.tahmisci-static-menu .menu-catalog-heading {
+  padding: clamp(70px, 8vw, 118px) 24px 40px;
+  text-align: left;
+}
+
+.tahmisci-static-menu .menu-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--copper);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.tahmisci-static-menu .menu-eyebrow::before {
+  content: "";
+  width: 30px;
+  height: 1px;
+  background: currentColor;
+}
+
+.tahmisci-static-menu .menu-catalog-heading h2 {
+  max-width: 780px;
+  margin: 12px 0 12px;
+  color: var(--espresso);
+  font-size: clamp(2.4rem, 5vw, 5rem);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.tahmisci-static-menu .menu-catalog-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 1rem;
+}
+
+.tahmisci-static-menu #menu .menu-filters-section {
+  position: sticky;
+  top: var(--tahmisci-header-height);
+  z-index: 990;
+  display: block;
+  padding: 12px 0;
+  border-block: 1px solid rgba(74, 44, 29, 0.12);
+  background: rgba(244, 235, 220, 0.92);
+  backdrop-filter: blur(18px) saturate(120%);
+  transition: padding 200ms ease, box-shadow 200ms ease;
+}
+
+.tahmisci-static-menu #menu .menu-filters-section.is-compact-sticky {
+  padding: 8px 0;
+  box-shadow: 0 14px 38px rgba(36, 21, 15, 0.1);
+}
+
+.tahmisci-static-menu #menu .menu-filters {
+  display: grid;
+  gap: 10px;
+}
+
+.tahmisci-static-menu #menu .filter-categories,
+.tahmisci-static-menu #menu .filter-subcategories {
+  display: flex;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tahmisci-static-menu #menu .filter-categories::-webkit-scrollbar,
+.tahmisci-static-menu #menu .filter-subcategories::-webkit-scrollbar {
+  display: none;
+}
+
+.tahmisci-static-menu #menu .filter-categories-inner,
+.tahmisci-static-menu #menu .filter-subcategories-inner {
+  display: flex;
+  min-width: max-content;
+  gap: 8px;
+}
+
+.tahmisci-static-menu #menu .filter-subcategories-wrapper {
+  display: none !important;
+}
+
+.tahmisci-static-menu #menu .filter-btn {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid rgba(74, 44, 29, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 250, 241, 0.74);
+  color: var(--coffee);
+  font-size: 0.84rem;
+  font-weight: 800;
+  white-space: nowrap;
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease;
+}
+
+.tahmisci-static-menu #menu .filter-btn:hover {
+  border-color: var(--copper);
+  color: var(--copper);
+}
+
+.tahmisci-static-menu #menu .filter-btn.active {
+  border-color: var(--copper);
+  background: var(--copper);
+  color: var(--paper);
+  box-shadow: 0 8px 20px rgba(183, 119, 61, 0.22);
+}
+
+.tahmisci-static-menu #menu .filter-btn.active::after {
+  display: none;
+}
+
+.tahmisci-static-menu #menu .filter-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(190px, 0.32fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin: 0;
+}
+
+.tahmisci-static-menu #menu .search-control,
+.tahmisci-static-menu #menu .sort-control {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  align-items: center;
+  border: 1px solid rgba(74, 44, 29, 0.16);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.tahmisci-static-menu #menu .search-control {
+  gap: 10px;
+  padding: 0 16px;
+}
+
+.tahmisci-static-menu #menu .search-control input,
+.tahmisci-static-menu #menu .sort-control select {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--espresso);
+}
+
+.tahmisci-static-menu #menu .search-control input::placeholder {
+  color: var(--muted);
+}
+
+.tahmisci-static-menu #menu .sort-control select {
+  padding: 0 38px 0 16px;
+  cursor: pointer;
+}
+
+.tahmisci-static-menu #menu .products-info {
+  display: flex;
+  min-height: 46px;
+  padding: 0 16px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid rgba(74, 44, 29, 0.14);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.tahmisci-static-menu #menu .products-count {
+  color: var(--coffee);
+  font-weight: 800;
+}
+
+.tahmisci-static-menu #menuCatalog.products-section {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 30px 0 clamp(76px, 8vw, 120px);
+  background: transparent;
+}
+
+.tahmisci-static-menu #productsGrid.products-grid {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-height: none;
+  padding: 0;
+  overflow: visible;
+  gap: 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.tahmisci-static-menu #productsGrid.is-category-panel {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.tahmisci-static-menu .menu-category-card {
+  display: flex;
+  min-width: 0;
+  min-height: 250px;
+  padding: 0;
+  overflow: hidden;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid rgba(74, 44, 29, 0.12);
+  border-radius: var(--radius-card);
+  background: var(--paper);
+  color: var(--espresso);
+  cursor: pointer;
+  box-shadow: var(--shadow-soft);
+  text-align: left;
+  transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+}
+
+.tahmisci-static-menu .menu-category-card:hover {
+  border-color: rgba(183, 119, 61, 0.55);
+  box-shadow: var(--shadow-medium);
+  transform: translateY(-4px);
+}
+
+.tahmisci-static-menu .menu-category-card-media {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background: #e8dece;
+}
+
+.tahmisci-static-menu .menu-category-card-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 260ms ease;
+}
+
+.tahmisci-static-menu .menu-category-card:hover .menu-category-card-media img {
+  transform: scale(1.035);
+}
+
+.tahmisci-static-menu .menu-category-card-icon {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--espresso);
+  color: var(--paper);
+}
+
+.tahmisci-static-menu .menu-category-card-body {
+  display: flex;
+  padding: 18px;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tahmisci-static-menu .menu-category-card-name {
+  color: var(--espresso);
+  font-family: Fraunces, Georgia, serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.14;
+}
+
+.tahmisci-static-menu .menu-category-card-count {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.tahmisci-static-menu #productsGrid.is-product-panel {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.tahmisci-static-menu .menu-product-panel-toolbar {
+  grid-column: 1 / -1;
+  display: flex;
+  min-width: 0;
+  margin-bottom: 4px;
+  padding: 0 0 18px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid rgba(74, 44, 29, 0.15);
+}
+
+.tahmisci-static-menu .menu-product-panel-back {
+  display: inline-flex;
+  min-height: 44px;
+  padding: 0 16px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(74, 44, 29, 0.18);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--coffee);
+  cursor: pointer;
+}
+
+.tahmisci-static-menu .menu-product-panel-back:hover {
+  border-color: var(--copper);
+  color: var(--copper);
+}
+
+.tahmisci-static-menu .menu-product-panel-title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--espresso);
+  line-height: 1.2;
+  text-align: right;
+}
+
+.tahmisci-static-menu .menu-product-panel-title strong {
+  font-family: Fraunces, Georgia, serif;
+  font-size: 1.25rem;
+}
+
+.tahmisci-static-menu .menu-product-panel-title span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.tahmisci-static-menu #productsGrid .product-card {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  grid-template-rows: 1fr auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 148px;
+  margin: 0;
+  padding: 8px;
+  overflow: hidden;
+  gap: 0 10px;
+  border: 1px solid rgba(74, 44, 29, 0.12);
+  border-radius: var(--radius-card);
+  background: var(--paper);
+  box-shadow: 0 6px 24px rgba(36, 21, 15, 0.06);
+  transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+}
+
+.tahmisci-static-menu #productsGrid .product-card:hover {
+  border-color: rgba(183, 119, 61, 0.55);
+  box-shadow: 0 16px 36px rgba(36, 21, 15, 0.11);
+  transform: translateY(-3px);
+}
+
+.tahmisci-static-menu #productsGrid .product-image {
+  position: relative;
+  grid-row: 1 / 3;
+  grid-column: 1;
+  width: 104px;
+  height: 100%;
+  min-height: 132px;
+  margin: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #e8dece;
+}
+
+.tahmisci-static-menu #productsGrid .product-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 260ms ease;
+}
+
+.tahmisci-static-menu #productsGrid .product-card:hover .product-image img {
+  transform: scale(1.04);
+}
+
+.tahmisci-static-menu #productsGrid .product-content {
+  grid-row: 1;
+  grid-column: 2;
+  display: flex;
+  min-width: 0;
+  padding: 6px 4px 3px 0;
+  flex-direction: column;
+}
+
+.tahmisci-static-menu #productsGrid .product-name {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--espresso);
+  font-family: Fraunces, Georgia, serif;
+  font-size: 1.08rem;
+  font-weight: 600;
+  line-height: 1.16;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.tahmisci-static-menu #productsGrid .product-description {
+  display: -webkit-box;
+  margin: 6px 0 8px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.42;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.tahmisci-static-menu #productsGrid .product-price {
+  margin-top: auto;
+}
+
+.tahmisci-static-menu #productsGrid .product-price .current-price {
+  font-size: 0.94rem;
+}
+
+.tahmisci-static-menu #productsGrid .product-footer {
+  grid-row: 2;
+  grid-column: 2;
+  margin: 0;
+  padding: 0 4px 3px 0;
+}
+
+.tahmisci-static-menu #productsGrid .product-add-btn {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+.tahmisci-static-menu #productsGrid .product-card--featured {
+  grid-column: auto;
+  grid-template-columns: 104px minmax(0, 1fr);
+  min-height: 148px;
+  padding: 8px;
+  border-color: rgba(183, 119, 61, 0.28);
+}
+
+.tahmisci-static-menu #productsGrid .product-card--featured .product-image {
+  width: 104px;
+  min-height: 132px;
+  border-radius: 12px;
+}
+
+.tahmisci-static-menu #productsGrid .product-card--featured .product-content {
+  padding: 6px 4px 3px 0;
+}
+
+.tahmisci-static-menu #productsGrid .product-card--featured .product-name {
+  font-size: 1.08rem;
+  -webkit-line-clamp: 2;
+}
+
+.tahmisci-static-menu #productsGrid .product-card--featured .product-description {
+  font-size: 0.78rem;
+  -webkit-line-clamp: 2;
+}
+
+.tahmisci-static-menu #productsGrid .product-card--no-media {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 138px;
+}
+
+.tahmisci-static-menu #productsGrid .product-card--no-media .product-content,
+.tahmisci-static-menu #productsGrid .product-card--no-media .product-footer {
+  grid-column: 1;
+  padding-left: 8px;
+}
+
+.tahmisci-static-menu #productsGrid .product-out-of-stock {
+  opacity: 0.72;
+}
+
+.tahmisci-static-menu .loading-state,
+.tahmisci-static-menu .empty-state {
+  padding: 48px 20px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* About */
+.tahmisci-static-menu .about-company-section {
+  position: relative;
+  padding: clamp(76px, 9vw, 132px) 0;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.tahmisci-static-menu .about-company-section::before {
+  content: "";
+  position: absolute;
+  top: 8%;
+  right: -110px;
+  width: 340px;
+  height: 340px;
+  border: 1px solid rgba(109, 114, 85, 0.1);
+  border-radius: 48% 52% 55% 45%;
+  box-shadow: inset 0 0 0 34px rgba(109, 114, 85, 0.025), inset 0 0 0 72px rgba(183, 119, 61, 0.02);
+  transform: rotate(24deg);
+  pointer-events: none;
+}
+
+.tahmisci-static-menu .about-company-content {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.82fr) minmax(360px, 1.18fr);
+  gap: clamp(38px, 5vw, 72px);
+  align-items: center;
+}
+
+.tahmisci-static-menu .about-company-image {
+  width: min(100%, 420px);
+  min-width: 0;
+  height: auto;
+  aspect-ratio: 3 / 4;
+  justify-self: center;
+  overflow: hidden;
+  border-radius: var(--radius-feature);
+  background: var(--cream);
+  box-shadow: var(--shadow-medium);
+}
+
+.tahmisci-static-menu .about-company-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  border-radius: inherit;
+}
+
+.tahmisci-static-menu .about-company-text {
+  position: relative;
+  z-index: 1;
+}
+
+.tahmisci-static-menu .about-company-text .section-title {
+  margin-bottom: 22px;
+}
+
+.tahmisci-static-menu .about-description {
+  margin: 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.85;
+}
+
+.tahmisci-static-menu .about-features {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 30px 0;
+}
+
+.tahmisci-static-menu .about-feature {
+  display: flex;
+  min-height: 112px;
+  padding: 16px 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid rgba(74, 44, 29, 0.12);
+  border-radius: var(--radius-card);
+  background: var(--cream);
+  color: var(--coffee);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.tahmisci-static-menu .about-feature i {
+  color: var(--copper);
+  font-size: 1.2rem;
+}
+
+/* QR and contact */
+.tahmisci-static-menu .qr-menu-section {
+  position: relative;
+  padding: clamp(68px, 8vw, 110px) 0;
+  overflow: hidden;
+  background: var(--espresso);
+  color: var(--paper);
+}
+
+.tahmisci-static-menu .qr-menu-section::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(183, 119, 61, 0.2), transparent 32%),
+    linear-gradient(120deg, transparent 55%, rgba(109, 114, 85, 0.1));
+  pointer-events: none;
+}
+
+.tahmisci-static-menu .qr-menu-content {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: clamp(36px, 7vw, 110px);
+  align-items: center;
+}
+
+.tahmisci-static-menu .qr-menu-text h2 {
+  max-width: 760px;
+  margin: 0;
+  color: var(--paper);
+  font-size: clamp(2.4rem, 5vw, 4.8rem);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+
+.tahmisci-static-menu .qr-menu-text p {
+  max-width: 620px;
+  margin: 20px 0 0;
+  color: rgba(255, 250, 241, 0.72);
+  line-height: 1.7;
+}
+
+.tahmisci-static-menu .qr-code-link {
+  display: grid;
+  width: 248px;
+  padding: 18px;
+  justify-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255, 250, 241, 0.16);
+  border-radius: var(--radius-feature);
+  background: rgba(255, 250, 241, 0.08);
+  color: var(--paper);
+  text-decoration: none;
+  backdrop-filter: blur(10px);
+  transition: transform 220ms ease, border-color 220ms ease, background-color 220ms ease;
+}
+
+.tahmisci-static-menu .qr-code-link:hover {
+  border-color: rgba(183, 119, 61, 0.72);
+  background: rgba(255, 250, 241, 0.12);
+  transform: translateY(-4px);
+}
+
+.tahmisci-static-menu .qr-code {
+  width: 180px;
+  height: 180px;
+  padding: 10px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.tahmisci-static-menu .qr-code img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.tahmisci-static-menu .qr-code-link p {
+  margin: 2px 0 0;
+  color: rgba(255, 250, 241, 0.78);
+  font-size: 0.78rem;
+}
+
+.tahmisci-static-menu .qr-code-link .btn {
+  width: 100%;
+  border-color: var(--copper);
+  color: var(--paper);
+}
+
+.tahmisci-static-menu .qr-code-link:hover .btn {
+  background: var(--copper);
+}
+
+.tahmisci-static-menu .tahmisci-contact-section {
+  padding: clamp(76px, 9vw, 124px) 0;
+  background: var(--cream);
+}
+
+.tahmisci-static-menu .tahmisci-contact-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.86fr) minmax(0, 1.14fr);
+  gap: clamp(30px, 5vw, 70px);
+  align-items: stretch;
+}
+
+.tahmisci-static-menu .tahmisci-contact-info {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.tahmisci-static-menu .tahmisci-contact-info .section-title {
+  margin-bottom: 14px;
+  font-size: clamp(2.2rem, 3.8vw, 3.8rem);
+}
+
+.tahmisci-static-menu .tahmisci-contact-card {
+  display: flex;
+  min-width: 0;
+  min-height: 76px;
+  padding: 16px;
+  align-items: flex-start;
+  gap: 14px;
+  border: 1px solid rgba(74, 44, 29, 0.12);
+  border-radius: var(--radius-card);
+  background: rgba(255, 250, 241, 0.72);
+  color: var(--espresso);
+  text-decoration: none;
+  transition: transform 200ms ease, border-color 200ms ease, background-color 200ms ease;
+}
+
+.tahmisci-static-menu .tahmisci-contact-link:hover {
+  border-color: rgba(183, 119, 61, 0.62);
+  background: var(--paper);
+  transform: translateX(3px);
+}
+
+.tahmisci-static-menu .tahmisci-contact-card i {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(183, 119, 61, 0.12);
+  color: var(--copper);
+}
+
+.tahmisci-static-menu .tahmisci-contact-card strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--coffee);
+  font-size: 0.82rem;
+}
+
+.tahmisci-static-menu .tahmisci-contact-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.tahmisci-static-menu .tahmisci-map-btn {
+  justify-self: start;
+  margin-top: 8px;
+  border-color: var(--coffee);
+}
+
+.tahmisci-static-menu .tahmisci-map {
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid rgba(74, 44, 29, 0.14);
+  border-radius: var(--radius-feature);
+  background: #e8dece;
+  box-shadow: var(--shadow-medium);
+}
+
+.tahmisci-static-menu .tahmisci-map iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+  border: 0;
+  filter: sepia(0.12) saturate(0.78) contrast(0.96);
+}
+
+/* Footer */
+.tahmisci-static-menu .footer {
+  padding-top: 70px;
+  background: #1b0e09;
+  color: rgba(255, 250, 241, 0.7);
+}
+
+.tahmisci-static-menu .footer-content {
+  gap: clamp(30px, 6vw, 90px);
+}
+
+.tahmisci-static-menu .footer-logo h3,
+.tahmisci-static-menu .footer-title {
+  color: var(--paper);
+}
+
+.tahmisci-static-menu .footer-logo h3 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.tahmisci-static-menu .footer-description,
+.tahmisci-static-menu .footer a {
+  color: rgba(255, 250, 241, 0.62);
+}
+
+.tahmisci-static-menu .footer a:hover {
+  color: #d59860;
+}
+
+.tahmisci-static-menu .social-links {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.tahmisci-static-menu .social-link,
+.tahmisci-static-menu .social-links a {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 250, 241, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 250, 241, 0.04);
+  color: var(--paper);
+  transition: transform 200ms ease, border-color 200ms ease, background-color 200ms ease;
+}
+
+.tahmisci-static-menu .social-link:hover,
+.tahmisci-static-menu .social-links a:hover {
+  border-color: var(--copper);
+  background: var(--copper);
+  color: var(--paper);
+  transform: translateY(-2px);
+}
+
+.tahmisci-static-menu .footer-bottom {
+  margin-top: 54px;
+  border-top: 1px solid rgba(255, 250, 241, 0.1);
+}
+
+/* Modals, cart and floating actions */
+.tahmisci-static-menu .product-modal-overlay,
+.tahmisci-static-menu .auth-modal-overlay,
+.tahmisci-static-menu .new-cart-modal-overlay,
+.tahmisci-static-menu .selection-modal-overlay,
+.tahmisci-static-menu .campaign-modal-overlay,
+.tahmisci-static-menu .call-waiter-modal-overlay {
+  background: rgba(36, 21, 15, 0.68);
+  backdrop-filter: blur(8px);
+  transition: opacity 220ms ease, visibility 220ms ease;
+}
+
+.tahmisci-static-menu .product-modal-overlay {
+  z-index: 1500;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.tahmisci-static-menu .product-modal {
+  position: relative;
+  display: flex;
+  width: min(980px, calc(100vw - 48px));
+  max-width: 980px;
+  max-height: calc(100dvh - 48px);
+  overflow: hidden;
+  flex-direction: column;
+  border: 1px solid rgba(74, 44, 29, 0.12);
+  border-radius: var(--radius-feature);
+  background: var(--paper);
+  color: var(--espresso);
+  box-shadow: 0 30px 90px rgba(36, 21, 15, 0.34);
+  transform: translateY(18px) scale(0.985);
+  transition: transform 240ms ease;
+}
+
+.tahmisci-static-menu .product-modal-overlay.active .product-modal {
+  transform: translateY(0) scale(1);
+}
+
+.tahmisci-static-menu .product-modal-header {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 8;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.tahmisci-static-menu .product-modal-close {
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(255, 250, 241, 0.42);
+  border-radius: 999px;
+  background: rgba(36, 21, 15, 0.58);
+  color: var(--paper);
+  backdrop-filter: blur(8px);
+}
+
+.tahmisci-static-menu .product-modal-close i::before {
+  content: "\f00d";
+}
+
+.tahmisci-static-menu .product-modal-content {
+  display: grid;
+  min-height: 0;
+  overflow-y: auto;
+  grid-template-columns: minmax(0, 1.08fr) minmax(330px, 0.92fr);
+  gap: 0;
+  padding: 0;
+}
+
+.tahmisci-static-menu .product-modal-image {
+  min-height: 520px;
+  overflow: hidden;
+  background: var(--cream);
+}
+
+.tahmisci-static-menu .product-gallery,
+.tahmisci-static-menu .product-gallery-main,
+.tahmisci-static-menu #gallerySlides,
+.tahmisci-static-menu .gallery-slide {
+  width: 100%;
+  height: 100%;
+}
+
+.tahmisci-static-menu .gallery-slide img,
+.tahmisci-static-menu .gallery-slide video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tahmisci-static-menu .product-modal-info {
+  min-width: 0;
+  padding: 54px 38px 34px;
+  text-align: left;
+}
+
+.tahmisci-static-menu .product-modal-title {
+  margin: 0;
+  color: var(--espresso);
+  font-family: Fraunces, Georgia, serif;
+  font-size: clamp(2rem, 3vw, 3rem);
+  font-weight: 600;
+  line-height: 1.04;
+}
+
+.tahmisci-static-menu .tahmisci-modal-category {
+  margin: 12px 0 0;
+  color: var(--copper);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.tahmisci-static-menu .product-modal-description {
+  margin: 20px 0 0;
+  color: var(--muted);
+  font-size: 0.94rem;
+  line-height: 1.7;
+}
+
+.tahmisci-static-menu .product-modal-price {
+  display: flex;
+  margin: 24px 0 0;
+  padding: 16px 0;
+  justify-content: flex-start;
+  gap: 10px;
+  border-block: 1px solid rgba(74, 44, 29, 0.12);
+}
+
+.tahmisci-static-menu .product-modal-price .current-price {
+  color: var(--coffee);
+  font-size: 1.3rem;
+  font-weight: 800;
+}
+
+.tahmisci-static-menu .tahmisci-recipe-summary {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.tahmisci-static-menu .tahmisci-recipe-summary-row {
+  padding: 12px 14px;
+  border: 1px solid rgba(74, 44, 29, 0.1);
+  border-radius: 12px;
+  background: var(--cream);
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.tahmisci-static-menu .product-modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid rgba(74, 44, 29, 0.12);
+  background: var(--paper);
+}
+
+.tahmisci-static-menu .add-to-cart-btn,
+.tahmisci-static-menu .new-cart-checkout-btn {
+  min-height: 48px;
+  border-radius: 999px;
+  background: var(--espresso);
+  color: var(--paper);
+}
+
+.tahmisci-static-menu .auth-modal,
+.tahmisci-static-menu .selection-modal,
+.tahmisci-static-menu .campaign-modal,
+.tahmisci-static-menu .call-waiter-modal,
+.tahmisci-static-menu .order-phone-modal,
+.tahmisci-static-menu .order-code-modal {
+  border: 1px solid rgba(74, 44, 29, 0.12);
+  border-radius: var(--radius-feature);
+  background: var(--paper);
+  box-shadow: 0 30px 90px rgba(36, 21, 15, 0.3);
+}
+
+.tahmisci-static-menu .new-cart-modal {
+  background: var(--paper);
+  color: var(--espresso);
+  box-shadow: -20px 0 70px rgba(36, 21, 15, 0.22);
+  transition: transform 240ms ease;
+}
+
+.tahmisci-static-menu .desktop-cart-btn,
+.tahmisci-static-menu .selection-status-btn,
+.tahmisci-static-menu .call-waiter-btn {
+  min-width: 52px;
+  min-height: 52px;
+  border: 1px solid rgba(255, 250, 241, 0.24);
+  background: var(--espresso);
+  color: var(--paper);
+  box-shadow: 0 16px 34px rgba(36, 21, 15, 0.22);
+}
+
+.tahmisci-static-menu .desktop-cart-btn:hover,
+.tahmisci-static-menu .selection-status-btn:hover,
+.tahmisci-static-menu .call-waiter-btn:hover {
+  background: var(--copper);
+}
+
+@media (max-width: 1180px) {
+  .tahmisci-static-menu .header-content {
+    gap: 12px;
+  }
+
+  .tahmisci-static-menu .nav-links {
+    gap: 10px;
+  }
+
+  .tahmisci-static-menu .nav-link {
+    font-size: 0.8rem;
+  }
+
+  .tahmisci-static-menu .auth-buttons .btn-login {
+    display: none;
+  }
+
+  .tahmisci-static-menu #productsGrid.is-category-panel {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .tahmisci-static-menu #productsGrid.is-product-panel {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1024px) and (min-width: 769px) {
+  .tahmisci-static-menu .hero-media-stage {
+    column-gap: 16px;
+  }
+
+  .tahmisci-static-menu .hero-main-media {
+    height: clamp(380px, 58vh, 500px);
+  }
+}
+
+@media (max-width: 900px) {
+  :root {
+    --tahmisci-header-height: 70px;
+  }
+
+  .tahmisci-static-menu .header,
+  .tahmisci-static-menu .header.scrolled {
+    height: 70px !important;
+  }
+
+  .tahmisci-static-menu .header-logo .logo-link {
+    width: 132px;
+    min-width: 112px;
+  }
+
+  .tahmisci-static-menu .header-logo .logo-image,
+  .tahmisci-static-menu .header.scrolled .header-logo .logo-image {
+    height: 62px;
+  }
+
+  .tahmisci-static-menu .header-nav,
+  .tahmisci-static-menu .auth-buttons {
+    display: none !important;
+  }
+
+  .tahmisci-static-menu .header .mobile-contact-btn,
+  .tahmisci-static-menu .header .mobile-menu-btn {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .tahmisci-static-menu #productsGrid.is-product-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tahmisci-static-menu .profile-menu-text,
+  .tahmisci-static-menu .profile-menu-arrow {
+    display: none;
+  }
+
+  .tahmisci-static-menu .hero-media-stage {
+    right: 18px;
+    width: clamp(360px, 48vw, 430px);
+    height: calc(100% - 50px);
+  }
+
+  .tahmisci-static-menu .hero-slide--editorial .hero-slide-content {
+    padding-right: clamp(360px, 49vw, 450px);
+  }
+
+  .tahmisci-static-menu .about-company-content {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 0.9fr);
+    gap: 36px;
+  }
+
+  .tahmisci-static-menu .about-features {
+    grid-template-columns: 1fr;
+  }
+
+  .tahmisci-static-menu .about-feature {
+    min-height: 68px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --tahmisci-header-height: 66px;
+  }
+
+  body.tahmisci-static-menu {
+    overflow-x: hidden;
+  }
+
+  .tahmisci-static-menu .header,
+  .tahmisci-static-menu .header.scrolled {
+    height: 66px !important;
+  }
+
+  .tahmisci-static-menu .header .container {
+    width: calc(100% - 24px);
+    padding-inline: 0;
+  }
+
+  .tahmisci-static-menu .header-content {
+    gap: 6px;
+  }
+
+  .tahmisci-static-menu .header-logo .logo-link {
+    width: 116px;
+    min-width: 100px;
+  }
+
+  .tahmisci-static-menu .header-logo .logo-image,
+  .tahmisci-static-menu .header.scrolled .header-logo .logo-image {
+    height: 58px;
+  }
+
+  .tahmisci-static-menu .header-actions {
+    gap: 5px;
+  }
+
+  .tahmisci-static-menu .language-btn,
+  .tahmisci-static-menu .profile-menu-btn,
+  .tahmisci-static-menu .mobile-contact-btn,
+  .tahmisci-static-menu .mobile-cart-btn,
+  .tahmisci-static-menu .mobile-menu-btn {
+    min-width: 42px;
+    width: 42px;
+    min-height: 44px;
+    padding: 0;
+  }
+
+  .tahmisci-static-menu .language-btn .language-icon {
+    display: none;
+  }
+
+  .tahmisci-static-menu .hero-section {
+    height: 55svh;
+    min-height: 410px;
+    max-height: 560px;
+  }
+
+  .tahmisci-static-menu .hero-slide {
+    background-color: var(--espresso);
+    background-position: center 42%;
+  }
+
+  .tahmisci-static-menu .hero-slide::before {
+    z-index: 1;
+    background:
+      linear-gradient(90deg, rgba(36, 21, 15, 0.94), rgba(36, 21, 15, 0.7) 68%, rgba(36, 21, 15, 0.38)),
+      linear-gradient(0deg, rgba(36, 21, 15, 0.38), transparent 56%);
+  }
+
+  .tahmisci-static-menu .hero-media-stage {
+    inset: 0;
+    z-index: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    transform: none;
+  }
+
+  .tahmisci-static-menu .hero-main-media {
+    position: absolute;
+    inset: auto 18px auto auto;
+    top: 50%;
+    z-index: 2;
+    display: block;
+    width: clamp(132px, 28vw, 220px);
+    height: auto;
+    aspect-ratio: 9 / 16;
+    border-width: 1px;
+    border-radius: 18px;
+    transform: translateY(-50%);
+  }
+
+  .tahmisci-static-menu .hero-product-media,
+  .tahmisci-static-menu .hero-barista-media {
+    position: absolute;
+    right: calc(32px + clamp(132px, 28vw, 220px));
+    left: auto;
+    z-index: 2;
+    display: block;
+    width: clamp(90px, 14vw, 108px);
+    border-width: 1px;
+    border-radius: 15px;
+  }
+
+  .tahmisci-static-menu .hero-product-media {
+    top: 18px;
+  }
+
+  .tahmisci-static-menu .hero-barista-media {
+    bottom: 18px;
+  }
+
+  .tahmisci-static-menu .hero-slide-content {
+    z-index: 3;
+    width: calc(100% - 36px);
+    justify-content: center;
+  }
+
+  .tahmisci-static-menu .hero-slide--editorial .hero-slide-content {
+    padding-right: 0;
+  }
+
+  .tahmisci-static-menu .hero-slide-brand {
+    margin-bottom: 12px;
+    font-size: 0.66rem;
+  }
+
+  .tahmisci-static-menu .hero-slide-title {
+    max-width: 540px;
+    font-size: clamp(2.45rem, 10vw, 4.2rem);
+  }
+
+  .tahmisci-static-menu .hero-slide-description {
+    max-width: 520px;
+    margin-top: 14px;
+    font-size: 0.9rem;
+    line-height: 1.55;
+  }
+
+  .tahmisci-static-menu .hero-slide-actions {
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .tahmisci-static-menu .hero-slide-actions .btn {
+    min-width: 0;
+    padding-inline: 16px;
+    font-size: 0.78rem;
+  }
+
+  .tahmisci-static-menu .hero-slider-nav {
+    display: none;
+  }
+
+  .tahmisci-static-menu .hero-slider-dots {
+    bottom: 14px;
+  }
+
+  .tahmisci-static-menu .homepage-main > .products-section {
+    padding: 64px 0;
+  }
+
+  .tahmisci-static-menu .products-slider-track .product-card {
+    flex-basis: min(78vw, 320px);
+  }
+
+  .tahmisci-static-menu .products-slider-track .product-image {
+    height: 210px;
+  }
+
+  .tahmisci-static-menu .menu-catalog-heading {
+    padding: 70px 18px 32px;
+  }
+
+  .tahmisci-static-menu #menu .menu-filters-section {
+    padding: 9px 0;
+  }
+
+  .tahmisci-static-menu #menu .menu-filters {
+    padding-inline: 12px;
+  }
+
+  .tahmisci-static-menu #menu .filter-controls {
+    grid-template-columns: minmax(0, 1fr) minmax(132px, 0.6fr);
+  }
+
+  .tahmisci-static-menu #menu .search-control {
+    grid-column: 1 / -1;
+  }
+
+  .tahmisci-static-menu #menu .products-info {
+    padding-inline: 10px;
+  }
+
+  .tahmisci-static-menu #menuCatalog.products-section {
+    padding-top: 22px;
+  }
+
+  .tahmisci-static-menu #productsGrid.is-category-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .tahmisci-static-menu .menu-category-card {
+    min-height: 220px;
+  }
+
+  .tahmisci-static-menu #productsGrid.is-product-panel {
+    gap: 12px;
+  }
+
+  .tahmisci-static-menu #productsGrid .product-card,
+  .tahmisci-static-menu #productsGrid .product-card--featured {
+    grid-column: auto;
+    grid-template-columns: 100px minmax(0, 1fr);
+    min-height: 146px;
+    padding: 8px;
+  }
+
+  .tahmisci-static-menu #productsGrid .product-image,
+  .tahmisci-static-menu #productsGrid .product-card--featured .product-image {
+    width: 100px;
+    min-height: 130px;
+    border-radius: 12px;
+  }
+
+  .tahmisci-static-menu #productsGrid .product-card--featured .product-content {
+    padding: 10px 6px 4px 0;
+  }
+
+  .tahmisci-static-menu #productsGrid .product-card--featured .product-name {
+    font-size: 1.25rem;
+    -webkit-line-clamp: 2;
+  }
+
+  .tahmisci-static-menu #productsGrid .product-card--no-media,
+  .tahmisci-static-menu #productsGrid .product-card--featured.product-card--no-media {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tahmisci-static-menu .about-company-content,
+  .tahmisci-static-menu .qr-menu-content,
+  .tahmisci-static-menu .tahmisci-contact-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tahmisci-static-menu .about-company-image {
+    width: min(100%, 430px);
+    height: auto;
+    max-height: none;
+    aspect-ratio: 3 / 4;
+    justify-self: center;
+  }
+
+  .tahmisci-static-menu .about-features {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .tahmisci-static-menu .about-feature {
+    min-height: 104px;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .tahmisci-static-menu .qr-code-link {
+    width: min(100%, 300px);
+    justify-self: start;
+  }
+
+  .tahmisci-static-menu .tahmisci-map,
+  .tahmisci-static-menu .tahmisci-map iframe {
+    min-height: 380px;
+  }
+
+  .tahmisci-static-menu .product-modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .tahmisci-static-menu .product-modal {
+    width: 100%;
+    max-width: none;
+    max-height: 92dvh;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 26px 26px 0 0;
+    transform: translateY(100%);
+  }
+
+  .tahmisci-static-menu .product-modal-overlay.active .product-modal {
+    transform: translateY(0);
+  }
+
+  .tahmisci-static-menu .product-modal::before {
+    content: "";
+    position: absolute;
+    top: 9px;
+    left: 50%;
+    z-index: 9;
+    width: 46px;
+    height: 4px;
+    border-radius: 99px;
+    background: rgba(74, 44, 29, 0.24);
+    transform: translateX(-50%);
+  }
+
+  .tahmisci-static-menu .product-modal-content {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .tahmisci-static-menu .product-modal-image {
+    min-height: 0;
+    aspect-ratio: 16 / 10;
+  }
+
+  .tahmisci-static-menu .product-modal-info {
+    padding: 28px 20px 24px;
+  }
+
+  .tahmisci-static-menu .product-modal-title {
+    font-size: 2rem;
+  }
+
+  .tahmisci-static-menu .product-modal-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .tahmisci-static-menu .footer {
+    padding-top: 58px;
+  }
+}
+
+@media (max-width: 620px) {
+  .tahmisci-static-menu .hero-main-media {
+    right: 10px;
+    top: 43%;
+    width: clamp(78px, 20vw, 90px);
+    border-radius: 13px;
+  }
+
+  .tahmisci-static-menu .hero-product-media,
+  .tahmisci-static-menu .hero-barista-media {
+    right: calc(20px + clamp(78px, 20vw, 90px));
+    display: block;
+    width: clamp(68px, 17vw, 78px);
+    border-radius: 11px;
+  }
+
+  .tahmisci-static-menu .hero-product-media {
+    top: 6px;
+  }
+
+  .tahmisci-static-menu .hero-barista-media {
+    bottom: 6px;
+  }
+
+  .tahmisci-static-menu .hero-slide-title,
+  .tahmisci-static-menu .hero-slide-description {
+    max-width: calc(100% - 110px);
+  }
+
+  .tahmisci-static-menu #productsGrid.is-product-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .tahmisci-static-menu .hero-section {
+    min-height: 390px;
+  }
+
+  .tahmisci-static-menu .hero-slide-content {
+    width: calc(100% - 28px);
+  }
+
+  .tahmisci-static-menu .hero-slide-title {
+    font-size: clamp(2.25rem, 11vw, 3.15rem);
+  }
+
+  .tahmisci-static-menu .hero-slide-description {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  .tahmisci-static-menu .hero-slide-actions .btn {
+    min-height: 42px;
+    padding: 0 14px;
+  }
+
+  .tahmisci-static-menu .menu-catalog-heading h2 {
+    font-size: 2.55rem;
+  }
+
+  .tahmisci-static-menu #menu .filter-controls {
+    gap: 8px;
+  }
+
+  .tahmisci-static-menu #menu .sort-control select {
+    padding-left: 12px;
+    font-size: 0.76rem;
+  }
+
+  .tahmisci-static-menu #menu .products-info {
+    flex-direction: column;
+    gap: 0;
+    line-height: 1.2;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .tahmisci-static-menu #productsGrid.is-category-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .tahmisci-static-menu .menu-category-card {
+    min-height: 0;
+  }
+
+  .tahmisci-static-menu .menu-category-card-media {
+    aspect-ratio: 16 / 8.5;
+  }
+
+  .tahmisci-static-menu .menu-product-panel-toolbar {
+    align-items: flex-start;
+  }
+
+  .tahmisci-static-menu .menu-product-panel-title {
+    max-width: 55%;
+  }
+
+  .tahmisci-static-menu #productsGrid .product-card,
+  .tahmisci-static-menu #productsGrid .product-card--featured {
+    grid-template-columns: 96px minmax(0, 1fr);
+    min-height: 142px;
+  }
+
+  .tahmisci-static-menu #productsGrid .product-image,
+  .tahmisci-static-menu #productsGrid .product-card--featured .product-image {
+    width: 96px;
+    min-height: 126px;
+  }
+
+  .tahmisci-static-menu #productsGrid .product-name,
+  .tahmisci-static-menu #productsGrid .product-card--featured .product-name {
+    font-size: 1.03rem;
+  }
+
+  .tahmisci-static-menu #productsGrid .product-description,
+  .tahmisci-static-menu #productsGrid .product-card--featured .product-description {
+    margin-block: 6px;
+    font-size: 0.72rem;
+    -webkit-line-clamp: 2;
+  }
+
+  .tahmisci-static-menu #productsGrid .product-card--no-media,
+  .tahmisci-static-menu #productsGrid .product-card--featured.product-card--no-media {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tahmisci-static-menu .about-features {
+    grid-template-columns: 1fr;
+  }
+
+  .tahmisci-static-menu .about-feature {
+    min-height: 62px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+  }
+
+  .tahmisci-static-menu .qr-code-link {
+    justify-self: stretch;
+  }
+
+  .tahmisci-static-menu .tahmisci-contact-info .section-title {
+    font-size: 2.35rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .tahmisci-static-menu *,
+  .tahmisci-static-menu *::before,
+  .tahmisci-static-menu *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+.about-feature small {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.contact-managed-details {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem 1.25rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  color: var(--muted);
+}
+
+.contact-managed-details a {
+  color: var(--copper);
+}
+.tahmisci-static-menu .auth-buttons,
+.tahmisci-static-menu #userMenu,
+.tahmisci-static-menu .mobile-cart-btn,
+.tahmisci-static-menu .mobile-nav-auth,
+.tahmisci-static-menu .mobile-nav-account-content,
+.tahmisci-static-menu #callWaiterBtn {
+  display: none !important;
+}
+
+body.tahmisci-static-menu .header .mobile-cart-btn,
+body.tahmisci-static-menu #mobileCartBtn {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body.tahmisci-static-menu #top,
+body.tahmisci-static-menu #menu,
+body.tahmisci-static-menu #about,
+body.tahmisci-static-menu #qr-menu,
+body.tahmisci-static-menu #contact {
+  scroll-margin-top: calc(var(--tahmisci-header-height, 76px) + 16px);
+}

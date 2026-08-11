@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Tahmisçi Müdavim dijital sadakat kartı.">
+  <title>Tahmisçi Müdavim</title>
+  <link rel="icon" type="image/png" href="/assets/brand/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link rel="stylesheet" href="/mudavim/mudavim.css?v=20260719-announcements1">
+</head>
+<body class="is-guest">
+  <header class="mudavim-header">
+    <a class="mudavim-logo" href="/" aria-label="Tahmisçi ana sayfa">
+      <img src="/assets/brand/logo-primary.png" alt="Tahmisçi">
+    </a>
+    <nav class="mudavim-nav" aria-label="Müdavim bağlantıları">
+      <a href="#features" data-guest-nav>Kampanyalar</a>
+      <button type="button" data-auth-open="login" data-guest-nav>Giriş Yap</button>
+      <button class="mudavim-nav__register" type="button" data-auth-open="register-phone" data-guest-nav>Kayıt Ol</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="mudavim-gate" id="gate">
+      <div class="mudavim-gate__watermark" aria-hidden="true"></div>
+      <div class="mudavim-gate__copy">
+        <p class="eyebrow">Tahmisçi Coffee & Roastery</p>
+        <h1><span>Tahmisçi</span><span>Müdavim</span></h1>
+        <p class="gate-lead">Ziyaretlerin kaybolmasın. Kasada kodunu okut, ilerlemeni takip et ve sadakat avantajlarından yararlan.</p>
+
+        <div class="gate-feature-layout" id="features">
+          <div class="gate-benefits" aria-label="Müdavim özellikleri">
+            <button class="feature-row" type="button" data-feature="qr" aria-expanded="false" aria-controls="featurePopover">
+              <span>Dijital QR kart</span><i aria-hidden="true">→</i>
+            </button>
+            <button class="feature-row" type="button" data-feature="visits" aria-expanded="false" aria-controls="featurePopover">
+              <span>Ziyaret takibi</span><i aria-hidden="true">→</i>
+            </button>
+            <button class="feature-row" type="button" data-feature="mobile" aria-expanded="false" aria-controls="featurePopover">
+              <span>Mobil arayüz</span><i aria-hidden="true">→</i>
+            </button>
+            <button class="feature-row" type="button" data-feature="profile" aria-expanded="false" aria-controls="featurePopover">
+              <span>Profil yönetimi</span><i aria-hidden="true">→</i>
+            </button>
+          </div>
+
+          <aside class="feature-popover" id="featurePopover" role="region" aria-labelledby="featurePopoverTitle" aria-live="polite" hidden>
+            <span class="feature-popover__icon" aria-hidden="true"><i class="fas fa-qrcode"></i></span>
+            <div>
+              <strong id="featurePopoverTitle">Dijital QR kart</strong>
+              <p id="featurePopoverText"></p>
+            </div>
+          </aside>
+        </div>
+
+      </div>
+
+      <figure class="mudavim-gate__visual">
+        <img src="/assets/images/hero/tahmisci-barista-main.jpg" alt="Tahmisçi baristası kahve hazırlarken" width="1440" height="1797">
+      </figure>
+    </section>
+
+    <section class="mudavim-app" id="app" hidden>
+      <header class="member-topbar">
+        <a class="member-brand" href="/" aria-label="Tahmisçi ana sayfa">
+          <img src="/assets/brand/logo-primary.png" alt="Tahmisçi Coffee & Roastery">
+        </a>
+        <nav class="member-tabs" aria-label="Müdavim paneli">
+          <button type="button" data-member-panel="announcements" aria-pressed="false">
+            <i class="far fa-bell" aria-hidden="true"></i><span>Duyurular</span>
+          </button>
+          <button type="button" data-member-panel="history" aria-pressed="false">
+            <i class="fas fa-clock-rotate-left" aria-hidden="true"></i><span>Geçmiş Ziyaretlerim</span>
+          </button>
+        </nav>
+        <button class="member-user-chip" id="memberProfileTrigger" type="button" aria-label="Profili düzenle" aria-controls="memberProfileOverlay" aria-expanded="false">
+          <span class="member-avatar" id="memberAvatar">M</span>
+          <span><small>Merhaba,</small><strong id="memberFullName">Müdavim</strong></span>
+          <i class="fas fa-chevron-down" aria-hidden="true"></i>
+        </button>
+      </header>
+
+      <div class="member-workspace">
+        <div class="member-dashboard">
+          <aside class="member-column member-column--summary" aria-label="Müdavim özeti">
+            <article class="member-panel-card visit-summary-card">
+              <div class="member-card-label"><i class="far fa-calendar-check" aria-hidden="true"></i><span>Ziyaretlerim</span></div>
+              <strong class="visit-summary-count"><span id="progressCount">6</span> / <span id="rewardTarget">10</span></strong>
+              <p>ziyaret tamamlandı</p>
+              <div class="visit-segments" id="visitSegments" aria-label="Ziyaret ilerlemesi"></div>
+              <small id="progressText">Bir sonraki ödüle 4 ziyaret kaldı.</small>
+            </article>
+
+            <article class="member-panel-card tier-summary-card">
+              <div class="member-card-label"><i class="fas fa-medal" aria-hidden="true"></i><span>Üyelik Derecem</span></div>
+              <div class="tier-track" id="tierTrack" aria-label="Üyelik derecesi"></div>
+              <span class="tier-current"><i class="fas fa-star" aria-hidden="true"></i>Mevcut Derecen: <strong id="memberLevel">Gold</strong></span>
+            </article>
+          </aside>
+
+          <section class="member-center" id="memberCenter" aria-live="polite">
+            <div class="member-center__watermark" aria-hidden="true"></div>
+            <div class="member-center-view member-welcome" data-member-view="welcome">
+              <span class="member-welcome__icon"><i class="fas fa-mug-hot" aria-hidden="true"></i></span>
+              <h2>Hoş Geldin,<span id="memberWelcomeName">Müdavim</span></h2>
+              <p>Duyurular ve geçmiş ziyaretlerini üst menüden görüntüleyebilirsin.</p>
+              <div class="member-center-summaries">
+                <article><i class="fas fa-medal" aria-hidden="true"></i><span>Mevcut Derecen</span><strong id="centerMemberLevel">Gold</strong></article>
+                <article><i class="far fa-calendar-check" aria-hidden="true"></i><span>Toplam Ziyaret</span><strong id="centerVisitCount">6</strong></article>
+                <article><i class="far fa-flag" aria-hidden="true"></i><span>Sonraki Adım</span><strong id="centerRemaining">4 ziyaret</strong></article>
+              </div>
+            </div>
+
+            <div class="member-center-view member-drawer" data-member-view="announcements" hidden>
+              <div class="member-drawer__head">
+                <span></span><h2>Duyurular</h2>
+                <button type="button" data-member-panel-close aria-label="Duyuruları kapat"><i class="fas fa-xmark" aria-hidden="true"></i></button>
+              </div>
+              <div class="announcement-feed" id="memberAnnouncementFeed"></div>
+            </div>
+
+            <div class="member-center-view member-drawer" data-member-view="history" hidden>
+              <div class="member-drawer__head">
+                <span></span><h2>Geçmiş Ziyaretlerim</h2>
+                <button type="button" data-member-panel-close aria-label="Geçmiş ziyaretleri kapat"><i class="fas fa-xmark" aria-hidden="true"></i></button>
+              </div>
+              <div class="member-history-list member-history-list--full" id="memberHistoryPanel"></div>
+            </div>
+          </section>
+
+          <aside class="member-column member-column--history" aria-label="Son ziyaretler">
+            <article class="member-panel-card latest-visit-card">
+              <div class="member-card-label"><i class="far fa-clock" aria-hidden="true"></i><span>Son Ziyaret</span></div>
+              <div id="latestVisit"></div>
+            </article>
+
+            <article class="member-panel-card compact-history-card">
+              <div class="compact-history-card__head"><span>Geçmiş Ziyaretlerim</span><button type="button" data-member-panel="history">Tümünü Gör</button></div>
+              <div class="member-history-list" id="compactVisitHistory"></div>
+              <button class="compact-history-card__more" type="button" data-member-panel="history">Tümünü Gör <i class="fas fa-arrow-right" aria-hidden="true"></i></button>
+            </article>
+          </aside>
+        </div>
+      </div>
+
+      <div class="member-profile-overlay" id="memberProfileOverlay" hidden>
+        <section class="member-profile-modal" role="dialog" aria-modal="true" aria-labelledby="memberProfileTitle">
+          <header class="member-profile-modal__head">
+            <span aria-hidden="true"></span>
+            <h2 id="memberProfileTitle">Profilimi Düzenle</h2>
+            <button type="button" data-profile-close aria-label="Profil düzenlemeyi kapat">
+              <i class="fas fa-xmark" aria-hidden="true"></i>
+            </button>
+          </header>
+
+          <form class="member-profile-form" id="memberProfileForm">
+            <div class="member-profile-scroll">
+              <div class="member-profile-primary">
+                <div class="member-profile-photo">
+                  <span class="member-profile-photo__preview" aria-hidden="true">
+                    <img id="memberProfilePhotoPreview" alt="" hidden>
+                    <strong id="memberProfilePhotoInitials">M</strong>
+                    <i class="fas fa-camera"></i>
+                  </span>
+                  <label class="member-profile-photo__button" for="memberProfilePhoto">Fotoğraf Yükle</label>
+                  <input id="memberProfilePhoto" type="file" accept="image/jpeg,image/png" hidden>
+                  <small id="memberProfilePhotoHelp">JPG veya PNG · En fazla 5 MB</small>
+                </div>
+
+                <div class="member-profile-fields">
+                  <label>
+                    <span>Ad</span>
+                    <input id="memberProfileFirstName" type="text" autocomplete="given-name" placeholder="Adınız" maxlength="60">
+                  </label>
+                  <label>
+                    <span>Soyad</span>
+                    <input id="memberProfileLastName" type="text" autocomplete="family-name" placeholder="Soyadınız" maxlength="60">
+                  </label>
+                  <label class="member-profile-fields__wide">
+                    <span>Doğum Tarihi</span>
+                    <span class="member-profile-input-icon"><i class="far fa-calendar" aria-hidden="true"></i><input id="memberProfileBirthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="GG / AA / YYYY" maxlength="10"></span>
+                  </label>
+                </div>
+              </div>
+
+              <section class="member-profile-section" aria-labelledby="memberContactTitle">
+                <h3 id="memberContactTitle">İletişim Bilgileri</h3>
+                <div class="member-profile-contact">
+                  <label>
+                    <i class="fas fa-phone" aria-hidden="true"></i>
+                    <span><strong>Telefon Numarası</strong><input id="memberProfilePhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="05xx xxx xx xx" maxlength="24"></span>
+                  </label>
+                  <label>
+                    <i class="far fa-envelope" aria-hidden="true"></i>
+                    <span><strong>E-posta <small>(isteğe bağlı)</small></strong><input id="memberProfileEmail" type="email" autocomplete="email" placeholder="E-posta adresiniz" maxlength="120"></span>
+                  </label>
+                </div>
+              </section>
+
+              <section class="member-profile-section" aria-labelledby="memberPreferencesTitle">
+                <h3 id="memberPreferencesTitle">Tercihler</h3>
+                <div class="member-profile-preferences">
+                  <label>
+                    <i class="far fa-bell" aria-hidden="true"></i>
+                    <span><strong>Duyuru Bildirimleri</strong><small>Yeni duyurulardan haberdar ol.</small></span>
+                    <input id="memberProfileAnnouncements" type="checkbox" role="switch">
+                  </label>
+                  <label>
+                    <i class="fas fa-cake-candles" aria-hidden="true"></i>
+                    <span><strong>Doğum Günü Sürprizi</strong><small>Doğum gününe özel avantajları al.</small></span>
+                    <input id="memberProfileBirthday" type="checkbox" role="switch">
+                  </label>
+                </div>
+              </section>
+
+              <section class="member-profile-section member-profile-security" aria-labelledby="memberSecurityTitle">
+                <h3 id="memberSecurityTitle">Güvenlik</h3>
+                <div class="member-profile-security__actions">
+                  <a href="/password-reset/">
+                    <i class="fas fa-lock" aria-hidden="true"></i>
+                    <span><strong>Şifreyi Değiştir</strong><small>Hesap şifrenizi güvenle güncelleyin.</small></span>
+                    <i class="fas fa-chevron-right" aria-hidden="true"></i>
+                  </a>
+                  <button class="member-profile-logout" type="button" data-logout>
+                    <i class="fas fa-right-from-bracket" aria-hidden="true"></i>
+                    <span><strong>Çıkış Yap</strong><small>Oturumu güvenle kapat.</small></span>
+                  </button>
+                </div>
+              </section>
+            </div>
+
+            <footer class="member-profile-actions">
+              <output id="memberProfileStatus" aria-live="polite"></output>
+              <button class="member-profile-cancel" type="button" data-profile-close>İptal</button>
+              <button class="member-profile-save" type="submit">Kaydet</button>
+            </footer>
+          </form>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div class="mudavim-auth-overlay" id="mudavimAuthOverlay" hidden>
+    <section class="mudavim-auth-modal" role="dialog" aria-modal="true" aria-labelledby="mudavimAuthTitle">
+      <button class="mudavim-auth-close" type="button" aria-label="Kapat">
+        <i class="fas fa-xmark" aria-hidden="true"></i>
+      </button>
+
+      <form class="mudavim-auth-card" data-auth-step="login">
+        <p class="eyebrow">Tahmisçi Müdavim</p>
+        <h2 id="mudavimAuthTitle">Giriş Yap</h2>
+        <p>Hesabına giriş yap, kartını ve ödül ilerlemeni gör.</p>
+        <label class="mudavim-auth-input">
+          <span>Telefon numarası</span>
+          <input id="loginPhone" type="tel" inputmode="tel" autocomplete="username" placeholder="05xx xxx xx xx" required>
+        </label>
+        <label class="mudavim-auth-input">
+          <span>Şifre</span>
+          <input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••" required>
+        </label>
+        <div class="auth-row">
+          <label class="remember-row">
+            <input id="rememberMember" type="checkbox">
+            <span>Beni hatırla</span>
+          </label>
+          <button type="button" class="mudavim-auth-link" data-auth-open="forgot">Şifremi unuttum</button>
+        </div>
+        <button class="mudavim-auth-cta" type="submit">Giriş Yap</button>
+        <button class="mudavim-auth-social" type="button" data-auth-open="google">
+          <i class="fab fa-google" aria-hidden="true"></i>
+          Google ile Devam Et
+        </button>
+        <button class="mudavim-auth-link" type="button" data-auth-open="register-phone">Hesabın yok mu? Kayıt Ol</button>
+      </form>
+
+      <div class="mudavim-auth-card" data-auth-step="forgot" hidden>
+        <button class="mudavim-auth-back" type="button" data-auth-open="login">Geri</button>
+        <h2>Şifre Sıfırlama</h2>
+        <p>Telefon numaranla şifre yenileme adımını başlatabilirsin.</p>
+        <button class="mudavim-auth-cta" type="button" data-auth-open="login">Girişe Dön</button>
+      </div>
+
+      <form class="mudavim-auth-card" data-auth-step="register-phone" hidden>
+        <button class="mudavim-auth-back" type="button" data-auth-open="login">Geri</button>
+        <h2>Telefon Numaranı Gir</h2>
+        <p>Bu numara Müdavim Kartın için kullanılacak.</p>
+        <label class="mudavim-auth-input">
+          <span>Telefon</span>
+          <input id="registerPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="05xx xxx xx xx" required>
+        </label>
+        <button class="mudavim-auth-cta" type="submit">Kodu Gönder</button>
+      </form>
+
+      <form class="mudavim-auth-card" data-auth-step="register-otp" hidden>
+        <h2>Kodu Onayla</h2>
+        <p>Telefonuna gelen 6 haneli kodu gir.</p>
+        <div class="mudavim-otp" data-otp-group="register" aria-label="6 haneli kayıt doğrulama kodu">
+          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 1">
+          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 2">
+          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 3">
+          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 4">
+          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 5">
+          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 6">
+        </div>
+        <button class="mudavim-auth-cta" type="submit">Devam Et</button>
+      </form>
+
+      <form class="mudavim-auth-card" data-auth-step="register-password" hidden>
+        <h2>Şifre Oluştur</h2>
+        <p class="auth-hint">En az 6 karakter. Tekrar şifre eşleşmeli.</p>
+        <label class="mudavim-auth-input">
+          <span>Şifre</span>
+          <input id="registerPassword" type="password" autocomplete="new-password" placeholder="En az 6 karakter" required>
+        </label>
+        <label class="mudavim-auth-input">
+          <span>Şifre tekrar</span>
+          <input id="registerPasswordConfirm" type="password" autocomplete="new-password" placeholder="Şifreni tekrar yaz" required>
+        </label>
+        <p class="auth-error" id="passwordError" hidden>Şifreler eşleşmeli ve en az 6 karakter olmalı.</p>
+        <button class="mudavim-auth-cta" type="submit">Devam Et</button>
+      </form>
+
+      <form class="mudavim-auth-card" data-auth-step="register-profile" hidden>
+        <h2>Profilini Tamamla</h2>
+        <p>Hesap bilgilerini tamamlayarak kişisel alanını oluşturabilirsin.</p>
+        <label class="mudavim-auth-input">
+          <span>Ad Soyad</span>
+          <input id="registerName" type="text" autocomplete="name" placeholder="Ad Soyad" required>
+        </label>
+        <label class="mudavim-auth-input">
+          <span>Profil adı</span>
+          <input id="registerAlias" type="text" placeholder="Profil adı" required>
+        </label>
+        <label class="mudavim-auth-input">
+          <span>Doğum tarihi</span>
+          <input id="registerBirthDate" type="date" required>
+        </label>
+        <label class="mudavim-auth-input">
+          <span>E-posta <em>isteğe bağlı</em></span>
+          <input id="registerEmail" type="email" autocomplete="email" placeholder="mail@ornek.com">
+        </label>
+        <label class="mudavim-auth-check">
+          <input id="registerTerms" type="checkbox" required>
+          <span>Üyelik koşullarını ve KVKK bilgilendirmesini okudum.</span>
+        </label>
+        <label class="mudavim-auth-check">
+          <input id="registerCampaigns" type="checkbox">
+          <span>Tahmisçi duyurularını almak istiyorum.</span>
+        </label>
+        <button class="mudavim-auth-cta" type="submit">Müdavim Kartımı Oluştur</button>
+      </form>
+
+      <form class="mudavim-auth-card" data-auth-step="phone" hidden>
+        <button class="mudavim-auth-back" type="button" data-auth-open="login">Geri</button>
+        <h2>Telefonla Devam Et</h2>
+        <p>Bu numara Müdavim Kartınla eşleşir.</p>
+        <label class="mudavim-auth-input">
+          <span>Telefon</span>
+          <input id="mudavimPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="05xx xxx xx xx" required>
+        </label>
+        <button class="mudavim-auth-cta" type="submit">Kodu Gönder</button>
+      </form>
+
+      <form class="mudavim-auth-card" data-auth-step="otp" hidden>
+        <h2>Kodu Onayla</h2>
+        <p>Telefonuna gelen 6 haneli kodu gir.</p>
+        <div class="mudavim-otp" data-otp-group="login" aria-label="6 haneli doğrulama kodu">
+          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 1">
+          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 2">
+          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 3">
+          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 4">
+          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 5">
+          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 6">
+        </div>
+        <button class="mudavim-auth-cta" type="submit">Devam Et</button>
+        <div class="mudavim-auth-inline">
+          <button type="button" data-auth-open="phone">Numarayı değiştir</button>
+          <button type="button" data-auth-resend>Kodu tekrar gönder</button>
+        </div>
+      </form>
+
+      <div class="mudavim-auth-card" data-auth-step="success" hidden>
+        <p class="eyebrow">Kartım hazır</p>
+        <h2>Müdavim Kartın Hazır</h2>
+        <div class="mudavim-auth-success">
+          <span id="authSuccessCode">THM-4821</span>
+          <div class="mudavim-auth-qr" aria-label="QR placeholder">
+            <i></i><i></i><i></i><i></i><i></i>
+            <i></i><i></i><i></i><i></i><i></i>
+            <i></i><i></i><i></i><i></i><i></i>
+            <i></i><i></i><i></i><i></i><i></i>
+            <i></i><i></i><i></i><i></i><i></i>
+          </div>
+          <b id="authSuccessProgress">0 ziyaret</b>
+          <p>İlk ziyaretini kasada kodunu okutarak kaydet.</p>
+        </div>
+        <button class="mudavim-auth-cta" type="button" data-auth-finish>Kartımı Gör</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="/mudavim/mudavim.js?v=20260719-announcements1"></script>
+</body>
+</html>

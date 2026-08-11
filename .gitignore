@@ -1,0 +1,103 @@
+# Dependencies and package-manager state
+**/node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+
+# Environment files and local overrides
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.local.example
+!**/.env.production.example
+
+# Runtime data: keep directory shells only
+storage/**
+!storage/
+!storage/**/
+!storage/**/.gitkeep
+**/storage/local/**
+**/storage/media/**
+**/storage/backups/**
+**/runtime/**
+**/uploads/**
+**/user-media/**
+**/backups/**
+**/audit/**
+**/revisions/**
+!**/storage/local/.gitkeep
+!**/storage/media/.gitkeep
+!**/storage/backups/.gitkeep
+
+# Temporary import/analyse files, caches and test output
+.tmp/
+**/.tmp/
+tmp/
+**/tmp/
+temp/
+**/temp/
+.cache/
+**/.cache/
+.parcel-cache/
+.eslintcache
+.nyc_output/
+coverage/
+**/coverage/
+test-results/
+playwright-report/
+*.tmp
+*.temp
+*.cache
+
+# Logs and process-manager state
+*.log
+*.log.*
+logs/
+**/logs/
+*.pid
+*.pid.lock
+*.seed
+pm2*.json
+
+# Private keys, certificates and signing material
+*.key
+*.pem
+*.crt
+*.cer
+*.csr
+*.der
+*.p7b
+*.p7c
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+!.well-known/
+
+# Editor, OS and cloud-sync artefacts
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+*.lnk
+~$*
+*.icloud
+.sync/
+.onedrive/
+OneDrive/
+OneDrive - */
+.849C9593-D756-4E56-8D6E-42412F2A707B
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local archives and release bundles
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="tr" data-pwa-app="menu" data-pwa-worker="/qr-menu/sw.js" data-pwa-scope="/">
+<head>
+  <!-- Developer: Uzeyir | System Key: xandar | Source integrity marker -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#5a2f1d">
+  <title>Tahmisçi Dijital Menü</title>
+  <link rel="manifest" href="/qr-menu/manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/app-icons/menu/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="48x48" href="/assets/app-icons/menu/favicon-48.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/app-icons/menu/apple-touch-icon-180.png">
+  <link rel="stylesheet" href="/qr-menu/styles/qr-menu.css?v=20260801-phase3">
+  <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260809-phase6">
+  <script src="/shared/scripts/menu-design-schema.js?v=20260802-prephase4-schema" defer></script>
+  <script src="/shared/scripts/live-preview-receiver.js?v=20260801-phase3" defer></script>
+  <script src="/qr-menu/scripts/app.js?v=20260802-prephase4-schema" defer></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260809-phase6" defer></script>
+</head>
+<body class="alternative-home dark-mode">
+  <div class="main-wrapper" id="home-page">
+    <div class="container">
+      <button class="about-link" type="button" data-action="about">Hakkımızda</button>
+      <button class="theme-toggle" type="button" data-action="theme" aria-label="Tema değiştir">
+        <svg class="theme-icon" id="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <g class="theme-icon__sun"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"></path></g>
+          <path class="theme-icon__moon" d="M20.2 15.2A8.5 8.5 0 0 1 8.8 3.8 8.5 8.5 0 1 0 20.2 15.2Z"></path>
+        </svg>
+      </button>
+
+      <div class="logo-area">
+        <img src="/assets/brand/logo-primary.png" id="main-logo" class="brand-logo" alt="Tahmisçi Logo">
+      </div>
+
+      <div class="content-center">
+        <h2 class="welcome-text">Dijital Menüye Hoş Geldiniz</h2>
+        <button class="menu-button" type="button" data-action="open-menu">MENÜ</button>
+        <div class="social-follow-card">
+          <div class="social-follow-text">
+            <strong>Bizi takip edin</strong>
+            <span>Sosyal mecralarda Tahmisçi</span>
+          </div>
+          <div class="social-follow-icons" aria-label="Sosyal medya">
+            <a href="https://www.instagram.com/tahmiscicoffee?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw==" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"></rect><circle cx="12" cy="12" r="4"></circle><circle cx="17.4" cy="6.7" r="1"></circle></svg>
+            </a>
+            <a href="https://www.tiktok.com/@tahmiscicoffee" target="_blank" rel="noopener noreferrer" aria-label="TikTok">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v10.2a4.2 4.2 0 1 1-3.3-4.1v3a1.4 1.4 0 1 0 .5 1.1V3h2.8a5.3 5.3 0 0 0 4.8 3v2.8A8 8 0 0 1 14 7.2Z"></path></svg>
+            </a>
+          </div>
+        </div>
+        <button class="feedback-channel-card" type="button" data-action="feedback-open">
+          <strong>İstek & Şikayet</strong>
+          <span>Mesajınızı bize iletin</span>
+        </button>
+      </div>
+
+      <div class="footer-spacer" aria-hidden="true"></div>
+    </div>
+  </div>
+
+  <section id="menu-page" class="menu-page" aria-hidden="true">
+    <header class="menu-header">
+      <div class="menu-topbar">
+        <div class="menu-search">
+          <span class="search-icon" aria-hidden="true"></span>
+          <input id="menuSearch" type="search" autocomplete="off" placeholder="menüde ara" aria-label="Menüde ara">
+          <div class="search-suggestions" id="searchSuggestions" hidden></div>
+        </div>
+        <div class="menu-header-logo-box">
+          <span class="menu-header-brand-name">
+            <span>Tahmisçi</span>
+            <span>Coffee & Roastery</span>
+          </span>
+        </div>
+        <button class="theme-toggle menu-theme-toggle" type="button" data-action="theme" aria-label="Tema değiştir">
+          <svg class="theme-icon" id="menu-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <g class="theme-icon__sun"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"></path></g>
+            <path class="theme-icon__moon" d="M20.2 15.2A8.5 8.5 0 0 1 8.8 3.8 8.5 8.5 0 1 0 20.2 15.2Z"></path>
+          </svg>
+        </button>
+      </div>
+      <nav class="category-tabs" id="categoryTabs" aria-label="Kategoriler"></nav>
+    </header>
+
+    <section class="showcase-stage" id="showcaseStage" aria-label="Öne çıkan ürünler" hidden></section>
+    <main class="category-list" id="categoryList"></main>
+    <div class="empty-state" id="emptyState" hidden>Henüz veri aktarılmadı.</div>
+
+    <div class="bottom-menu-bar" aria-label="Hızlı menü">
+      <button class="dock-button" id="popularDock" type="button" data-action="popular">Popüler Ürünler</button>
+      <button class="dock-home" type="button" data-action="menu-top">MENÜ</button>
+      <button class="dock-button" id="suggestDock" type="button" data-action="suggest">Öneri</button>
+      <div class="menu-update-line" id="menuUpdateLine" hidden></div>
+    </div>
+  </section>
+
+  <div class="modal-overlay" id="aboutModal" aria-hidden="true">
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+      <button class="close-btn" type="button" data-action="close-about" aria-label="Kapat">&times;</button>
+      <h3 id="aboutTitle">MARKA HİKAYEMİZ</h3>
+      <div class="about-copy">
+        <p>Kurtuluş Savaşı'nın ardından büyük dedem Hüseyin Tünaydın, 1926'da Torbalı'da kahve çekirdeklerini zeytin odununda kavurup taş dibekte döverek satmaya başladı. Kahvesinin kokusu kısa sürede köyleri sardı ve herkes "Tahmisçi Hüseyin Efendi"nin kahvesini içmeden gününü tamamlamaz oldu.</p>
+        <p>Bu ustalık dolu mesleği dedem Ahmet Zeki Tünaydın devraldı. 1957'den itibaren aynı özenle sürdürdü; kahveyi bir içecekten çok bir kültür, bir sabır ve ustalık işi olarak gördü. Daha sonra babam Mustafa Aygün Tünaydın ve kardeşleri bu geleneği yaşattı.</p>
+        <p>Bugün ben, hem dedemden hem babamdan öğrendiğim bu ilkelerle, geçmişin emek dolu zanaatini yeni nesil kahve anlayışıyla birleştiriyorum. Her fincanda dört neslin emeği, dürüstlüğü ve tutkusu var.</p>
+        <p class="about-signature">Tahmisçi<br>COFFEE & ROASTERY</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="sheet-overlay" id="actionSheet" aria-hidden="true">
+    <div class="sheet-box" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+      <div class="sheet-head">
+        <h2 id="sheetTitle">Popüler Ürünler</h2>
+        <button class="sheet-close" type="button" data-action="close-sheet" aria-label="Kapat">&times;</button>
+      </div>
+      <div class="sheet-body" id="sheetBody"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay feedback-overlay" id="feedbackModal" aria-hidden="true">
+    <div class="feedback-box" role="dialog" aria-modal="true" aria-labelledby="feedbackTitle">
+      <button class="close-btn" type="button" data-action="feedback-close" aria-label="Kapat">&times;</button>
+      <h3 id="feedbackTitle">İstek & Şikayet</h3>
+      <div class="feedback-form-grid">
+        <div class="feedback-type-grid" aria-label="Geri bildirim türü">
+          <label>
+            <input type="radio" name="feedbackType" value="istek" checked>
+            <span>İstek</span>
+          </label>
+          <label>
+            <input type="radio" name="feedbackType" value="sikayet">
+            <span>Şikayet</span>
+          </label>
+          <label>
+            <input type="radio" name="feedbackType" value="oneri">
+            <span>Öneri</span>
+          </label>
+        </div>
+        <textarea id="feedbackText" placeholder="Mesajınızı yazın" aria-label="Mesajınız"></textarea>
+        <div class="rating-row" id="feedbackRating" aria-label="Kafeyi puanla">
+          <span>Kafeyi puanla</span>
+          <button class="rating-star" type="button" data-feedback-rating="1" aria-pressed="false">★</button>
+          <button class="rating-star" type="button" data-feedback-rating="2" aria-pressed="false">★</button>
+          <button class="rating-star" type="button" data-feedback-rating="3" aria-pressed="false">★</button>
+          <button class="rating-star" type="button" data-feedback-rating="4" aria-pressed="false">★</button>
+          <button class="rating-star" type="button" data-feedback-rating="5" aria-pressed="false">★</button>
+        </div>
+        <div class="favorite-field">
+          <label for="favoriteDrinkInput">Senin favori içeceğin hangisi?</label>
+          <div class="favorite-input-row">
+            <input id="favoriteDrinkInput" type="text" autocomplete="off" placeholder="Ürün adı yazın">
+            <button class="favorite-send" id="favoriteSendButton" type="button" data-action="favorite-send" hidden>Gönder</button>
+          </div>
+          <div class="favorite-suggestions" id="favoriteSuggestions" hidden></div>
+        </div>
+        <button class="feedback-submit" type="button" data-action="feedback-submit">Mesajı Gönder</button>
+        <p class="feedback-status" id="feedbackStatus" aria-live="polite"></p>
+      </div>
+    </div>
+  </div>
+
+  <noscript>Menünün çalışması için JavaScript etkin olmalıdır.</noscript>
+</body>
+</html>

@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.*
+!.env.example
+data/
+data/local-dev-store.json
+data/local-dev-media/
+data/local-smoke-store.json
+data/local-smoke-media/
+*.log

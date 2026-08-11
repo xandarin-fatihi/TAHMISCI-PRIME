@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <!-- Developer: Uzeyir | System Key: xandar | Admin login markup marker -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tahmisçi Yönetici Girişi</title>
+  <link rel="icon" type="image/png" href="/assets/brand/favicon.png?v=20260714">
+  <style>
+    :root {
+      --bg: #f5ecdf;
+      --card: rgba(255, 255, 240, 0.88);
+      --ink: #2C1609;
+      --muted: rgba(44, 22, 9, 0.70);
+      --line: rgba(44, 22, 9, 0.14);
+      --accent: #2C1609;
+      --cream: #FFFFF0;
+      --danger: #b42318;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100svh;
+      max-height: 100svh;
+      display: grid;
+      place-items: center;
+      margin: 0;
+      overflow: hidden;
+      padding: 18px;
+      background:
+        radial-gradient(circle at 50% 18%, rgba(255, 255, 240, 0.92), transparent 34%),
+        radial-gradient(circle at 12% 0%, rgba(44, 22, 9, 0.08), transparent 30%),
+        linear-gradient(145deg, #fffff0 0%, var(--bg) 56%, #eadbc9 100%);
+      color: var(--ink);
+      font-family: Inter, Manrope, Arial, sans-serif;
+    }
+
+    main {
+      width: min(408px, calc(100vw - 36px));
+      display: grid;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: var(--card);
+      padding: 32px 36px 30px;
+      box-shadow: 0 24px 68px rgba(44, 22, 9, 0.13);
+      text-align: center;
+      backdrop-filter: blur(10px);
+    }
+
+    .login-logo {
+      width: 158px;
+      justify-self: center;
+      margin-bottom: 10px;
+      filter: brightness(0) saturate(100%) invert(8%) sepia(35%) saturate(1513%) hue-rotate(349deg) brightness(94%) contrast(99%);
+    }
+
+    h1,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      color: var(--ink);
+      font-size: clamp(24px, 4vw, 30px);
+      line-height: 1.1;
+      letter-spacing: -0.04em;
+    }
+
+    p {
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 14px;
+    }
+
+    form {
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    label {
+      position: relative;
+      display: block;
+    }
+
+    label::before {
+      content: "";
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      z-index: 1;
+      width: 18px;
+      height: 18px;
+      background: rgba(44, 22, 9, 0.58);
+      transform: translateY(-50%);
+      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E") center / contain no-repeat;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E") center / contain no-repeat;
+    }
+
+    input,
+    button {
+      min-height: 50px;
+      border-radius: 12px;
+      font: inherit;
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 240, 0.90);
+      color: var(--ink);
+      outline: none;
+      padding: 0 14px 0 44px;
+      font-size: 15px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.44);
+    }
+
+    input::placeholder {
+      color: rgba(44, 22, 9, 0.52);
+    }
+
+    input:focus {
+      border-color: rgba(44, 22, 9, 0.42);
+      box-shadow: 0 0 0 3px rgba(44, 22, 9, 0.08);
+    }
+
+    button {
+      border: 0;
+      background: linear-gradient(135deg, #4a2412, #2C1609);
+      color: var(--cream);
+      font-weight: 850;
+      cursor: pointer;
+      box-shadow: 0 16px 32px rgba(44, 22, 9, 0.22);
+    }
+
+    .reset-link {
+      justify-self: center;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 850;
+      text-decoration: underline;
+      text-underline-offset: 4px;
+      margin-top: 8px;
+    }
+
+    .status {
+      min-height: 22px;
+      color: var(--danger);
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1.45;
+      text-align: left;
+    }
+
+    @media (max-width: 460px) {
+      main {
+        padding: 28px 22px 26px;
+      }
+
+      .login-logo {
+        width: 140px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="/assets/brand/logo-primary.png" alt="Tahmisçi" class="login-logo">
+    <h1>Tahmisçi Yönetici Paneli</h1>
+    <p>Menü içeriklerini, renkleri, görselleri ve ürün detaylarını buradan yönetin.</p>
+
+    <form id="loginForm">
+      <label>
+        <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Panel şifresi" required autofocus>
+      </label>
+      <button type="submit">Panele Gir</button>
+      <a class="reset-link" href="/password-reset/">Şifremi unuttum</a>
+      <div class="status" id="status" role="status" aria-live="polite"></div>
+    </form>
+  </main>
+
+  <script src="/assets/scripts/auth-login.js" defer></script>
+</body>
+</html>

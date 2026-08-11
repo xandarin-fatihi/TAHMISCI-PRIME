@@ -1,0 +1,1538 @@
+﻿<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta
+    name="description"
+    content="Tahmisçi Coffee & Roastery; özenle hazırlanan kahveler, soğuk içecekler, tatlılar ve daha fazlası." />
+  <meta
+    name="keywords"
+    content="Tahmisçi, Coffee & Roastery, kahve, dijital menü, Torbalı" />
+  <meta name="author" content="Tahmisci" />
+
+  <!-- Open Graph Meta Tags -->
+  <meta property="og:title" content="Tahmisçi | Coffee & Roastery" />
+  <meta
+    property="og:description"
+    content="Modern Anadolu kahve geleneğini günün lezzetleriyle buluşturan Tahmisçi deneyimi." />
+  <meta property="og:type" content="website" />
+    <meta property="og:image" content="assets/images/hero/tahmisci-barista-main.jpg" />
+  
+
+
+  <meta name="site-title-brand" content="Tahmisci">
+  <meta name="theme-color" content="#24150f">
+  <title>Tahmisçi | Coffee & Roastery</title>
+  <link rel="icon" type="image/png" href="/assets/brand/favicon.png" />
+  <link rel="apple-touch-icon" href="/assets/brand/favicon.png" />
+
+  <link rel="stylesheet" href="styles/base.css?v=3" />
+  <link rel="stylesheet" href="styles/components/components.css?v=3" />
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet" />
+
+    <link
+        rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <link rel="stylesheet" href="styles/website.css?v=25" />
+</head>
+
+<body class="anasayfa tahmisci-static-menu" id="top">
+  <input id="defaultlanguage" type="hidden" value="tr">
+  <input id="defaultTheme" type="hidden" value="default">
+  <script>window.__yepSessionUser = null;</script>
+ 
+<!-- Loading Screen -->
+<div id="loading-screen" class="loading-screen">
+    <div class="loading-brand" aria-hidden="true">
+        <img class="loading-logo" src="/assets/brand/logo-large.png" alt="Tahmisçi Coffee & Roastery" width="220" height="120">
+    </div>
+    <div class="loading-spinner"></div>
+    <p data-i18n="loading" role="status" aria-live="polite">Yükleniyor...</p>
+</div>
+<!-- Header -->
+<header class="header modern-header" id="header">
+    <div class="container">
+        <div class="header-content">
+            <!-- Logo -->
+            <!-- Logo -->
+            <div class="header-logo">
+                <a href="./" class="logo-link">
+                    <div class="logo-image-wrapper">
+                      <img src="/assets/brand/logo-primary.png" alt="Tahmisci" class="logo-image" />
+                    </div>
+                </a>
+            </div>
+
+            <!-- Navigation -->
+            <nav class="header-nav">
+                <ul class="nav-links">
+                    <li class="nav-item" data-nav-id="home"><a class="nav-link active" href="#top" data-nav-id="home"><i class="nav-link-icon fas fa-house" aria-hidden="true"></i><span class="nav-link-text">Ana Sayfa</span></a></li>
+                    <li class="nav-item" data-nav-id="menu"><a class="nav-link" href="#menu" data-nav-id="menu"><i class="nav-link-icon fas fa-utensils" aria-hidden="true"></i><span class="nav-link-text">Menü</span></a></li>
+                    <li class="nav-item" data-nav-id="about"><a class="nav-link" href="#about" data-nav-id="about"><i class="nav-link-icon fas fa-mug-hot" aria-hidden="true"></i><span class="nav-link-text">Hakkımızda</span></a></li>
+                    <li class="nav-item" data-nav-id="contact"><a class="nav-link" href="#contact" data-nav-id="contact"><i class="nav-link-icon fas fa-phone" aria-hidden="true"></i><span class="nav-link-text">İletişim</span></a></li>
+                    <li class="nav-item" data-nav-id="mudavim"><a class="nav-link" href="/mudavim/" data-nav-id="mudavim"><i class="nav-link-icon fas fa-id-card" aria-hidden="true"></i><span class="nav-link-text">Müdavim</span></a></li>
+                </ul>
+            </nav>
+
+            <!-- Header Actions -->
+            <div class="header-actions">
+                <!-- Mobile Contact Button (only on mobile) -->
+                <button class="mobile-contact-btn" id="mobileContactBtn" type="button" aria-label="İletişim">
+                    <i class="fas fa-phone"></i>
+                </button>
+                <!-- Language Switcher -->
+                <div class="language-switcher">
+                    <button class="language-btn" id="languageBtn" aria-label="Dil seç">
+                        <span class="language-current" id="currentLanguage">TR</span>
+                        <i class="fas fa-chevron-down language-icon"></i>
+                    </button>
+                    <div class="language-dropdown" id="languageDropdown">
+                        <button class="language-option" data-lang="tr">
+                            <span class="language-code">TR</span>
+                            <span class="language-name">Türkçe</span>
+                        </button>
+                        <button class="language-option" data-lang="en">
+                            <span class="language-code">EN</span>
+                            <span class="language-name">English</span>
+                        </button>
+                    </div>
+                </div>
+                <!-- Auth Buttons -->
+                <div class="auth-buttons" id="authButtons">
+                    <button class="btn-auth btn-login" id="btnLogin" data-i18n="login">
+                        Giriş Yap
+                    </button>
+                    <button class="btn-auth btn-register" id="btnRegister" data-i18n="register">
+                        Üye Ol
+                    </button>
+                </div>
+                <!-- User Menu (hidden by default, shown when logged in) -->
+                <div class="profile-menu-wrapper" id="userMenu" style="display: none">
+                    <button class="profile-menu-btn" id="userBtn">
+                        <div class="profile-menu-avatar" id="userAvatar">
+                            <i class="fas fa-user"></i>
+                        </div>
+                        <span class="profile-menu-text" id="userNameDisplay">Müşteri</span>
+                        <i class="fas fa-chevron-down profile-menu-arrow"></i>
+                    </button>
+                    <!-- User Dropdown Menu -->
+                    <div class="profile-menu-dropdown" id="userDropdownMenu" style="display: none;">
+                        <a href="hesabim" class="profile-menu-item">
+                            <i class="fas fa-user-circle"></i>
+                            <span data-i18n="profile_menu_account">Hesabım</span>
+                        </a>
+                        <a href="siparislerim" class="profile-menu-item">
+                            <i class="fas fa-shopping-bag"></i>
+                            <span data-i18n="profile_menu_orders">Siparişlerim</span>
+                        </a>
+                        <a href="hesabim-rezervasyonlar" class="profile-menu-item">
+                            <i class="fas fa-calendar-check"></i>
+                            <span>Rezervasyonlarım</span>
+                        </a>
+                        <a href="bilgilerim" class="profile-menu-item">
+                            <i class="fas fa-edit"></i>
+                            <span data-i18n="profile_menu_info">Bilgilerim</span>
+                        </a>
+                        <a href="adreslerim" class="profile-menu-item">
+                            <i class="fas fa-map-marker-alt"></i>
+                            <span data-i18n="profile_menu_addresses">Adreslerim</span>
+                        </a>
+                        <div class="profile-menu-divider"></div>
+                        <a href="#" class="profile-menu-item" id="logoutBtn">
+                            <i class="fas fa-sign-out-alt"></i>
+                            <span data-i18n="profile_menu_logout">Çıkış Yap</span>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Mobile Menu -->
+                <button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Menüyü aç">
+                    <span class="menu-line"></span>
+                    <span class="menu-line"></span>
+                    <span class="menu-line"></span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Mobile Navigation -->
+        <nav class="mobile-nav" id="mobileNav">
+            <div class="mobile-nav-body">
+                <div class="mobile-nav-top">
+                    <a href="./" class="mobile-nav-logo">
+                        <img src="/assets/brand/logo-primary.png" alt="Tahmisci" class="logo-image" />
+                    </a>
+                    <div class="mobile-language-switcher">
+                        <button class="mobile-language-btn" id="mobileLanguageBtn">
+                            <span class="mobile-language-current" id="mobileCurrentLanguage">TR</span>
+                            <i class="fas fa-chevron-down mobile-language-icon"></i>
+                        </button>
+                        <div class="mobile-language-dropdown" id="mobileLanguageDropdown">
+                            <button class="mobile-language-option" data-lang="tr">
+                                <span class="mobile-language-code">TR</span>
+                                <span class="mobile-language-name">Türkçe</span>
+                            </button>
+                            <button class="mobile-language-option" data-lang="en">
+                                <span class="mobile-language-code">EN</span>
+                                <span class="mobile-language-name">English</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <button class="mobile-nav-close" id="mobileNavClose">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="mobile-auth-section" id="mobileAuth" hidden aria-hidden="true">
+                    <button class="mobile-auth-btn primary" id="mobileMenuBtnLogin" data-i18n="login">
+                        Giriş Yap
+                    </button>
+                    <button class="mobile-auth-btn secondary" id="mobileMenuBtnRegister" data-i18n="register">
+                        Üye Ol
+                    </button>
+                </div>
+
+
+
+                <div class="mobile-nav-account-content" style="display: none;">
+                    <ul class="mobile-nav-links">
+                        <li class="mobile-account-nav-item">
+                            <a href="hesabim" class="mobile-nav-link">
+                                <i class="fas fa-user-circle"></i>
+                                <span data-i18n="profile_menu_account">Hesabım</span>
+                            </a>
+                        </li>
+                        <li class="mobile-account-nav-item">
+                            <a href="siparislerim" class="mobile-nav-link">
+                                <i class="fas fa-shopping-bag"></i>
+                                <span data-i18n="profile_menu_orders">Siparişlerim</span>
+                            </a>
+                        </li>
+                        <li class="mobile-account-nav-item">
+                            <a href="hesabim-rezervasyonlar" class="mobile-nav-link">
+                                <i class="fas fa-calendar-check"></i>
+                                <span class="mobile-account-nav-text">Rezervasyonlarım</span>
+                            </a>
+                        </li>
+                        <li class="mobile-account-nav-item has-submenu">
+                            <a href="bilgilerim" class="mobile-nav-link">
+                                <i class="fas fa-edit"></i>
+                                <span class="mobile-account-nav-text" data-i18n="profile_menu_info">Bilgilerim</span>
+                            </a>
+
+                        </li>
+                        <li class="mobile-account-nav-item has-submenu">
+                            <a href="adreslerim" class="mobile-nav-link">
+                                <i class="fas fa-map-marker-alt"></i>
+                                <span class="mobile-account-nav-text" data-i18n="profile_menu_addresses">Adreslerim</span>
+                            </a>
+
+                        </li>
+                        <li class="mobile-nav-item"><a href="#" class="profile-menu-item" id="mobileLogoutBtn">
+                                <i class="fas fa-sign-out-alt"></i>
+                                <span data-i18n="profile_menu_logout">Çıkış Yap</span>
+                            </a></li>
+                    </ul>
+                </div>
+
+                <div class="mobile-nav-content">
+                    <ul class="mobile-nav-links">
+                        <li class="mobile-nav-item" data-nav-id="home"><a class="mobile-nav-link active" href="#top" data-nav-id="home"><i class="mobile-nav-link-icon fas fa-house" aria-hidden="true"></i><span class="mobile-nav-text">Ana Sayfa</span></a></li>
+                        <li class="mobile-nav-item" data-nav-id="menu"><a class="mobile-nav-link" href="#menu" data-nav-id="menu"><i class="mobile-nav-link-icon fas fa-utensils" aria-hidden="true"></i><span class="mobile-nav-text">Menü</span></a></li>
+                        <li class="mobile-nav-item" data-nav-id="about"><a class="mobile-nav-link" href="#about" data-nav-id="about"><i class="mobile-nav-link-icon fas fa-mug-hot" aria-hidden="true"></i><span class="mobile-nav-text">Hakkımızda</span></a></li>
+                        <li class="mobile-nav-item" data-nav-id="contact"><a class="mobile-nav-link" href="#contact" data-nav-id="contact"><i class="mobile-nav-link-icon fas fa-phone" aria-hidden="true"></i><span class="mobile-nav-text">İletişim</span></a></li>
+                        <li class="mobile-nav-item" data-nav-id="mudavim"><a class="mobile-nav-link" href="/mudavim/" data-nav-id="mudavim"><i class="mobile-nav-link-icon fas fa-id-card" aria-hidden="true"></i><span class="mobile-nav-text">Müdavim</span></a></li>
+                    </ul>
+
+                </div>
+            </div>
+
+
+        </nav>
+
+
+
+
+    </div>
+
+
+
+
+
+</header>
+<script>
+    // Set active nav link function - defined early for header-loader.js
+    function setActiveNavLink() {
+        const path = window.location.pathname;
+        const normalizedPath = path.toLowerCase().replace(/\/$/, '');
+        const currentPathSegment = normalizedPath.split('/').pop() || '';
+        // Remove .php extension if exists
+        const pathSegmentWithoutExt = currentPathSegment.replace(/\.php$/, '');
+
+        let targetSegment = '';
+        // Profile pages - don't set any nav as active
+        if (pathSegmentWithoutExt === 'hesabim' || pathSegmentWithoutExt === 'siparislerim' ||
+            pathSegmentWithoutExt === 'hesabim-rezervasyonlar' ||
+            pathSegmentWithoutExt === 'bilgilerim' || pathSegmentWithoutExt === 'adreslerim') {
+            targetSegment = '';
+        } else if (pathSegmentWithoutExt === 'menuler') {
+            targetSegment = 'menuler';
+        } else if (pathSegmentWithoutExt === 'hakkimizda') {
+            targetSegment = 'hakkimizda';
+        } else if (pathSegmentWithoutExt === 'iletisim') {
+            targetSegment = 'iletisim';
+        } else if (pathSegmentWithoutExt === 'sepet') {
+            targetSegment = 'sepet';
+        } else if (normalizedPath === '' || normalizedPath === '/' || normalizedPath === '/web' || normalizedPath.endsWith('/web')) {
+            targetSegment = 'index';
+        }
+
+        const navLinks = document.querySelectorAll('.nav-link, .mobile-nav-link, .nav-dropdown-item, .mobile-nav-submenu-item');
+        navLinks.forEach((link) => {
+            link.classList.remove('active');
+
+            // Profile pages - don't set any nav as active
+            if (targetSegment === '') {
+                // Skip - no link should be active on profile pages
+                return;
+            }
+
+            const linkHref = link.getAttribute('href') || '';
+            const linkPath = linkHref.toLowerCase().replace(/^\.\.\//, '').replace(/^\//, '').replace(/\/$/, '');
+            const linkSegment = linkPath.split('/').pop() || linkPath;
+
+            let isActive = false;
+
+            if (targetSegment === 'index') {
+                if (linkPath === 'index.php' || linkPath === '' || linkPath === 'index' || linkHref === './' || linkHref === '') {
+                    isActive = true;
+                }
+            } else if (targetSegment) {
+                // Only set active if targetSegment is not empty
+                if (linkSegment === targetSegment || linkPath.includes(targetSegment)) {
+                    isActive = true;
+                }
+            }
+
+            if (isActive) {
+                link.classList.add('active');
+            }
+        });
+    }
+</script>
+<script>
+    // Initialize language switcher immediately (inline)
+    (function() {
+        function initLanguageSwitcherInline() {
+            const languageBtn = document.getElementById('languageBtn');
+            const languageDropdown = document.getElementById('languageDropdown');
+            const currentLanguageSpan = document.getElementById('currentLanguage');
+            const mobileLanguageBtn = document.getElementById('mobileLanguageBtn');
+            const mobileLanguageDropdown = document.getElementById('mobileLanguageDropdown');
+            const mobileCurrentLanguageSpan = document.getElementById('mobileCurrentLanguage');
+
+            // Load saved language from localStorage
+            const savedLanguage = localStorage.getItem('site_language') || 'tr';
+
+            // Update display
+            if (currentLanguageSpan) {
+                currentLanguageSpan.textContent = savedLanguage.toUpperCase();
+            }
+            if (mobileCurrentLanguageSpan) {
+                mobileCurrentLanguageSpan.textContent = savedLanguage.toUpperCase();
+            }
+
+            // Update active state
+            if (languageDropdown) {
+                const languageOptions = languageDropdown.querySelectorAll('.language-option');
+                languageOptions.forEach(option => {
+                    const lang = option.getAttribute('data-lang');
+                    if (lang === savedLanguage) {
+                        option.classList.add('active');
+                    } else {
+                        option.classList.remove('active');
+                    }
+                });
+            }
+
+            if (mobileLanguageDropdown) {
+                const mobileLanguageOptions = mobileLanguageDropdown.querySelectorAll('.mobile-language-option');
+                mobileLanguageOptions.forEach(option => {
+                    const lang = option.getAttribute('data-lang');
+                    if (lang === savedLanguage) {
+                        option.classList.add('active');
+                    } else {
+                        option.classList.remove('active');
+                    }
+                });
+            }
+
+            // Desktop language switcher
+            if (languageBtn && languageDropdown) {
+                languageBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const switcher = languageBtn.closest('.language-switcher');
+                    if (switcher) {
+                        switcher.classList.toggle('active');
+                    }
+                });
+
+                // Handle language selection
+                const languageOptions = languageDropdown.querySelectorAll('.language-option');
+                languageOptions.forEach(option => {
+                    option.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        const lang = option.getAttribute('data-lang');
+                        localStorage.setItem('site_language', lang);
+                        window.location.reload();
+                    });
+                });
+            }
+
+            // Mobile language switcher
+            if (mobileLanguageBtn && mobileLanguageDropdown) {
+                mobileLanguageBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    const switcher = mobileLanguageBtn.closest('.mobile-language-switcher');
+                    if (switcher) {
+                        switcher.classList.toggle('active');
+                    }
+                });
+
+                // Handle mobile language selection
+                const mobileLanguageOptions = mobileLanguageDropdown.querySelectorAll('.mobile-language-option');
+                mobileLanguageOptions.forEach(option => {
+                    option.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        const lang = option.getAttribute('data-lang');
+                        localStorage.setItem('site_language', lang);
+                        window.location.reload();
+                    });
+                });
+            }
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initLanguageSwitcherInline);
+        } else {
+            initLanguageSwitcherInline();
+        }
+    })();
+</script>
+  <!-- Main Content -->
+  <main class="main homepage-main">
+    <!-- Hero Section -->
+    <section
+      class="homepage-section hero-section"
+      data-section="hero"
+      data-active="true">
+      <div class="hero-slider-wrapper">
+        <div class="hero-slider-track" id="heroSliderTrack">
+          <!-- Slides will be loaded here by JavaScript -->
+        </div>
+
+        <!-- Navigation Buttons -->
+        <button
+          class="hero-slider-nav hero-slider-prev"
+          id="heroSliderPrev"
+          aria-label="Önceki">
+          <i class="fas fa-chevron-left"></i>
+        </button>
+        <button
+          class="hero-slider-nav hero-slider-next"
+          id="heroSliderNext"
+          aria-label="Sonraki">
+          <i class="fas fa-chevron-right"></i>
+        </button>
+
+        <!-- Dots Indicator -->
+        <div class="hero-slider-dots" id="heroSliderDots">
+          <!-- Dots will be loaded here by JavaScript -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Popüler Ürünler -->
+    <section
+      class="homepage-section products-section"
+      data-section="popular-products"
+      data-active="true">
+      <div class="container">
+        <div class="section-header">
+          <h2 class="section-title" data-i18n="featured_title">Öne Çıkan Lezzetler</h2>
+        </div>
+        <div class="products-slider-wrapper" id="popularProductsSlider">
+          <div class="products-slider-track" id="productsSliderTrack">
+            <!-- Products will be loaded here by JavaScript -->
+          </div>
+          <button
+            class="slider-nav-btn slider-prev"
+            id="sliderPrev"
+            aria-label="Önceki">
+            <i class="fas fa-chevron-left"></i>
+          </button>
+          <button
+            class="slider-nav-btn slider-next"
+            id="sliderNext"
+            aria-label="Sonraki">
+            <i class="fas fa-chevron-right"></i>
+          </button>
+        </div>
+        <div style="text-align: center; margin-top: 2rem">
+          <a href="#menu" class="btn btn-primary">
+            <span data-i18n="view_full_menu">Tüm Menüyü Gör</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tahmisci Menu -->
+    <section class="menu-catalog" id="menu" aria-labelledby="menuTitle">
+      <div class="menu-catalog-heading container">
+        <span class="menu-eyebrow" data-i18n="menu_eyebrow">TAHMİSÇİ MENÜ</span>
+        <h2 id="menuTitle" data-i18n="menu_section_title">Kahveden tatlıya, tüm lezzetler</h2>
+        <p data-i18n="menu_section_desc">Güncel Tahmisçi menüsü yükleniyor.</p>
+      </div>
+
+      <div class="menu-filters-section" id="menuFilters">
+        <div class="container menu-filters">
+          <div class="filter-categories" aria-label="Menu kategorileri"></div>
+          <div class="filter-subcategories-wrapper" style="display:none">
+            <div class="filter-subcategories"></div>
+          </div>
+          <div class="filter-controls">
+            <label class="search-control" for="productSearch">
+              <i class="fas fa-search" aria-hidden="true"></i>
+              <input id="productSearch" type="search" placeholder="Ürün veya içerik ara" data-i18n-placeholder="menu_search_full_placeholder" autocomplete="off" />
+            </label>
+            <label class="sort-control" for="sortSelect">
+              <span class="sr-only">Sıralama</span>
+              <select id="sortSelect">
+                <option value="default" data-i18n="menu_sort_order">Menü sırası</option>
+                <option value="name" data-i18n="menu_sort_name">Ada göre</option>
+                <option value="price-low" data-i18n="menu_sort_price_low">Fiyat: düşükten yükseğe</option>
+                <option value="price-high" data-i18n="menu_sort_price_high">Fiyat: yüksekten düşüğe</option>
+              </select>
+            </label>
+            <div class="products-info" aria-live="polite">
+              <span class="products-count" id="productsCount">0 ürün</span>
+              <span class="products-category" id="productsCategory" data-i18n="all_categories_lower">tüm kategoriler</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="products-section" id="menuCatalog">
+        <div class="container">
+          <div class="loading-state" id="loadingState" data-i18n="menu_loading">Menü yükleniyor...</div>
+          <div class="products-grid" id="productsGrid"></div>
+          <div class="empty-state" id="emptyState" style="display:none" data-i18n="menu_empty_search">Aramanızla eşleşen ürün bulunamadı.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Firma Hakkinda -->
+    <section
+      class="homepage-section about-company-section"
+      id="about"
+      data-section="about-company"
+      data-active="true">
+      <div class="container">
+        <div class="about-company-content">
+          <div class="about-company-image">
+            <img
+              src="/assets/images/about/tahmisci-hakkimizda.webp"
+              alt="Tahmisçi kahve sunumu"
+              loading="lazy" />
+          </div>
+          <div class="about-company-text">
+            <h2 class="section-title" data-i18n="about_title">Tahmisçi</h2>
+            <p class="about-description" data-i18n="about_description">
+              Tahmisçi geleneği, Torbalı'da kahvenin kokusunu ve emeğini bugüne taşıyan bir marka deneyimidir.
+              Zeytin odununda kavrulan kahve hafızasından ilham alıyor; espresso kültürü, soğuk içecekler,
+              tatlılar ve özenli hazırlıkla günün her anına eşlik eden sade bir kahve molası sunuyoruz.
+            </p>
+            <div class="about-features">
+              <div class="about-feature">
+                <i class="fas fa-award"></i>
+                <span data-i18n="about_feature_care">Özenli Hazırlık</span>
+              </div>
+              <div class="about-feature">
+                <i class="fas fa-shipping-fast"></i>
+                <span data-i18n="about_feature_service">Hızlı Servis</span>
+              </div>
+              <div class="about-feature">
+                <i class="fas fa-heart"></i>
+                <span data-i18n="about_feature_passion">Kahve Tutkusu</span>
+              </div>
+            </div>
+            <a href="#menu" class="btn btn-primary">
+              <span data-i18n="discover_menu">Menüyü Keşfet</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- QR Menü Section -->
+    <section
+      class="homepage-section qr-menu-section"
+      id="qr-menu"
+      data-section="qr-menu"
+      data-active="true">
+      <div class="container">
+        <div class="qr-menu-content">
+          <div class="qr-menu-text">
+            <h2 data-i18n="qr_section_title">QR Menü ile Hızlı Erişim</h2>
+            <p data-i18n="qr_section_desc">
+              QR kodu okutarak Tahmisçi menüsüne mobil cihazınızdan hızlıca ulaşın.
+            </p>
+          </div>
+          <a class="qr-code-box qr-code-link" href="https://tahmiscicoffee.com/" target="_blank" rel="noopener noreferrer" data-i18n-aria-label="qr_open_site">
+            <div class="qr-code">
+              <img src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&amp;data=https%3A%2F%2Ftahmiscicoffee.com%2F" alt="tahmiscicoffee.com QR kodu" loading="lazy" />
+            </div>
+            <p data-i18n="scan_qr_text">QR kodu okutun</p>
+            <span class="btn btn-outline" data-i18n="go_to_menu_site">Menüye Git</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- İletişim -->
+    <section class="homepage-section tahmisci-contact-section" id="contact" data-section="contact" data-active="true">
+      <div class="container">
+        <div class="tahmisci-contact-grid">
+          <div class="tahmisci-contact-info">
+            <span class="menu-eyebrow" data-i18n="contact_eyebrow">İLETİŞİM</span>
+            <h2 class="section-title" data-i18n="contact_title">Tahmisçi Coffee & Roastery</h2>
+            <div class="tahmisci-contact-card">
+              <i class="fas fa-map-marker-alt"></i>
+              <div>
+                <strong data-i18n="contact_address_label">Adres</strong>
+                <p>Ertuğrul Mahallesi, Sadık İleri Bulvarı No: 42/B, 35860 Torbalı/İzmir</p>
+              </div>
+            </div>
+            <a class="tahmisci-contact-card tahmisci-contact-link" href="tel:+905522954634">
+              <i class="fas fa-phone"></i>
+              <div>
+                <strong data-i18n="contact_phone_label">Telefon</strong>
+                <p>0552 295 46 34</p>
+              </div>
+            </a>
+            <a class="tahmisci-contact-card tahmisci-contact-link" href="https://www.instagram.com/tahmiscicoffee?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw==" target="_blank" rel="noopener noreferrer">
+              <i class="fab fa-instagram"></i>
+              <div>
+                <strong>Instagram</strong>
+                <p>@tahmiscicoffee</p>
+              </div>
+            </a>
+            <a class="tahmisci-contact-card tahmisci-contact-link" href="https://www.tiktok.com/@tahmiscicoffee" target="_blank" rel="noopener noreferrer">
+              <i class="fab fa-tiktok"></i>
+              <div>
+                <strong>TikTok</strong>
+                <p>@tahmiscicoffee</p>
+              </div>
+            </a>
+            <a class="btn btn-outline tahmisci-map-btn" href="https://www.google.com/maps/search/?api=1&query=Ertu%C4%9Frul%20Mahallesi%20Sad%C4%B1k%20%C4%B0leri%20Bulvar%C4%B1%20No%3A%2042B%2035860%20Torbal%C4%B1%20%C4%B0zmir%20Tahmis%C3%A7i%20Coffee%20%26%20Roastery" target="_blank" rel="noopener noreferrer" data-i18n="open_in_maps">Haritada Aç</a>
+          </div>
+          <div class="tahmisci-map">
+            <iframe
+              title="Tahmisçi Coffee & Roastery konumu"
+              src="https://www.google.com/maps?q=Tahmis%C3%A7i%20Coffee%20%26%20Roastery%20Ertu%C4%9Frul%20Mahallesi%20Sad%C4%B1k%20%C4%B0leri%20Bulvar%C4%B1%20No%3A%2042B%2035860%20Torbal%C4%B1%20%C4%B0zmir&output=embed"
+              loading="lazy"
+              referrerpolicy="no-referrer-when-downgrade"></iframe>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+
+
+  <!-- Footer -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-content">
+      <div class="footer-section">
+        <div class="footer-logo">
+          <h3>Tahmisçi</h3>
+        </div>
+        <p class="footer-description" data-i18n="footer_static_desc">Kahve, tatlı ve daha fazlası.</p>
+        <div class="social-links">
+          <!-- Social links will be loaded here by JavaScript -->
+        </div>
+      </div>
+
+      <div class="footer-section">
+        <h4 class="footer-title" data-i18n="footer_quick_links">Hızlı Linkler</h4>
+        <ul class="footer-links">
+          <!-- Quick links will be loaded here by JavaScript -->
+        </ul>
+      </div>
+
+      <div class="footer-section">
+        <h4 class="footer-title" data-i18n="footer_contact">İletişim</h4>
+        <!-- Contact items will be loaded here by JavaScript -->
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <div class="footer-bottom-content">
+        <p class="footer-bottom-copyright">&copy; 2026 Tahmisçi. Tüm hakları saklıdır.</p>
+        <div class="footer-bottom-links">
+          <!-- Footer bottom links will be loaded here by JavaScript when data.bottom is provided -->
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+
+<!-- Cookie Notice -->
+<div class="cookie-notice" id="cookieNotice">
+  <div class="cookie-content">
+    <div class="cookie-text">
+      <p>
+        Web sitemizde deneyiminizi geliştirmek için çerezler kullanıyoruz.
+      </p>
+    </div>
+    <div class="cookie-actions">
+      <button class="btn btn-sm btn-secondary" id="cookieDecline">
+        Reddet
+      </button>
+      <button class="btn btn-sm btn-primary" id="cookieAccept">
+        Kabul Et
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Kampanya Seçim Modalı -->
+<div class="campaign-modal-overlay" id="campaignModal">
+  <div class="campaign-modal">
+    <div class="campaign-modal-header">
+      <button type="button" class="campaign-modal-back" id="campaignModalClose">
+        <i class="fas fa-chevron-left"></i>
+      </button>
+      <h2 class="campaign-modal-title" data-i18n="campaign_modal_title">Kampanyalar</h2>
+    </div>
+    <div class="campaign-modal-body">
+      <div class="campaign-section">
+        <h3 class="campaign-section-title" data-i18n="campaign_section_ready">Kullanıma Hazır Kampanyalar</h3>
+        <div class="campaign-list" id="campaignListReady"></div>
+      </div>
+      <div class="campaign-section">
+        <h3 class="campaign-section-title" data-i18n="campaign_section_eligible">Koşulları Sağlayıp Uygula</h3>
+        <div class="campaign-list" id="campaignListEligible"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- /Color Palette Switcher -->
+
+<!-- Login Modal -->
+<div id="loginModal" class="auth-modal-overlay" hidden aria-hidden="true">
+  <div class="auth-modal">
+    <button class="auth-modal-close" id="loginModalClose">
+      <i class="fas fa-times"></i>
+    </button>
+    <div class="auth-modal-header">
+      <h2 data-i18n="login_title">Giriş Yap</h2>
+      <p data-i18n="login_subtitle">Hesabınıza giriş yapın</p>
+    </div>
+    <div class="auth-modal-body">
+      <form id="loginForm" class="auth-form">
+        <div class="form-group">
+          <label for="loginEmail" data-i18n="email_label">E-posta</label>
+          <input
+            type="email"
+            id="loginEmail"
+            name="email"
+            placeholder="ornek@email.com"
+            data-i18n-placeholder="email_placeholder"
+            required />
+        </div>
+        <div class="form-group">
+          <label for="loginPassword" data-i18n="password_label">Şifre</label>
+          <div class="password-input-wrapper">
+            <input
+              type="password"
+              id="loginPassword"
+              name="password"
+              placeholder="********"
+              required />
+            <button
+              type="button"
+              class="password-toggle"
+              id="loginPasswordToggle">
+              <i class="fas fa-eye"></i>
+            </button>
+          </div>
+        </div>
+        <div class="form-group form-check">
+          <input type="checkbox" id="rememberMe" name="rememberMe" />
+          <label for="rememberMe" data-i18n="remember_me">Beni hatırla</label>
+        </div>
+        <button type="submit" class="btn-auth-submit" data-i18n="login">Giriş Yap</button>
+      </form>
+      <div class="auth-modal-footer">
+        <p data-i18n-html="no_account_html">
+          Hesabınız yok mu? <a href="#" id="switchToRegister">Üye Ol</a>
+        </p>
+        <p class="auth-modal-footer-guest" id="guestOrderWrap" style="display: none;">
+          <a href="#" id="guestOrderLink" data-i18n="guest_order_link">İstersen üye olmadan sipariş ver</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Register Modal -->
+<div id="registerModal" class="auth-modal-overlay" hidden aria-hidden="true">
+  <div class="auth-modal register-modal-modern">
+    <div class="auth-modal-header-modern">
+      <h2 data-i18n="register_title">Kayıt Ol</h2>
+      <button class="auth-modal-close" id="registerModalClose">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <div class="auth-modal-body">
+      <!-- Step 1: Registration Form -->
+      <div id="registerStep1">
+        <form id="registerForm" class="auth-form register-form-modern">
+          <!-- Telefon Numarası -->
+          <div class="form-group phone-group">
+            <label for="registerPhone" data-i18n="phone_label">Telefon Numarası</label>
+            <div class="phone-input-wrapper">
+              <div class="phone-code-selector">
+                <span class="flag-icon">TR</span>
+                <span class="phone-code">+90</span>
+              </div>
+              <input
+                type="tel"
+                id="registerPhone"
+                name="phone"
+                placeholder="Telefon Numarası"
+                data-i18n-placeholder="phone_placeholder"
+                required />
+            </div>
+          </div>
+
+          <!-- Ad ve Soyad -->
+          <div class="form-row-name">
+            <div class="form-group">
+              <label for="registerFirstName" data-i18n="first_name">Ad</label>
+              <input
+                type="text"
+                id="registerFirstName"
+                name="firstName"
+                placeholder="Ad"
+                data-i18n-placeholder="first_name"
+                required />
+            </div>
+            <div class="form-group">
+              <label for="registerLastName" data-i18n="last_name">Soyad</label>
+              <input
+                type="text"
+                id="registerLastName"
+                name="lastName"
+                placeholder="Soyad"
+                data-i18n-placeholder="last_name"
+                required />
+            </div>
+          </div>
+
+          <!-- E-posta -->
+          <div class="form-group">
+            <label for="registerEmail" data-i18n="email_label">E-Posta</label>
+            <input
+              type="email"
+              id="registerEmail"
+              name="email"
+              placeholder="E-Posta"
+              data-i18n-placeholder="email_placeholder"
+              required />
+          </div>
+
+          <!-- Şifre ve Şifre Tekrarı -->
+          <div class="form-row-password">
+            <div class="form-group">
+              <label for="registerPassword" data-i18n="password_label">Şifre</label>
+              <div class="password-input-wrapper">
+                <input
+                  type="password"
+                  id="registerPassword"
+                  name="password"
+                  placeholder="Şifre"
+                  data-i18n-placeholder="password_label"
+                  required />
+                <button
+                  type="button"
+                  class="password-toggle"
+                  id="registerPasswordToggle">
+                  <i class="fas fa-eye"></i>
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="registerPasswordConfirm" data-i18n="password_confirm_label">Şifre Tekrarı</label>
+              <div class="password-input-wrapper">
+                <input
+                  type="password"
+                  id="registerPasswordConfirm"
+                  name="passwordConfirm"
+                  placeholder="Şifre Tekrarı"
+                  data-i18n-placeholder="password_confirm_label"
+                  required />
+                <button
+                  type="button"
+                  class="password-toggle"
+                  id="registerPasswordConfirmToggle">
+                  <i class="fas fa-eye"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Kampanya Checkbox -->
+          <div class="form-group form-check campaign-checkbox">
+            <input type="checkbox" id="campaignNews" name="campaignNews" />
+            <label for="campaignNews" data-i18n="campaign_consent_alt">
+              Tahmisçi'nin bana özel kampanya ve duyurularından
+              haberdar olmak istiyorum.
+            </label>
+          </div>
+
+          <!-- Legal Links -->
+          <div class="legal-links">
+            <p data-i18n-html="legal_notice_html">
+              Üye olarak,
+              <a href="#" class="legal-link" data-legal="disclosure">Kişisel Verilere İlişkin Aydınlatma Metni</a>’ni
+              okuduğunuzu ve
+              <a href="#" class="legal-link" data-legal="terms">Kullanım Koşulları</a>’nı
+              kabul ettiğinizi onaylamış olursunuz.
+            </p>
+          </div>
+
+          <button type="submit" class="btn-auth-submit btn-register-submit" data-i18n="register_title">
+            Kayıt Ol
+          </button>
+        </form>
+        <div class="auth-modal-footer-modern">
+          <p data-i18n-html="already_member_html">
+            Tahmisçi'ye üyeysen <a href="#" id="switchToLogin">Giriş yap</a>
+          </p>
+        </div>
+      </div>
+
+      <!-- Step 2: Verification Code -->
+      <div id="registerStep2" class="register-step2" style="display: none">
+        <button type="button" class="btn-back-to-step1" id="backToStep1">
+          <i class="fas fa-arrow-left"></i>
+          <span data-i18n="back">Geri</span>
+        </button>
+        <div class="verification-header">
+          <h3 data-i18n="verify_title">Doğrulama Kodu</h3>
+          <p class="verification-info" data-i18n-html="verify_info_html">
+            Telefon numaranız (<span id="step2Phone"></span>) ve e-posta
+            adresinize (<span id="step2Email"></span>) gönderilen 4 haneli
+            kodu giriniz.
+          </p>
+        </div>
+        <div class="verification-code-group">
+          <input
+            type="text"
+            class="verification-code-input"
+            maxlength="4"
+            autocomplete="one-time-code"
+            inputmode="numeric" />
+          <input
+            type="text"
+            class="verification-code-input"
+            maxlength="1"
+            inputmode="numeric" />
+          <input
+            type="text"
+            class="verification-code-input"
+            maxlength="1"
+            inputmode="numeric" />
+          <input
+            type="text"
+            class="verification-code-input"
+            maxlength="1"
+            inputmode="numeric" />
+        </div>
+        <button
+          type="button"
+          id="verifyCodeBtn"
+          class="btn-auth-submit btn-verify-code"
+          data-i18n="verify_code">
+          Kodu Doğrula
+        </button>
+        <div class="verification-footer">
+          <p data-i18n-html="resend_code_html">
+            Kod gelmedi mi? <a href="#" id="resendCode">Tekrar Gönder</a>
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Legal Document Modal (Kullanım Sözleşmesi / Aydınlatma Metni) -->
+<div class="legal-doc-modal-overlay" id="legalDocModal" hidden aria-hidden="true">
+  <div class="legal-doc-modal">
+    <div class="legal-doc-modal-header">
+      <h2 class="legal-doc-modal-title" id="legalDocModalTitle"></h2>
+      <button type="button" class="legal-doc-modal-close" id="legalDocModalClose" aria-label="Kapat">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <div class="legal-doc-modal-body">
+      <div class="legal-doc-modal-loading" id="legalDocModalLoading">Yükleniyor...</div>
+      <div class="legal-doc-modal-content" id="legalDocModalContent"></div>
+    </div>
+    <div class="legal-doc-modal-footer">
+      <button type="button" class="legal-doc-modal-footer-close" id="legalDocModalFooterClose">Kapat</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modern Product Modal -->
+<div class="product-modal-overlay" id="productModalOverlay">
+  <div class="product-modal" id="productModal">
+    <div class="product-modal-header">
+      <button class="product-modal-close" id="productModalClose">
+        <i class="fas fa-chevron-left"></i>
+      </button>
+    </div>
+
+    <div class="product-modal-content">
+      <div class="product-modal-image">
+        <!-- Gallery Container -->
+        <div class="product-gallery">
+          <div class="product-gallery-main" id="productGalleryMain">
+            <!-- Spinner -->
+            <div class="image-loading-spinner" id="modalImageLoadingSpinner">
+              <div class="spinner"></div>
+            </div>
+            <!-- Ana resim/video slider -->
+            <div class="gallery-slides" id="gallerySlides">
+              <!-- Dinamik olarak JS ile eklenecek -->
+            </div>
+            <!-- Sol/Sağ oklar -->
+            <button class="gallery-nav gallery-nav-prev" id="galleryPrev">
+              <i class="fas fa-chevron-left"></i>
+            </button>
+            <button class="gallery-nav gallery-nav-next" id="galleryNext">
+              <i class="fas fa-chevron-right"></i>
+            </button>
+
+            <!-- Thumbnail dots - main içinde -->
+            <div class="gallery-dots" id="galleryDots"></div>
+          </div>
+        </div>
+
+        <div class="product-modal-badge" id="modalProductBadge"></div>
+      </div>
+
+      <div class="product-modal-info">
+        <div class="product-modal-header-info">
+          <h2 class="product-modal-title" id="modalProductName">
+            Ürün Adı
+          </h2>
+          <div class="product-modal-nutrition-actions">
+            <span class="product-modal-calorie-badge" id="modalCalorieBadge" style="display: none;">
+              <i class="fas fa-fire"></i>
+              <span>Kalori: <b id="modalCalorieValue"></b></span>
+            </span>
+            <button class="product-modal-nutrition-btn" id="modalNutritionBtn" style="display: none;">
+              <i class="fas fa-info-circle"></i>
+              <span data-i18n="nutrition_button">Besin Değerleri</span>
+            </button>
+          </div>
+          <p class="product-modal-description" id="modalProductDescription">
+            Ürün açıklaması burada yer alacak...
+          </p>
+        </div>
+
+        <div class="product-modal-price">
+          <span class="current-price" id="modalCurrentPrice">45</span>
+          <span
+            class="old-price"
+            id="modalOldPriceTop"
+            style="display: none">0</span>
+        </div>
+
+        <!-- Dynamic Options Container -->
+        <div id="dynamicOptionsContainer">
+          <!-- Options Loading Spinner -->
+          <div class="options-loading-spinner" id="optionsLoadingSpinner">
+            <div class="spinner"></div>
+          </div>
+          <!-- Options will be rendered here dynamically -->
+        </div>
+
+        <!-- Special Notes - Always visible -->
+        <div class="product-option-group">
+          <h4 class="option-title mb-1" data-i18n="notes_title">Özel Notlar</h4>
+          <textarea
+            class="product-notes"
+            id="productNotes"
+            placeholder="Siparişiniz hakkında özel bir isteğiniz var mı?"
+            data-i18n-placeholder="notes_placeholder"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Product Modal Footer -->
+    <div class="product-modal-footer">
+      <div class="add-to-cart-row">
+        <div class="modal-price-group">
+          <span class="modal-current-price" id="modalTotalPrice">45</span>
+          <span
+            class="modal-old-price"
+            id="modalOldPrice"
+            style="display: none">55</span>
+        </div>
+        <div class="quantity-selector">
+          <button class="quantity-btn minus" id="modalQuantityMinus">
+            <i class="fas fa-minus"></i>
+          </button>
+          <span class="quantity-display" id="modalQuantity">1</span>
+          <button class="quantity-btn plus" id="modalQuantityPlus">
+            <i class="fas fa-plus"></i>
+          </button>
+        </div>
+        <button class="add-to-cart-btn" id="modalAddToCart" data-i18n="product_action_add">
+          Ekle
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Gallery Fullscreen Overlay -->
+<div class="gallery-fullscreen-overlay" id="galleryFullscreen">
+  <button class="gallery-fullscreen-close" id="galleryFullscreenClose">
+    <i class="fas fa-times"></i>
+  </button>
+  <div class="gallery-fullscreen-content" id="galleryFullscreenContent">
+    <!-- Tam ekran medya -->
+  </div>
+  <button class="gallery-fullscreen-nav gallery-fullscreen-prev" id="fullscreenPrev">
+    <i class="fas fa-chevron-left"></i>
+  </button>
+  <button class="gallery-fullscreen-nav gallery-fullscreen-next" id="fullscreenNext">
+    <i class="fas fa-chevron-right"></i>
+  </button>
+  <div class="gallery-fullscreen-dots" id="fullscreenDots"></div>
+</div>
+
+<!-- Nutrition Values Tooltip -->
+<div class="nutrition-tooltip-overlay" id="nutritionTooltipOverlay">
+  <div class="nutrition-tooltip" id="nutritionTooltip">
+    <button class="nutrition-tooltip-close" id="nutritionTooltipClose">
+      <i class="fas fa-times"></i>
+    </button>
+    <div class="nutrition-tooltip-content" id="nutritionTooltipContent">
+      <!-- Content will be populated by JavaScript -->
+    </div>
+  </div>
+</div>
+
+<!-- Search Overlay -->
+<div class="search-overlay" id="searchOverlay">
+  <div class="search-container">
+    <div class="search-box">
+      <div class="search-input-group">
+        <i class="fas fa-search"></i>
+        <input type="text" placeholder="Ürün, kategori ara..." id="searchInput" data-i18n-placeholder="search_placeholder">
+        <button class="search-close" id="searchClose">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="search-suggestions" id="searchSuggestions">
+        <!-- Search suggestions will be loaded here by JavaScript if needed -->
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Header Overlay -->
+<div class="header-overlay" id="headerOverlay"></div>
+
+<!-- Mobile Contact Action Sheet (içerik footer API ile doldurulur) -->
+<div class="mobile-contact-overlay" id="mobileContactOverlay">
+  <div class="mobile-contact-sheet" id="mobileContactSheet">
+    <div class="mobile-contact-sheet-header">
+      <h3 class="mobile-contact-sheet-title" data-i18n="contact_options">İletişim Seçenekleri</h3>
+    </div>
+    <div class="mobile-contact-options" id="mobileContactOptions"></div>
+    <button class="mobile-contact-cancel" id="mobileContactCancel" data-i18n="contact_cancel">Vazgeç</button>
+  </div>
+</div>
+<!-- Add to Cart Success Notification -->
+
+<!-- Branch Select Modal -->
+<div id="branchSelectModal" class="selection-modal-overlay">
+  <div class="selection-modal">
+    <div class="selection-modal-header selection-modal-header--with-search">
+      <div class="selection-modal-header-text">
+        <h2 data-i18n="branch_select_title">Şube Seç</h2>
+        <p data-i18n="branch_select_desc">Size en uygun şubeyi seçin</p>
+      </div>
+      <div class="branch-search-wrap" id="branchSearchWrap">
+        <span class="branch-search-input-wrap">
+          <input type="text" class="branch-search-input" id="branchSearchInput" placeholder="Şube, il, ilçe ara..." autocomplete="off" />
+          <button type="button" class="branch-search-clear" id="branchSearchClear" aria-label="Temizle" title="Temizle"><i class="fas fa-times"></i></button>
+        </span>
+        <span class="branch-search-icon" id="branchSearchIcon"><i class="fas fa-search"></i></span>
+      </div>
+    </div>
+    <div class="selection-modal-body">
+      <div id="branchList" class="selection-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Order Type Select Modal -->
+<div id="orderTypeModal" class="selection-modal-overlay">
+  <div class="selection-modal">
+    <button class="selection-modal-close" id="orderTypeModalClose" style="display: none;">
+      <i class="fas fa-times"></i>
+    </button>
+    <div class="selection-modal-header">
+      <h2 data-i18n="order_type_title">Sipariş Tipi Seç</h2>
+      <p data-i18n="order_type_desc">Devam etmek için bir seçenek seçin</p>
+    </div>
+    <div class="selection-modal-body">
+      <div id="orderTypeList" class="selection-list"></div>
+      <button type="button" class="selection-back-btn" id="orderTypeBackBtn">
+        <i class="fas fa-arrow-left"></i>
+        <span data-i18n="back">Geri</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Table Select Modal -->
+<div id="tableSelectModal" class="selection-modal-overlay">
+  <div class="selection-modal">
+    <button class="selection-modal-close" id="tableSelectModalClose" style="display: none;">
+      <i class="fas fa-times"></i>
+    </button>
+    <div class="selection-modal-header">
+      <h2 data-i18n="table_select_title">Masa Seç</h2>
+      <p data-i18n="table_select_desc">Siparişi hangi masadan vereceksiniz?</p>
+    </div>
+    <div class="selection-modal-body">
+      <div class="selection-search-row">
+        <div class="selection-search-wrapper">
+          <input
+            type="text"
+            id="tableSearchInput"
+            class="selection-search-input"
+            placeholder="Masa ara..."
+            data-i18n-placeholder="table_search_placeholder"
+            autocomplete="off" />
+          <button
+            type="button"
+            class="selection-search-clear"
+            id="tableSearchClear"
+            aria-label="Aramayı temizle"
+            data-i18n-title="clear_search">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <span class="selection-search-divider" data-i18n="or_label">ya da</span>
+        <button type="button" id="qrScanBtn" class="selection-qr-btn" data-i18n="qr_scan" onclick="if(window.menuPage && window.menuPage.openQrScanner) window.menuPage.openQrScanner();">
+          <i class="fas fa-qrcode"></i>
+          QR Okut
+        </button>
+      </div>
+      <div id="tableList" class="selection-list selection-table-list"></div>
+      <button type="button" class="selection-back-btn" id="tableBackBtn">
+        <i class="fas fa-arrow-left"></i>
+        <span data-i18n="back">Geri</span>
+      </button>
+    </div>
+  </div>
+
+
+</div>
+
+<!-- Selection Status Button -->
+<button type="button" id="selectionStatusBtn" class="selection-status-btn">
+  <i class="fas fa-exchange-alt"></i>
+  <span class="selection-status-text" data-i18n="selection_label">Seçim</span>
+</button>
+
+<!-- Call Waiter Button -->
+<button type="button" id="callWaiterBtn" class="call-waiter-btn" style="display: none;">
+  <i class="fas fa-bell"></i>
+  <span data-i18n="call_waiter_label">Garson Çağır</span>
+</button>
+
+<!-- Call Waiter Reason Modal -->
+<div class="call-waiter-modal-overlay" id="callWaiterModalOverlay">
+  <div class="call-waiter-modal" id="callWaiterModal">
+    <h3 class="call-waiter-modal-title" data-i18n="call_waiter_reason_title">Yardım için garsonu çağırmak istediğinize emin misiniz?</h3>
+
+    <div class="call-waiter-reasons">
+      <button type="button" class="call-waiter-reason-btn" data-reason="payment" data-reason-id="1">
+        <i class="fas fa-credit-card" aria-hidden="true"></i>
+        <span data-i18n="call_waiter_reason_payment">Ödeme</span>
+      </button>
+      <button type="button" class="call-waiter-reason-btn" data-reason="ordering" data-reason-id="2">
+        <i class="fas fa-utensils" aria-hidden="true"></i>
+        <span data-i18n="call_waiter_reason_ordering">Sipariş verme</span>
+      </button>
+      <button type="button" class="call-waiter-reason-btn" data-reason="hurry" data-reason-id="3">
+        <i class="fas fa-bolt" aria-hidden="true"></i>
+        <span data-i18n="call_waiter_reason_hurry">Hızlan</span>
+      </button>
+      <button type="button" class="call-waiter-reason-btn" data-reason="other" data-reason-id="4">
+        <i class="fas fa-comment-dots" aria-hidden="true"></i>
+        <span data-i18n="call_waiter_reason_other">Diğer</span>
+      </button>
+    </div>
+
+    <div class="call-waiter-modal-actions">
+      <button type="button" class="call-waiter-cancel-btn" id="callWaiterCancelBtn">
+        <i class="fas fa-times-circle" aria-hidden="true"></i>
+        <span data-i18n="call_waiter_cancel">Vazgeç</span>
+      </button>
+      <button type="button" class="call-waiter-confirm-btn" id="callWaiterConfirmBtn" disabled>
+        <i class="fas fa-check-circle" aria-hidden="true"></i>
+        <span data-i18n="call_waiter_confirm">Onayla</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Garson çağrısı - Telefon (orderPhoneModal ile aynı tasarım) -->
+<div class="order-phone-modal-overlay" id="callWaiterPhoneModal">
+  <div class="order-phone-modal">
+    <button type="button" class="order-phone-close" id="callWaiterPhoneClose" aria-label="Kapat"><i class="fas fa-times"></i></button>
+    <div class="order-phone-header">
+      <h2 data-i18n="call_waiter_phone_title">Telefon numaranızı girin</h2>
+      <p data-i18n="call_waiter_phone_desc">Garson çağrısı için doğrulama kodu göndereceğiz.</p>
+    </div>
+    <div class="order-phone-body">
+      <div class="order-phone-form-group">
+        <label for="callWaiterPhoneNumber" data-i18n="order_phone_country">Ülke Kodu</label>
+        <div class="order-phone-input-group">
+          <input type="text" class="order-phone-country-input" value="TR +90" readonly />
+          <input type="tel" id="callWaiterPhoneInput" class="order-phone-number-input" placeholder="5XX XXX XX XX" data-i18n-placeholder="order_phone_placeholder" maxlength="10" inputmode="numeric" />
+        </div>
+        <div class="order-phone-error" id="callWaiterPhoneError"></div>
+      </div>
+      <button type="button" class="order-phone-send-btn" id="callWaiterPhoneSend" data-i18n="call_waiter_phone_send">Kod Gönder</button>
+    </div>
+  </div>
+</div>
+
+<!-- Garson çağrısı - Kod doğrulama (orderCodeModal ile aynı tasarım) -->
+<div class="order-code-modal-overlay" id="callWaiterCodeModal">
+  <div class="order-code-modal">
+    <button type="button" class="order-code-close" id="callWaiterCodeClose" aria-label="Kapat"><i class="fas fa-times"></i></button>
+    <div class="order-code-header">
+      <h2 data-i18n="call_waiter_code_title">Doğrulama kodu</h2>
+      <p data-i18n="call_waiter_code_desc">SMS ile gelen 4 haneli kodu girin.</p>
+      <p class="order-code-phone" style="margin-top: 0.5rem; font-weight: 600;">
+        <span id="callWaiterCodePhoneDisplay"></span>
+        <button type="button" class="order-code-change-phone" id="callWaiterCodeChangePhone">(<span data-i18n="order_change_phone_btn">Değiştir</span>)</button>
+      </p>
+    </div>
+    <div class="order-code-body">
+      <div class="verification-code-group" id="callWaiterCodeInputs">
+        <input type="text" maxlength="4" class="verification-code-input" inputmode="numeric" autocomplete="one-time-code" data-idx="0" />
+        <input type="text" maxlength="1" class="verification-code-input" inputmode="numeric" data-idx="1" />
+        <input type="text" maxlength="1" class="verification-code-input" inputmode="numeric" data-idx="2" />
+        <input type="text" maxlength="1" class="verification-code-input" inputmode="numeric" data-idx="3" />
+      </div>
+      <div class="order-code-error" id="callWaiterCodeError"></div>
+      <button type="button" class="order-code-confirm" id="callWaiterCodeVerify" data-i18n="call_waiter_code_verify">Doğrula</button>
+    </div>
+  </div>
+</div>
+
+<!-- Desktop Cart Button (Sadece desktop'ta görünür) -->
+<button type="button" id="desktopCartBtn" class="desktop-cart-btn" onclick="if(window.menuPage && window.menuPage.openNewCartModal) window.menuPage.openNewCartModal();">
+  <i class="fas fa-shopping-cart"></i>
+  <span class="cart-badge" id="desktopCartBadge">0</span>
+</button>
+
+<!-- New Cart Modal -->
+<div class="new-cart-modal-overlay" id="newCartModalOverlay">
+  <div class="new-cart-modal" id="newCartModal">
+    <!-- Modal Header -->
+    <div class="new-cart-header">
+      <h2 class="new-cart-title" data-i18n="cart_title">Sepetim</h2>
+      <button type="button" class="new-cart-close" id="newCartClose">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+
+    <!-- Modal Content -->
+    <div class="new-cart-content" id="newCartContent">
+      <!-- Cart Items Container -->
+      <div class="new-cart-items" id="newCartItems">
+        <!-- Items will be rendered here -->
+      </div>
+
+      <!-- Empty Cart State -->
+      <div class="new-cart-empty" id="newCartEmpty" style="display: none;">
+        <img src="/assets/brand/favicon.png" alt="Sepet" class="cart-empty-icon">
+        <p data-i18n="cart_empty_title">Sepetiniz henüz boş</p>
+        <span data-i18n="cart_empty_desc">Lezzetli ürünlerimizi keşfetmeye başlayın!</span>
+        <a href="#menu" class="btn btn-outline new-cart-empty-menu-btn" id="newCartEmptyMenuBtn">
+          <i class="fas fa-arrow-left" aria-hidden="true"></i>
+          <span data-i18n="cart_go_to_menu">Menüye git</span>
+        </a>
+      </div>
+
+      <!-- Order Summary -->
+      <div class="new-cart-summary" id="newCartSummary" style="display: none;">
+        <div class="summary-row campaign-select-row" id="menuCampaignSelectRow" style="display: none;">
+          <button type="button" class="campaign-select-card" id="menuCampaignSelectBtn">
+            <div class="campaign-select-icon">
+              <i class="fas fa-gift" aria-hidden="true"></i>
+            </div>
+            <div class="campaign-select-texts">
+              <div class="campaign-select-title" data-i18n="campaign_select_title">Kampanya Seç</div>
+              <div class="campaign-select-subtitle" data-i18n="campaign_select_subtitle">Fırsatlarını keşfet!</div>
+            </div>
+            <div class="campaign-select-action" data-i18n="campaign_select_action">Seç</div>
+          </button>
+        </div>
+        <div class="summary-row promo-row">
+          <div class="promo-input-wrapper">
+            <input
+              type="text"
+              id="promoCodeInput"
+              class="promo-code-input"
+              placeholder=""
+              data-i18n-placeholder="promo_code_placeholder"
+              autocomplete="off" />
+            <button
+              type="button"
+              id="applyPromoBtn"
+              class="promo-apply-btn"
+              style="display: none;"
+              data-i18n="promo_apply_btn">
+              Uygula
+            </button>
+          </div>
+          <div class="promo-error-message" id="promoErrorMessage" style="display: none;"></div>
+        </div>
+
+        <div class="summary-row campaign-applied-row" id="menuCampaignAppliedRow" style="display: none;">
+          <div class="campaign-applied-info">
+            <span class="campaign-applied-label" data-i18n="order_campaign_label">Kampanya</span>
+            <span class="campaign-applied-code" id="menuCampaignAppliedCode"></span>
+          </div>
+          <div class="campaign-applied-actions">
+            <span class="campaign-applied-discount" id="menuCampaignAppliedDiscount"></span>
+            <button type="button" class="campaign-remove-btn" id="menuCampaignRemoveBtn">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+        </div>
+        <div class="summary-row promo-applied-row" id="promoAppliedRow" style="display: none;">
+          <div class="promo-applied-info">
+            <span class="promo-applied-label" data-i18n="promo_discount_label">İndirim</span>
+            <span class="promo-applied-code" id="promoAppliedCode"></span>
+          </div>
+          <div class="promo-applied-actions">
+            <span class="promo-applied-discount" id="promoAppliedDiscount"></span>
+            <button type="button" class="promo-remove-btn" id="removePromoBtn">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+        </div>
+        <div class="summary-row free-items-row" id="menuFreeItemsRow" style="display: none;">
+          <div class="free-items-info">
+            <span class="free-items-label" data-i18n="cart_free_items">Ücretsiz ürünler</span>
+            <div class="free-items-list" id="menuFreeItemsList"></div>
+          </div>
+        </div>
+        <div class="summary-row items-row">
+          <span id="cartItemsCount">0 ürün</span>
+          <span id="cartItemsTotal">0</span>
+        </div>
+        <div class="summary-row total-row">
+          <span data-i18n="cart_order_total">Sipariş tutarı</span>
+          <span id="cartOrderTotal">0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Footer -->
+    <div class="new-cart-footer" id="newCartFooter" style="display: none;">
+      <div class="new-cart-footer-total">
+        <span class="new-cart-footer-total-label" data-i18n="cart_order_total">Sipariş tutarı</span>
+        <span class="new-cart-footer-total-amount" id="newCartFooterTotal">0</span>
+      </div>
+      <button type="button" class="new-cart-checkout-btn" id="newCartCheckoutBtn">
+        <span data-i18n="cart_next_step">Sonraki</span>
+        <i class="fas fa-chevron-right"></i>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- QR Scan Modal -->
+<div id="qrScanModal" class="selection-modal-overlay">
+  <div class="selection-modal qr-scan-modal">
+    <div class="selection-modal-header">
+      <h2 data-i18n="qr_scan_title">QR Okut</h2>
+      <p data-i18n="qr_scan_desc">Masa QR kodunu kameraya gösterin</p>
+    </div>
+    <div class="selection-modal-body">
+      <div id="qrScanReader" class="qr-scan-reader"></div>
+      <div class="qr-scan-status" id="qrScanStatus" data-i18n="qr_scan_waiting">
+        Kamera bekleniyor...
+      </div>
+      <button type="button" class="selection-back-btn" id="qrScanCloseBtn">
+        <i class="fas fa-arrow-left"></i>
+        <span data-i18n="back">Geri</span>
+      </button>
+    </div>
+  </div>
+</div>
+<!-- Scripts -->
+<script src="scripts/state/site-state.js?v=3"></script>
+<script src="scripts/utils/localization.js?v=5"></script>
+<script src="scripts/api/public-data-provider.js?v=9"></script>
+<script src="scripts/components/swipe-modal.js?v=3"></script>
+<script src="scripts/bootstrap/initialize-site.js?v=26"></script>
+<script src="scripts/sections/hero-section.js?v=26"></script>
+<script src="scripts/sections/featured-products.js?v=26"></script>
+<script src="scripts/components/product-details-modal.js?v=26"></script>
+<script src="scripts/components/header-navigation.js?v=26"></script>
+<script src="scripts/components/language-switcher.js?v=26"></script>
+<script src="scripts/sections/footer.js?v=26"></script>
+<script src="scripts/menu/menu-catalog.js?v=27"></script>
+<script src="scripts/menu/menu-filter.js?v=27"></script>
+<script src="scripts/components/product-gallery.js?v=26"></script>
+<script src="scripts/menu/menu-categories.js?v=26"></script>
+<script src="scripts/menu/menu-search.js?v=26"></script>
+
+</body>
+
+</html>
+
+
+

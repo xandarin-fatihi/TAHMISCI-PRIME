@@ -1,0 +1,126 @@
+# Example Nginx configuration for Tahmisci Prime.
+# Replace domain/certificate paths if the production topology differs, then run
+# `nginx -t` before reload. The certificate shown must cover the apex and the
+# optional www redirect host. Yönetici aynı domain altında `/yonetici/`dir.
+
+upstream tahmisci_api {
+    server 127.0.0.1:8080;
+    keepalive 32;
+}
+
+# HTTP -> HTTPS on the single canonical domain.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name tahmiscicoffee.com www.tahmiscicoffee.com;
+    return 301 https://tahmiscicoffee.com$request_uri;
+}
+
+# Canonicalize www without changing the path or query string.
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name www.tahmiscicoffee.com;
+
+    ssl_certificate /etc/letsencrypt/live/tahmiscicoffee.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/tahmiscicoffee.com/privkey.pem;
+
+    return 301 https://tahmiscicoffee.com$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name tahmiscicoffee.com;
+
+    ssl_certificate /etc/letsencrypt/live/tahmiscicoffee.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/tahmiscicoffee.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:TAHMISCI_TLS:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # Enable HSTS only after HTTPS is confirmed on the canonical domain.
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    client_max_body_size 130m;
+    client_body_timeout 120s;
+    keepalive_timeout 65s;
+
+    access_log /var/log/nginx/tahmisci.access.log;
+    error_log /var/log/nginx/tahmisci.error.log warn;
+
+    # SSE endpoints need an unbuffered, long-lived upstream connection.
+    location ~ ^/api/(?:admin/notifications|workforce/notifications|menu|recipes|stock|site|feedback)/events/?$ {
+        proxy_pass http://tahmisci_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        add_header X-Accel-Buffering "no" always;
+        add_header Cache-Control "no-cache, no-transform" always;
+    }
+
+    # API responses are never cached at the reverse proxy. Route-specific body
+    # limits and authorization remain enforced by Express.
+    location /api/ {
+        proxy_pass http://tahmisci_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+        proxy_buffering off;
+        proxy_cache off;
+        add_header Cache-Control "no-store" always;
+    }
+
+    # Service workers and manifests must revalidate so a rollback or new PWA
+    # release is not held behind an intermediary cache.
+    location ~* (?:^|/)sw\.js$ {
+        proxy_pass http://tahmisci_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_cache off;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+    }
+
+    location ~* \.webmanifest$ {
+        proxy_pass http://tahmisci_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_cache off;
+        add_header Cache-Control "no-cache, must-revalidate" always;
+    }
+
+    # `/`, `/yonetici/`, `/personel/` and static assets are served by the same
+    # Express application. Keep `/panel` compatibility redirects in the app so
+    # route tests and deep-link query strings share one source of truth.
+    location / {
+        proxy_pass http://tahmisci_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_read_timeout 75s;
+        proxy_send_timeout 75s;
+    }
+}
