@@ -8,11 +8,17 @@ const {
   WORKBOOKS,
   analyzeDataImport,
   catalogFingerprint,
-  catalogSnapshot,
   importRevision,
   legacyCatalogFingerprint,
   productCodeFingerprint,
-  restoreCatalogSnapshot
+  normalizeImportDomains,
+  domainsToScopes,
+  scopesToDomains,
+  domainRevisionSnapshot,
+  domainFingerprintSnapshot,
+  domainProductCodeFingerprintSnapshot,
+  domainCatalogSnapshot,
+  restoreDomainCatalogSnapshot
 } = require("./data-import");
 
 const DRAFT_TTL_MS = 30 * 60 * 1000;
@@ -80,6 +86,7 @@ function registerDataImportRoutes(options) {
           ok: true, analysisId, createdAt, expiresAt,
           expectedRevision: analysis.expectedRevision,
           files: analysis.files, scopes: analysis.scopes, report: analysis.report,
+          domains: analysis.domains,
           changes: analysis.changes, issues: analysis.issues, canApply: analysis.report.canApply
         };
         rememberIdempotency(data, scope, requestId, response, createdAt);
@@ -108,47 +115,65 @@ function registerDataImportRoutes(options) {
         const draft = data.dataImportDrafts.find((item) => item.id === analysisId || item.analysisId === analysisId);
         if (!draft) throw clientError(404, "Analiz kaydı bulunamadı veya süresi doldu. Dosyaları yeniden analiz edin.");
         if (draft.actor !== actor) throw clientError(403, "Bu analiz kaydını uygulama yetkiniz yok.");
-        if (!draft.report || draft.report.canApply !== true) throw clientError(409, "Kritik analiz hataları giderilmeden aktarım uygulanamaz.");
-        if (draft.report.requiresArchiveConfirmation === true && body.confirmArchiveImpact !== true) {
+        const requestedDomains = normalizeRequestedDomains(body.domains, draft);
+        const selectedDomains = requestedDomains.length ? requestedDomains : normalizeImportDomains([], draft.scopes);
+        if (!selectedDomains.length) throw clientError(400, "Uygulanacak en az bir veri alanı seçin.");
+        for (const domain of selectedDomains) {
+          const readiness = draft.domains && draft.domains[domain];
+          if (readiness && readiness.selected !== true) throw clientError(409, `${domain} bu analizde seçili değil.`);
+          if (readiness && readiness.canApply !== true) throw clientError(409, `${domain} veri alanındaki kritik analiz hataları giderilmeden aktarım uygulanamaz.`);
+        }
+        const appliedScopes = domainsToScopes(selectedDomains, draft.scopes);
+        if (!appliedScopes.length) throw clientError(409, "Seçilen veri alanları için uygulanabilir dosya bulunamadı.");
+        if (archiveConfirmationRequired(draft, selectedDomains) && body.confirmArchiveImpact !== true) {
           throw clientError(409, "Bu aktarım katalog kayıtlarının önemli bir bölümünü arşivleyecek. Arşiv etkisini açıkça onaylayın.");
         }
-        if (expectedRevision !== draft.expectedRevision || importRevision(data) !== expectedRevision) throw clientError(409, "Veri revizyonu analizden sonra değişti. Yeniden analiz edin.");
-        const currentFingerprint = Number(draft.fingerprintVersion || 0) >= 2
-          ? catalogFingerprint(data, draft.scopes)
-          : legacyCatalogFingerprint(data);
-        if (currentFingerprint !== draft.expectedFingerprint) throw clientError(409, "Katalog analizden sonra değişti. Yeniden analiz edin.");
-        if (draft.expectedProductCodeFingerprint
-          && productCodeFingerprint(data, draft.scopes) !== draft.expectedProductCodeFingerprint) {
-          throw clientError(409, "Ürün kodu bağlantıları analizden sonra değişti. Yeniden analiz edin.");
+        // İstek analizde verilen revizyonu taşımalı. Canlı global revizyon burada
+        // karşılaştırılmaz; seçili domain'in gerçekten bayat olup olmadığını aşağıdaki
+        // domain revizyonu ve fingerprint muhafızları belirler.
+        if (expectedRevision !== draft.expectedRevision) throw clientError(409, "Veri revizyonu analizden sonra değişti. Yeniden analiz edin.");
+        assertDomainDraftIsCurrent(data, draft, selectedDomains, appliedScopes);
+        if (!draft.expectedDomainFingerprints) {
+          const currentFingerprint = Number(draft.fingerprintVersion || 0) >= 2
+            ? catalogFingerprint(data, appliedScopes)
+            : legacyCatalogFingerprint(data);
+          if (currentFingerprint !== draft.expectedFingerprint) throw clientError(409, "Seçili veri alanı analizden sonra değişti. Yeniden analiz edin.");
+          if (draft.expectedProductCodeFingerprint
+            && productCodeFingerprint(data, appliedScopes) !== draft.expectedProductCodeFingerprint) {
+            throw clientError(409, "Ürün kodu bağlantıları analizden sonra değişti. Yeniden analiz edin.");
+          }
         }
 
         const now = new Date().toISOString();
         const operationId = `data-import-${crypto.randomUUID()}`;
-        const before = catalogSnapshot(data);
+        const before = domainCatalogSnapshot(data, selectedDomains);
         rollbackSnapshot = structuredClone(before);
         const revisionBefore = importRevision(data);
         const publishRevisionBefore = Number(data.revisions && data.revisions.publish || 0);
         const pricingRevisionBefore = Number(data.revisions && data.revisions.pricing || 0);
-        const beforeFingerprint = catalogFingerprint(data, draft.scopes);
-        const beforeProductCodeFingerprint = productCodeFingerprint(data, draft.scopes);
-        applyPlan(data, draft.plan, draft.scopes);
-        stampImportedMetadata(data, operationId, now, draft.scopes);
+        const beforeFingerprint = catalogFingerprint(data, appliedScopes);
+        const beforeProductCodeFingerprint = productCodeFingerprint(data, appliedScopes);
+        applyPlan(data, draft.plan, appliedScopes);
+        stampImportedMetadata(data, operationId, now, appliedScopes);
         data.revisions.dataImport = revisionBefore + 1;
+        bumpDomainRevisions(data, selectedDomains);
         data.revisions.publish = Number(data.revisions.publish || 0) + 1;
-        if (draft.scopes.includes("pricing")) data.revisions.pricing = Number(data.revisions.pricing || 0) + 1;
-        if (draft.scopes.includes("menu") || draft.scopes.includes("pricing") || draft.scopes.includes("recipes")) data.menuUpdatedAt = now;
-        if (draft.scopes.includes("pricing")) data.pricingUpdatedAt = now;
-        if (draft.scopes.includes("recipes")) data.recipeUpdatedAt = now;
-        if (draft.scopes.includes("stock")) data.stockUpdatedAt = now;
+        if (appliedScopes.includes("pricing")) data.revisions.pricing = Number(data.revisions.pricing || 0) + 1;
+        if (appliedScopes.includes("menu") || appliedScopes.includes("pricing")) data.menuUpdatedAt = now;
+        if (appliedScopes.includes("pricing")) data.pricingUpdatedAt = now;
+        if (appliedScopes.includes("recipes")) data.recipeUpdatedAt = now;
+        if (appliedScopes.includes("stock")) data.stockUpdatedAt = now;
         const backupId = `data-import-backup-${crypto.randomUUID()}`;
         const history = {
           id: operationId, importId: operationId, kind: "apply", requestId, analysisId, actor, files: draft.files,
-          scopes: draft.scopes, report: draft.report, changeCount: draft.changes.length,
-          importScope: draft.scopes, fingerprintVersion: 2,
+          scopes: appliedScopes, domains: selectedDomains, report: selectedDomainReport(draft, selectedDomains), changeCount: selectedDomainChanges(draft, selectedDomains).length,
+          importScope: appliedScopes, fingerprintVersion: 3,
           revisionBefore, revisionAfter: data.revisions.dataImport,
           publishRevisionBefore, pricingRevisionBefore,
           publishRevisionAfter: data.revisions.publish,
           pricingRevisionAfter: data.revisions.pricing,
+          domainRevisionsBefore: draft.expectedDomainRevisions || {},
+          domainRevisionsAfter: domainRevisionSnapshot(data, selectedDomains),
           beforeFingerprint, beforeProductCodeFingerprint,
           afterFingerprint: "", afterProductCodeFingerprint: "",
           committedFingerprint: "", persistedFingerprint: "",
@@ -157,13 +182,13 @@ function registerDataImportRoutes(options) {
           appliedAt: now, rolledBackAt: null, rollbackReason: "", rollbackVerified: null,
           backupId, createdAt: now, status: "applied", undoneAt: null, undoneBy: "", undoOperationId: ""
         };
-        data.dataImportBackups = (data.dataImportBackups || []).concat({ id: backupId, operationId, createdAt: now, snapshot: before }).slice(-10);
+        data.dataImportBackups = (data.dataImportBackups || []).concat({ id: backupId, operationId, createdAt: now, domains: selectedDomains, scopes: appliedScopes, snapshot: before }).slice(-10);
         data.dataImportHistory = (data.dataImportHistory || []).concat(history).slice(-100);
         data.dataImportDrafts = data.dataImportDrafts.filter((item) => item !== draft);
         response = {
           ok: true, operationId, analysisId, revision: data.revisions.dataImport,
           publishRevision: data.revisions.publish, pricingRevision: data.revisions.pricing,
-          changedScopes: draft.scopes, report: draft.report, changedCount: draft.changes.length,
+          changedScopes: appliedScopes, changedDomains: selectedDomains, report: selectedDomainReport(draft, selectedDomains), changedCount: selectedDomainChanges(draft, selectedDomains).length,
           canUndo: true, validationStatus: "pending", updatedAt: now
         };
         rememberIdempotency(data, scope, requestId, response, now);
@@ -199,7 +224,7 @@ function registerDataImportRoutes(options) {
           }
 
           const rollbackCommitted = await store.update((data) => {
-            restoreCatalogSnapshot(data, rollbackSnapshot);
+            restoreDomainCatalogSnapshot(data, rollbackSnapshot, response.changedDomains || scopesToDomains(response.changedScopes));
             data.revisions.dataImport = Number(committedHistory.revisionBefore || 0);
             data.revisions.publish = Number(committedHistory.publishRevisionBefore || 0);
             data.revisions.pricing = Number(committedHistory.pricingRevisionBefore || 0);
@@ -277,9 +302,10 @@ function registerDataImportRoutes(options) {
       const committedUndo = await store.update((data) => {
         const previous = idempotentResponse(data, scope, requestId);
         if (previous) { replay = true; response = previous; return data; }
-        if (importRevision(data) !== expectedRevision) throw clientError(409, "Veri revizyonu değişti. Geçmişi yenileyin.");
         const source = (data.dataImportHistory || []).find((item) => item.id === operationId && item.kind === "apply");
         if (!source) throw clientError(404, "Aktarım geçmişi bulunamadı.");
+        if (Number(source.fingerprintVersion || 0) < 3 && importRevision(data) !== expectedRevision) throw clientError(409, "Veri revizyonu değişti. Geçmişi yenileyin.");
+        if (Number(source.fingerprintVersion || 0) >= 3 && expectedRevision > importRevision(data)) throw clientError(409, "Geçerli veri revizyonu gerekli.");
         if (source.undoneAt) throw clientError(409, "Bu aktarım daha önce geri alındı.");
         const sourceFingerprint = Number(source.fingerprintVersion || 0) >= 2
           ? catalogFingerprint(data, source.scopes)
@@ -291,26 +317,36 @@ function registerDataImportRoutes(options) {
         }
         const backup = (data.dataImportBackups || []).find((item) => item.id === source.backupId && item.operationId === source.id);
         if (!backup || !backup.snapshot) throw clientError(409, "Geri alma yedeği bulunamadı.");
+        const sourceDomains = normalizeImportDomains(source.domains, source.scopes);
+        const sourceDomainRevisions = source.domainRevisionsAfter || {};
+        const currentDomainRevisions = domainRevisionSnapshot(data, sourceDomains);
+        for (const domain of sourceDomains) {
+          if (sourceDomainRevisions[domain] !== undefined && Number(sourceDomainRevisions[domain]) !== Number(currentDomainRevisions[domain])) {
+            throw clientError(409, `${domain} veri alanında aktarım sonrasında değişiklik yapıldığı için güvenli geri alma mümkün değil.`);
+          }
+        }
         const now = new Date().toISOString();
         const undoOperationId = `data-import-undo-${crypto.randomUUID()}`;
-        restoreCatalogSnapshot(data, backup.snapshot);
-        data.revisions.dataImport = expectedRevision + 1;
+        restoreDomainCatalogSnapshot(data, backup.snapshot, sourceDomains);
+        data.revisions.dataImport = importRevision(data) + 1;
+        bumpDomainRevisions(data, sourceDomains);
         data.revisions.publish = Number(data.revisions.publish || 0) + 1;
         if (source.scopes.includes("pricing")) data.revisions.pricing = Number(data.revisions.pricing || 0) + 1;
-        if (source.scopes.includes("menu") || source.scopes.includes("pricing") || source.scopes.includes("recipes")) data.menuUpdatedAt = now;
+        if (source.scopes.includes("menu") || source.scopes.includes("pricing")) data.menuUpdatedAt = now;
         if (source.scopes.includes("pricing")) data.pricingUpdatedAt = now;
         if (source.scopes.includes("recipes")) data.recipeUpdatedAt = now;
         if (source.scopes.includes("stock")) data.stockUpdatedAt = now;
         source.undoneAt = now; source.undoneBy = actor; source.undoOperationId = undoOperationId;
         const undoHistory = {
           id: undoOperationId, kind: "undo", sourceOperationId: source.id, requestId, actor,
-          scopes: source.scopes, importScope: source.scopes, fingerprintVersion: 2,
-          revisionBefore: expectedRevision, revisionAfter: data.revisions.dataImport,
+          scopes: source.scopes, domains: sourceDomains, importScope: source.scopes, fingerprintVersion: 3,
+          domainRevisionsAfter: domainRevisionSnapshot(data, sourceDomains),
+          revisionBefore: data.revisions.dataImport - 1, revisionAfter: data.revisions.dataImport,
           publishRevisionAfter: data.revisions.publish, createdAt: now, status: "undone", changeCount: source.changeCount,
           afterFingerprint: "", afterProductCodeFingerprint: "", validationStatus: "pending"
         };
         data.dataImportHistory = data.dataImportHistory.concat(undoHistory).slice(-100);
-        response = { ok: true, operationId: undoOperationId, sourceOperationId: source.id, revision: data.revisions.dataImport, publishRevision: data.revisions.publish, changedScopes: source.scopes, updatedAt: now };
+        response = { ok: true, operationId: undoOperationId, sourceOperationId: source.id, revision: data.revisions.dataImport, publishRevision: data.revisions.publish, changedScopes: source.scopes, changedDomains: sourceDomains, updatedAt: now };
         rememberIdempotency(data, scope, requestId, response, now);
         return data;
       });
@@ -393,26 +429,36 @@ function applyPlan(data, plan, scopes) {
     data.pricing = structuredClone(plan.pricing);
   }
   if (scopes.includes("recipes")) {
-    data.menuState = structuredClone(plan.menuState);
     data.recipeState = structuredClone(plan.recipeState);
     data.recipeCatalog = structuredClone(plan.recipeCatalog);
     data.recipeLinkReview = structuredClone(plan.recipeLinkReview || []);
   }
   if (scopes.includes("stock")) data.stockState = structuredClone(plan.stockState);
-  data.dataImportMappings = structuredClone(plan.mappings);
-  applyReferenceRewrites(data, plan.referenceRewrites);
+  applyScopedMappings(data, plan.mappings, scopes);
+  applyReferenceRewrites(data, plan.referenceRewrites, scopes);
 }
 
-function applyReferenceRewrites(data, rewritesInput) {
+function applyScopedMappings(data, mappings, scopes) {
+  const target = data.dataImportMappings || (data.dataImportMappings = { menu: [], pricing: [], recipe: [], stock: [] });
+  const source = mappings || {};
+  if (scopes.includes("menu")) target.menu = structuredClone(source.menu || []);
+  if (scopes.includes("pricing")) target.pricing = structuredClone(source.pricing || []);
+  if (scopes.includes("recipes")) target.recipe = structuredClone(source.recipe || []);
+  if (scopes.includes("stock")) target.stock = structuredClone(source.stock || []);
+}
+
+function applyReferenceRewrites(data, rewritesInput, scopes) {
   const rewrites = rewritesInput && typeof rewritesInput === "object" ? rewritesInput : {};
   const menuProducts = rewrites.menuProducts || {};
   const menuCategories = rewrites.menuCategories || {};
   const stockProducts = rewrites.stockProducts || {};
   const stockCategories = rewrites.stockCategories || {};
 
-  rewriteMenuReferences(data.siteState, menuProducts, menuCategories);
-  for (const revision of data.siteRevisions || []) rewriteMenuReferences(revision, menuProducts, menuCategories);
-  for (const shipment of data.workforceShipments || []) {
+  if (scopes.includes("menu") || scopes.includes("pricing")) {
+    rewriteMenuReferences(data.siteState, menuProducts, menuCategories);
+    for (const revision of data.siteRevisions || []) rewriteMenuReferences(revision, menuProducts, menuCategories);
+  }
+  if (scopes.includes("stock")) for (const shipment of data.workforceShipments || []) {
     for (const item of shipment.items || shipment.lines || []) {
       if (stockProducts[String(item.productId)]) item.productId = stockProducts[String(item.productId)];
       if (stockCategories[String(item.categoryId)]) item.categoryId = stockCategories[String(item.categoryId)];
@@ -444,15 +490,20 @@ function stampImportedMetadata(data, operationId, now, scopes) {
   if (scopes.includes("menu") || scopes.includes("pricing")) for (const category of data.menuState.categories || []) { stamp(category); (category.products || []).forEach(stamp); }
   if (scopes.includes("recipes")) for (const products of Object.values(data.recipeState || {})) for (const sizes of Object.values(products || {})) for (const item of Object.values(sizes || {})) stamp(item);
   if (scopes.includes("stock")) { (data.stockState.categories || []).forEach(stamp); (data.stockState.products || []).forEach(stamp); }
-  for (const entries of Object.values(data.dataImportMappings || {})) for (const mapping of entries || []) { mapping.lastImportedAt = now; mapping.lastImportOperationId = operationId; }
+  const mappingScopes = [];
+  if (scopes.includes("menu")) mappingScopes.push("menu");
+  if (scopes.includes("pricing")) mappingScopes.push("pricing");
+  if (scopes.includes("recipes")) mappingScopes.push("recipe");
+  if (scopes.includes("stock")) mappingScopes.push("stock");
+  for (const scope of mappingScopes) for (const mapping of data.dataImportMappings && data.dataImportMappings[scope] || []) { mapping.lastImportedAt = now; mapping.lastImportOperationId = operationId; }
 }
 
 function broadcastImport(data, scopes, updatedAt, options) {
   const set = new Set(scopes || []);
-  if ((set.has("menu") || set.has("pricing") || set.has("recipes")) && typeof options.broadcastMenuUpdate === "function") options.broadcastMenuUpdate(serializeLegacyMenuState(data.menuState, data.pricing), updatedAt, data.pricing, data.revisions.pricing);
+  if ((set.has("menu") || set.has("pricing")) && typeof options.broadcastMenuUpdate === "function") options.broadcastMenuUpdate(serializeLegacyMenuState(data.menuState, data.pricing), updatedAt, data.pricing, data.revisions.pricing);
   if (set.has("recipes") && typeof options.broadcastRecipeUpdate === "function") options.broadcastRecipeUpdate(data.recipeState, updatedAt, data.recipeCatalog || []);
   if (set.has("stock") && typeof options.broadcastStockUpdate === "function") options.broadcastStockUpdate(data.stockState, updatedAt);
-  if ((set.has("menu") || set.has("pricing") || set.has("recipes")) && typeof options.broadcastPublicUpdate === "function") options.broadcastPublicUpdate(data, "data-import");
+  if ((set.has("menu") || set.has("pricing")) && typeof options.broadcastPublicUpdate === "function") options.broadcastPublicUpdate(data, "data-import");
 }
 
 function buildReadbackValidation(committed, persisted, scopes, operationId, expectedRevision) {
@@ -551,7 +602,7 @@ function updateIdempotentResponse(data, scope, requestId, response) {
 function publicHistory(item) {
   return {
     id: item.id, kind: item.kind, sourceOperationId: item.sourceOperationId || "", files: item.files || [],
-    scopes: item.scopes || [], report: item.report || null, changeCount: Number(item.changeCount || 0),
+    scopes: item.scopes || [], domains: item.domains || scopesToDomains(item.scopes), report: item.report || null, changeCount: Number(item.changeCount || 0),
     revision: item.revisionAfter, revisionBefore: item.revisionBefore, revisionAfter: item.revisionAfter, actor: item.actor,
     createdAt: item.createdAt, undoneAt: item.undoneAt || null, undoOperationId: item.undoOperationId || "",
     status: item.status || item.kind, canUndo: item.kind === "apply" && item.status !== "failed_readback" && !item.undoneAt,
@@ -572,6 +623,73 @@ function publicHistory(item) {
       : null,
     fingerprintVersion: Number(item.fingerprintVersion || 0)
   };
+}
+
+function normalizeRequestedDomains(value, draft) {
+  if (value === undefined || value === null) return normalizeImportDomains([], draft && draft.scopes);
+  if (!Array.isArray(value)) throw clientError(400, "domains alanı bir dizi olmalıdır.");
+  const normalized = normalizeImportDomains(value);
+  if (normalized.length !== new Set(value.map((item) => String(item || "").trim().toLowerCase())).size) {
+    throw clientError(400, "Bilinmeyen veya yinelenen veri alanı seçildi.");
+  }
+  return normalized;
+}
+
+function archiveConfirmationRequired(draft, domains) {
+  if (!draft || !draft.report || draft.report.requiresArchiveConfirmation !== true) return false;
+  const selected = new Set(domains);
+  const archived = (draft.changes || []).filter((change) => change.operation === "archive" && selected.has(changeDomain(change))).length;
+  return archived > 0;
+}
+
+function changeDomain(item) {
+  const workbook = String(item && item.workbook || "");
+  if (workbook === "menu" || workbook === "pricing") return "catalog";
+  if (workbook === "recipe" || workbook === "recipes") return "recipes";
+  if (workbook === "stock") return "stock";
+  return "";
+}
+
+function selectedDomainChanges(draft, domains) {
+  const selected = new Set(domains);
+  return (draft.changes || []).filter((change) => selected.has(changeDomain(change)));
+}
+
+function selectedDomainReport(draft, domains) {
+  const selected = new Set(domains);
+  const domainEntries = Object.entries(draft.domains || {}).filter(([domain]) => selected.has(domain));
+  return {
+    ...(draft.report || {}),
+    selectedDomains: [...selected],
+    changeCount: selectedDomainChanges(draft, domains).length,
+    warningCount: domainEntries.reduce((sum, [, item]) => sum + Number(item.warningCount || 0), 0),
+    errorCount: domainEntries.reduce((sum, [, item]) => sum + Number(item.errorCount || 0), 0),
+    canApply: domainEntries.every(([, item]) => item.canApply === true)
+  };
+}
+
+function domainRevisionKey(domain) { return `dataImport${domain[0].toUpperCase()}${domain.slice(1)}`; }
+
+function bumpDomainRevisions(data, domains) {
+  data.revisions = data.revisions || {};
+  for (const domain of normalizeImportDomains(domains)) {
+    const key = domainRevisionKey(domain);
+    data.revisions[key] = Math.max(0, Number(data.revisions[key] || 0)) + 1;
+  }
+}
+
+function assertDomainDraftIsCurrent(data, draft, domains, scopes) {
+  const expectedRevisions = draft.expectedDomainRevisions || {};
+  const currentRevisions = domainRevisionSnapshot(data, domains);
+  const expectedFingerprints = draft.expectedDomainFingerprints || {};
+  const currentFingerprints = domainFingerprintSnapshot(data, domains);
+  const expectedCodeFingerprints = draft.expectedDomainProductCodeFingerprints || {};
+  const currentCodeFingerprints = domainProductCodeFingerprintSnapshot(data, domains);
+  for (const domain of domains) {
+    if (expectedRevisions[domain] !== undefined && Number(expectedRevisions[domain]) !== Number(currentRevisions[domain])) throw clientError(409, `${domain} veri alanı analizden sonra değişti. Yeniden analiz edin.`);
+    if (expectedFingerprints[domain] && expectedFingerprints[domain] !== currentFingerprints[domain]) throw clientError(409, `${domain} veri alanı analizden sonra değişti. Yeniden analiz edin.`);
+    if (expectedCodeFingerprints[domain] && expectedCodeFingerprints[domain] !== currentCodeFingerprints[domain]) throw clientError(409, `${domain} ürün kodları analizden sonra değişti. Yeniden analiz edin.`);
+  }
 }
 
 function activeDrafts(items) { const now = Date.now(); return (Array.isArray(items) ? items : []).filter((item) => item && Date.parse(item.expiresAt) > now); }

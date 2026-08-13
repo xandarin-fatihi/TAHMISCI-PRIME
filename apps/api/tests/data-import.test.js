@@ -277,15 +277,15 @@ test("kararlı eşleme normalize kaydı eski mapping'in önünde tutar ve silinm
   assert.equal(alias.issues.some((issue) => issue.code === "stale_mapping"), false);
 });
 
-test("reçete kanonik menü ürününe bağlanır, karşılıksız reçete bağlantısız ve uyarılı korunur", () => {
+test("reçete menüden bağımsız kalır ve menüde olmayan ürün hata olmadan korunur", () => {
   const workbooks = completeWorkbooks();
   const linked = analyzeDataImport(emptyData(), { workbooks: { menu: workbooks.menu, recipe: workbooks.recipe }, files: {} }, {
     analysisId: "data-import-analysis-recipe-link"
   });
-  const product = linked.plan.menuState.categories.flatMap((category) => category.products).find((item) => item.name === "Yeni Kahve");
   const catalogRecord = linked.plan.recipeCatalog.find((item) => item.product === "Yeni Kahve");
-  assert.equal(catalogRecord.menuProductId, product.id);
-  assert.equal(product.recipeId, catalogRecord.id);
+  assert.ok(catalogRecord);
+  assert.equal(catalogRecord.menuProductId, undefined);
+  assert.equal(linked.plan.menuState.categories.flatMap((category) => category.products).find((item) => item.name === "Yeni Kahve").recipeId, undefined);
 
   const orphanRecipe = workbook({
     Sıcaklar: sheet(["Kategori", "Ürün Adı", "Ölçü"], [{ Kategori: "Sıcaklar", "Ürün Adı": "Menüde Yok", "Ölçü": "Standart" }])
@@ -294,7 +294,6 @@ test("reçete kanonik menü ürününe bağlanır, karşılıksız reçete bağl
     analysisId: "data-import-analysis-orphan-recipe"
   });
   assert.equal(blocked.report.canApply, true);
-  assert.ok(blocked.issues.some((issue) => issue.code === "unlinked_recipe_product" && issue.severity === "warning"));
   assert.ok(blocked.plan.recipeCatalog.some((item) => item.product === "Menüde Yok" && !item.menuProductId));
 });
 
@@ -339,7 +338,7 @@ test("kodlu dört dosya kanonik Ürün Kodu ile bağlanır ve çoklu fiyat ailel
   assert.equal(families.get("standard").standard.price, 105);
   assert.equal(families.get("weight")["100-gr"].price, 80);
   assert.equal(analysis.plan.recipeState.SICAKLAR["Kodlu Latte"]["14 oz"].productCode, "SIC-LAT-KOD");
-  assert.equal(analysis.plan.recipeCatalog.find((item) => item.productCode === "SIC-LAT-KOD").menuProductId, product.id);
+  assert.equal(analysis.plan.recipeCatalog.find((item) => item.productCode === "SIC-LAT-KOD").menuProductId, undefined);
   assert.equal(analysis.plan.stockState.products[0].productCode, "STK-SUT-BAR");
   assert.ok(analysis.changes.filter((change) => change.product).every((change) => change.productCode || change.workbook === "menu" && change.field === "kategori"));
 });
@@ -501,7 +500,7 @@ test("geçersiz, mükerrer ve yetim kodlar raporlanır; bağlantısız reçete k
   const analysis = analyzeDataImport(live, { workbooks: { recipe }, files: {} }, { analysisId: "data-import-analysis-code-errors" });
   assert.equal(analysis.report.canApply, false);
   assert.ok(analysis.report.invalidProductCodes >= 1);
-  assert.ok(analysis.report.orphanProductCodes >= 1);
+  assert.equal(analysis.report.orphanProductCodes, 0, "reçete kodu menü kataloğuna bağımlı olmamalı");
   assert.ok(analysis.report.duplicateProductCodes >= 1);
   assert.ok(analysis.report.duplicateRecipeMeasures >= 1);
   assert.ok(analysis.plan.recipeState.HAZIRLIK["Şurup Hazırlığı"].Standart, "yetim kodlu ilk reçete bağlantısız da olsa planda korunmalı");

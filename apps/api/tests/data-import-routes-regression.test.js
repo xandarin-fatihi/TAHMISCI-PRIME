@@ -114,6 +114,44 @@ function createMenuWorkbookBuffer() {
   });
 }
 
+function createWorkbookBuffer(sheetDefinitions) {
+  const names = Object.keys(sheetDefinitions);
+  const relationships = names.map((name, index) => (
+    `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`
+  )).join("");
+  const sheets = names.map((name, index) => (
+    `<sheet name="${escapeXml(name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`
+  )).join("");
+  const entries = {
+    "xl/workbook.xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets}</sheets></workbook>`,
+    "xl/_rels/workbook.xml.rels": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships}</Relationships>`
+  };
+  names.forEach((name, sheetIndex) => {
+    const rows = sheetDefinitions[name].map((values, rowIndex) => {
+      const content = values.map((value, columnIndex) => {
+        const reference = `${columnName(columnIndex)}${rowIndex + 1}`;
+        if (typeof value === "number" && Number.isFinite(value)) return `<c r="${reference}"><v>${value}</v></c>`;
+        return `<c r="${reference}" t="inlineStr"><is><t>${escapeXml(value)}</t></is></c>`;
+      }).join("");
+      return `<row r="${rowIndex + 1}">${content}</row>`;
+    }).join("");
+    entries[`xl/worksheets/sheet${sheetIndex + 1}.xml`] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`;
+  });
+  return createStoredZip(entries);
+}
+
+function columnName(index) {
+  let name = "";
+  for (let cursor = index + 1; cursor > 0; cursor = Math.floor((cursor - 1) / 26)) {
+    name = String.fromCharCode(65 + ((cursor - 1) % 26)) + name;
+  }
+  return name;
+}
+
+function workbookFile(filename, sheets) {
+  return { filename, contentBase64: createWorkbookBuffer(sheets).toString("base64") };
+}
+
 function createStoredZip(entries) {
   const localParts = [];
   const centralParts = [];
@@ -195,6 +233,20 @@ async function applyAnalysis(baseUrl, requestId, analysis) {
       analysisId: analysis.analysisId,
       expectedRevision: analysis.expectedRevision,
       confirmArchiveImpact: analysis.report && analysis.report.requiresArchiveConfirmation === true
+    })
+  });
+}
+
+async function applyDomains(baseUrl, requestId, analysis, domains) {
+  return requestJson(baseUrl, "/api/admin/data-imports/apply", {
+    method: "POST",
+    headers: requestHeaders(requestId),
+    body: JSON.stringify({
+      requestId,
+      analysisId: analysis.analysisId,
+      expectedRevision: analysis.expectedRevision,
+      confirmArchiveImpact: analysis.report && analysis.report.requiresArchiveConfirmation === true,
+      domains
     })
   });
 }
@@ -298,4 +350,207 @@ test("persisted readback uyuşmazlığı audit bırakır, yalnız bir rollback y
   assert.ok(failedAudits[0].validationDetails.persistedFingerprint);
   assert.notEqual(failedAudits[0].validationDetails.committedFingerprint, failedAudits[0].validationDetails.persistedFingerprint);
   assert.equal((after.dataImportIdempotency || []).some((item) => item.requestId === "mismatch-menu-apply-0001"), false);
+});
+
+test("çoklu analiz yalnız hazır domainleri explicit uygular ve state izolasyonunu korur", async (t) => {
+  const initial = defaultStore("test-hash", "test-recipe-hash");
+  initial.recipeState = {
+    ESKI: { "Korunan Reçete": { Standart: { id: "recipe-kept", content: "Korunan", preparation: "Korunan", active: true } } }
+  };
+  initial.stockState.categories = [{ id: "stock-old-category", name: "ESKİ", active: true, order: 0 }];
+  initial.stockState.products = [{
+    id: "stock-old-product", categoryId: "stock-old-category", category: "ESKİ", productName: "Korunan Stok",
+    name: "Korunan Stok", productCode: "STK-OLD-001", unit: "adet", stockQuantity: 7, active: true, order: 0
+  }];
+  const store = createMemoryStore(initial);
+  const runtime = await startImportApp(store);
+  t.after(runtime.close);
+  const before = store.snapshot();
+
+  const files = {
+    menu: workbookFile("TAHMISCI-MENU.xlsx", {
+      SICAKLAR: [
+        ["Ürün Adı", "Ürün Kodu", "Ürün İçeriği"],
+        ["Domain Latte", "SIC-DOM-001", "Espresso ve süt"]
+      ]
+    }),
+    pricing: workbookFile("TAHMISCI-FIYAT.xlsx", {
+      SICAKLAR: [
+        ["Ürün Adı", "Ürün Kodu", "Standart"],
+        ["Domain Latte", "SIC-DOM-001", 120]
+      ]
+    }),
+    recipe: workbookFile("TAHMISCI-RECETE.xlsx", {
+      SICAKLAR: [
+        ["Kategori", "Ürün Adı", "Ürün Kodu", "Ölçü", "İçerik (ölçüsüz)", "Hazırlanış (ölçüler dahil)"],
+        ["SICAKLAR", "Çakışan Reçete", "REC-DOM-001", "14 oz", "Bir", "Bir"],
+        ["SICAKLAR", "Çakışan Reçete", "REC-DOM-001", "14 oz", "İki", "İki"]
+      ]
+    }),
+    stock: workbookFile("TAHMISCI-STOK.xlsx", {
+      SÜTLER: [
+        ["Ürün Adı", "Ürün Kodu", "Ürün Adedi", "Sipariş Eşiği"],
+        ["Yeni Süt", "STK-DOM-001", "10 koli", 2]
+      ]
+    })
+  };
+  const analyzed = await analyzeMenu(runtime.baseUrl, "domains-analyze-0001", files);
+  assert.equal(analyzed.response.status, 201, JSON.stringify(analyzed.body));
+  assert.equal(analyzed.body.domains.catalog.canApply, true);
+  assert.equal(analyzed.body.domains.recipes.canApply, false);
+  assert.equal(analyzed.body.domains.stock.canApply, true);
+
+  const blocked = await applyDomains(runtime.baseUrl, "domains-blocked-0001", analyzed.body, ["recipes"]);
+  assert.equal(blocked.response.status, 409);
+
+  const applied = await applyDomains(runtime.baseUrl, "domains-apply-00001", analyzed.body, ["catalog", "stock"]);
+  assert.equal(applied.response.status, 200, JSON.stringify(applied.body));
+  assert.deepEqual(applied.body.changedDomains, ["catalog", "stock"]);
+  const after = store.snapshot();
+  assert.deepEqual(after.recipeState, before.recipeState, "engelli reçete domaini yazılmamalı");
+  assert.ok(after.menuState.categories.flatMap((category) => category.products || []).some((product) => product.productCode === "SIC-DOM-001"));
+  assert.ok(after.stockState.products.some((product) => product.productCode === "STK-DOM-001"));
+});
+
+test("recipe, stock ve catalog apply yalnız kendi domain state'ini değiştirir", async (t) => {
+  const scenarios = [
+    {
+      domain: "recipes",
+      files: {
+        recipe: workbookFile("TAHMISCI-RECETE.xlsx", {
+          SICAKLAR: [
+            ["Kategori", "Ürün Adı", "Ürün Kodu", "Ölçü", "İçerik (ölçüsüz)", "Hazırlanış (ölçüler dahil)"],
+            ["SICAKLAR", "Tek Reçete", "REC-ISO-001", "14 oz", "Kahve", "Hazırla"]
+          ]
+        })
+      },
+      untouched: ["menuState", "stockState"]
+    },
+    {
+      domain: "stock",
+      files: {
+        stock: workbookFile("TAHMISCI-STOK.xlsx", {
+          SÜTLER: [
+            ["Ürün Adı", "Ürün Kodu", "Ürün Adedi", "Sipariş Eşiği"],
+            ["Tek Stok", "STK-ISO-001", "6 koli", 1]
+          ]
+        })
+      },
+      untouched: ["menuState", "recipeState"]
+    },
+    {
+      domain: "catalog",
+      files: {
+        menu: workbookFile("TAHMISCI-MENU.xlsx", {
+          SICAKLAR: [
+            ["Ürün Adı", "Ürün Kodu", "Ürün İçeriği"],
+            ["Tek Menü", "SIC-ISO-001", "Kahve"]
+          ]
+        })
+      },
+      untouched: ["recipeState", "stockState"]
+    }
+  ];
+
+  for (const [index, scenario] of scenarios.entries()) {
+    await t.test(scenario.domain, async (subtest) => {
+      const initial = defaultStore("test-hash", "test-recipe-hash");
+      initial.menuState.categories = [{ id: "keep-menu", name: "KORUNAN", active: true, order: 0, products: [] }];
+      initial.recipeState = { KORUNAN: { Reçete: { Standart: { id: "keep-recipe", content: "X", preparation: "Y" } } } };
+      initial.stockState.categories = [{ id: "keep-stock-category", name: "KORUNAN", active: true, order: 0 }];
+      initial.stockState.products = [];
+      const store = createMemoryStore(initial);
+      const runtime = await startImportApp(store);
+      subtest.after(runtime.close);
+      const before = store.snapshot();
+      const analyzed = await analyzeMenu(runtime.baseUrl, `isolation-analyze-000${index + 1}`, scenario.files);
+      assert.equal(analyzed.response.status, 201, JSON.stringify(analyzed.body));
+      const applied = await applyDomains(runtime.baseUrl, `isolation-apply-0000${index + 1}`, analyzed.body, [scenario.domain]);
+      assert.equal(applied.response.status, 200, JSON.stringify(applied.body));
+      const after = store.snapshot();
+      for (const key of scenario.untouched) assert.deepEqual(after[key], before[key], `${scenario.domain} apply ${key} alanına dokunmamalı`);
+    });
+  }
+});
+
+test("scope-aware undo sonraki bağımsız domain değişikliğini ezmez", async (t) => {
+  const store = createMemoryStore(defaultStore("test-hash", "test-recipe-hash"));
+  const runtime = await startImportApp(store);
+  t.after(runtime.close);
+  const stockFiles = {
+    stock: workbookFile("TAHMISCI-STOK.xlsx", {
+      SÜTLER: [
+        ["Ürün Adı", "Ürün Kodu", "Ürün Adedi", "Sipariş Eşiği"],
+        ["Undo Süt", "STK-UND-001", "8 koli", 2]
+      ]
+    })
+  };
+  const stockAnalysis = await analyzeMenu(runtime.baseUrl, "undo-stock-analyze-0001", stockFiles);
+  const stockApply = await applyDomains(runtime.baseUrl, "undo-stock-apply-00001", stockAnalysis.body, ["stock"]);
+  assert.equal(stockApply.response.status, 200, JSON.stringify(stockApply.body));
+
+  const recipeFiles = {
+    recipe: workbookFile("TAHMISCI-RECETE.xlsx", {
+      SICAKLAR: [
+        ["Kategori", "Ürün Adı", "Ürün Kodu", "Ölçü", "İçerik (ölçüsüz)", "Hazırlanış (ölçüler dahil)"],
+        ["SICAKLAR", "Undo Sonrası Reçete", "REC-UND-001", "14 oz", "Kahve", "Hazırla"]
+      ]
+    })
+  };
+  const recipeAnalysis = await analyzeMenu(runtime.baseUrl, "undo-recipe-analyze-001", recipeFiles);
+  const recipeApply = await applyDomains(runtime.baseUrl, "undo-recipe-apply-0001", recipeAnalysis.body, ["recipes"]);
+  assert.equal(recipeApply.response.status, 200, JSON.stringify(recipeApply.body));
+  const recipeAfterApply = structuredClone(store.snapshot().recipeState);
+
+  const requestId = "undo-stock-operation-0001";
+  const undone = await requestJson(runtime.baseUrl, `/api/admin/data-imports/${encodeURIComponent(stockApply.body.operationId)}/undo`, {
+    method: "POST",
+    headers: requestHeaders(requestId),
+    // Global revizyon recipes apply ile ilerledi. Domain-aware undo, stock
+    // fingerprint/revizyonu değişmedikçe kaynağın eski global revizyonunu kabul etmeli.
+    body: JSON.stringify({ requestId, expectedRevision: stockApply.body.revision })
+  });
+  assert.equal(undone.response.status, 200, JSON.stringify(undone.body));
+  assert.deepEqual(undone.body.changedDomains, ["stock"]);
+  const afterUndo = store.snapshot();
+  assert.deepEqual(afterUndo.recipeState, recipeAfterApply, "stock undo sonraki recipe snapshotını ezmemeli");
+  assert.equal(afterUndo.stockState.products.some((product) => product.productCode === "STK-UND-001"), false);
+});
+
+test("domain-aware taslak bağımsız domain apply sonrası eski global revizyonla uygulanabilir", async (t) => {
+  const store = createMemoryStore(defaultStore("test-hash", "test-recipe-hash"));
+  const runtime = await startImportApp(store);
+  t.after(runtime.close);
+
+  const recipeFiles = {
+    recipe: workbookFile("TAHMISCI-RECETE.xlsx", {
+      SICAKLAR: [
+        ["Kategori", "Ürün Adı", "Ürün Kodu", "Ölçü", "İçerik (ölçüsüz)", "Hazırlanış (ölçüler dahil)"],
+        ["SICAKLAR", "Bağımsız Taslak Reçetesi", "REC-BGT-001", "14 oz", "Kahve", "Hazırla"]
+      ]
+    })
+  };
+  const stockFiles = {
+    stock: workbookFile("TAHMISCI-STOK.xlsx", {
+      SÜTLER: [
+        ["Ürün Adı", "Ürün Kodu", "Ürün Adedi", "Sipariş Eşiği"],
+        ["Bağımsız Taslak Sütü", "STK-BGT-001", "5 koli", 1]
+      ]
+    })
+  };
+
+  const recipeAnalysis = await analyzeMenu(runtime.baseUrl, "stale-recipe-analyze-0001", recipeFiles);
+  const stockAnalysis = await analyzeMenu(runtime.baseUrl, "stale-stock-analyze-00001", stockFiles);
+  assert.equal(recipeAnalysis.response.status, 201, JSON.stringify(recipeAnalysis.body));
+  assert.equal(stockAnalysis.response.status, 201, JSON.stringify(stockAnalysis.body));
+  assert.equal(recipeAnalysis.body.expectedRevision, stockAnalysis.body.expectedRevision);
+
+  const stockApply = await applyDomains(runtime.baseUrl, "stale-stock-apply-000001", stockAnalysis.body, ["stock"]);
+  assert.equal(stockApply.response.status, 200, JSON.stringify(stockApply.body));
+  assert.ok(stockApply.body.revision > recipeAnalysis.body.expectedRevision);
+
+  const recipeApply = await applyDomains(runtime.baseUrl, "stale-recipe-apply-00001", recipeAnalysis.body, ["recipes"]);
+  assert.equal(recipeApply.response.status, 200, JSON.stringify(recipeApply.body));
+  assert.deepEqual(recipeApply.body.changedDomains, ["recipes"]);
+  assert.equal(store.snapshot().recipeCatalog.some((item) => item.productCode === "REC-BGT-001"), true);
 });

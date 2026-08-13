@@ -8,8 +8,7 @@ const {
   normalizeMenuState,
   normalizeRecipeState,
   normalizeStockState,
-  reconcileRecipeCatalog,
-  migrateMenuRecipeLinks
+  reconcileRecipeCatalog
 } = require("./store/migrations");
 
 const WORKBOOKS = ["menu", "pricing", "recipe", "stock"];
@@ -37,8 +36,11 @@ function analyzeDataImport(data, inputs, context = {}) {
   const issues = [];
   const scopes = [];
   const sharedContext = { now, analysisId, report, changes, issues };
+  const selectedDomains = selectedImportDomains(workbooks);
 
-  consolidateExistingCatalog(staged, sharedContext);
+  // Legacy katalog kusurları yalnız içe aktarılan domain içinde kanonikleştirilir.
+  // Böylece örneğin stok aktarımı menüdeki eski bir mükerrer kayda bağımlı olmaz.
+  consolidateExistingCatalog(staged, sharedContext, selectedDomains);
 
   if (workbooks.menu) {
     scopes.push("menu");
@@ -60,14 +62,12 @@ function analyzeDataImport(data, inputs, context = {}) {
     analyzeStockWorkbook(workbooks.stock, staged, { now, analysisId, report, changes, issues });
   }
 
-  if (workbooks.recipe || workbooks.menu) {
+  if (workbooks.recipe) {
     staged.recipeCatalog = reconcileRecipeCatalog(staged.recipeState, staged.recipeCatalog);
     hydrateRecipeCatalogCodes(staged);
-    linkRecipesToCanonicalProducts(staged, sharedContext, { strict: Boolean(workbooks.recipe) });
-    const linkedCatalog = migrateMenuRecipeLinks(staged.menuState, staged.recipeCatalog, staged.recipeState);
-    staged.menuState = linkedCatalog.menuState;
-    staged.recipeLinkReview = linkedCatalog.review;
-    report.unlinkedRecipes = countUnlinkedRecipes(staged.menuState, staged.recipeCatalog);
+    // Reçete bağımsız bir domaindir. Analiz sırasında menü bağlantılarını yeniden
+    // kurmak menuState'i yan etkili biçimde değiştirdiği için burada yapılmaz.
+    staged.recipeLinkReview = [];
   }
 
   report.missingPrices = Math.max(report.missingPrices, countProductsWithoutPrice(staged.menuState));
@@ -81,7 +81,8 @@ function analyzeDataImport(data, inputs, context = {}) {
   report.archiveBaseline = archiveBaseline;
   report.archiveRatio = archiveBaseline > 0 ? Number((report.archived / archiveBaseline).toFixed(4)) : 0;
   report.requiresArchiveConfirmation = report.archived > 0 && report.archiveRatio >= 0.35;
-  report.canApply = scopes.length > 0 && report.errorCount === 0 && changes.length > 0;
+  const domains = buildDomainReadiness(data, workbooks, scopes, changes, issues);
+  report.canApply = Object.values(domains).some((domain) => domain.canApply);
 
   const importScopes = normalizeFingerprintScopes(scopes);
   return {
@@ -97,6 +98,10 @@ function analyzeDataImport(data, inputs, context = {}) {
       size: files[key].size
     })),
     scopes: importScopes,
+    domains,
+    expectedDomainRevisions: domainRevisionSnapshot(data, Object.keys(domains).filter((domain) => domains[domain].selected)),
+    expectedDomainFingerprints: domainFingerprintSnapshot(data, Object.keys(domains).filter((domain) => domains[domain].selected)),
+    expectedDomainProductCodeFingerprints: domainProductCodeFingerprintSnapshot(data, Object.keys(domains).filter((domain) => domains[domain].selected)),
     report,
     changes: changes.slice(0, 10000),
     issues: issues.slice(0, 5000),
@@ -595,10 +600,6 @@ function ensurePricingFamilyType(pricing, familyName, entries) {
 function analyzeRecipeWorkbook(workbook, staged, ctx) {
   const rows = workbookRows(workbook, "recipe", ctx, (sheet) => normalizeSourceName(sheet) !== "tumu");
   const state = staged.recipeState;
-  const menuByCode = groupedIndex(
-    (staged.menuState.categories || []).flatMap((category) => (category.products || []).map((product) => ({ category, product }))),
-    (item) => normalizeProductCode(item.product.productCode)
-  );
   const seen = new Set();
   const keys = new Map();
   for (const source of rows) {
@@ -613,14 +614,6 @@ function analyzeRecipeWorkbook(workbook, staged, ctx) {
     const codeInfo = readProductCode(source, ctx, "recipe");
     if (codeInfo.invalid) continue;
     const productCode = codeInfo.code;
-    if (productCode) {
-      const menuMatches = menuByCode.get(productCode) || [];
-      if (menuMatches.length > 1) {
-        addIssue(ctx, "recipe", source, "duplicate_product_code", `“${productCode}” Ürün Kodu birden fazla menü ürününe bağlı.`);
-        continue;
-      }
-      if (!menuMatches.length) addIssue(ctx, "recipe", source, "orphan_product_code", `“${productCode}” reçete kodunun menü kataloğunda karşılığı bulunamadı; reçete bağlantısız içe alınacak.`, "warning");
-    }
     if (!product) { addIssue(ctx, "recipe", source, "missing_product_name", "Reçete ürün adı boş."); continue; }
     const key = productCode
       ? `${productCode}\u0000${normalizeSourceName(size)}`
@@ -874,8 +867,9 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
 }
 
 function consolidateExistingCatalog(staged, ctx) {
-  consolidateMenuCatalog(staged, ctx);
-  consolidateStockCatalog(staged, ctx);
+  const domains = arguments.length > 2 && arguments[2] instanceof Set ? arguments[2] : new Set();
+  if (domains.has("catalog")) consolidateMenuCatalog(staged, ctx);
+  if (domains.has("stock")) consolidateStockCatalog(staged, ctx);
   rewriteMappingEntityIds(staged.mappings, staged.referenceRewrites);
 }
 
@@ -903,6 +897,7 @@ function consolidateMenuCatalog(staged, ctx) {
   }
 
   staged.menuState.categories = nextCategories;
+  const canonicalProductsByCode = new Map();
   for (const category of staged.menuState.categories) {
     const groups = groupedIndex(category.products || [], (item) => normalizeProductCode(item.productCode)
       ? `code\u0000${normalizeProductCode(item.productCode)}`
@@ -911,15 +906,18 @@ function consolidateMenuCatalog(staged, ctx) {
     for (const records of groups.values()) {
       const canonical = chooseCanonical(records, staged.mappings.menu, ["product"]);
       const duplicates = records.filter((item) => item !== canonical);
-      let conflict = false;
-      for (const duplicate of duplicates) {
-        if (!canMergeMenuProducts(canonical, duplicate)) {
-          conflict = true;
-          addIssue(ctx, "menu", { sheet: category.name, rowNumber: 0 }, "ambiguous_merge_conflict", `“${canonical.name}” için mükerrer kayıtların fiyat/reçete içeriği çakışıyor; otomatik birleştirme uygulanmadı.`);
+      const productCode = normalizeProductCode(canonical.productCode);
+      const crossCategory = productCode ? canonicalProductsByCode.get(productCode) : null;
+      if (crossCategory && crossCategory.product !== canonical) {
+        mergeMenuProduct(crossCategory.product, canonical);
+        staged.referenceRewrites.menuProducts[String(canonical.id)] = String(crossCategory.product.id);
+        crossCategory.product.aliasIds = uniqueStrings([...(crossCategory.product.aliasIds || []), canonical.id, ...(canonical.aliasIds || [])]).filter((id) => id !== String(crossCategory.product.id));
+        for (const duplicate of duplicates) {
+          mergeMenuProduct(crossCategory.product, duplicate);
+          staged.referenceRewrites.menuProducts[String(duplicate.id)] = String(crossCategory.product.id);
         }
-      }
-      if (conflict) {
-        nextProducts.push(...records);
+        ctx.report.mergedDuplicates += records.length;
+        addChange(ctx, "menu", crossCategory.category.name, crossCategory.product.name, "mükerrer ürün kodu", canonical.id, crossCategory.product.id, "merge", "unchanged", "system", productCode);
         continue;
       }
       for (const duplicate of duplicates) {
@@ -930,6 +928,7 @@ function consolidateMenuCatalog(staged, ctx) {
         addChange(ctx, "menu", category.name, canonical.name, "mükerrer ürün", duplicate.id, canonical.id, "merge", "unchanged", "system");
       }
       nextProducts.push(canonical);
+      if (productCode) canonicalProductsByCode.set(productCode, { category, product: canonical });
     }
     category.products = nextProducts;
   }
@@ -965,12 +964,6 @@ function consolidateStockCatalog(staged, ctx) {
   for (const records of productGroups.values()) {
     const canonical = chooseCanonical(records, staged.mappings.stock, ["stock-product"]);
     const duplicates = records.filter((item) => item !== canonical);
-    const conflicting = duplicates.some((item) => !canMergeStockProducts(canonical, item));
-    if (conflicting) {
-      addIssue(ctx, "stock", { sheet: canonical.category || "", rowNumber: 0 }, "ambiguous_merge_conflict", `“${canonical.productName || canonical.name}” için mükerrer stok miktarı veya birimi çakışıyor; otomatik birleştirme uygulanmadı.`);
-      products.push(...records);
-      continue;
-    }
     for (const duplicate of duplicates) {
       mergeStockProduct(canonical, duplicate);
       if (String(duplicate.id) !== String(canonical.id)) staged.referenceRewrites.stockProducts[String(duplicate.id)] = String(canonical.id);
@@ -1475,6 +1468,148 @@ function countProductsWithoutPrice(menuState) {
   return count;
 }
 
+const IMPORT_DOMAINS = ["catalog", "recipes", "stock"];
+
+function selectedImportDomains(workbooks) {
+  const selected = new Set();
+  if (workbooks && (workbooks.menu || workbooks.pricing)) selected.add("catalog");
+  if (workbooks && workbooks.recipe) selected.add("recipes");
+  if (workbooks && workbooks.stock) selected.add("stock");
+  return selected;
+}
+
+function normalizeImportDomains(domains, fallbackScopes = []) {
+  const source = Array.isArray(domains) && domains.length ? domains : scopesToDomains(fallbackScopes);
+  const requested = new Set(source.map((domain) => String(domain || "").trim().toLowerCase()));
+  return IMPORT_DOMAINS.filter((domain) => requested.has(domain));
+}
+
+function scopesToDomains(scopes) {
+  const selected = new Set(normalizeFingerprintScopes(scopes));
+  const domains = [];
+  if (selected.has("menu") || selected.has("pricing")) domains.push("catalog");
+  if (selected.has("recipes")) domains.push("recipes");
+  if (selected.has("stock")) domains.push("stock");
+  return domains;
+}
+
+function domainsToScopes(domains, availableScopes = []) {
+  const available = new Set(normalizeFingerprintScopes(availableScopes));
+  const scopes = [];
+  for (const domain of normalizeImportDomains(domains)) {
+    if (domain === "catalog") {
+      if (available.has("menu")) scopes.push("menu");
+      if (available.has("pricing")) scopes.push("pricing");
+    } else if (domain === "recipes" && available.has("recipes")) scopes.push("recipes");
+    else if (domain === "stock" && available.has("stock")) scopes.push("stock");
+  }
+  return normalizeFingerprintScopes(scopes);
+}
+
+function buildDomainReadiness(data, workbooks, scopes, changes, issues) {
+  const selected = selectedImportDomains(workbooks);
+  const scopeSets = {
+    catalog: new Set(["menu", "pricing"]),
+    recipes: new Set(["recipe", "recipes"]),
+    stock: new Set(["stock"])
+  };
+  const result = {};
+  for (const domain of IMPORT_DOMAINS) {
+    const domainIssues = issues.filter((issue) => scopeSets[domain].has(String(issue.workbook || "")));
+    const domainChanges = changes.filter((change) => scopeSets[domain].has(String(change.workbook || "")));
+    const blockingIssues = domainIssues.filter((issue) => issue.severity !== "warning");
+    result[domain] = {
+      selected: selected.has(domain),
+      changeCount: domainChanges.length,
+      warningCount: domainIssues.filter((issue) => issue.severity === "warning").length,
+      errorCount: blockingIssues.length,
+      canApply: selected.has(domain) && blockingIssues.length === 0 && domainChanges.length > 0,
+      blockingIssues: blockingIssues.slice(0, 100)
+    };
+  }
+  return result;
+}
+
+function domainRevisionSnapshot(data, domains) {
+  const revisions = data && data.revisions || {};
+  const result = {};
+  for (const domain of normalizeImportDomains(domains)) result[domain] = Math.max(0, Number(revisions[`dataImport${domain[0].toUpperCase()}${domain.slice(1)}`] || 0));
+  return result;
+}
+
+function domainFingerprintSnapshot(data, domains) {
+  const result = {};
+  for (const domain of normalizeImportDomains(domains)) result[domain] = catalogFingerprint(data, domain === "catalog" ? ["menu", "pricing"] : [domain]);
+  return result;
+}
+
+function domainProductCodeFingerprintSnapshot(data, domains) {
+  const result = {};
+  for (const domain of normalizeImportDomains(domains)) result[domain] = productCodeFingerprint(data, domain === "catalog" ? ["menu", "pricing"] : [domain]);
+  return result;
+}
+
+function domainCatalogSnapshot(data, domains) {
+  const selected = new Set(normalizeImportDomains(domains));
+  const snapshot = { domains: [...selected] };
+  if (selected.has("catalog")) Object.assign(snapshot, clone({
+    menuState: data.menuState, pricing: data.pricing,
+    menuUpdatedAt: data.menuUpdatedAt, pricingUpdatedAt: data.pricingUpdatedAt,
+    siteState: data.siteState, siteRevisions: data.siteRevisions
+  }));
+  if (selected.has("recipes")) Object.assign(snapshot, clone({
+    recipeState: data.recipeState, recipeCatalog: data.recipeCatalog,
+    recipeLinkReview: data.recipeLinkReview, recipeUpdatedAt: data.recipeUpdatedAt
+  }));
+  if (selected.has("stock")) Object.assign(snapshot, clone({
+    stockState: data.stockState, stockUpdatedAt: data.stockUpdatedAt,
+    workforceShipments: data.workforceShipments
+  }));
+  snapshot.dataImportMappings = {};
+  const mappings = data.dataImportMappings || {};
+  if (selected.has("catalog")) { snapshot.dataImportMappings.menu = clone(mappings.menu || []); snapshot.dataImportMappings.pricing = clone(mappings.pricing || []); }
+  if (selected.has("recipes")) snapshot.dataImportMappings.recipe = clone(mappings.recipe || []);
+  if (selected.has("stock")) snapshot.dataImportMappings.stock = clone(mappings.stock || []);
+  const registryScopes = new Set(selected.has("catalog") ? ["menu"] : []);
+  if (selected.has("recipes")) registryScopes.add("recipe");
+  if (selected.has("stock")) registryScopes.add("stock");
+  const registry = data.productCodeRegistry || {};
+  snapshot.productCodeRegistry = {
+    schemaVersion: registry.schemaVersion || 1,
+    entries: clone((registry.entries || []).filter((entry) => registryScopes.has(entry.scope))),
+    conflicts: clone((registry.conflicts || []).filter((entry) => registryScopes.has(entry.scope)))
+  };
+  return snapshot;
+}
+
+function restoreDomainCatalogSnapshot(data, snapshot, domains) {
+  const selected = new Set(normalizeImportDomains(domains, snapshot && snapshot.domains));
+  const copy = (key) => { if (Object.prototype.hasOwnProperty.call(snapshot || {}, key)) data[key] = clone(snapshot[key]); };
+  if (selected.has("catalog")) ["menuState", "pricing", "menuUpdatedAt", "pricingUpdatedAt", "siteState", "siteRevisions"].forEach(copy);
+  if (selected.has("recipes")) ["recipeState", "recipeCatalog", "recipeLinkReview", "recipeUpdatedAt"].forEach(copy);
+  if (selected.has("stock")) ["stockState", "stockUpdatedAt", "workforceShipments"].forEach(copy);
+  const targetMappings = data.dataImportMappings || (data.dataImportMappings = { menu: [], pricing: [], recipe: [], stock: [] });
+  const savedMappings = snapshot && snapshot.dataImportMappings || {};
+  if (selected.has("catalog")) { targetMappings.menu = clone(savedMappings.menu || []); targetMappings.pricing = clone(savedMappings.pricing || []); }
+  if (selected.has("recipes")) targetMappings.recipe = clone(savedMappings.recipe || []);
+  if (selected.has("stock")) targetMappings.stock = clone(savedMappings.stock || []);
+  restoreRegistryDomains(data, snapshot && snapshot.productCodeRegistry, selected);
+  return data;
+}
+
+function restoreRegistryDomains(data, savedRegistry, selectedDomains) {
+  const registryScopes = new Set(selectedDomains.has("catalog") ? ["menu"] : []);
+  if (selectedDomains.has("recipes")) registryScopes.add("recipe");
+  if (selectedDomains.has("stock")) registryScopes.add("stock");
+  const current = data.productCodeRegistry || { schemaVersion: 1, entries: [], conflicts: [] };
+  const saved = savedRegistry || { entries: [], conflicts: [] };
+  data.productCodeRegistry = {
+    schemaVersion: Math.max(Number(current.schemaVersion || 1), Number(saved.schemaVersion || 1)),
+    entries: clone((current.entries || []).filter((entry) => !registryScopes.has(entry.scope))).concat(clone(saved.entries || [])),
+    conflicts: clone((current.conflicts || []).filter((entry) => !registryScopes.has(entry.scope))).concat(clone(saved.conflicts || []))
+  };
+}
+
 function importRevision(data) { return Math.max(0, Number(data && data.revisions && data.revisions.dataImport || 0)); }
 
 function catalogSnapshot(data) {
@@ -1601,28 +1736,13 @@ function pricingFingerprintProjection(data) {
 }
 
 function recipeFingerprintProjection(data) {
-  const menuLinks = [];
-  for (const category of data && data.menuState && data.menuState.categories || []) {
-    for (const product of category.products || []) {
-      if (!product.recipeId && !product.recipeSize && product.contentMode !== "recipe") continue;
-      menuLinks.push({
-        id: String(product.id || ""),
-        productCode: normalizeProductCode(product.productCode),
-        recipeId: String(product.recipeId || ""),
-        recipeSize: String(product.recipeSize || ""),
-        contentMode: String(product.contentMode || "")
-      });
-    }
-  }
   return {
     recipeState: withoutTransientFingerprintFields(data && data.recipeState || {}),
     recipeCatalog: stableSort((data && data.recipeCatalog || []).map((item) =>
-      withoutTransientFingerprintFields(item)
+      withoutTransientFingerprintFields(item, new Set([
+        "menuProductId", "menuProductIds", "menuCategoryId", "menuCategoryIds"
+      ]))
     ), recipeCatalogSortKey),
-    recipeLinkReview: stableSort((data && data.recipeLinkReview || []).map((item) =>
-      withoutTransientFingerprintFields(item)
-    ), genericEntitySortKey),
-    menuLinks: stableSort(menuLinks, genericEntitySortKey),
     mappings: fingerprintMappings(data, "recipe")
   };
 }
@@ -1800,6 +1920,14 @@ module.exports = {
   importRevision,
   legacyCatalogFingerprint,
   normalizeFingerprintScopes,
+  normalizeImportDomains,
+  domainsToScopes,
+  scopesToDomains,
+  domainRevisionSnapshot,
+  domainFingerprintSnapshot,
+  domainProductCodeFingerprintSnapshot,
+  domainCatalogSnapshot,
+  restoreDomainCatalogSnapshot,
   normalizeSourceName,
   productCodeFingerprint,
   restoreCatalogSnapshot

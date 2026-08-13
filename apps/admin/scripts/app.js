@@ -596,6 +596,7 @@
       "dataImportRecipeFile", "dataImportStockFile", "dataImportMenuFileName", "dataImportPricingFileName",
       "dataImportRecipeFileName", "dataImportStockFileName", "dataImportMessage", "dataImportReset", "dataImportAnalyze",
       "dataImportApply", "dataImportAnalysis", "dataImportAnalysisMeta", "dataImportReadiness", "dataImportStats",
+      "dataImportDomains",
       "dataImportWorkbookSummary", "dataImportCrossLinkSummary", "dataImportApplyBlocker", "dataImportArchiveOnly",
       "dataImportChangeCount", "dataImportChanges", "dataImportIssueScope", "dataImportIssueCode",
       "dataImportIssueCount", "dataImportIssues", "dataImportHistoryList",
@@ -8208,6 +8209,12 @@
     { key: "stock", input: "dataImportStockFile", name: "dataImportStockFileName", label: "Stok" }
   ]);
 
+  const DATA_IMPORT_DOMAINS = Object.freeze([
+    { key: "catalog", label: "Menü + Fiyat", scopes: ["menu", "pricing"] },
+    { key: "recipes", label: "Reçete", scopes: ["recipe"] },
+    { key: "stock", label: "Stok", scopes: ["stock"] }
+  ]);
+
   function bindDataImportCenterEvents() {
     if (!els.dataImportCenter) return;
     DATA_IMPORT_SCOPES.forEach((scope) => {
@@ -8337,15 +8344,17 @@
       center.lastResult = null;
       const hasErrors = Number(center.analysis.report && center.analysis.report.errorCount || 0) > 0
         || center.analysis.issues.some((issue) => dataImportIssueSeverity(issue) === "error");
-      const hasChanges = center.analysis.changes.length > 0;
-      center.message = center.analysis.canApply
-        ? "Analiz tamamlandı. Önizlemeyi kontrol ederek atomik uygulamayı onaylayabilirsiniz."
+      const hasChanges = dataImportAnalysisHasChanges(center.analysis);
+      const applicableDomains = dataImportApplicableDomains(center.analysis);
+      const blockedDomains = dataImportBlockedDomains(center.analysis);
+      center.message = applicableDomains.length
+        ? `Analiz tamamlandı. Uygulanmaya hazır: ${dataImportDomainListLabel(applicableDomains)}.${blockedDomains.length ? ` Engelli: ${dataImportDomainListLabel(blockedDomains)}.` : ""}`
         : hasErrors
           ? "Analiz tamamlandı; kritik kayıtlar giderilmeden uygulama yapılamaz."
           : hasChanges
             ? "Analiz tamamlandı; yalnız uyarı içeren kayıtları inceleyin."
             : "Analiz tamamlandı. Kalıcı veride uygulanacak yeni bir değişiklik bulunmadı.";
-      center.messageType = center.analysis.canApply || !hasChanges ? "success" : (hasErrors ? "error" : "warning");
+      center.messageType = applicableDomains.length ? (blockedDomains.length ? "warning" : "success") : (!hasChanges ? "success" : (hasErrors ? "error" : "warning"));
     } catch (error) {
       center.analysis = null;
       center.message = error.message || "Excel dosyaları analiz edilemedi.";
@@ -8364,17 +8373,20 @@
       setDataImportMessage("Analiz tamamlandı. Kalıcı veride uygulanacak değişiklik bulunmadığı için yeni bir işlem oluşturulmadı.", "success");
       return;
     }
-    if (analysis.canApply !== true) return;
+    const applicableDomains = dataImportApplicableDomains(analysis);
+    if (!applicableDomains.length) return;
     if (hasPendingChanges()) {
       setDataImportMessage("Kalıcı veri aktarımından önce mevcut taslak değişikliklerini Kaydet ve Yayınla ile tamamlayın.", "error");
       return;
     }
+    const blockedDomains = dataImportBlockedDomains(analysis);
     const report = analysis.report || {};
     const archived = Number(report.archived || 0);
     const requiresArchiveConfirmation = report.requiresArchiveConfirmation === true;
+    const domainConfirmation = `Uygulanacak: ${dataImportDomainListLabel(applicableDomains)}.\nEngelli: ${blockedDomains.length ? dataImportDomainListLabel(blockedDomains) : "Yok"}.`;
     const confirmationMessage = requiresArchiveConfirmation
-      ? `Bu aktarım ${archived} kaydı arşivleyecek ve canlı katalog revizyonunu güncelleyecek. Önizlemeyi kontrol ettiniz mi; atomik uygulamaya devam edilsin mi?`
-      : "Önizlenen Excel değişiklikleri kalıcı store'a ve canlı katalog revizyonuna atomik olarak uygulansın mı?";
+      ? `${domainConfirmation}\n\nBu aktarım ${archived} kaydı arşivleyecek ve ilgili canlı veri revizyonlarını güncelleyecek. Önizlemeyi kontrol ettiniz mi; atomik uygulamaya devam edilsin mi?`
+      : `${domainConfirmation}\n\nÖnizlenen Excel değişiklikleri kalıcı store'a atomik olarak uygulansın mı?`;
     if (!window.confirm(confirmationMessage)) return;
     const requestId = createRequestId("data-import-apply");
     setDataImportBusy("apply");
@@ -8388,13 +8400,14 @@
         body: {
           analysisId: analysis.analysisId,
           expectedRevision: analysis.expectedRevision,
+          domains: applicableDomains,
           confirmArchiveImpact: requiresArchiveConfirmation,
           requestId
         }
       });
       center.lastResult = result;
-      center.analysis = Object.assign({}, analysis, { canApply: false, applied: true });
-      center.message = `Aktarım kalıcı veriye uygulandı${result.operationId ? ` · İşlem ${result.operationId}` : ""}.`;
+      center.analysis = Object.assign({}, analysis, { canApply: false, applied: true, appliedDomains: applicableDomains });
+      center.message = `${dataImportDomainListLabel(applicableDomains)} kalıcı veriye uygulandı${blockedDomains.length ? `; ${dataImportDomainListLabel(blockedDomains)} uygulanmadı` : ""}${result.operationId ? ` · İşlem ${result.operationId}` : ""}.`;
       center.messageType = "success";
       await Promise.all([hydrateFromBackend(), hydrateStockFromBackend()]);
       await loadDataImportHistory(true);
@@ -8403,6 +8416,7 @@
       if (staleAnalysis) {
         center.analysis = Object.assign({}, analysis, {
           canApply: false,
+          domains: Object.fromEntries(Object.entries(analysis.domains || {}).map(([key, domain]) => [key, Object.assign({}, domain, { canApply: false })])),
           blockedReasons: ["Veri revizyonu analizden sonra değişti. Dosyaları yeniden analiz edin."]
         });
       }
@@ -8480,19 +8494,74 @@
   function normalizeDataImportAnalysis(result) {
     const source = result && result.analysis && typeof result.analysis === "object" ? result.analysis : (result || {});
     const report = source.report || result.report || source.summary || result.summary || {};
+    const changes = Array.isArray(source.changes) ? source.changes : (Array.isArray(result.changes) ? result.changes : []);
+    const issues = normalizeDataImportIssues(source, result);
+    const legacyCanApplyValue = source.canApply ?? result.canApply;
+    const domains = normalizeDataImportDomains(source, result, report, changes, issues, legacyCanApplyValue);
     return {
       analysisId: source.analysisId || result.analysisId || source.id || "",
       expectedRevision: source.expectedRevision ?? result.expectedRevision ?? source.baseRevision ?? result.baseRevision,
       report,
-      changes: Array.isArray(source.changes) ? source.changes : (Array.isArray(result.changes) ? result.changes : []),
-      issues: normalizeDataImportIssues(source, result),
-      canApply: (source.canApply ?? result.canApply) === true,
+      changes,
+      issues,
+      domains,
+      canApply: DATA_IMPORT_DOMAINS.some((domain) => domains[domain.key] && domains[domain.key].selected && domains[domain.key].canApply && domains[domain.key].changeCount > 0),
       workbookReports: source.workbookReports || source.fileReports || report.workbooks || report.byWorkbook || report.files || {},
       crossLinks: source.crossLinks || source.crossLinkSummary || report.crossLinks || report.links || {},
       blockedReasons: normalizeDataImportBlockedReasons(source, result, report),
       createdAt: source.createdAt || result.createdAt || new Date().toISOString(),
       applied: false
     };
+  }
+
+  function normalizeDataImportDomains(source, result, report, changes, issues, legacyCanApplyValue) {
+    const raw = [
+      source.domains, result.domains, source.domainReadiness, result.domainReadiness,
+      source.domainResults, result.domainResults, report.domains, report.domainReadiness
+    ].find((item) => item && typeof item === "object") || null;
+    return DATA_IMPORT_DOMAINS.reduce((domains, definition) => {
+      const aliases = definition.key === "catalog" ? ["catalog", "menupricing", "menu"]
+        : definition.key === "recipes" ? ["recipes", "recipe"] : ["stock", "inventory"];
+      let value = null;
+      if (Array.isArray(raw)) value = raw.find((item) => aliases.includes(dataImportDomainKey(item && (item.key || item.domain || item.name))));
+      else if (raw) {
+        const rawKey = Object.keys(raw).find((key) => aliases.includes(dataImportDomainKey(key)));
+        value = rawKey ? raw[rawKey] : null;
+      }
+      const domainIssues = issues.filter((issue) => dataImportDomainForRecord(issue) === definition.key);
+      const errorCount = dataImportDomainMetric(value, ["errorCount", "errors", "blockingErrorCount"], domainIssues.filter((issue) => dataImportIssueSeverity(issue) === "error").length);
+      const warningCount = dataImportDomainMetric(value, ["warningCount", "warnings"], domainIssues.filter((issue) => dataImportIssueSeverity(issue) !== "error").length);
+      const inferredChangeCount = changes.filter((change) => dataImportDomainForRecord(change) === definition.key).length;
+      const changeCount = dataImportDomainMetric(value, ["changeCount", "changedCount", "changes", "totalChanges"], inferredChangeCount);
+      const fileSelected = definition.scopes.some((scope) => Boolean(state.dataImportCenter.files[scope]));
+      const selected = value && Object.prototype.hasOwnProperty.call(value, "selected")
+        ? value.selected === true
+        : (fileSelected || Boolean(value));
+      const blockingIssuesValue = value && (value.blockingIssues || value.blockedReasons || value.blockingReasons || value.errors);
+      const blockingIssues = (Array.isArray(blockingIssuesValue) ? blockingIssuesValue : (blockingIssuesValue ? [blockingIssuesValue] : []))
+        .map((item) => typeof item === "string" ? item : (item.message || item.reason || item.code || ""))
+        .filter(Boolean);
+      if (!blockingIssues.length) domainIssues.filter((issue) => dataImportIssueSeverity(issue) === "error").forEach((issue) => {
+        blockingIssues.push(issue.message || issue.reason || dataImportIssueCode(issue));
+      });
+      const explicitCanApply = value && (value.canApply ?? value.ready ?? value.isReady);
+      const canApply = selected && (explicitCanApply !== undefined
+        ? explicitCanApply === true
+        : (legacyCanApplyValue !== undefined ? legacyCanApplyValue === true : errorCount === 0));
+      domains[definition.key] = { selected, changeCount, warningCount, errorCount, canApply, blockingIssues };
+      return domains;
+    }, {});
+  }
+
+  function dataImportDomainMetric(source, keys, fallback) {
+    if (source && typeof source === "object") {
+      for (const key of keys) {
+        const value = source[key];
+        if (Array.isArray(value)) return value.length;
+        if (Number.isFinite(Number(value))) return Number(value);
+      }
+    }
+    return Number(fallback || 0);
   }
 
   function normalizeDataImportBlockedReasons(source, result, report) {
@@ -8541,7 +8610,7 @@
       els.dataImportAnalyze.textContent = center.busy === "analyze" ? "Analiz Ediliyor…" : "Backend’de Analiz Et";
     }
     if (els.dataImportApply) {
-      els.dataImportApply.disabled = Boolean(center.busy) || !center.analysis || !dataImportAnalysisHasChanges(center.analysis) || center.analysis.canApply !== true || center.analysis.applied;
+      els.dataImportApply.disabled = Boolean(center.busy) || !center.analysis || !dataImportAnalysisHasChanges(center.analysis) || dataImportApplicableDomains(center.analysis).length === 0 || center.analysis.applied;
       els.dataImportApply.textContent = center.busy === "apply" ? "Uygulanıyor…" : "Onayla ve Atomik Uygula";
     }
     if (els.dataImportReset) els.dataImportReset.disabled = Boolean(center.busy) || (selectedCount === 0 && !center.analysis && !center.lastResult);
@@ -8592,8 +8661,14 @@
     if (els.dataImportAnalysisMeta) els.dataImportAnalysisMeta.textContent = `${formatDateTime(analysis.createdAt) || "Şimdi"} · Analiz ${analysis.analysisId || "kimliği backend'de"}`;
     if (els.dataImportReadiness) {
       const hasChanges = dataImportAnalysisHasChanges(analysis);
-      els.dataImportReadiness.textContent = analysis.applied ? "Uygulandı" : (!hasChanges ? "Değişiklik yok" : (analysis.canApply ? "Uygulamaya hazır" : "Uygulama engelli"));
-      els.dataImportReadiness.className = `ui-badge ${analysis.applied || analysis.canApply ? "is-success" : (hasChanges ? "is-warning" : "")}`.trim();
+      const ready = dataImportApplicableDomains(analysis);
+      const blocked = dataImportBlockedDomains(analysis);
+      els.dataImportReadiness.textContent = analysis.applied
+        ? "Uygulandı"
+        : (blocked.length && !ready.length
+          ? "Uygulama engelli"
+          : (!hasChanges ? "Değişiklik yok" : (ready.length ? (blocked.length ? "Kısmen hazır" : "Uygulamaya hazır") : "Uygulama engelli")));
+      els.dataImportReadiness.className = `ui-badge ${analysis.applied || (ready.length && !blocked.length) ? "is-success" : (hasChanges ? "is-warning" : "")}`.trim();
     }
     if (els.dataImportStats) {
       els.dataImportStats.innerHTML = dataImportSummaryEntries(analysis.report).map((item) => `
@@ -8601,6 +8676,7 @@
       `).join("");
     }
 
+    renderDataImportDomains(analysis);
     renderDataImportWorkbookSummary(analysis);
     renderDataImportCrossLinkSummary(analysis);
     renderDataImportApplyBlocker(analysis);
@@ -8631,7 +8707,7 @@
     const allIssues = analysis.issues || [];
     renderDataImportIssueFilterOptions(allIssues);
     const issues = allIssues.filter((issue) => {
-      const scope = dataImportScopeKey(issue.scope || issue.workbook || issue.sourceWorkbook);
+      const scope = dataImportIssueScopeKey(issue);
       const code = dataImportIssueCode(issue);
       return (center.issueScope === "all" || center.issueScope === scope)
         && (center.issueCode === "all" || center.issueCode === code);
@@ -8643,17 +8719,49 @@
     if (els.dataImportIssues) {
       els.dataImportIssues.innerHTML = issues.length ? issues.slice(0, 300).map((issue) => `
         <article class="is-${escapeAttribute(dataImportIssueSeverity(issue))}">
-          <div><strong>${escapeHTML(dataImportScopeLabel(issue.scope || issue.workbook || issue.sourceWorkbook))}</strong><span>${escapeHTML(dataImportIssueCode(issue))}</span></div>
-          <p>${escapeHTML(issue.message || issue.reason || "İnceleme gereken kayıt")}</p>
-          <small>${escapeHTML([
-            issue.sheet || issue.sourceSheet,
-            issue.rowNumber || issue.row ? `Satır ${issue.rowNumber || issue.row}` : "",
-            issue.product || issue.name,
-            dataImportProductCode(issue, true) ? `Ürün Kodu ${dataImportProductCode(issue, true)}` : ""
-          ].filter(Boolean).join(" · "))}</small>
+          <div><strong>${escapeHTML(dataImportIssueScopeLabel(issue))}</strong><span>${escapeHTML(dataImportIssueCode(issue))}</span></div>
+          <p class="data-import-issue-reason"><strong>Neden:</strong> ${escapeHTML(issue.message || issue.reason || "İnceleme gereken kayıt")}</p>
+          <dl class="data-import-issue-detail">
+            <div><dt>Dosya</dt><dd>${escapeHTML(issue.filename || issue.fileName || issue.file || issue.sourceFile || issue.workbook || issue.sourceWorkbook || "-")}</dd></div>
+            <div><dt>Sayfa</dt><dd>${escapeHTML(issue.sheet || issue.sheetName || issue.sourceSheet || "-")}</dd></div>
+            <div><dt>Satır</dt><dd>${escapeHTML(formatDataImportValue(issue.rowNumber || issue.row || issue.sourceRow))}</dd></div>
+            <div><dt>Ürün</dt><dd>${escapeHTML(issue.product || issue.productName || issue.name || issue.item || "-")}</dd></div>
+            <div><dt>Ürün Kodu</dt><dd><code class="data-import-product-code">${escapeHTML(dataImportProductCode(issue, true) || "-")}</code></dd></div>
+          </dl>
         </article>
       `).join("") : `<div class="empty-mini">${allIssues.length ? "Seçili filtrelerle eşleşen kayıt yok." : "Uyarı veya hata bulunmadı."}</div>`;
     }
+  }
+
+  function renderDataImportDomains(analysis) {
+    if (!els.dataImportDomains) return;
+    els.dataImportDomains.innerHTML = DATA_IMPORT_DOMAINS.map((definition) => {
+      const domain = analysis.domains && analysis.domains[definition.key] || {};
+      const hasChanges = Number(domain.changeCount || 0) > 0;
+      let statusKey = "not-selected";
+      let statusLabel = "Seçilmedi";
+      if (analysis.applied && (analysis.appliedDomains || []).includes(definition.key)) {
+        statusKey = "ready";
+        statusLabel = "Uygulandı";
+      } else if (domain.selected) {
+        if (!hasChanges && Number(domain.errorCount || 0) === 0) {
+          statusKey = "unchanged";
+          statusLabel = "Değişiklik yok";
+        } else if (domain.canApply && hasChanges) {
+          statusKey = "ready";
+          statusLabel = "Uygulamaya hazır";
+        } else {
+          statusKey = "blocked";
+          statusLabel = "Engelli";
+        }
+      }
+      const blocking = Array.isArray(domain.blockingIssues) ? domain.blockingIssues.filter(Boolean) : [];
+      return `<article class="data-import-domain-card is-${statusKey}">
+        <header><strong>${escapeHTML(definition.label)}</strong><span>${escapeHTML(statusLabel)}</span></header>
+        <dl><div><dt>Değişiklik</dt><dd>${Number(domain.changeCount || 0)}</dd></div><div><dt>Uyarı</dt><dd>${Number(domain.warningCount || 0)}</dd></div><div><dt>Hata</dt><dd>${Number(domain.errorCount || 0)}</dd></div></dl>
+        ${blocking.length ? `<ul>${blocking.slice(0, 3).map((reason) => `<li>${escapeHTML(reason)}</li>`).join("")}</ul>` : ""}
+      </article>`;
+    }).join("");
   }
 
   function renderDataImportWorkbookSummary(analysis) {
@@ -8701,28 +8809,38 @@
 
   function renderDataImportApplyBlocker(analysis) {
     if (!els.dataImportApplyBlocker) return;
-    if (analysis.applied || analysis.canApply || !dataImportAnalysisHasChanges(analysis)) {
+    const applicableDomains = dataImportApplicableDomains(analysis);
+    const blockedDomains = dataImportBlockedDomains(analysis);
+    if (analysis.applied || (!dataImportAnalysisHasChanges(analysis) && !blockedDomains.length) || (!blockedDomains.length && applicableDomains.length)) {
       els.dataImportApplyBlocker.hidden = true;
       els.dataImportApplyBlocker.innerHTML = "";
       return;
     }
-    const errorIssues = analysis.issues.filter((issue) => dataImportIssueSeverity(issue) === "error");
-    const reasons = [...analysis.blockedReasons, ...errorIssues.map((issue) => issue.message || issue.reason || dataImportIssueCode(issue))]
-      .filter(Boolean).filter((item, index, list) => list.indexOf(item) === index);
+    const reasons = blockedDomains.flatMap((domainKey) => {
+      const domain = analysis.domains && analysis.domains[domainKey] || {};
+      return (domain.blockingIssues || []).map((reason) => `${dataImportDomainLabel(domainKey)}: ${reason}`);
+    }).filter(Boolean).filter((item, index, list) => list.indexOf(item) === index);
+    if (!reasons.length && !applicableDomains.length) {
+      const errorIssues = analysis.issues.filter((issue) => dataImportIssueSeverity(issue) === "error");
+      reasons.push(...[...analysis.blockedReasons, ...errorIssues.map((issue) => issue.message || issue.reason || dataImportIssueCode(issue))]
+        .filter(Boolean).filter((item, index, list) => list.indexOf(item) === index));
+    }
+    if (!reasons.length && blockedDomains.length) reasons.push("Seçili veri alanı backend doğrulaması nedeniyle engelli.");
     if (!reasons.length && !analysis.changes.length) reasons.push("Kalıcı veride uygulanacak yeni bir değişiklik bulunmuyor.");
     if (!reasons.length) reasons.push("Backend bu analizi atomik uygulama için uygun bulmadı.");
     els.dataImportApplyBlocker.hidden = false;
-    els.dataImportApplyBlocker.innerHTML = `<strong>Uygulama engelli</strong><ul>${reasons.slice(0, 8).map((reason) => `<li>${escapeHTML(reason)}</li>`).join("")}</ul>`;
+    els.dataImportApplyBlocker.classList.toggle("is-partial", applicableDomains.length > 0);
+    els.dataImportApplyBlocker.innerHTML = `<strong>${applicableDomains.length ? `${dataImportDomainListLabel(applicableDomains)} uygulanabilir; ${dataImportDomainListLabel(blockedDomains)} engelli` : "Uygulama engelli"}</strong><ul>${reasons.slice(0, 8).map((reason) => `<li>${escapeHTML(reason)}</li>`).join("")}</ul>`;
   }
 
   function renderDataImportIssueFilterOptions(issues) {
     const center = state.dataImportCenter;
-    const scopes = [...new Set(issues.map((issue) => dataImportScopeKey(issue.scope || issue.workbook || issue.sourceWorkbook)).filter(Boolean))].sort();
+    const scopes = [...new Set(issues.map(dataImportIssueScopeKey).filter(Boolean))].sort();
     const codes = [...new Set(issues.map(dataImportIssueCode).filter(Boolean))].sort();
     if (!scopes.includes(center.issueScope)) center.issueScope = "all";
     if (!codes.includes(center.issueCode)) center.issueCode = "all";
     if (els.dataImportIssueScope) {
-      els.dataImportIssueScope.innerHTML = `<option value="all">Tümü</option>${scopes.map((scope) => `<option value="${escapeAttribute(scope)}">${escapeHTML(dataImportScopeLabel(scope))}</option>`).join("")}`;
+      els.dataImportIssueScope.innerHTML = `<option value="all">Tümü</option>${scopes.map((scope) => `<option value="${escapeAttribute(scope)}">${escapeHTML(dataImportDomainKey(scope) === scope ? dataImportDomainLabel(scope) : dataImportScopeLabel(scope))}</option>`).join("")}`;
       els.dataImportIssueScope.value = center.issueScope;
     }
     if (els.dataImportIssueCode) {
@@ -8762,11 +8880,60 @@
     return String(issue && (issue.issueCode || issue.code || issue.type || dataImportIssueSeverity(issue)) || "warning").trim().toLowerCase();
   }
 
+  function dataImportIssueScopeKey(issue) {
+    const value = issue && (issue.domain || issue.domainKey || issue.scope || issue.workbook || issue.sourceWorkbook);
+    const domain = dataImportDomainKey(value);
+    return DATA_IMPORT_DOMAINS.some((item) => item.key === domain) ? domain : dataImportScopeKey(value);
+  }
+
+  function dataImportIssueScopeLabel(issue) {
+    const key = dataImportIssueScopeKey(issue);
+    return DATA_IMPORT_DOMAINS.some((item) => item.key === key) ? dataImportDomainLabel(key) : dataImportScopeLabel(key);
+  }
+
   function dataImportScopeKey(value) {
     const key = String(value || "").trim().toLowerCase();
     if (key === "price") return "pricing";
     if (key === "recipes") return "recipe";
     return key;
+  }
+
+  function dataImportDomainKey(value) {
+    const key = String(value || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+    if (["catalog", "menupricing", "menuprice", "menu", "pricing", "price"].includes(key)) return "catalog";
+    if (["recipes", "recipe", "recete", "receteler"].includes(key)) return "recipes";
+    if (["stock", "inventory", "stok"].includes(key)) return "stock";
+    return key;
+  }
+
+  function dataImportDomainForRecord(record) {
+    return dataImportDomainKey(record && (record.domain || record.domainKey || record.scope || record.workbook || record.sourceWorkbook));
+  }
+
+  function dataImportDomainLabel(value) {
+    const key = dataImportDomainKey(value);
+    const definition = DATA_IMPORT_DOMAINS.find((item) => item.key === key);
+    return definition ? definition.label : String(value || "Veri alanı");
+  }
+
+  function dataImportDomainListLabel(values) {
+    return values.map(dataImportDomainLabel).join(", ");
+  }
+
+  function dataImportApplicableDomains(analysis) {
+    if (!analysis || !analysis.domains) return [];
+    return DATA_IMPORT_DOMAINS.filter(({ key }) => {
+      const domain = analysis.domains[key];
+      return domain && domain.selected && domain.canApply === true && Number(domain.changeCount || 0) > 0;
+    }).map(({ key }) => key);
+  }
+
+  function dataImportBlockedDomains(analysis) {
+    if (!analysis || !analysis.domains) return [];
+    return DATA_IMPORT_DOMAINS.filter(({ key }) => {
+      const domain = analysis.domains[key];
+      return domain && domain.selected && domain.canApply !== true && (Number(domain.changeCount || 0) > 0 || Number(domain.errorCount || 0) > 0 || (domain.blockingIssues || []).length > 0);
+    }).map(({ key }) => key);
   }
 
   function isDataImportArchiveChange(change) {
@@ -8814,6 +8981,7 @@
   function dataImportAnalysisHasChanges(analysis) {
     if (!analysis || typeof analysis !== "object") return false;
     if (Array.isArray(analysis.changes) && analysis.changes.length > 0) return true;
+    if (analysis.domains && DATA_IMPORT_DOMAINS.some(({ key }) => Number(analysis.domains[key] && analysis.domains[key].changeCount || 0) > 0)) return true;
     const report = analysis.report && typeof analysis.report === "object" ? analysis.report : {};
     const count = report.changeCount ?? report.changedCount ?? report.totalChanges ?? analysis.changeCount;
     return Number.isFinite(Number(count)) && Number(count) > 0;

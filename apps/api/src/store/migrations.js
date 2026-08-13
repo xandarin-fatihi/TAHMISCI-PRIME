@@ -92,6 +92,9 @@ function normalizeStoreRevisions(value, legacyPricingRevision) {
     publish: Math.max(0, Math.trunc(finiteNumber(source.publish, 0))),
     pricing: Math.max(0, Math.trunc(finiteNumber(source.pricing ?? legacyPricingRevision, 0))),
     dataImport: Math.max(0, Math.trunc(finiteNumber(source.dataImport, 0))),
+    dataImportCatalog: Math.max(0, Math.trunc(finiteNumber(source.dataImportCatalog, 0))),
+    dataImportRecipes: Math.max(0, Math.trunc(finiteNumber(source.dataImportRecipes, 0))),
+    dataImportStock: Math.max(0, Math.trunc(finiteNumber(source.dataImportStock, 0))),
     catalogMigration: Math.max(0, Math.trunc(finiteNumber(source.catalogMigration, 0))),
     workforce: Math.max(0, Math.trunc(finiteNumber(source.workforce, 0)))
   };
