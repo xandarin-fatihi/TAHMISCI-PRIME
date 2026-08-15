@@ -2,8 +2,13 @@
 
 const crypto = require("crypto");
 const express = require("express");
+const path = require("path");
 const { readWorkbook } = require("./simple-xlsx");
 const { serializeLegacyMenuState } = require("./pricing");
+const {
+  createDataImportColdStore,
+  migrateLegacyDataImportPayloads
+} = require("./data-import-cold-store");
 const {
   WORKBOOKS,
   analyzeDataImport,
@@ -31,9 +36,25 @@ function registerDataImportRoutes(options) {
     riskOperationLimiter = (_req, _res, next) => next(),
     broadcastMenuUpdate, broadcastRecipeUpdate, broadcastStockUpdate, broadcastPublicUpdate
   } = options;
+  const coldStore = options.dataImportColdStore || createDataImportColdStore({
+    rootDir: options.dataImportColdDir
+      || (store.filePath ? path.join(path.dirname(store.filePath), "data-import-cold") : "")
+  });
+  let coldReadyPromise = null;
+  const ensureColdReady = () => {
+    if (!coldReadyPromise) {
+      coldReadyPromise = migrateLegacyDataImportPayloads(store, coldStore)
+        .catch((error) => {
+          coldReadyPromise = null;
+          throw error;
+        });
+    }
+    return coldReadyPromise;
+  };
 
   app.get("/api/admin/data-imports/history", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
+      await ensureColdReady();
       const data = await store.read();
       const limit = Math.min(100, Math.max(1, Number(req.query.limit || 50)));
       const history = (data.dataImportHistory || []).slice().reverse().slice(0, limit).map(publicHistory);
@@ -43,6 +64,7 @@ function registerDataImportRoutes(options) {
 
   app.post("/api/admin/data-imports/analyze", requireAdminRequestOrigin, auth.requireAdmin, riskOperationLimiter, express.json({ limit: "82mb", strict: true }), async (req, res, next) => {
     try {
+      await ensureColdReady();
       const parsed = parseFiles(req.body && req.body.files);
       const requestId = requestIdentifier(req, req.body || {});
       const actor = actorFromRequest(req);
@@ -52,12 +74,17 @@ function registerDataImportRoutes(options) {
       const expiresAt = new Date(Date.now() + DRAFT_TTL_MS).toISOString();
       let replay = false;
       let response;
-      await store.update((data) => {
-        const previous = idempotentResponse(data, scope, requestId);
-        if (previous) { replay = true; response = previous; return data; }
+      await store.update(async (data, context = {}) => {
+        const previous = await idempotentResponse(data, scope, requestId, coldStore);
+        if (previous) {
+          replay = true;
+          response = previous;
+          return context.noChange !== undefined ? context.noChange : data;
+        }
         const analysis = analyzeDataImport(data, parsed, { analysisId, now: createdAt });
         const draft = { ...analysis, actor, createdAt, expiresAt };
-        data.dataImportDrafts = activeDrafts(data.dataImportDrafts).concat(draft).slice(-20);
+        const draftRecord = await coldStore.externalizeDraft(draft);
+        data.dataImportDrafts = activeDrafts(data.dataImportDrafts).concat(draftRecord).slice(-20);
         const analysisStatus = analysis.report.errorCount === 0 && analysis.report.changeCount === 0
           ? "unchanged"
           : "analyzed";
@@ -89,7 +116,7 @@ function registerDataImportRoutes(options) {
           domains: analysis.domains,
           changes: analysis.changes, issues: analysis.issues, canApply: analysis.report.canApply
         };
-        rememberIdempotency(data, scope, requestId, response, createdAt);
+        await rememberIdempotency(data, scope, requestId, response, createdAt, coldStore);
         return data;
       });
       res.status(replay ? 200 : 201).json(response);
@@ -98,6 +125,7 @@ function registerDataImportRoutes(options) {
 
   app.post("/api/admin/data-imports/apply", requireAdminRequestOrigin, auth.requireAdmin, riskOperationLimiter, async (req, res, next) => {
     try {
+      await ensureColdReady();
       const body = req.body && typeof req.body === "object" ? req.body : {};
       const analysisId = String(body.analysisId || "").trim();
       if (!/^data-import-analysis-[a-z0-9-]{20,}$/i.test(analysisId)) throw clientError(400, "Geçerli bir analiz kaydı gerekli.");
@@ -108,12 +136,18 @@ function registerDataImportRoutes(options) {
       let replay = false;
       let response;
       let rollbackSnapshot = null;
-      const committedState = await store.update((data) => {
-        const previous = idempotentResponse(data, scope, requestId);
-        if (previous) { replay = true; response = previous; return data; }
+      const committedState = await store.update(async (data, context = {}) => {
+        const previous = await idempotentResponse(data, scope, requestId, coldStore);
+        if (previous) {
+          replay = true;
+          response = previous;
+          return context.noChange !== undefined ? context.noChange : data;
+        }
         data.dataImportDrafts = activeDrafts(data.dataImportDrafts);
-        const draft = data.dataImportDrafts.find((item) => item.id === analysisId || item.analysisId === analysisId);
-        if (!draft) throw clientError(404, "Analiz kaydı bulunamadı veya süresi doldu. Dosyaları yeniden analiz edin.");
+        const draftRecord = data.dataImportDrafts.find((item) => item.id === analysisId || item.analysisId === analysisId);
+        if (!draftRecord) throw clientError(404, "Analiz kaydı bulunamadı veya süresi doldu. Dosyaları yeniden analiz edin.");
+        const draft = await coldStore.resolveDraft(draftRecord);
+        if (!draft) throw clientError(409, "Analiz payload kaydı çözülemedi. Dosyaları yeniden analiz edin.");
         if (draft.actor !== actor) throw clientError(403, "Bu analiz kaydını uygulama yetkiniz yok.");
         const requestedDomains = normalizeRequestedDomains(body.domains, draft);
         const selectedDomains = requestedDomains.length ? requestedDomains : normalizeImportDomains([], draft.scopes);
@@ -182,16 +216,17 @@ function registerDataImportRoutes(options) {
           appliedAt: now, rolledBackAt: null, rollbackReason: "", rollbackVerified: null,
           backupId, createdAt: now, status: "applied", undoneAt: null, undoneBy: "", undoOperationId: ""
         };
-        data.dataImportBackups = (data.dataImportBackups || []).concat({ id: backupId, operationId, createdAt: now, domains: selectedDomains, scopes: appliedScopes, snapshot: before }).slice(-10);
+        const backupRecord = await coldStore.externalizeBackup({ id: backupId, operationId, createdAt: now, domains: selectedDomains, scopes: appliedScopes, snapshot: before });
+        data.dataImportBackups = (data.dataImportBackups || []).concat(backupRecord).slice(-10);
         data.dataImportHistory = (data.dataImportHistory || []).concat(history).slice(-100);
-        data.dataImportDrafts = data.dataImportDrafts.filter((item) => item !== draft);
+        data.dataImportDrafts = data.dataImportDrafts.filter((item) => item !== draftRecord);
         response = {
           ok: true, operationId, analysisId, revision: data.revisions.dataImport,
           publishRevision: data.revisions.publish, pricingRevision: data.revisions.pricing,
           changedScopes: appliedScopes, changedDomains: selectedDomains, report: selectedDomainReport(draft, selectedDomains), changedCount: selectedDomainChanges(draft, selectedDomains).length,
           canUndo: true, validationStatus: "pending", updatedAt: now
         };
-        rememberIdempotency(data, scope, requestId, response, now);
+        await rememberIdempotency(data, scope, requestId, response, now, coldStore);
         return data;
       }, {
         backupLabel: `excel-import-${analysisId}-${requestId}`,
@@ -209,7 +244,7 @@ function registerDataImportRoutes(options) {
         if (!validationDetails.valid) {
           const committedHistory = findImportHistory(committedState, response.operationId)
             || findImportHistory(readback, response.operationId);
-          rollbackSnapshot = rollbackSnapshot || findImportBackupSnapshot(committedState, response.operationId);
+          rollbackSnapshot = rollbackSnapshot || await findImportBackupSnapshot(committedState, response.operationId, coldStore);
           const rolledBackAt = new Date().toISOString();
           const rollbackReason = validationDetails.failureReason;
           console.error("[data-import] apply readback validation failed", {
@@ -270,7 +305,7 @@ function registerDataImportRoutes(options) {
 
         response = { ...response, validationStatus: "verified" };
         const validatedAt = new Date().toISOString();
-        const validatedState = await store.update((data) => {
+        const validatedState = await store.update(async (data) => {
           const history = findImportHistory(data, response.operationId);
           if (history) {
             applyReadbackAudit(history, validationDetails);
@@ -280,7 +315,7 @@ function registerDataImportRoutes(options) {
             history.afterFingerprint = validationDetails.committedFingerprint;
             history.afterProductCodeFingerprint = validationDetails.committedProductCodeFingerprint;
           }
-          updateIdempotentResponse(data, scope, requestId, response);
+          await updateIdempotentResponse(data, scope, requestId, response, coldStore);
           return data;
         });
         broadcastImport(validatedState, response.changedScopes, response.updatedAt, options);
@@ -291,6 +326,7 @@ function registerDataImportRoutes(options) {
 
   app.post("/api/admin/data-imports/:id/undo", requireAdminRequestOrigin, auth.requireAdmin, riskOperationLimiter, async (req, res, next) => {
     try {
+      await ensureColdReady();
       const operationId = String(req.params.id || "").trim();
       const body = req.body && typeof req.body === "object" ? req.body : {};
       const requestId = requestIdentifier(req, body);
@@ -299,9 +335,13 @@ function registerDataImportRoutes(options) {
       const scope = `data-import:undo:${operationId}`;
       let replay = false;
       let response;
-      const committedUndo = await store.update((data) => {
-        const previous = idempotentResponse(data, scope, requestId);
-        if (previous) { replay = true; response = previous; return data; }
+      const committedUndo = await store.update(async (data, context = {}) => {
+        const previous = await idempotentResponse(data, scope, requestId, coldStore);
+        if (previous) {
+          replay = true;
+          response = previous;
+          return context.noChange !== undefined ? context.noChange : data;
+        }
         const source = (data.dataImportHistory || []).find((item) => item.id === operationId && item.kind === "apply");
         if (!source) throw clientError(404, "Aktarım geçmişi bulunamadı.");
         if (Number(source.fingerprintVersion || 0) < 3 && importRevision(data) !== expectedRevision) throw clientError(409, "Veri revizyonu değişti. Geçmişi yenileyin.");
@@ -316,7 +356,8 @@ function registerDataImportRoutes(options) {
           throw clientError(409, "Aktarımdan sonra ürün kodu bağlantıları değiştiği için güvenli geri alma mümkün değil.");
         }
         const backup = (data.dataImportBackups || []).find((item) => item.id === source.backupId && item.operationId === source.id);
-        if (!backup || !backup.snapshot) throw clientError(409, "Geri alma yedeği bulunamadı.");
+        const backupSnapshot = await coldStore.resolveBackupSnapshot(backup);
+        if (!backup || !backupSnapshot) throw clientError(409, "Geri alma yedeği bulunamadı.");
         const sourceDomains = normalizeImportDomains(source.domains, source.scopes);
         const sourceDomainRevisions = source.domainRevisionsAfter || {};
         const currentDomainRevisions = domainRevisionSnapshot(data, sourceDomains);
@@ -327,7 +368,7 @@ function registerDataImportRoutes(options) {
         }
         const now = new Date().toISOString();
         const undoOperationId = `data-import-undo-${crypto.randomUUID()}`;
-        restoreDomainCatalogSnapshot(data, backup.snapshot, sourceDomains);
+        restoreDomainCatalogSnapshot(data, backupSnapshot, sourceDomains);
         data.revisions.dataImport = importRevision(data) + 1;
         bumpDomainRevisions(data, sourceDomains);
         data.revisions.publish = Number(data.revisions.publish || 0) + 1;
@@ -347,7 +388,7 @@ function registerDataImportRoutes(options) {
         };
         data.dataImportHistory = data.dataImportHistory.concat(undoHistory).slice(-100);
         response = { ok: true, operationId: undoOperationId, sourceOperationId: source.id, revision: data.revisions.dataImport, publishRevision: data.revisions.publish, changedScopes: source.scopes, changedDomains: sourceDomains, updatedAt: now };
-        rememberIdempotency(data, scope, requestId, response, now);
+        await rememberIdempotency(data, scope, requestId, response, now, coldStore);
         return data;
       });
       if (!replay) {
@@ -379,6 +420,8 @@ function registerDataImportRoutes(options) {
       res.json(response);
     } catch (error) { routeError(error, res, next); }
   });
+
+  return { ready: ensureColdReady, coldStore };
 }
 
 function parseFiles(input) {
@@ -589,14 +632,22 @@ function findImportHistory(data, operationId) {
   return (data && data.dataImportHistory || []).find((item) => item && item.id === operationId) || null;
 }
 
-function findImportBackupSnapshot(data, operationId) {
+async function findImportBackupSnapshot(data, operationId, coldStore) {
   const backup = (data && data.dataImportBackups || []).find((item) => item && item.operationId === operationId);
-  return backup && backup.snapshot ? structuredClone(backup.snapshot) : null;
+  return backup ? coldStore.resolveBackupSnapshot(backup) : null;
 }
 
-function updateIdempotentResponse(data, scope, requestId, response) {
+async function updateIdempotentResponse(data, scope, requestId, response, coldStore) {
   const entry = (data.dataImportIdempotency || []).find((item) => item.scope === scope && item.requestId === requestId);
-  if (entry) entry.response = structuredClone(response);
+  if (!entry) return;
+  const updated = await coldStore.externalizeIdempotency({
+    scope,
+    requestId,
+    createdAt: entry.createdAt,
+    response: structuredClone(response)
+  });
+  entry.responseRef = updated.responseRef;
+  delete entry.response;
 }
 
 function publicHistory(item) {
@@ -696,14 +747,17 @@ function activeDrafts(items) { const now = Date.now(); return (Array.isArray(ite
 function actorFromRequest(req) { return String(req.admin && (req.admin.sessionId || req.admin.sub) || "admin"); }
 function requestIdentifier(req, body) { const value = String(req.header("Idempotency-Key") || req.header("X-Request-ID") || body.requestId || "").trim(); if (!/^[a-zA-Z0-9._:-]{8,180}$/.test(value)) throw clientError(400, "Geçerli requestId veya Idempotency-Key gerekli."); return value; }
 function requiredRevision(value) { const number = Number(value); if (!Number.isInteger(number) || number < 0) throw clientError(400, "Geçerli expectedRevision gerekli."); return number; }
-function idempotentResponse(data, scope, requestId) {
+async function idempotentResponse(data, scope, requestId, coldStore) {
   const matches = (data.dataImportIdempotency || []).filter((entry) => entry.requestId === requestId);
   const item = matches.find((entry) => entry.scope === scope);
-  if (item) return structuredClone(item.response);
+  if (item) return coldStore.resolveIdempotencyResponse(item);
   if (matches.length) throw clientError(409, "Bu requestId daha önce farklı bir Excel işlemi için kullanıldı.");
   return null;
 }
-function rememberIdempotency(data, scope, requestId, response, createdAt) { data.dataImportIdempotency = (data.dataImportIdempotency || []).concat({ scope, requestId, response: structuredClone(response), createdAt }).slice(-500); }
+async function rememberIdempotency(data, scope, requestId, response, createdAt, coldStore) {
+  const entry = await coldStore.externalizeIdempotency({ scope, requestId, response: structuredClone(response), createdAt });
+  data.dataImportIdempotency = (data.dataImportIdempotency || []).concat(entry).slice(-500);
+}
 function clientError(status, message) { const error = new Error(message); error.status = status; return error; }
 function routeError(error, res, next) {
   if (error && (error.type === "entity.too.large" || Number(error.status) === 413)) {

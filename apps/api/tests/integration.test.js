@@ -50,13 +50,14 @@ function fixture() {
   };
 }
 
-test("workforce polling 401/403 sonrası tek oturum-sonlandı olayı üretir ve yeniden girişte başlar", async () => {
+test("workforce revision fallback 401/403 sonrası tek oturum-sonlandı olayı üretir ve yalnız aktif bölümde başlar", async () => {
   const source = await fs.readFile(path.resolve(__dirname, "../../personel/workforce.js"), "utf8");
   const listeners = new Map();
   const intervals = new Map();
   let timerId = 0;
   let lastPollingCallback = null;
   let fetchCount = 0;
+  const fetchPaths = [];
   let sessionEndedCount = 0;
   let authenticated = false;
   let unauthorizedStatus = 401;
@@ -92,8 +93,9 @@ test("workforce polling 401/403 sonrası tek oturum-sonlandı olayı üretir ve 
     clearInterval(id) { intervals.delete(id); },
     setTimeout() { return 0; }
   };
-  const fetch = async () => {
+  const fetch = async (path) => {
     fetchCount += 1;
+    fetchPaths.push(String(path));
     return authenticated
       ? { ok: true, status: 200, json: async () => ({ ok: true, tasks: [], shipments: [], shiftRequests: [], shiftPlans: [] }) }
       : { ok: false, status: unauthorizedStatus, json: async () => ({ ok: false, message: "Personel oturumu gerekli." }) };
@@ -113,7 +115,7 @@ test("workforce polling 401/403 sonrası tek oturum-sonlandı olayı üretir ve 
   document.addEventListener("personel:session-ended", () => { sessionEndedCount += 1; });
   document.dispatchEvent(new FakeCustomEvent("DOMContentLoaded"));
   document.dispatchEvent(new FakeCustomEvent("personel:session-started", { detail: { userId: "u1" } }));
-  assert.equal(intervals.size, 1);
+  assert.equal(intervals.size, 0, "workforce bölümü açılmadan fallback timer başlamamalı");
 
   document.dispatchEvent(new FakeCustomEvent("personel:section-change", { detail: { section: "tasks" } }));
   await flushPromises();
@@ -129,13 +131,15 @@ test("workforce polling 401/403 sonrası tek oturum-sonlandı olayı üretir ve 
 
   authenticated = true;
   document.dispatchEvent(new FakeCustomEvent("personel:session-started", { detail: { userId: "u1" } }));
-  assert.equal(intervals.size, 1, "başarılı yeniden giriş polling'i yeniden başlatmalı");
+  assert.equal(intervals.size, 0, "başarılı yeniden giriş workforce verisini eager yüklememeli");
   document.dispatchEvent(new FakeCustomEvent("personel:section-change", { detail: { section: "tasks" } }));
   await flushPromises();
   assert.equal(fetchCount, 2);
+  assert.equal(intervals.size, 1, "aktif workforce bölümünde seyrek fallback kurulmalı");
   lastPollingCallback();
   await flushPromises();
-  assert.equal(fetchCount, 3, "yeniden girişten sonra periyodik istek çalışmalı");
+  assert.equal(fetchCount, 3, "yeniden girişten sonra revision denetimi çalışmalı");
+  assert.match(fetchPaths.at(-1), /scope=revision/, "fallback tam workforce yerine küçük revision projection istemeli");
 
   authenticated = false;
   unauthorizedStatus = 403;

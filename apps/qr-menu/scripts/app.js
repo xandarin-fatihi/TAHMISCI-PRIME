@@ -274,25 +274,31 @@
   async function hydrateMenuFromBackend(options) {
     const baseUrl = backendBaseUrl();
     if (!baseUrl || !window.fetch || (isPreviewMode() && state.previewDraftApplied)) return false;
+    if (state.menuRefreshPromise) return state.menuRefreshPromise;
     const requestId = ++state.backendRequestId;
     const serverEventVersion = state.serverEventVersion;
-
-    try {
-      const result = await backendRequest("/api/menu");
-      if (requestId !== state.backendRequestId || serverEventVersion !== state.serverEventVersion) return false;
-      if (isPreviewMode() && state.previewDraftApplied) return false;
-      const menuState = menuStateFromPayload(result);
-      if (!menuState) {
-        warnMenuUpdate(`${options && options.reason || "backend"} yaniti gecersiz`, new Error("Menu state bulunamadi."));
+    state.menuRefreshPromise = (async () => {
+      try {
+        const result = await backendRequest("/api/menu");
+        if (requestId !== state.backendRequestId || serverEventVersion !== state.serverEventVersion) return false;
+        if (isPreviewMode() && state.previewDraftApplied) return false;
+        const menuState = menuStateFromPayload(result);
+        if (!menuState) {
+          warnMenuUpdate(`${options && options.reason || "backend"} yaniti gecersiz`, new Error("Menu state bulunamadi."));
+          return false;
+        }
+        state.menuRevision = Math.max(state.menuRevision || 0, Number(result.streamRevision || result.revision || 0));
+        return applyMenuSnapshot(menuState, { source: "backend", persistCache: true });
+      } catch (error) {
+        if (requestId === state.backendRequestId && !(isPreviewMode() && state.previewDraftApplied)) {
+          warnMenuUpdate(`${options && options.reason || "backend"} yenilemesi basarisiz`, error);
+        }
         return false;
+      } finally {
+        state.menuRefreshPromise = null;
       }
-      return applyMenuSnapshot(menuState, { source: "backend", persistCache: true });
-    } catch (error) {
-      if (requestId === state.backendRequestId && !(isPreviewMode() && state.previewDraftApplied)) {
-        warnMenuUpdate(`${options && options.reason || "backend"} yenilemesi basarisiz`, error);
-      }
-      return false;
-    }
+    })();
+    return state.menuRefreshPromise;
   }
 
   function setupBackendMenuEvents() {
@@ -307,12 +313,21 @@
       try {
         const payload = JSON.parse(event.data);
         const menuState = menuStateFromPayload(payload);
+        if (!menuState && payload && payload.requiresRefetch) {
+          const revision = Number(payload.revision || 0);
+          if (revision && revision <= Number(state.menuRevision || 0)) return;
+          state.serverEventVersion += 1;
+          state.menuRevision = Math.max(Number(state.menuRevision || 0), revision);
+          void hydrateMenuFromBackend({ reason: "sse-invalidation" });
+          return;
+        }
         if (!menuState) {
           warnMenuUpdate("SSE menu mesaji gecersiz", new Error("Menu state bulunamadi."));
           return;
         }
         state.serverEventVersion += 1;
         state.backendRequestId += 1;
+        state.menuRevision = Math.max(Number(state.menuRevision || 0), Number(payload.revision || 0));
         applyMenuSnapshot(menuState, { source: "sse", persistCache: true });
       } catch (error) {
         warnMenuUpdate("SSE menu mesaji okunamadi", error);

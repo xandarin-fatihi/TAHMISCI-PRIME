@@ -42,7 +42,7 @@ const APPLICATIONS = Object.freeze([
   {
     label: "Yönetici",
     page: "/yonetici/",
-    pageMarkers: ["scripts/app.js", "scripts/workforce.js"],
+    pageMarkers: ["scripts/app.js", "scripts/live-preview.js"],
     manifest: "/yonetici/manifest.webmanifest",
     worker: "/yonetici/sw.js",
     offline: "/yonetici/offline.html",

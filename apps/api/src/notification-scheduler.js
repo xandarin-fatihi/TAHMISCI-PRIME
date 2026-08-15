@@ -38,14 +38,20 @@ function createNotificationScheduler(options) {
     const created = [];
     let claimed = false;
     try {
+      // Empty ticks never acquire a lease or enter the durable write queue.
+      // The preview clones only collections that notification creation mutates.
+      const snapshot = await store.read();
+      if (!previewSchedulerChanges(snapshot, now)) return { created: 0, skipped: "no-work" };
       claimed = await claimLease(now);
       if (!claimed) return { created: 0, skipped: "leased" };
       const diagnostics = { invalidTaskDates: 0, invalidShiftDates: 0 };
       await store.update((data) => {
+        const beforeCount = created.length;
         createTaskReminders(data, now, created, diagnostics);
         createShiftReminders(data, now, created, diagnostics);
-        createCriticalStockNotifications(data, now, created);
+        const stockStateChanged = createCriticalStockNotifications(data, now, created);
         createManagerPendingReminders(data, now, created);
+        if (created.length === beforeCount && !stockStateChanged) return noChange(store, data);
         data.notificationSchedulerState = {
           ...(data.notificationSchedulerState || {}),
           lastRunAt: now.toISOString(),
@@ -76,7 +82,7 @@ function createNotificationScheduler(options) {
         ? data.notificationSchedulerState
         : {};
       const leaseExpiry = Date.parse(state.leaseExpiresAt || "");
-      if (state.leaseOwner && state.leaseOwner !== owner && Number.isFinite(leaseExpiry) && leaseExpiry > now.getTime()) return data;
+      if (state.leaseOwner && state.leaseOwner !== owner && Number.isFinite(leaseExpiry) && leaseExpiry > now.getTime()) return noChange(store, data);
       data.notificationSchedulerState = {
         ...state,
         leaseOwner: owner,
@@ -93,7 +99,7 @@ function createNotificationScheduler(options) {
     const now = validDate(clock()) || new Date();
     await store.update((data) => {
       const state = data.notificationSchedulerState || {};
-      if (state.leaseOwner !== owner) return data;
+      if (state.leaseOwner !== owner) return noChange(store, data);
       data.notificationSchedulerState = {
         ...state,
         leaseOwner: "",
@@ -234,6 +240,7 @@ function createCriticalStockNotifications(data, now, created) {
     ? state.criticalStockState
     : {};
   const nextStates = {};
+  let stateChanged = false;
   const products = data.stockState && Array.isArray(data.stockState.products) ? data.stockState.products : [];
   for (const product of products) {
     if (!product || !product.id || product.active === false) continue;
@@ -245,7 +252,14 @@ function createCriticalStockNotifications(data, now, created) {
     const previous = previousStates[id] && typeof previousStates[id] === "object" ? previousStates[id] : {};
     const isCritical = quantity <= threshold;
     const revision = Math.max(0, Number(previous.revision || 0)) + (isCritical && previous.isCritical !== true ? 1 : 0);
-    nextStates[id] = { isCritical, revision, quantity, threshold, updatedAt: now.toISOString() };
+    const same = previous.isCritical === isCritical
+      && Number(previous.revision || 0) === revision
+      && Number(previous.quantity) === quantity
+      && Number(previous.threshold) === threshold;
+    nextStates[id] = same
+      ? previous
+      : { isCritical, revision, quantity, threshold, updatedAt: now.toISOString() };
+    if (!same) stateChanged = true;
     if (!isCritical || previous.isCritical === true) continue;
     addNotification(data, created, {
       recipientRole: "manager",
@@ -262,7 +276,9 @@ function createCriticalStockNotifications(data, now, created) {
       metadata: { productName: String(product.name || product.productName || ""), quantity, threshold, unit: String(product.unit || "") }
     }, now);
   }
-  state.criticalStockState = nextStates;
+  if (Object.keys(previousStates).some((id) => !Object.prototype.hasOwnProperty.call(nextStates, id))) stateChanged = true;
+  if (stateChanged) state.criticalStockState = nextStates;
+  return stateChanged;
 }
 
 function createManagerPendingReminders(data, now, created) {
@@ -353,6 +369,31 @@ function shortToken(value) {
 function normalizeLookup(value) {
   return String(value || "").trim().toLocaleLowerCase("tr-TR").normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function previewSchedulerChanges(data, now) {
+  const state = data.notificationSchedulerState && typeof data.notificationSchedulerState === "object"
+    ? data.notificationSchedulerState
+    : {};
+  const preview = {
+    ...data,
+    notifications: [...(Array.isArray(data.notifications) ? data.notifications : [])],
+    notificationOutbox: [...(Array.isArray(data.notificationOutbox) ? data.notificationOutbox : [])],
+    notificationSchedulerState: {
+      ...state,
+      criticalStockState: structuredClone(state.criticalStockState || {})
+    }
+  };
+  const created = [];
+  createTaskReminders(preview, now, created, {});
+  createShiftReminders(preview, now, created, {});
+  const stockStateChanged = createCriticalStockNotifications(preview, now, created);
+  createManagerPendingReminders(preview, now, created);
+  return created.length > 0 || stockStateChanged;
+}
+
+function noChange(store, data) {
+  return store && typeof store.noChange === "function" ? store.noChange() : data;
 }
 
 function safeSchedulerError(error) {

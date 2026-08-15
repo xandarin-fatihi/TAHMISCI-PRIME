@@ -8,6 +8,8 @@ const REQUEST_TYPES = new Set(["leave", "morning", "evening", "custom"]);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const WORKFORCE_IDEMPOTENCY_LIMIT = 500;
+const WORKFORCE_SSE_RETRY_MS = 5000;
+const WORKFORCE_SSE_HEARTBEAT_MS = 25000;
 
 function registerWorkforceRoutes(deps) {
   const {
@@ -27,6 +29,8 @@ function registerWorkforceRoutes(deps) {
   const fail = (message, status = 400) => Object.assign(new Error(message), { status });
   const activeUsers = (data) => (data.recipeUsers || []).filter((user) => user.active !== false);
   const currentStaff = (req) => req.recipeUser || null;
+  const workforceClients = new Set();
+  const adminWorkforceClients = new Set();
 
   function queueNotification(data, pending, input) {
     if (!notificationService || typeof notificationService.createNotificationInStore !== "function") return null;
@@ -102,6 +106,112 @@ function registerWorkforceRoutes(deps) {
     if (!data.revisions || typeof data.revisions !== "object" || Array.isArray(data.revisions)) data.revisions = {};
     data.revisions.workforce = workforceRevision(data) + 1;
     return data.revisions.workforce;
+  }
+
+  async function updateStore(mutator) {
+    let beforeRevision = 0;
+    let afterRevision = 0;
+    const saved = await store.update((data) => {
+      beforeRevision = workforceRevision(data);
+      const result = mutator(data);
+      const next = result === undefined ? data : result;
+      afterRevision = workforceRevision(next);
+      return next;
+    });
+    if (afterRevision > beforeRevision) broadcastWorkforceInvalidation(afterRevision);
+    return saved;
+  }
+
+  function dataForRequest(req) {
+    return req.storeSnapshot || null;
+  }
+
+  async function resolveRequestData(req) {
+    return dataForRequest(req) || store.read();
+  }
+
+  function requestedScopes(req) {
+    const value = String(req.query && (req.query.scope || req.query.projection) || "").trim().toLowerCase();
+    if (!value || value === "full") return null;
+    return new Set(value.split(",").map((part) => part.trim()).filter(Boolean));
+  }
+
+  function includesScope(scopes, name) {
+    return !scopes || scopes.has(name);
+  }
+
+  function openWorkforceEvents(req, res, clients, data, ownerKey) {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+      "Content-Encoding": "identity"
+    });
+    if (res.socket) res.socket.setTimeout(0);
+    res.write(`retry: ${WORKFORCE_SSE_RETRY_MS}\n\n`);
+    const revision = workforceRevision(data);
+    const rawLastId = Number(String(req.get("Last-Event-ID") || "").split(":").pop() || 0);
+    writeWorkforceSse(res, "ready", {
+      revision,
+      scope: "workforce",
+      action: "ready",
+      requiresRefetch: Number.isSafeInteger(rawLastId) && rawLastId > 0 && rawLastId < revision
+    }, revision);
+
+    const clientId = cleanClientId(req.query && req.query.clientId);
+    if (clientId) {
+      for (const existing of Array.from(clients)) {
+        if (existing.clientId === clientId && existing.ownerKey === ownerKey) closeClient(existing, clients);
+      }
+    }
+    const client = {
+      res,
+      ownerKey,
+      clientId,
+      heartbeat: setInterval(() => {
+        if (!res.writableEnded) res.write(`: heartbeat ${Date.now()}\n\n`);
+      }, WORKFORCE_SSE_HEARTBEAT_MS)
+    };
+    if (typeof client.heartbeat.unref === "function") client.heartbeat.unref();
+    clients.add(client);
+    req.once("close", () => closeClient(client, clients, false));
+  }
+
+  function broadcastWorkforceInvalidation(revision) {
+    const payload = {
+      revision,
+      scope: "workforce",
+      action: "invalidate",
+      changedIds: [],
+      requiresRefetch: true,
+      updatedAt: isoNow()
+    };
+    for (const clients of [workforceClients, adminWorkforceClients]) {
+      for (const client of clients) {
+        if (!client.res.writableEnded) writeWorkforceSse(client.res, "workforce", payload, revision);
+      }
+    }
+  }
+
+  function writeWorkforceSse(res, event, payload, revision) {
+    if (revision !== undefined && revision !== null) res.write(`id: ${revision}\n`);
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  }
+
+  function cleanClientId(value) {
+    const id = String(value || "").trim();
+    return /^[a-z0-9._:-]{8,128}$/i.test(id) ? id : "";
+  }
+
+  function closeClient(client, clients, end = true) {
+    if (!client) return;
+    if (client.heartbeat) clearInterval(client.heartbeat);
+    clients.delete(client);
+    if (end) {
+      try { if (!client.res.writableEnded) client.res.end(); } catch (_error) {}
+    }
   }
 
   function requireStaff(req, res) {
@@ -239,7 +349,7 @@ function registerWorkforceRoutes(deps) {
     auth.requireAdmin,
     async (req, res, next) => {
       try {
-        const data = await store.read();
+        const data = await resolveRequestData(req);
         const users = data.recipeUsers || [];
         const usersById = new Map(users.map((user) => [user.id, user]));
         const stockState = normalizeStockState(data.stockState);
@@ -247,27 +357,34 @@ function registerWorkforceRoutes(deps) {
         const plans = requestedWeek
           ? (data.workforceShiftPlans || []).filter((plan) => plan.weekStart === requestedWeek)
           : (data.workforceShiftPlans || []);
-        res.json({
+        const scopes = requestedScopes(req);
+        const payload = {
           ok: true,
           stats: workforceStats(data),
           users: activeUsers(data).map(publicUser),
           allUsers: users.map(publicUser),
-          tasks: (data.workforceTasks || []).map((task) => publicTask(task, data.workforceAssignments || [], usersById)),
-          shipments: (data.workforceShipments || [])
-            .map((shipment) => publicShipment(shipment, stockState))
-            .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))),
-          shiftRequests: (data.workforceShiftRequests || [])
-            .slice()
-            .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))),
-          shiftPlans: plans,
-          shiftPlanRevisions: (data.workforceShiftPlanRevisions || []).filter((revision) =>
-            !requestedWeek || revision.weekStart === requestedWeek
-          ),
-          shiftSettings: normalizeShiftSettings(data.workforceShiftSettings),
           stockUpdatedAt: data.stockUpdatedAt || null,
-          revision: workforceRevision(data),
-          taskActivity: (data.recipeActivity || []).filter((item) => item.workforceTaskId).slice(-1000)
-        });
+          revision: workforceRevision(data)
+        };
+        if (includesScope(scopes, "tasks")) {
+          payload.tasks = (data.workforceTasks || []).map((task) => publicTask(task, data.workforceAssignments || [], usersById));
+          payload.taskActivity = (data.recipeActivity || []).filter((item) => item.workforceTaskId).slice(-1000);
+        }
+        if (includesScope(scopes, "shipments")) {
+          payload.shipments = (data.workforceShipments || [])
+            .map((shipment) => publicShipment(shipment, stockState))
+            .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+        }
+        if (includesScope(scopes, "shift")) {
+          payload.shiftRequests = (data.workforceShiftRequests || []).slice()
+            .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+          payload.shiftPlans = plans;
+          payload.shiftPlanRevisions = (data.workforceShiftPlanRevisions || []).filter((revision) =>
+            !requestedWeek || revision.weekStart === requestedWeek
+          );
+          payload.shiftSettings = normalizeShiftSettings(data.workforceShiftSettings);
+        }
+        res.json(payload);
       } catch (error) {
         next(error);
       }
@@ -280,7 +397,7 @@ function registerWorkforceRoutes(deps) {
     auth.requirePersonelOrPreview,
     async (req, res, next) => {
       try {
-        const data = await store.read();
+        const data = await resolveRequestData(req);
         const previewMode = req.recipe && req.recipe.role === "preview";
         if (!previewMode && !requireStaff(req, res)) return;
         const staff = previewMode ? (activeUsers(data)[0] || null) : currentStaff(req);
@@ -295,28 +412,67 @@ function registerWorkforceRoutes(deps) {
           (!requestedWeek || plan.weekStart === requestedWeek)
         );
         const stockState = normalizeStockState(data.stockState);
-        res.json({
+        const scopes = requestedScopes(req);
+        const payload = {
           ok: true,
           preview: previewMode,
           user: staff ? publicUser(staff) : null,
-          tasks: (data.workforceTasks || [])
+          revision: workforceRevision(data)
+        };
+        if (includesScope(scopes, "tasks")) {
+          payload.tasks = (data.workforceTasks || [])
             .filter((task) => assignmentTaskIds.has(task.id) && task.status !== "archived")
             .map((task) => ({
               ...publicTask(task, assignments, usersById),
               assignedUserIds: [userId]
-            })),
-          shipments: (data.workforceShipments || [])
+            }));
+        }
+        if (includesScope(scopes, "shipments")) {
+          payload.shipments = (data.workforceShipments || [])
             .filter((shipment) => shipment.userId === userId)
             .map((shipment) => publicShipment(shipment, stockState))
-            .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))),
-          shiftRequests: (data.workforceShiftRequests || [])
+            .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+        }
+        if (includesScope(scopes, "shift")) {
+          payload.shiftRequests = (data.workforceShiftRequests || [])
             .filter((request) => request.personId === userId)
-            .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))),
-          shiftPlans: plans.sort((a, b) => String(a.date).localeCompare(String(b.date))),
-          shiftSettings: normalizeShiftSettings(data.workforceShiftSettings),
-          stockState,
-          revision: workforceRevision(data)
-        });
+            .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+          payload.shiftPlans = plans.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+          payload.shiftSettings = normalizeShiftSettings(data.workforceShiftSettings);
+        }
+        if (includesScope(scopes, "stock")) payload.stockState = stockState;
+        res.json(payload);
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  app.get(
+    "/api/workforce/events",
+    requireAdminOrMainRequestOrigin,
+    auth.requirePersonelOrPreview,
+    async (req, res, next) => {
+      try {
+        const data = await resolveRequestData(req);
+        const previewMode = req.recipe && req.recipe.role === "preview";
+        if (!previewMode && !requireStaff(req, res)) return;
+        const staff = previewMode ? activeUsers(data)[0] : currentStaff(req);
+        openWorkforceEvents(req, res, workforceClients, data, String(staff && staff.id || "preview"));
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  app.get(
+    "/api/admin/workforce/events",
+    requireAdminRequestOrigin,
+    auth.requireAdmin,
+    async (req, res, next) => {
+      try {
+        const data = await resolveRequestData(req);
+        openWorkforceEvents(req, res, adminWorkforceClients, data, "manager");
       } catch (error) {
         next(error);
       }
@@ -351,7 +507,7 @@ function registerWorkforceRoutes(deps) {
         let response;
         let replayed = false;
         const pendingNotifications = [];
-        const saved = await store.update((data) => {
+        const saved = await updateStore((data) => {
           const previous = findIdempotent(data, "task_create", requestId);
           if (previous) {
             response = replayResponse(previous);
@@ -474,7 +630,7 @@ function registerWorkforceRoutes(deps) {
         let response;
         let replayed = false;
         const pendingNotifications = [];
-        const saved = await store.update((data) => {
+        const saved = await updateStore((data) => {
           const previous = findIdempotent(data, "task_update", requestId);
           if (previous) {
             response = replayResponse(previous);
@@ -647,7 +803,7 @@ function registerWorkforceRoutes(deps) {
         let response;
         let replayed = false;
         const pendingNotifications = [];
-        await store.update((data) => {
+        await updateStore((data) => {
           const previous = findIdempotent(data, "task_item_update", requestId);
           if (previous) {
             response = replayResponse(previous);
@@ -741,7 +897,7 @@ function registerWorkforceRoutes(deps) {
         let response;
         let replayed = false;
         const pendingNotifications = [];
-        await store.update((data) => {
+        await updateStore((data) => {
           const previous = findIdempotent(data, "shipment_create", requestId);
           if (previous) {
             response = replayResponse(previous);
@@ -862,7 +1018,7 @@ function registerWorkforceRoutes(deps) {
         let response;
         const pendingNotifications = [];
 
-        const saved = await store.update((data) => {
+        const saved = await updateStore((data) => {
           const previous = findIdempotent(data, `shipment_${decision}`, requestId);
           if (previous) {
             idempotent = true;
@@ -1074,7 +1230,7 @@ function registerWorkforceRoutes(deps) {
         let response;
         let replayed = false;
         const pendingNotifications = [];
-        await store.update((data) => {
+        await updateStore((data) => {
           const previous = findIdempotent(data, "shift_request_create", requestId);
           if (previous) {
             response = replayResponse(previous);
@@ -1150,7 +1306,7 @@ function registerWorkforceRoutes(deps) {
         let request;
         let response;
         let replayed = false;
-        await store.update((data) => {
+        await updateStore((data) => {
           const previous = findIdempotent(data, "shift_request_cancel", requestId);
           if (previous) {
             response = replayResponse(previous);
@@ -1204,7 +1360,7 @@ function registerWorkforceRoutes(deps) {
         let response;
         let replayed = false;
         const pendingNotifications = [];
-        await store.update((data) => {
+        await updateStore((data) => {
           const previous = findIdempotent(data, `shift_request_${decision}`, requestId);
           if (previous) {
             response = replayResponse(previous);
@@ -1270,7 +1426,7 @@ function registerWorkforceRoutes(deps) {
         let savedSettings;
         let response;
         let replayed = false;
-        await store.update((data) => {
+        await updateStore((data) => {
           const previous = findIdempotent(data, "shift_settings_update", requestId);
           if (previous) {
             response = replayResponse(previous);
@@ -1311,7 +1467,7 @@ function registerWorkforceRoutes(deps) {
         let response;
         let replayed = false;
         const pendingNotifications = [];
-        await store.update((data) => {
+        await updateStore((data) => {
           const operation = publish ? "shifts_publish" : "shifts_draft_save";
           const previous = findIdempotent(data, operation, requestId);
           if (previous) {
@@ -1443,7 +1599,7 @@ function registerWorkforceRoutes(deps) {
         let plans;
         let response;
         let replayed = false;
-        await store.update((data) => {
+        await updateStore((data) => {
           const previous = findIdempotent(data, "shifts_apply_draft", requestId);
           if (previous) {
             response = replayResponse(previous);
@@ -1495,7 +1651,7 @@ function registerWorkforceRoutes(deps) {
         let plans;
         let response;
         let replayed = false;
-        await store.update((data) => {
+        await updateStore((data) => {
           const previous = findIdempotent(data, "shifts_auto_draft", requestId);
           if (previous) {
             response = replayResponse(previous);

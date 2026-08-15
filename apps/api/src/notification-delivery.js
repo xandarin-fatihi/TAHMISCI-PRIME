@@ -40,8 +40,10 @@ function createNotificationDeliveryWorker(options) {
         processed += 1;
         if (result && result.sent) sent += 1;
       }
-      const now = nowDate(clock).toISOString();
-      await updateSchedulerState({ lastOutboxRunAt: now, ...(sent ? { lastOutboxSuccessAt: now } : {}) });
+      if (processed > 0) {
+        const now = nowDate(clock).toISOString();
+        await updateSchedulerState({ lastOutboxRunAt: now, ...(sent ? { lastOutboxSuccessAt: now } : {}) });
+      }
       return { processed, sent };
     } finally {
       running = false;
@@ -52,6 +54,8 @@ function createNotificationDeliveryWorker(options) {
     let claimed = null;
     const now = nowDate(clock);
     const staleBefore = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
+    const snapshot = await store.read();
+    if (!hasClaimableOutboxItem(snapshot.notificationOutbox, now, staleBefore, maxAttempts)) return null;
     await store.update((data) => {
       data.notificationOutbox = Array.isArray(data.notificationOutbox) ? data.notificationOutbox : [];
       for (const item of data.notificationOutbox) {
@@ -66,7 +70,7 @@ function createNotificationDeliveryWorker(options) {
           && Number(item.attemptCount || 0) < maxAttempts
           && (!item.nextAttemptAt || !Number.isFinite(Date.parse(item.nextAttemptAt)) || Date.parse(item.nextAttemptAt) <= now.getTime()))
         .sort((left, right) => String(left.nextAttemptAt || left.createdAt || "").localeCompare(String(right.nextAttemptAt || right.createdAt || "")))[0];
-      if (!candidate) return data;
+      if (!candidate) return noChange(store, data);
       candidate.status = "processing";
       candidate.lockedAt = now.toISOString();
       candidate.lockedBy = workerId;
@@ -139,7 +143,7 @@ function createNotificationDeliveryWorker(options) {
     const now = nowDate(clock);
     await store.update((data) => {
       const current = (data.notificationOutbox || []).find((entry) => entry && entry.id === item.id);
-      if (!current || current.status !== "processing" || current.lockedBy !== workerId) return data;
+      if (!current || current.status !== "processing" || current.lockedBy !== workerId) return noChange(store, data);
       current.lockedAt = null;
       current.lockedBy = "";
       current.updatedAt = now.toISOString();
@@ -164,7 +168,7 @@ function createNotificationDeliveryWorker(options) {
     const now = nowDate(clock).toISOString();
     await store.update((data) => {
       const current = (data.notificationOutbox || []).find((entry) => entry && entry.id === item.id);
-      if (!current || current.status !== "processing" || current.lockedBy !== workerId) return data;
+      if (!current || current.status !== "processing" || current.lockedBy !== workerId) return noChange(store, data);
       current.status = "cancelled";
       current.lockedAt = null;
       current.lockedBy = "";
@@ -180,7 +184,7 @@ function createNotificationDeliveryWorker(options) {
     const nextAttemptAt = until.toISOString();
     await store.update((data) => {
       const current = (data.notificationOutbox || []).find((entry) => entry && entry.id === item.id);
-      if (!current || current.status !== "processing" || current.lockedBy !== workerId) return data;
+      if (!current || current.status !== "processing" || current.lockedBy !== workerId) return noChange(store, data);
       current.status = "pending";
       current.attemptCount = Math.max(0, Number(current.attemptCount || 0) - 1);
       current.nextAttemptAt = nextAttemptAt;
@@ -195,16 +199,20 @@ function createNotificationDeliveryWorker(options) {
 
   async function removePushSubscription(item) {
     await store.update((data) => {
+      const before = (data.pushSubscriptions || []).length;
       data.pushSubscriptions = (data.pushSubscriptions || []).filter((entry) => !(entry
         && (entry.id === item.subscriptionId || entry.endpoint === item.destination)));
-      return data;
+      return data.pushSubscriptions.length === before ? noChange(store, data) : data;
     });
   }
 
   async function removeRecipientSubscriptions(role, id) {
     await store.update((data) => {
+      let changed = false;
+      const before = (data.pushSubscriptions || []).length;
       data.pushSubscriptions = (data.pushSubscriptions || []).filter((entry) => !(entry
         && entry.ownerRole === role && String(entry.ownerId) === String(id)));
+      changed = data.pushSubscriptions.length !== before;
       for (const entry of data.notificationOutbox || []) {
         if (entry && entry.recipientRole === role && String(entry.recipientId) === String(id)
           && ["pending", "processing"].includes(entry.status)) {
@@ -214,9 +222,10 @@ function createNotificationDeliveryWorker(options) {
           entry.nextAttemptAt = null;
           entry.lastError = "Alıcı hesabı aktif değil.";
           entry.updatedAt = nowDate(clock).toISOString();
+          changed = true;
         }
       }
-      return data;
+      return changed ? data : noChange(store, data);
     });
   }
 
@@ -229,7 +238,7 @@ function createNotificationDeliveryWorker(options) {
         subscription.failureCount = 0;
         subscription.updatedAt = timestamp;
       }
-      return data;
+      return subscription ? data : noChange(store, data);
     });
   }
 
@@ -242,7 +251,7 @@ function createNotificationDeliveryWorker(options) {
         subscription.failureCount = Math.max(0, Number(subscription.failureCount || 0)) + 1;
         subscription.updatedAt = timestamp;
       }
-      return data;
+      return subscription ? data : noChange(store, data);
     });
   }
 
@@ -323,6 +332,20 @@ function createNotificationDeliveryWorker(options) {
 function retryDelayMs(attempt) {
   const index = Math.max(0, Math.min(RETRY_DELAYS_MS.length - 1, Number(attempt || 1) - 1));
   return RETRY_DELAYS_MS[index];
+}
+
+function hasClaimableOutboxItem(items, now, staleBefore, maxAttempts) {
+  const timestamp = now.getTime();
+  return (Array.isArray(items) ? items : []).some((item) => {
+    if (!item) return false;
+    if (item.status === "processing" && item.lockedAt && item.lockedAt < staleBefore) return true;
+    if (item.status !== "pending" || Number(item.attemptCount || 0) >= maxAttempts) return false;
+    return !item.nextAttemptAt || !Number.isFinite(Date.parse(item.nextAttemptAt)) || Date.parse(item.nextAttemptAt) <= timestamp;
+  });
+}
+
+function noChange(store, data) {
+  return store && typeof store.noChange === "function" ? store.noChange() : data;
 }
 
 function quietHoursEnd(preference, now) {

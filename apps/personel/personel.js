@@ -45,6 +45,9 @@
     section: "recipe",
     stock: { categories: [], products: [], movements: [] },
     stockEventSource: null,
+    stockLoaded: false,
+    stockLoadPromise: null,
+    stockRevision: 0,
     previewRecipeDraft: null,
     query: "",
     category: "all",
@@ -244,7 +247,6 @@
       const session = await api("/api/recipe/me");
       activatePersonelSession(session);
       showDashboard();
-      await loadStock();
       if (!PREVIEW_TOKEN) history.replaceState(null, "", "/personel/");
       setSection(PREVIEW_SECTION || readLastSection(), { updateHash: false, persist: false });
     } catch (_error) {
@@ -270,7 +272,6 @@
       const session = await api("/api/recipe/me");
       activatePersonelSession(session);
       showDashboard();
-      await loadStock();
       history.replaceState(null, "", "/personel/");
       setSection("recipe", { updateHash: false });
     } catch (error) {
@@ -325,6 +326,9 @@
     state.sessionActive = false;
     state.user = null;
     state.stock = { categories: [], products: [], movements: [] };
+    state.stockLoaded = false;
+    state.stockLoadPromise = null;
+    state.stockRevision = 0;
   }
 
   function showLogin() {
@@ -339,7 +343,6 @@
     applySidebarPreference();
     renderUser();
     fillProfileForm();
-    setupStockEvents();
   }
 
   function setView(view) {
@@ -506,12 +509,15 @@
       setSidebarCollapsed(true);
     }
     if (options && options.updateHash) history.replaceState(null, "", "/personel/");
-    if (next === "stock" && !stockProducts().length) loadStock();
+    if (next === "stock") {
+      loadStock().catch(() => {});
+      setupStockEvents();
+    } else {
+      closeStockEvents();
+    }
     if (next === "recipe") {
       loadRecipeFrame();
       compactRecipeFrame();
-    } else {
-      unloadRecipeFrame();
     }
     document.dispatchEvent(new CustomEvent("personel:section-change", { detail: { section: next } }));
   }
@@ -543,27 +549,54 @@
   }
 
   async function loadStock() {
-    try {
-      const result = await api("/api/stock");
-      state.stock = normalizeStock(result.stockState);
-      renderStock();
-    } catch (error) {
-      showStockMessage(error.message || "Stok verisi alınamadı.", true);
-    }
+    if (state.stockLoaded) return state.stock;
+    if (state.stockLoadPromise) return state.stockLoadPromise;
+    state.stockLoadPromise = api("/api/stock")
+      .then((result) => {
+        state.stock = normalizeStock(result.stockState);
+        state.stockRevision = responseRevision(result, state.stockRevision);
+        state.stockLoaded = true;
+        if (state.section === "stock") renderStock();
+        return state.stock;
+      })
+      .catch((error) => {
+        showStockMessage(error.message || "Stok verisi alınamadı.", true);
+        throw error;
+      })
+      .finally(() => { state.stockLoadPromise = null; });
+    return state.stockLoadPromise;
   }
 
   function setupStockEvents() {
     if (PREVIEW_TOKEN || state.stockEventSource || !window.EventSource) return;
     const source = new EventSource("/api/stock/events");
-    source.addEventListener("stock", (event) => {
+    const handleStockEvent = (event) => {
       try {
         const payload = JSON.parse(event.data || "{}");
-        if (!payload.stockState) return;
-        state.stock = normalizeStock(payload.stockState);
-        renderStock();
+        const revision = responseRevision(payload, state.stockRevision);
+        if (payload.stockState) {
+          state.stock = normalizeStock(payload.stockState);
+          state.stockRevision = revision;
+          state.stockLoaded = true;
+          if (state.section === "stock") renderStock();
+          return;
+        }
+        if (revision <= state.stockRevision && !payload.requiresRefetch) return;
+        state.stockLoaded = false;
+        if (state.section === "stock") loadStock().catch(() => {});
       } catch (_error) {}
-    });
+    };
+    source.addEventListener("ready", handleStockEvent);
+    source.addEventListener("stock", handleStockEvent);
+    source.addEventListener("message", handleStockEvent);
     state.stockEventSource = source;
+  }
+
+  function responseRevision(value, fallback = 0) {
+    const source = value && typeof value === "object" ? value : {};
+    const revisions = source.revisions && typeof source.revisions === "object" ? source.revisions : {};
+    const revision = Number(source.revision ?? source.stockRevision ?? revisions.stock);
+    return Number.isSafeInteger(revision) && revision >= 0 ? revision : Math.max(0, Number(fallback || 0));
   }
 
   function closeStockEvents() {

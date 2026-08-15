@@ -6,6 +6,8 @@
   const workerUrl = String(root.dataset.pwaWorker || "").trim();
   const workerScope = String(root.dataset.pwaScope || "").trim();
   const isBackOffice = appId === "personel" || appId === "yonetici";
+  const updateCheckKey = `tahmisci:pwa-update-check:${appId}`;
+  const updateCheckIntervalMs = 6 * 60 * 60 * 1000;
   const dirtyForms = new WeakSet();
   let waitingWorker = null;
   let controllerChangeHandled = false;
@@ -40,9 +42,24 @@
 
       watchRegistration(registration, hadController);
       navigator.serviceWorker.addEventListener("controllerchange", () => handleControllerChange(hadController));
-      window.setTimeout(() => registration.update().catch(() => {}), 1500);
+      scheduleAutomaticUpdateCheck(registration);
     } catch (error) {
       console.warn("PWA çevrimdışı desteği başlatılamadı; web uygulaması normal çalışmaya devam ediyor.", error);
+    }
+  }
+
+  function scheduleAutomaticUpdateCheck(registration) {
+    let lastCheckedAt = 0;
+    try { lastCheckedAt = Number(window.localStorage.getItem(updateCheckKey) || 0); } catch (_error) {}
+    if (Date.now() - lastCheckedAt < updateCheckIntervalMs) return;
+    const check = () => {
+      try { window.localStorage.setItem(updateCheckKey, String(Date.now())); } catch (_error) {}
+      registration.update().catch(() => {});
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(check, { timeout: 15000 });
+    } else {
+      window.setTimeout(check, 15000);
     }
   }
 

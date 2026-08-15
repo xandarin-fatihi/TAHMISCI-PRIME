@@ -21,6 +21,7 @@ function registerNotificationRoutes(options) {
   } = options;
   const personelGuards = [requireAdminOrMainRequestOrigin, auth.requireActivePersonel];
   const adminGuards = [requireAdminRequestOrigin, auth.requireAdmin];
+  let notificationEventRevision = 0;
 
   registerRecipientRoutes({ prefix: "/api/notifications", guards: personelGuards, role: "personnel" });
   registerRecipientRoutes({ prefix: "/api/admin/notifications", guards: adminGuards, role: "manager", admin: true });
@@ -29,7 +30,7 @@ function registerNotificationRoutes(options) {
     app.get(prefix, ...guards, async (req, res, next) => {
       try {
         const owner = recipientFromRequest(req, role);
-        const data = await store.read();
+        const data = req.storeSnapshot || await store.read();
         const result = listNotifications(data, owner, req.query || {});
         noStore(res).json({ ok: true, ...result });
       } catch (error) { next(error); }
@@ -38,7 +39,7 @@ function registerNotificationRoutes(options) {
     app.get(`${prefix}/unread-count`, ...guards, async (req, res, next) => {
       try {
         const owner = recipientFromRequest(req, role);
-        const data = await store.read();
+        const data = req.storeSnapshot || await store.read();
         noStore(res).json({ ok: true, unreadCount: unreadCount(data, owner) });
       } catch (error) { next(error); }
     });
@@ -49,7 +50,7 @@ function registerNotificationRoutes(options) {
           const owner = recipientFromRequest(req, role);
           const notificationId = validateId(req.params.id, "Bildirim kimliği");
           let notification = null;
-          await store.update((data) => {
+          const saved = await store.update((data) => {
             const item = findOwnedNotification(data, notificationId, owner);
             const timestamp = new Date().toISOString();
             if (action === "read") item.readAt = timestamp;
@@ -58,8 +59,7 @@ function registerNotificationRoutes(options) {
             notification = publicNotification(item);
             return data;
           });
-          const data = await store.read();
-          noStore(res).json({ ok: true, notification, unreadCount: unreadCount(data, owner) });
+          noStore(res).json({ ok: true, notification, unreadCount: unreadCount(saved, owner) });
         } catch (error) { next(error); }
       });
     }
@@ -84,7 +84,7 @@ function registerNotificationRoutes(options) {
     app.get(`${prefix}/preferences`, ...guards, async (req, res, next) => {
       try {
         const owner = recipientFromRequest(req, role);
-        const data = await store.read();
+        const data = req.storeSnapshot || await store.read();
         noStore(res).json({
           ok: true,
           preferences: getNotificationPreferences(data, owner.role, owner.id),
@@ -188,22 +188,45 @@ function registerNotificationRoutes(options) {
         const owner = recipientFromRequest(req, role);
         res.set({
           "Content-Type": "text/event-stream; charset=utf-8",
-          "Cache-Control": "no-store",
+          "Cache-Control": "no-store, no-transform",
           "Connection": "keep-alive",
-          "X-Accel-Buffering": "no"
+          "X-Accel-Buffering": "no",
+          "Content-Encoding": "identity"
         });
         res.flushHeaders();
         if (res.socket) res.socket.setTimeout(0);
         res.write("retry: 5000\n\n");
         let closed = false;
-        const initialData = await store.read();
-        writeSse(res, "ready", { unreadCount: unreadCount(initialData, owner) });
-        const listener = async (notification) => {
+        const initialData = req.storeSnapshot || await store.read();
+        let currentUnreadCount = unreadCount(initialData, owner);
+        notificationEventRevision = Math.max(notificationEventRevision, newestNotificationRevision(initialData, owner));
+        const lastEventId = Number(String(req.get("Last-Event-ID") || "").split(":").pop() || 0);
+        writeSse(res, "ready", {
+          revision: notificationEventRevision,
+          scope: "notifications",
+          action: "ready",
+          requiresRefetch: Number.isSafeInteger(lastEventId) && lastEventId > 0 && lastEventId < notificationEventRevision,
+          unreadCount: currentUnreadCount
+        }, notificationEventRevision);
+        const deliveredIds = new Set();
+        const listener = (notification) => {
           if (closed || !recipientMatches(notification, owner.role, owner.id) || notification.inAppVisible === false) return;
-          try {
-            const data = await store.read();
-            writeSse(res, "notification", { notification: publicNotification(notification), unreadCount: unreadCount(data, owner) });
-          } catch (_error) {}
+          const notificationId = String(notification.id || "");
+          if (notificationId && deliveredIds.has(notificationId)) return;
+          if (notificationId) {
+            deliveredIds.add(notificationId);
+            if (deliveredIds.size > 200) deliveredIds.delete(deliveredIds.values().next().value);
+          }
+          if (!notification.archivedAt && !notification.readAt) currentUnreadCount += 1;
+          notificationEventRevision = nextNotificationRevision(notificationEventRevision, notification);
+          writeSse(res, "notification", {
+            revision: notificationEventRevision,
+            scope: "notifications",
+            action: "created",
+            requiresRefetch: false,
+            notification: publicNotification(notification),
+            unreadCount: currentUnreadCount
+          }, notificationEventRevision);
         };
         const unsubscribe = subscribeNotificationEvents(listener);
         const heartbeat = setInterval(() => res.write(": keepalive\n\n"), 25000);
@@ -341,9 +364,24 @@ function validatePushSubscription(value) {
   return { endpoint, expirationTime: source.expirationTime || null, keys: { p256dh, auth } };
 }
 
-function writeSse(res, event, payload) {
+function writeSse(res, event, payload, id) {
   if (res.writableEnded) return;
+  if (id !== undefined && id !== null) res.write(`id: ${String(id).replace(/[\r\n]/g, "")}\n`);
   res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+}
+
+function newestNotificationRevision(data, owner) {
+  let revision = 0;
+  for (const item of data.notifications || []) {
+    if (!item || !recipientMatches(item, owner.role, owner.id)) continue;
+    revision = Math.max(revision, Date.parse(item.createdAt || "") || 0);
+  }
+  return revision;
+}
+
+function nextNotificationRevision(current, notification) {
+  const hinted = Date.parse(notification && notification.createdAt || "") || 0;
+  return hinted > current ? hinted : current + 1;
 }
 
 function noStore(res) {

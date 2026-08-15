@@ -73,7 +73,11 @@
     currentModalRecipe: null,
     activeModalPanel: "content",
     baristaName: "Personel",
-    accessGranted: false
+    accessGranted: false,
+    revision: 0,
+    requestPromise: null,
+    lastHydratedAt: 0,
+    refreshTimer: null
   };
 
   const els = {};
@@ -88,8 +92,8 @@
     applyStoredTheme();
     bindEvents();
     renderAll();
-    setupLiveUpdates();
     await hydrateRecipesFromBackend();
+    setupLiveUpdates();
     if (isPersonelEmbed()) {
       state.accessGranted = true;
       applyRecipeAccessState();
@@ -309,7 +313,8 @@
     if ("BroadcastChannel" in window) {
       state.channel = new BroadcastChannel(CHANNEL_NAME);
       state.channel.addEventListener("message", (event) => {
-        if (event.data && event.data.type === "recipes-updated") hydrateRecipesFromBackend();
+        if (!event.data || event.data.type !== "recipes-updated") return;
+        scheduleRecipeRefresh(Number(event.data.revision || 0));
       });
     }
 
@@ -320,31 +325,67 @@
     return {};
   }
 
-  async function hydrateRecipesFromBackend() {
+  async function hydrateRecipesFromBackend(options = {}) {
     const baseUrl = backendBaseUrl();
     if (!baseUrl || !window.fetch) return;
-    try {
+    if (state.requestPromise) return state.requestPromise;
+    state.requestPromise = (async () => {
       const result = await backendRequest("/api/recipes");
-      if (!isRecipeStatePayload(result.recipeState)) return;
+      if (!isRecipeStatePayload(result.recipeState)) return state.data;
       state.data = normalizeRecipeData(result.recipeState);
+      state.revision = responseRevision(result, state.revision);
+      state.lastHydratedAt = Date.now();
       ensureActiveSelection();
       renderAll();
-    } catch (error) {}
+      return state.data;
+    })().catch(() => state.data).finally(() => { state.requestPromise = null; });
+    return state.requestPromise;
   }
 
   function setupBackendRecipeEvents() {
     const baseUrl = backendBaseUrl();
     if (!baseUrl || !window.EventSource || state.eventSource) return;
     state.eventSource = new EventSource(`${baseUrl}/api/recipes/events`);
-    state.eventSource.addEventListener("recipes", (event) => {
+    const handle = (event) => {
       try {
-        const payload = JSON.parse(event.data);
-        if (!isRecipeStatePayload(payload.recipeState)) return;
-        state.data = normalizeRecipeData(payload.recipeState);
-        ensureActiveSelection();
-        renderAll();
-      } catch (error) {}
-    });
+        const payload = JSON.parse(event.data || "{}");
+        const revision = responseRevision(payload, state.revision);
+        if (isRecipeStatePayload(payload.recipeState)) {
+          state.data = normalizeRecipeData(payload.recipeState);
+          state.revision = revision;
+          state.lastHydratedAt = Date.now();
+          ensureActiveSelection();
+          renderAll();
+          return;
+        }
+        if (event.type === "ready" && !payload.requiresRefetch) {
+          state.revision = Math.max(state.revision, revision);
+          return;
+        }
+        scheduleRecipeRefresh(revision, payload.requiresRefetch === true);
+      } catch (_error) {}
+    };
+    state.eventSource.addEventListener("ready", handle);
+    state.eventSource.addEventListener("recipes", handle);
+    state.eventSource.addEventListener("message", handle);
+  }
+
+  function responseRevision(value, fallback = 0) {
+    const source = value && typeof value === "object" ? value : {};
+    const revisions = source.revisions && typeof source.revisions === "object" ? source.revisions : {};
+    const revision = Number(source.revision ?? source.recipeRevision ?? revisions.recipes ?? revisions.recipe);
+    return Number.isSafeInteger(revision) && revision >= 0 ? revision : Math.max(0, Number(fallback || 0));
+  }
+
+  function scheduleRecipeRefresh(revision = 0, force = false) {
+    const incoming = Number(revision || 0);
+    if (!force && incoming > 0 && incoming <= state.revision) return;
+    if (!force && incoming <= 0 && Date.now() - state.lastHydratedAt < 1000) return;
+    window.clearTimeout(state.refreshTimer);
+    state.refreshTimer = window.setTimeout(() => {
+      state.refreshTimer = null;
+      hydrateRecipesFromBackend({ force }).catch(() => {});
+    }, 80);
   }
 
   function backendBaseUrl() {

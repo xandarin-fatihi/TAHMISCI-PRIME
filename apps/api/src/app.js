@@ -12,6 +12,7 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
 const bcrypt = require("bcryptjs");
+const { performance } = require("perf_hooks");
 
 const { config, validateConfig } = require("./config");
 const { createAuthMiddleware } = require("./middleware/auth");
@@ -49,7 +50,9 @@ const app = express();
 const store = createFileStore(config.dataFile, {
   bcryptRounds: config.bcryptRounds,
   defaultPanelPassword: config.defaultPanelPassword,
-  defaultRecipePassword: config.defaultRecipePassword
+  defaultRecipePassword: config.defaultRecipePassword,
+  externalCheckIntervalMs: config.storeExternalCheckIntervalMs,
+  eventLoopResolutionMs: config.eventLoopDelayResolutionMs
 });
 const auth = createAuthMiddleware(config, store);
 const mailService = createMailService(config);
@@ -62,6 +65,10 @@ const siteSseClients = new Set();
 const publicSseClients = new Set();
 const feedbackSseClients = new Set();
 const stockSseClients = new Set();
+const SSE_RETRY_MS = 5000;
+const SSE_HEARTBEAT_MS = 25000;
+const SSE_HISTORY_LIMIT = 64;
+const sseStreamState = new Map();
 let xlsxModule = null;
 const RECIPE_ACTIVITY_LIMIT = 5000;
 
@@ -118,6 +125,33 @@ app.use(morgan(config.isProduction ? "combined" : "dev", {
     }
   }
 }));
+app.use((req, res, next) => {
+  const startedAt = performance.now();
+  const originalWriteHead = res.writeHead;
+  res.writeHead = function performanceWriteHead(...args) {
+    if (config.performanceServerTiming && !res.headersSent) {
+      const snapshotMs = Number(req.storeContext && req.storeContext.timings && req.storeContext.timings.snapshotResolveMs || 0);
+      const routeMs = performance.now() - startedAt;
+      res.setHeader("Server-Timing", `store;dur=${snapshotMs.toFixed(2)}, route;dur=${routeMs.toFixed(2)}`);
+    }
+    return originalWriteHead.apply(this, args);
+  };
+  res.once("finish", () => {
+    const elapsedMs = performance.now() - startedAt;
+    if (!config.performanceDebug && elapsedMs < config.performanceSlowRequestMs) return;
+    const metrics = typeof store.getMetrics === "function" ? store.getMetrics() : {};
+    console.warn("Tahmisci yavaş istek", {
+      method: req.method,
+      path: String(req.path || "").slice(0, 240),
+      status: res.statusCode,
+      durationMs: Number(elapsedMs.toFixed(2)),
+      storeRevision: req.storeRevision || metrics.revision || 0,
+      snapshotResolveMs: Number(req.storeContext && req.storeContext.timings && req.storeContext.timings.snapshotResolveMs || 0),
+      eventLoopDelayP95Ms: Number(metrics.eventLoopDelayP95Ms || 0)
+    });
+  });
+  next();
+});
 app.use((req, res, next) => {
   if (/^\/api\/admin\/data-imports\/analyze\/?$/.test(req.path)) return next();
   return normalJsonParser(req, res, next);
@@ -1654,12 +1688,14 @@ app.post("/api/admin/password-reset/confirm", requireAdminOrMainRequestOrigin, p
 app.get("/api/menu", async (_req, res, next) => {
   try {
     const data = await store.read();
+    const streamRevision = resolveScopeRevision(data, "menu");
     res.json({
       ok: true,
       menuState: serializeLegacyMenuState(data.menuState, data.pricing),
       pricing: data.pricing,
       revision: data.revisions && data.revisions.pricing || 0,
       publishRevision: data.revisions && data.revisions.publish || 0,
+      streamRevision,
       updatedAt: data.menuUpdatedAt || null
     });
   } catch (error) {
@@ -1772,39 +1808,23 @@ app.delete("/api/media/:name", requireAdminRequestOrigin, auth.requireAdmin, asy
 
 app.get("/api/menu/events", async (req, res, next) => {
   try {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive"
-    });
-
-    const data = await store.read();
-    sendSse(res, "menu", {
-      menuState: serializeLegacyMenuState(data.menuState, data.pricing),
-      pricing: data.pricing,
-      revision: data.revisions && data.revisions.pricing || 0,
-      updatedAt: data.menuUpdatedAt || null
-    });
-
-    const client = { res };
-    sseClients.add(client);
-
-    req.on("close", () => {
-      sseClients.delete(client);
-    });
+    const data = req.storeSnapshot || await store.read();
+    openRevisionStream(req, res, sseClients, "menu", data);
   } catch (error) {
     next(error);
   }
 });
 
-app.get("/api/recipes", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (_req, res, next) => {
+app.get("/api/recipes", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (req, res, next) => {
   try {
-    const data = await store.read();
+    const data = req.storeSnapshot || await store.read();
     res.json({
       ok: true,
       recipeState: data.recipeState,
       recipeCatalog: data.recipeCatalog || [],
       recipeLinkReview: data.recipeLinkReview || [],
+      revision: resolveScopeRevision(data, "recipes"),
+      publishRevision: data.revisions && data.revisions.publish || 0,
       updatedAt: data.recipeUpdatedAt || null
     });
   } catch (error) {
@@ -1858,24 +1878,9 @@ app.post("/api/admin/recipes/import-excel", requireAdminRequestOrigin, auth.requ
 
 app.get("/api/recipes/events", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (req, res, next) => {
   try {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive"
-    });
-
-    const data = await store.read();
-    sendSse(res, "recipes", {
-      recipeState: data.recipeState,
-      recipeCatalog: data.recipeCatalog || [],
-      updatedAt: data.recipeUpdatedAt || null
-    });
-
-    const client = { res, userId: req.recipe && req.recipe.userId || "" };
-    recipeSseClients.add(client);
-
-    req.on("close", () => {
-      recipeSseClients.delete(client);
+    const data = req.storeSnapshot || await store.read();
+    openRevisionStream(req, res, recipeSseClients, "recipes", data, {
+      userId: req.recipe && req.recipe.userId || ""
     });
   } catch (error) {
     next(error);
@@ -1956,10 +1961,16 @@ app.get("/api/feedback/events", requireAdminRequestOrigin, auth.requireAdmin, as
   }
 });
 
-app.get("/api/stock", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (_req, res, next) => {
+app.get("/api/stock", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (req, res, next) => {
   try {
-    const data = await store.read();
-    res.json({ ok: true, stockState: normalizeStockState(data.stockState), updatedAt: data.stockUpdatedAt || null });
+    const data = req.storeSnapshot || await store.read();
+    res.json({
+      ok: true,
+      stockState: normalizeStockState(data.stockState),
+      revision: resolveScopeRevision(data, "stock"),
+      publishRevision: data.revisions && data.revisions.publish || 0,
+      updatedAt: data.stockUpdatedAt || null
+    });
   } catch (error) {
     next(error);
   }
@@ -1967,19 +1978,8 @@ app.get("/api/stock", requireAdminOrMainRequestOrigin, auth.requireRecipe, requi
 
 app.get("/api/stock/events", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (req, res, next) => {
   try {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive"
-    });
-    const data = await store.read();
-    sendSse(res, "stock", {
-      stockState: normalizeStockState(data.stockState),
-      updatedAt: data.stockUpdatedAt || null
-    });
-    const client = { res };
-    stockSseClients.add(client);
-    req.on("close", () => stockSseClients.delete(client));
+    const data = req.storeSnapshot || await store.read();
+    openRevisionStream(req, res, stockSseClients, "stock", data);
   } catch (error) {
     next(error);
   }
@@ -2092,7 +2092,7 @@ registerPricingRoutes({
   broadcastMenuUpdate, broadcastPublicUpdate
 });
 
-registerDataImportRoutes({
+const dataImportRuntime = registerDataImportRoutes({
   app,
   store,
   auth,
@@ -2373,19 +2373,19 @@ app.use((error, req, res, _next) => {
 async function prepareRuntime() {
   await Promise.all([
     store.ensure(),
-    fs.mkdir(config.mediaDir, { recursive: true })
+    fs.mkdir(config.mediaDir, { recursive: true }),
+    dataImportRuntime.ready()
   ]);
   await seedStoreIfEmpty(store, projectRoot);
   if (config.notificationsManagerEmail) {
-    await store.update((data) => {
+    await store.update((data, context = {}) => {
       const exists = (data.notificationPreferences || []).some((item) => item
         && item.ownerRole === "manager" && item.ownerId === "manager");
-      if (!exists) {
-        notificationService.updateNotificationPreferencesInStore(data, "manager", "manager", {
-          emailEnabled: config.notificationsEmailEnabled === true,
-          emailAddress: config.notificationsManagerEmail
-        });
-      }
+      if (exists) return context.noChange !== undefined ? context.noChange : data;
+      notificationService.updateNotificationPreferencesInStore(data, "manager", "manager", {
+        emailEnabled: config.notificationsEmailEnabled === true,
+        emailAddress: config.notificationsManagerEmail
+      });
       return data;
     });
   }
@@ -2534,7 +2534,7 @@ async function requireActiveRecipeUser(req, res, next) {
     if (payload.role === "admin" || payload.role === "preview") return next();
 
     const userId = String(payload.userId || payload.sub || "").trim();
-    const data = await store.read();
+    const data = req.storeSnapshot || await store.read();
     const users = Array.isArray(data.recipeUsers) ? data.recipeUsers : [];
 
     if (!users.length && userId === "recipe") return next();
@@ -3739,13 +3739,8 @@ function cloneJson(value) {
   return JSON.parse(JSON.stringify(value || {}));
 }
 
-function broadcastMenuUpdate(menuState, updatedAt, pricing, revision) {
-  const payload = { menuState, updatedAt };
-  if (pricing) payload.pricing = pricing;
-  if (Number.isInteger(Number(revision))) payload.revision = Number(revision);
-  for (const client of sseClients) {
-    sendSse(client.res, "menu", payload);
-  }
+function broadcastMenuUpdate(_menuState, updatedAt, _pricing, revision) {
+  broadcastScopeInvalidation(sseClients, "menu", "menu", { updatedAt, revision });
 }
 
 function menuPricingFingerprint(menuState, pricing) {
@@ -3862,11 +3857,8 @@ function incrementPublishRevision(data) {
   return data.revisions.publish;
 }
 
-function broadcastRecipeUpdate(recipeState, updatedAt, recipeCatalog = []) {
-  const payload = { recipeState, recipeCatalog, updatedAt };
-  for (const client of recipeSseClients) {
-    sendSse(client.res, "recipes", payload);
-  }
+function broadcastRecipeUpdate(_recipeState, updatedAt, _recipeCatalog = []) {
+  broadcastScopeInvalidation(recipeSseClients, "recipes", "recipes", { updatedAt });
 }
 
 function closeRecipeClientsForUser(userId) {
@@ -3876,10 +3868,17 @@ function closeRecipeClientsForUser(userId) {
   for (const client of Array.from(recipeSseClients)) {
     if (client.userId !== targetId) continue;
     try {
-      sendSse(client.res, "recipes", { recipeState: {}, updatedAt: new Date().toISOString(), revoked: true });
-      client.res.end();
+      const revision = nextScopeRevision("recipes", Date.now());
+      sendSse(client.res, "recipes", {
+        revision,
+        scope: "recipes",
+        action: "revoked",
+        requiresRefetch: false,
+        revoked: true,
+        updatedAt: new Date().toISOString()
+      }, { id: revision });
     } catch (_error) {}
-    recipeSseClients.delete(client);
+    closeRevisionClient(client, recipeSseClients);
   }
 }
 
@@ -3904,11 +3903,8 @@ function broadcastFeedbackUpdate(feedbackItems, updatedAt) {
   }
 }
 
-function broadcastStockUpdate(stockState, updatedAt) {
-  const payload = { stockState: normalizeStockState(stockState), updatedAt };
-  for (const client of stockSseClients) {
-    sendSse(client.res, "stock", payload);
-  }
+function broadcastStockUpdate(_stockState, updatedAt) {
+  broadcastScopeInvalidation(stockSseClients, "stock", "stock", { updatedAt });
 }
 
 function queueAppNotification(data, pending, input) {
@@ -4028,9 +4024,134 @@ function suspendPersonnelNotificationDelivery(data, userId, updatedAt) {
   });
 }
 
-function sendSse(res, event, payload) {
+function sendSse(res, event, payload, options = {}) {
+  if (options.id !== undefined && options.id !== null && String(options.id)) {
+    res.write(`id: ${String(options.id).replace(/[\r\n]/g, "")}\n`);
+  }
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function openRevisionStream(req, res, clients, scope, data, clientData = {}) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+    "Content-Encoding": "identity"
+  });
+  if (res.socket) res.socket.setTimeout(0);
+  res.write(`retry: ${SSE_RETRY_MS}\n\n`);
+
+  const revision = seedScopeRevision(scope, resolveScopeRevision(data, scope));
+  const lastEventId = parseLastEventId(req);
+  sendSse(res, "ready", {
+    revision,
+    scope,
+    action: "ready",
+    requiresRefetch: lastEventId > 0 && lastEventId < revision
+  }, { id: revision });
+
+  const clientId = cleanSseClientId(req.query && req.query.clientId);
+  if (clientId) {
+    for (const existing of Array.from(clients)) {
+      if (existing.clientId !== clientId) continue;
+      closeRevisionClient(existing, clients);
+    }
+  }
+
+  const client = {
+    ...clientData,
+    res,
+    clientId,
+    heartbeat: setInterval(() => {
+      if (!res.writableEnded) res.write(`: heartbeat ${Date.now()}\n\n`);
+    }, SSE_HEARTBEAT_MS)
+  };
+  if (typeof client.heartbeat.unref === "function") client.heartbeat.unref();
+  clients.add(client);
+  req.once("close", () => closeRevisionClient(client, clients, false));
+  return client;
+}
+
+function broadcastScopeInvalidation(clients, scope, event, options = {}) {
+  const revision = nextScopeRevision(scope, options.revision || Date.parse(options.updatedAt || ""));
+  const payload = {
+    revision,
+    scope,
+    action: options.action || "invalidate",
+    changedIds: Array.isArray(options.changedIds) ? options.changedIds.slice(0, 50).map((id) => String(id).slice(0, 120)) : [],
+    requiresRefetch: options.requiresRefetch !== false,
+    updatedAt: options.updatedAt || new Date().toISOString()
+  };
+  rememberScopeEvent(scope, event, payload);
+  for (const client of clients) {
+    if (!client || !client.res || client.res.writableEnded) continue;
+    sendSse(client.res, event, payload, { id: revision });
+  }
+  return payload;
+}
+
+function resolveScopeRevision(data, scope) {
+  const updatedAt = {
+    menu: data && data.menuUpdatedAt,
+    recipes: data && data.recipeUpdatedAt,
+    stock: data && data.stockUpdatedAt,
+    feedback: data && data.feedbackUpdatedAt
+  }[scope];
+  const timestamp = Date.parse(updatedAt || "");
+  if (Number.isSafeInteger(timestamp) && timestamp > 0) return timestamp;
+  const revisions = data && data.revisions || {};
+  if (scope === "workforce") return Math.max(0, Number(revisions.workforce || 0));
+  if (scope === "menu") return Math.max(0, Number(revisions.publish || 0), Number(revisions.pricing || 0));
+  return Math.max(0, Number(revisions.publish || 0));
+}
+
+function seedScopeRevision(scope, revision) {
+  const state = scopeStreamState(scope);
+  const numeric = Number(revision || 0);
+  if (Number.isSafeInteger(numeric) && numeric > state.revision) state.revision = numeric;
+  return state.revision;
+}
+
+function nextScopeRevision(scope, hint) {
+  const state = scopeStreamState(scope);
+  const numericHint = Number(hint || 0);
+  state.revision = Number.isSafeInteger(numericHint) && numericHint > state.revision
+    ? numericHint
+    : state.revision + 1;
+  return state.revision;
+}
+
+function rememberScopeEvent(scope, event, payload) {
+  const state = scopeStreamState(scope);
+  state.history.push({ event, payload });
+  if (state.history.length > SSE_HISTORY_LIMIT) state.history.splice(0, state.history.length - SSE_HISTORY_LIMIT);
+}
+
+function scopeStreamState(scope) {
+  if (!sseStreamState.has(scope)) sseStreamState.set(scope, { revision: 0, history: [] });
+  return sseStreamState.get(scope);
+}
+
+function parseLastEventId(req) {
+  const value = String(req.get && req.get("last-event-id") || "").split(":").pop();
+  const revision = Number(value || 0);
+  return Number.isSafeInteger(revision) && revision > 0 ? revision : 0;
+}
+
+function cleanSseClientId(value) {
+  const id = String(value || "").trim();
+  return /^[a-z0-9._:-]{8,128}$/i.test(id) ? id : "";
+}
+
+function closeRevisionClient(client, clients, end = true) {
+  if (!client) return;
+  if (client.heartbeat) clearInterval(client.heartbeat);
+  clients.delete(client);
+  if (end) {
+    try { if (client.res && !client.res.writableEnded) client.res.end(); } catch (_error) {}
+  }
 }
 
 function isPasswordResetConfigured() {

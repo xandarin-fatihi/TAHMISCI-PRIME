@@ -56,6 +56,7 @@ function createAuthMiddleware(config, store) {
       }
 
       setRequestSession(req, resolved, "admin");
+      attachStoreTiming(req, res);
       return next();
     } catch (error) {
       return next(error);
@@ -71,6 +72,7 @@ function createAuthMiddleware(config, store) {
       }
 
       setRequestSession(req, resolved, "admin");
+      attachStoreTiming(req, res);
       return next();
     } catch (error) {
       return next(error);
@@ -91,6 +93,7 @@ function createAuthMiddleware(config, store) {
             maxAge: PREVIEW_TTL_SECONDS * 1000
           });
         }
+        attachStoreTiming(req, res);
         return next();
       }
 
@@ -103,6 +106,7 @@ function createAuthMiddleware(config, store) {
       }
 
       setRequestSession(req, resolved, "recipe");
+      attachStoreTiming(req, res);
       return next();
     } catch (error) {
       return next(error);
@@ -117,9 +121,11 @@ function createAuthMiddleware(config, store) {
       }
 
       const userId = String(resolved.payload && resolved.payload.userId || "").trim();
-      const data = await store.read();
-      const user = (Array.isArray(data.recipeUsers) ? data.recipeUsers : [])
-        .find((item) => item && String(item.id || "") === userId);
+      const context = await resolveStoreSnapshot(req);
+      const user = context.indexes && context.indexes.recipeUserById
+        ? context.indexes.recipeUserById.get(userId)
+        : (Array.isArray(context.data.recipeUsers) ? context.data.recipeUsers : [])
+          .find((item) => item && String(item.id || "") === userId);
       if (!userId || !user || user.active === false) {
         await revokeRequestSession(req, ["personel"]);
         clearRecipeCookie(res);
@@ -136,6 +142,7 @@ function createAuthMiddleware(config, store) {
         username: String(user.username || ""),
         name: String(user.name || user.username || "")
       });
+      attachStoreTiming(req, res);
       return next();
     } catch (error) {
       return next(error);
@@ -147,8 +154,8 @@ function createAuthMiddleware(config, store) {
       const previewPayload = await verifyPreviewRequest(req);
       if (!previewPayload) return requireActivePersonel(req, res, next);
 
-      const data = await store.read();
-      const user = (Array.isArray(data.recipeUsers) ? data.recipeUsers : [])
+      const context = await resolveStoreSnapshot(req);
+      const user = (Array.isArray(context.data.recipeUsers) ? context.data.recipeUsers : [])
         .find((item) => item && item.active !== false && String(item.id || "").trim());
       if (!user) {
         return res.status(403).json({ ok: false, message: "Önizleme için aktif personel bulunamadı." });
@@ -169,6 +176,7 @@ function createAuthMiddleware(config, store) {
           maxAge: PREVIEW_TTL_SECONDS * 1000
         });
       }
+      attachStoreTiming(req, res);
       return next();
     } catch (error) {
       return next(error);
@@ -219,7 +227,7 @@ function createAuthMiddleware(config, store) {
   }
 
   async function sessionInfoFromToken(token) {
-    const resolved = await resolveToken(token, ["admin", "personel"]);
+    const resolved = await resolveToken(token, ["admin", "personel"], await resolveStoreSnapshot());
     return resolved ? sessionInfoFromPayload(resolved.payload) : emptySessionInfo();
   }
 
@@ -319,23 +327,24 @@ function createAuthMiddleware(config, store) {
 
   async function resolveRequestSession(req, roles, cookieCandidates) {
     const tokens = uniqueTokens([bearerToken(req), ...(cookieCandidates || [])]);
+    const context = await resolveStoreSnapshot(req);
     for (const token of tokens) {
-      const resolved = await resolveToken(token, roles);
+      const resolved = await resolveToken(token, roles, context);
       if (resolved) return resolved;
     }
     return null;
   }
 
-  async function resolveToken(token, roles) {
+  async function resolveToken(token, roles, context) {
     if (!token) return null;
     const allowedRoles = new Set(roles);
     const tokenHash = hashToken(token);
-    const data = await store.read();
-    const session = (data.authSessions || []).find((item) => (
-      !item.revokedAt
-      && allowedRoles.has(item.role)
-      && safeHashEquals(tokenHash, item.tokenHash)
-    ));
+    const snapshot = context || await resolveStoreSnapshot();
+    const indexed = snapshot.indexes && snapshot.indexes.sessionByTokenHash
+      ? snapshot.indexes.sessionByTokenHash.get(tokenHash)
+      : null;
+    const session = indexed || (snapshot.data.authSessions || []).find((item) => safeHashEquals(tokenHash, item.tokenHash));
+    if (session && (session.revokedAt || !allowedRoles.has(session.role))) return null;
     if (!session) return null;
     return { token, session, payload: payloadFromSession(session) };
   }
@@ -351,10 +360,11 @@ function createAuthMiddleware(config, store) {
       });
       if (payload.role !== "preview" || !PREVIEW_MODES.has(String(payload.mode || ""))) return null;
       if (!previewModeAllows(String(payload.mode), req.originalUrl || req.path || "")) return null;
-      const data = await store.read();
-      const adminSession = (data.authSessions || []).find((session) => (
-        session.id === payload.sub && session.role === "admin" && !session.revokedAt
-      ));
+      const context = await resolveStoreSnapshot(req);
+      const adminSession = context.indexes && context.indexes.sessionById
+        ? context.indexes.sessionById.get(String(payload.sub || ""))
+        : (context.data.authSessions || []).find((session) => session.id === payload.sub);
+      if (adminSession && (adminSession.role !== "admin" || adminSession.revokedAt)) return null;
       if (!adminSession) return null;
       req.previewToken = token;
       return {
@@ -382,6 +392,29 @@ function createAuthMiddleware(config, store) {
     req.authToken = resolved.token;
     if (target === "admin") req.admin = resolved.payload;
     if (target === "recipe") req.recipe = resolved.payload;
+  }
+
+  async function resolveStoreSnapshot(req) {
+    if (req && req.storeContext && req.storeSnapshot) return req.storeContext;
+    if (typeof store.getRequestSnapshot === "function") return store.getRequestSnapshot(req);
+    const data = await store.read();
+    const context = { data, revision: Number(data && data.storeRevision || 0), indexes: null, timings: {} };
+    if (req && typeof req === "object") {
+      req.storeContext = context;
+      req.storeSnapshot = data;
+      req.storeRevision = context.revision;
+      req.storeIndexes = null;
+    }
+    return context;
+  }
+
+  function attachStoreTiming(req, res) {
+    if (config.performanceServerTiming === false || !res || typeof res.setHeader !== "function") return;
+    const duration = Number(req && req.storeContext && req.storeContext.timings
+      && req.storeContext.timings.snapshotResolveMs || 0);
+    const value = `store;dur=${Number.isFinite(duration) ? Math.max(0, duration).toFixed(2) : "0.00"};desc="memory snapshot"`;
+    const current = typeof res.getHeader === "function" ? res.getHeader("Server-Timing") : "";
+    res.setHeader("Server-Timing", current ? `${current}, ${value}` : value);
   }
 
   function bearerToken(req) {

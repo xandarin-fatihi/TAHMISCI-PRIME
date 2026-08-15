@@ -62,7 +62,7 @@
     const offlineCache = await caches.open(offlineCacheName);
     const staticCache = await caches.open(staticCacheName);
     const offlineResources = [config.offlineUrl];
-    const staticResources = unique((config.precache || []).concat(config.offlineAssets || []));
+    const staticResources = uniqueCacheResources((config.precache || []).concat(config.offlineAssets || []));
 
     await Promise.all(offlineResources.map((path) => cacheKnownResource(offlineCache, path, true)));
     await Promise.all(staticResources.map((path) => cacheKnownResource(staticCache, path, false)));
@@ -158,5 +158,17 @@
 
   function unique(values) {
     return Array.from(new Set(values.filter(Boolean)));
+  }
+
+  function uniqueCacheResources(values) {
+    const resources = new Map();
+    for (const value of unique(values)) {
+      try {
+        const url = new URL(value, globalScope.location.origin);
+        const key = `${url.origin}${url.pathname}`;
+        resources.set(key, value);
+      } catch (_error) {}
+    }
+    return Array.from(resources.values());
   }
 })(self);

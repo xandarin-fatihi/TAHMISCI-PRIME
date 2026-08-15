@@ -166,13 +166,22 @@
   function snapshot(section) {
     const admin = bridge();
     const current = admin && typeof admin.snapshot === "function" ? admin.snapshot() : {};
-    return {
-      section: safePreviewSection(section),
-      menuState: clone(current.menuState || null),
-      recipeState: clone(current.recipeState || null),
-      stockState: clone(current.stockState || null),
-      pricing: clone(current.pricing || current.menuState && current.menuState.pricing || null)
-    };
+    const safeSection = safePreviewSection(section);
+    const value = { section: safeSection };
+    if (safeSection === "recipe") value.recipeState = clone(current.recipeState || null);
+    else if (safeSection === "stock") value.stockState = clone(current.stockState || null);
+    else if (!["tasks", "shipment", "shift"].includes(safeSection)) {
+      value.menuState = clone(current.menuState || null);
+      value.pricing = clone(current.pricing || current.menuState && current.menuState.pricing || null);
+    }
+    return value;
+  }
+
+  function snapshotRevision(section) {
+    const admin = bridge();
+    return admin && typeof admin.previewRevision === "function"
+      ? Number(admin.previewRevision(safePreviewSection(section)) || 0)
+      : 0;
   }
 
   function relevantSnapshot(value, section) {
@@ -206,7 +215,8 @@
   }
 
   function pushHistory(state, current, section) {
-    const hash = fingerprint(relevantSnapshot(current, section));
+    const revision = snapshotRevision(section);
+    const hash = revision > 0 ? `${safePreviewSection(section)}:${revision}` : fingerprint(relevantSnapshot(current, section));
     const selected = state.history[state.historyIndex];
     if (selected && selected.hash === hash) return false;
     state.history = state.history.slice(0, state.historyIndex + 1);
@@ -981,12 +991,17 @@
         return;
       }
 
-      captureSectionHistory(this.config);
-      if (pendingPublishedSnapshot && !historyState(this.config).publishedSnapshot) {
-        historyState(this.config).publishedSnapshot = clone(pendingPublishedSnapshot);
+      if (this.isOpen) {
+        captureSectionHistory(this.config);
+        if (pendingPublishedSnapshot && !historyState(this.config).publishedSnapshot) {
+          historyState(this.config).publishedSnapshot = clone(pendingPublishedSnapshot);
+        }
+        this.mountOrUpdatePreview();
+      } else {
+        const state = historyState(this.config);
+        state.status = isDraft(this.config.section) ? "draft" : "current";
+        this.syncStatus();
       }
-      if (this.isOpen) this.mountOrUpdatePreview();
-      else this.syncStatus();
     }
 
     mountOrUpdatePreview() {
@@ -1016,15 +1031,26 @@
       }
       if (this.isOpen && this.instance && !this.instance.destroyed) this.instance.queueDraft();
       else {
-        captureSectionHistory(this.config);
+        const state = historyState(this.config);
+        state.status = isDraft(this.config.section) ? "draft" : "current";
         this.syncStatus();
       }
     }
 
     markPublished(publishedSnapshot) {
-      applyPublishedToHistory(publishedSnapshot);
-      if (this.isOpen && this.instance && !this.instance.destroyed) this.instance.markPublished(publishedSnapshot);
-      else this.syncStatus();
+      if (this.isOpen && this.instance && !this.instance.destroyed) {
+        applyPublishedToHistory(publishedSnapshot);
+        this.instance.markPublished(publishedSnapshot);
+      } else {
+        const state = historyState(this.config);
+        state.history = [];
+        state.historyIndex = -1;
+        state.publishedSnapshot = null;
+        state.justPublished = false;
+        state.status = "current";
+        pendingPublishedSnapshot = null;
+        this.setStatus("current");
+      }
     }
 
     syncStatus() {
@@ -1207,12 +1233,21 @@
       if (drawer) drawer.notifyDraft();
       else {
         const config = resolveSectionConfig(pendingSection);
-        if (config) captureSectionHistory(config);
+        if (config) historyState(config).status = isDraft(config.section) ? "draft" : "current";
       }
     },
     markPublished(publishedSnapshot) {
       if (globalDrawer) globalDrawer.markPublished(publishedSnapshot);
-      else applyPublishedToHistory(publishedSnapshot);
+      else {
+        historyBySection.forEach((state) => {
+          state.history = [];
+          state.historyIndex = -1;
+          state.publishedSnapshot = null;
+          state.justPublished = false;
+          state.status = "current";
+        });
+        pendingPublishedSnapshot = null;
+      }
     },
     destroy() {
       if (globalDrawer) globalDrawer.destroy();

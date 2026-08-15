@@ -263,6 +263,13 @@ test("boş katalog ilk menü analiz/apply işlemini tek revision ile uygular; ay
   assert.equal(first.body.canApply, true);
   assert.ok(first.body.report.newCategories > 0);
   assert.ok(first.body.report.newProducts > 0);
+  const analyzedState = store.snapshot();
+  const draftMetadata = analyzedState.dataImportDrafts.find((item) => item.analysisId === first.body.analysisId);
+  const analysisReplayMetadata = analyzedState.dataImportIdempotency.find((item) => item.requestId === "canonical-menu-analyze-0001");
+  assert.ok(draftMetadata && draftMetadata.payloadRef, "analiz planı cold payload referansı taşımalı");
+  assert.equal(Object.hasOwn(draftMetadata, "plan"), false, "büyük analiz planı hot store'da kalmamalı");
+  assert.ok(analysisReplayMetadata && analysisReplayMetadata.responseRef, "büyük replay cevabı cold payload referansı taşımalı");
+  assert.equal(Object.hasOwn(analysisReplayMetadata, "response"), false, "replay cevabı hot store'da kalmamalı");
 
   const applied = await applyAnalysis(runtime.baseUrl, "canonical-menu-apply-0001", first.body);
   assert.equal(applied.response.status, 200, JSON.stringify(applied.body));
@@ -275,6 +282,9 @@ test("boş katalog ilk menü analiz/apply işlemini tek revision ile uygular; ay
   assert.equal(matchingHistory[0].status, "applied");
   assert.equal(matchingHistory[0].revisionBefore, importRevision(before));
   assert.equal(matchingHistory[0].revisionAfter, importRevision(before) + 1);
+  const backupMetadata = (persisted.dataImportBackups || []).find((item) => item.operationId === applied.body.operationId);
+  assert.ok(backupMetadata && backupMetadata.snapshotRef, "rollback snapshot'ı cold payload referansı taşımalı");
+  assert.equal(Object.hasOwn(backupMetadata, "snapshot"), false, "rollback snapshot'ı hot store'da kalmamalı");
   const firstProductIds = persisted.menuState.categories.flatMap((category) => category.products || []).map((product) => product.id).sort();
 
   const second = await analyzeMenu(runtime.baseUrl, "canonical-menu-analyze-0002", files);

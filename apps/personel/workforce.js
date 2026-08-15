@@ -26,8 +26,14 @@
     revision: 0,
     busy: false,
     loaded: false,
-    loadPromise: null,
+    loadedScopes: new Set(),
+    staleScopes: new Set(),
+    loadPromises: new Map(),
     pollingTimer: null,
+    eventSource: null,
+    reconnectTimer: null,
+    reconnectAttempt: 0,
+    clientId: createRequestId("personel-workforce-events"),
     sessionEnded: true,
     sessionEndNotified: false
   };
@@ -53,7 +59,12 @@
   document.addEventListener("DOMContentLoaded", () => {
     document.addEventListener("personel:section-change", (event) => {
       const section = event.detail && event.detail.section;
-      if (["tasks", "shipment", "shift"].includes(section)) openSection(section);
+      if (["tasks", "shipment", "shift"].includes(section)) {
+        connectWorkforceEvents();
+        openSection(section);
+      } else {
+        pauseWorkforceEvents();
+      }
     });
     document.addEventListener("personel:session-started", handleSessionStarted);
     document.addEventListener("personel:session-ended", handleSessionEnded);
@@ -65,21 +76,24 @@
     state.sessionEnded = false;
     state.sessionEndNotified = false;
     state.loaded = false;
-    state.loadPromise = null;
-    startPolling();
+    state.loadedScopes.clear();
+    state.staleScopes.clear();
+    state.loadPromises.clear();
   }
 
   function handleSessionEnded() {
     state.sessionEnded = true;
     state.sessionEndNotified = true;
     state.loaded = false;
-    state.loadPromise = null;
-    stopPolling();
+    state.loadedScopes.clear();
+    state.staleScopes.clear();
+    state.loadPromises.clear();
+    stopWorkforceEvents();
   }
 
-  function startPolling() {
+  function startFallbackPolling() {
     if (state.pollingTimer || state.sessionEnded || document.hidden) return;
-    state.pollingTimer = window.setInterval(pollWorkforce, 12000);
+    state.pollingTimer = window.setInterval(pollWorkforce, 120000);
   }
 
   function stopPolling() {
@@ -88,11 +102,86 @@
     state.pollingTimer = null;
   }
 
-  function pollWorkforce() {
+  function connectWorkforceEvents() {
+    if (state.sessionEnded || PREVIEW_TOKEN || document.hidden || state.eventSource || !window.EventSource) {
+      if (!window.EventSource) startFallbackPolling();
+      return;
+    }
+    const query = new URLSearchParams({ clientId: state.clientId });
+    const source = new EventSource(`/api/workforce/events?${query.toString()}`, { withCredentials: true });
+    state.eventSource = source;
+    source.addEventListener("open", () => {
+      state.reconnectAttempt = 0;
+      stopPolling();
+    });
+    const handle = (event) => {
+      let payload;
+      try { payload = JSON.parse(event.data || "{}"); } catch (_error) { return; }
+      const incomingRevision = responseRevision(payload, state.revision);
+      if (event.type === "ready" && !payload.requiresRefetch) {
+        state.revision = Math.max(state.revision, incomingRevision);
+        return;
+      }
+      if (incomingRevision <= state.revision && !payload.requiresRefetch) return;
+      state.revision = Math.max(state.revision, incomingRevision);
+      state.loadedScopes.forEach((scope) => state.staleScopes.add(scope));
+      const activeScope = scopeForSection(state.section);
+      if (["tasks", "shipment", "shift"].includes(state.section) && !state.busy && !isEditingWorkforce()) {
+        state.staleScopes.add(activeScope);
+        openSection(state.section, { silent: true }).catch(() => {});
+      }
+    };
+    source.addEventListener("ready", handle);
+    source.addEventListener("workforce", handle);
+    source.addEventListener("message", handle);
+    source.addEventListener("error", () => {
+      if (state.eventSource === source) state.eventSource = null;
+      try { source.close(); } catch (_error) {}
+      if (state.sessionEnded) return;
+      startFallbackPolling();
+      scheduleWorkforceReconnect();
+    });
+  }
+
+  function scheduleWorkforceReconnect() {
+    if (state.reconnectTimer || state.sessionEnded || document.hidden || !window.EventSource) return;
+    const delay = Math.min(30000, 5000 * (2 ** Math.min(state.reconnectAttempt, 3)));
+    state.reconnectAttempt += 1;
+    state.reconnectTimer = window.setTimeout(() => {
+      state.reconnectTimer = null;
+      connectWorkforceEvents();
+    }, delay);
+  }
+
+  function stopWorkforceEvents() {
+    pauseWorkforceEvents();
+    state.reconnectAttempt = 0;
+  }
+
+  function pauseWorkforceEvents() {
+    stopPolling();
+    if (state.eventSource) {
+      try { state.eventSource.close(); } catch (_error) {}
+      state.eventSource = null;
+    }
+    if (state.reconnectTimer) window.clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+    state.loadedScopes.forEach((scope) => state.staleScopes.add(scope));
+  }
+
+  async function pollWorkforce() {
     if (state.sessionEnded) return;
     const editing = document.activeElement && document.activeElement.closest(".workforce-section");
     if (!document.hidden && !editing && ["tasks", "shipment", "shift"].includes(state.section) && !state.busy) {
-      openSection(state.section, { silent: true });
+      try {
+        const status = await api("/api/workforce/me?scope=revision");
+        const incomingRevision = responseRevision(status, state.revision);
+        if (incomingRevision > state.revision) {
+          state.revision = incomingRevision;
+          state.staleScopes.add(scopeForSection(state.section));
+          await openSection(state.section, { silent: true });
+        }
+      } catch (_error) {}
     }
   }
 
@@ -101,10 +190,9 @@
       stopPolling();
       return;
     }
-    startPolling();
-    if (!state.sessionEnded && ["tasks", "shipment", "shift"].includes(state.section) && !state.busy) {
-      openSection(state.section, { silent: true });
-    }
+    if (!state.eventSource) connectWorkforceEvents();
+    if (!state.eventSource) startFallbackPolling();
+    if (!state.sessionEnded && state.staleScopes.has(scopeForSection(state.section)) && !state.busy) openSection(state.section, { silent: true });
   }
 
   function handleStockUpdated(event) {
@@ -124,7 +212,7 @@
     state.sessionEnded = true;
     state.sessionEndNotified = true;
     state.loaded = false;
-    stopPolling();
+    stopWorkforceEvents();
     document.dispatchEvent(new CustomEvent("personel:session-ended", {
       detail: {
         source: "workforce",
@@ -137,10 +225,16 @@
   async function openSection(section, options = {}) {
     if (state.sessionEnded) return;
     state.section = section;
+    const scope = scopeForSection(section);
+    const alreadyLoaded = state.loadedScopes.has(scope) && !state.staleScopes.has(scope);
+    if (alreadyLoaded) {
+      render(section);
+      return;
+    }
     if (state.loaded) render(section);
     else if (!options.silent) renderLoading(section);
     try {
-      await loadWorkforceData();
+      await loadWorkforceData(section);
       if (state.section !== section) return;
       render(section);
     } catch (error) {
@@ -149,21 +243,35 @@
     }
   }
 
-  async function loadWorkforceData() {
+  function scopeForSection(section) {
+    return section === "shipment" ? "shipments" : section === "shift" ? "shift" : "tasks";
+  }
+
+  function requestScopesForSection(section) {
+    return section === "shipment" ? "shipments,stock" : scopeForSection(section);
+  }
+
+  async function loadWorkforceData(section = state.section, options = {}) {
     if (state.sessionEnded) return Promise.reject(Object.assign(new Error("Personel oturumu gerekli."), { status: 401 }));
-    if (state.loadPromise) return state.loadPromise;
-    state.loadPromise = api("/api/workforce/me")
+    const scope = scopeForSection(section);
+    if (!options.force && state.loadedScopes.has(scope) && !state.staleScopes.has(scope)) return state.data;
+    if (state.loadPromises.has(scope)) return state.loadPromises.get(scope);
+    const query = new URLSearchParams({ scope: requestScopesForSection(section) });
+    const promise = api(`/api/workforce/me?${query.toString()}`)
       .then((result) => {
-        state.data = normalizeData(result);
+        mergeWorkforceData(result);
         state.revision = responseRevision(result, state.revision);
         pruneUnavailableCartLines();
         state.loaded = true;
+        state.loadedScopes.add(scope);
+        state.staleScopes.delete(scope);
         return state.data;
       })
       .finally(() => {
-        state.loadPromise = null;
+        state.loadPromises.delete(scope);
       });
-    return state.loadPromise;
+    state.loadPromises.set(scope, promise);
+    return promise;
   }
 
   function emptyData() {
@@ -194,6 +302,17 @@
       stockState: normalizeStockState(source.stockState),
       revision: responseRevision(source, state.revision)
     };
+  }
+
+  function mergeWorkforceData(value) {
+    const source = value && typeof value === "object" ? value : {};
+    if (Array.isArray(source.tasks)) state.data.tasks = source.tasks;
+    if (Array.isArray(source.shipments)) state.data.shipments = source.shipments;
+    if (Array.isArray(source.shiftRequests)) state.data.shiftRequests = source.shiftRequests;
+    if (Array.isArray(source.shiftPlans)) state.data.shiftPlans = source.shiftPlans;
+    if (source.shiftSettings && typeof source.shiftSettings === "object") state.data.shiftSettings = source.shiftSettings;
+    if (source.stockState && typeof source.stockState === "object") state.data.stockState = normalizeStockState(source.stockState);
+    state.data.revision = responseRevision(source, state.data.revision);
   }
 
   function normalizeStockState(value) {
@@ -941,15 +1060,9 @@
   }
 
   async function refreshWorkforceData() {
-    const result = await api("/api/workforce/me");
-    const incomingRevision = responseRevision(result, state.revision);
-    if (incomingRevision >= state.revision) {
-      state.data = normalizeData(result);
-      state.revision = incomingRevision;
-      state.loaded = true;
-      pruneUnavailableCartLines();
-    }
-    return state.data;
+    const scope = scopeForSection(state.section);
+    state.staleScopes.add(scope);
+    return loadWorkforceData(state.section, { force: true });
   }
 
   function showMutationError(section, error) {

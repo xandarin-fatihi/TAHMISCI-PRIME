@@ -49,11 +49,32 @@ server {
     client_body_timeout 120s;
     keepalive_timeout 65s;
 
+    # Compress regular text/static/API responses. SSE is explicitly excluded
+    # below so event delivery is never held by a compression buffer.
+    gzip on;
+    gzip_comp_level 6;
+    gzip_min_length 1024;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_types
+        application/json
+        application/javascript
+        application/manifest+json
+        application/xml
+        font/ttf
+        font/otf
+        image/svg+xml
+        text/css
+        text/javascript
+        text/plain
+        text/xml;
+
     access_log /var/log/nginx/tahmisci.access.log;
     error_log /var/log/nginx/tahmisci.error.log warn;
 
     # SSE endpoints need an unbuffered, long-lived upstream connection.
-    location ~ ^/api/(?:admin/notifications|workforce/notifications|menu|recipes|stock|site|feedback)/events/?$ {
+    location ~ ^/api/(?:admin/(?:notifications|workforce)|notifications|workforce(?:/notifications)?|menu|recipes|stock|site|feedback)/events/?$ {
+        gzip off;
         proxy_pass http://tahmisci_api;
         proxy_http_version 1.1;
         proxy_set_header Host $host;

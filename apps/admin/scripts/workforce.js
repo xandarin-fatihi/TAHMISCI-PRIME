@@ -43,6 +43,14 @@
     taskDraft: { title: "", description: "", priority: "normal", dueDate: "", dueTime: "", managerNote: "" },
     workforceRevision: 0,
     shiftRevision: 0,
+    loaded: false,
+    stale: true,
+    loadPromise: null,
+    eventSource: null,
+    reconnectTimer: null,
+    reconnectAttempt: 0,
+    mounted: false,
+    clientId: requestId("admin-workforce-events"),
     taskFormDirty: false,
     busy: false,
     templates: {
@@ -203,7 +211,14 @@
     });
   }
 
-  async function load() {
+  async function load(options = {}) {
+    if (!options.force && state.loaded && !state.stale) return state.data;
+    if (state.loadPromise) return state.loadPromise;
+    state.loadPromise = loadFromBackend().finally(() => { state.loadPromise = null; });
+    return state.loadPromise;
+  }
+
+  async function loadFromBackend() {
     const workforce = await api("/api/admin/workforce");
     state.data = {
       users: workforce.users || [],
@@ -237,6 +252,9 @@
       plan.weekStart === state.weekStart && plan.status === "draft"
     );
     state.draftPlans = persistedDrafts.length ? persistedDrafts : null;
+    state.loaded = true;
+    state.stale = false;
+    return state.data;
   }
 
   function renderOverview() {
@@ -1044,8 +1062,8 @@
     else renderShipments();
   }
 
-  async function refresh(section) {
-    await load();
+  async function refresh(section, options = {}) {
+    await load(options);
     renderOverview();
     if (section === "tasks") renderTasks();
     else if (section === "shifts" || section === "shipments") {
@@ -1094,28 +1112,93 @@
 
   async function mount() {
     if (!$("#workforceTasksPanel") || !$("#workforceOperationsPanel")) return;
+    if (state.mounted) {
+      connectWorkforceEvents();
+      return refresh(undefined, { force: state.stale });
+    }
+    state.mounted = true;
+    window.__tahmisciWorkforceMounted = true;
     setupAccordions();
     $$(".workforce-section-tabs [data-workforce-tab]").forEach((button) => button.addEventListener("click", () => {
       state.tab = button.dataset.workforceTab;
       syncLivePreview(state.tab);
       renderOperations();
     }));
+    connectWorkforceEvents();
     try {
-      await refresh();
-      window.setInterval(() => {
-        if (document.hidden) return;
-        if (document.activeElement && document.activeElement.closest(".workforce-panel")) return;
-        const tasksOpen = $("#workforceTasksAccordion")?.open;
-        const operationsOpen = $("#workforceOperationsAccordion")?.open;
-        if (tasksOpen) refresh("tasks").catch(() => {});
-        else if (operationsOpen && state.tab === "shipments") refresh("shipments").catch(() => {});
-      }, 12000);
+      await refresh(undefined, { force: true });
     } catch (error) {
       $("#workforceTasksPanel").innerHTML = `<div class="workforce-empty"><h4>Veriler yüklenemedi</h4><p>${esc(error.message)}</p><button class="workforce-line-button ui-button ui-button--secondary" type="button" data-retry-workforce>Tekrar Dene</button></div>`;
       $("#workforceOperationsPanel").innerHTML = `<div class="workforce-empty"><h4>Operasyon verileri yüklenemedi</h4><p>${esc(error.message)}</p></div>`;
-      $("[data-retry-workforce]")?.addEventListener("click", mount);
+      $("[data-retry-workforce]")?.addEventListener("click", () => refresh(undefined, { force: true }).catch(() => {}), { once: true });
     }
   }
 
-  document.addEventListener("DOMContentLoaded", () => setTimeout(mount, 250));
+  function connectWorkforceEvents() {
+    if (state.eventSource || !window.EventSource || document.hidden) return;
+    const query = new URLSearchParams({ clientId: state.clientId });
+    const source = new EventSource(`/api/admin/workforce/events?${query.toString()}`, { withCredentials: true });
+    state.eventSource = source;
+    source.addEventListener("open", () => { state.reconnectAttempt = 0; });
+    const handle = (event) => {
+      let payload;
+      try { payload = JSON.parse(event.data || "{}"); } catch (_error) { return; }
+      const revision = Number(payload.revision || 0);
+      if (event.type === "ready" && !payload.requiresRefetch) {
+        state.workforceRevision = Math.max(state.workforceRevision, revision);
+        return;
+      }
+      if (revision <= state.workforceRevision && !payload.requiresRefetch) return;
+      state.workforceRevision = Math.max(state.workforceRevision, revision);
+      state.stale = true;
+      const section = window.TahmisciAdminBridge && window.TahmisciAdminBridge.activeSection();
+      if (section !== "staffAccess" || state.busy || document.activeElement?.closest(".workforce-panel")) return;
+      const tasksOpen = $("#workforceTasksAccordion")?.open;
+      const operationsOpen = $("#workforceOperationsAccordion")?.open;
+      refresh(tasksOpen ? "tasks" : operationsOpen ? state.tab : undefined, { force: true }).catch(() => {});
+    };
+    source.addEventListener("ready", handle);
+    source.addEventListener("workforce", handle);
+    source.addEventListener("message", handle);
+    source.addEventListener("error", () => {
+      if (state.eventSource === source) state.eventSource = null;
+      try { source.close(); } catch (_error) {}
+      scheduleWorkforceReconnect();
+    });
+  }
+
+  function scheduleWorkforceReconnect() {
+    if (state.reconnectTimer || document.hidden) return;
+    const delay = Math.min(30000, 5000 * (2 ** Math.min(state.reconnectAttempt, 3)));
+    state.reconnectAttempt += 1;
+    state.reconnectTimer = window.setTimeout(() => {
+      state.reconnectTimer = null;
+      const section = window.TahmisciAdminBridge && window.TahmisciAdminBridge.activeSection();
+      if (section === "staffAccess") connectWorkforceEvents();
+    }, delay);
+  }
+
+  function disconnectWorkforceEvents() {
+    if (state.eventSource) {
+      try { state.eventSource.close(); } catch (_error) {}
+      state.eventSource = null;
+    }
+    if (state.reconnectTimer) window.clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+    state.stale = true;
+  }
+
+  function handleAdminSectionChange(event) {
+    const section = event.detail && event.detail.section;
+    if (section === "staffAccess") mount().catch(() => {});
+    else disconnectWorkforceEvents();
+  }
+
+  document.addEventListener("tahmisci:admin-section-change", handleAdminSectionChange);
+  const startWhenActive = () => {
+    const section = window.TahmisciAdminBridge && window.TahmisciAdminBridge.activeSection();
+    if (section === "staffAccess") mount().catch(() => {});
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startWhenActive, { once: true });
+  else startWhenActive();
 })();

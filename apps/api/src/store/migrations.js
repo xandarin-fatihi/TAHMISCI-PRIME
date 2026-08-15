@@ -13,7 +13,7 @@ const {
   registryCodeForEntity
 } = require("./product-code-registry");
 
-const STORE_SCHEMA_VERSION = 13;
+const STORE_SCHEMA_VERSION = 14;
 
 function migrateStore(input) {
   const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
@@ -22,6 +22,10 @@ function migrateStore(input) {
   const next = {
     ...source,
     schemaVersion: STORE_SCHEMA_VERSION,
+    // Monotonic durable revision used by the in-memory snapshot and optimistic
+    // concurrency guard. Legacy stores start at zero and are upgraded once by
+    // FileStore.ensure without changing any domain revision.
+    storeRevision: Math.max(0, Math.trunc(finiteNumber(source.storeRevision, 0))),
     menuState: pricingMigration.menuState,
     menuUpdatedAt: source.menuUpdatedAt || null,
     pricing: pricingMigration.pricing,

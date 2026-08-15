@@ -321,6 +321,12 @@
     notificationPollTimer: null,
     notificationReconnectTimer: null,
     notificationReconnectAttempt: 0,
+    requestPromises: new Map(),
+    sectionLoadPromises: new Map(),
+    modulePromises: new Map(),
+    loadedScopes: new Set(),
+    scopeRevisions: { menu: 0, recipes: 0, stock: 0, workforce: 0 },
+    previewRevisions: { menu: 0, recipes: 0, stock: 0, site: 0 },
     bound: false,
     mediaDbPromise: null,
     dirtyMenu: false,
@@ -425,6 +431,10 @@
     activeSection() {
       return state.activeSection;
     },
+    previewRevision(section) {
+      const scope = section === "recipe" ? "recipes" : section === "stock" ? "stock" : section === "site" ? "site" : "menu";
+      return Number(state.previewRevisions[scope] || 0) + Number(state.scopeRevisions[scope] || 0);
+    },
     selectedProduct() {
       return selectedProductStrict();
     },
@@ -455,7 +465,7 @@
         return false;
       }
       state.saveStatus = "dirty";
-      renderAll();
+      renderActiveSection(state.activeSection);
       updateSaveControls("Kaydedilmemiş değişiklik");
       return true;
     },
@@ -469,7 +479,7 @@
       state.dirtyMenu = false;
       safeLocalSet(STORAGE_KEY, JSON.stringify(state.data));
       ensureSelection();
-      renderAll();
+      renderActiveSection(state.activeSection);
       updateSaveControls("Fiyatlar backend üzerinde güncellendi");
     },
     setPricing(pricing) {
@@ -481,7 +491,7 @@
       if (Number.isSafeInteger(value) && value >= 0) state.publishRevision = value;
     },
     render() {
-      renderAll();
+      renderActiveSection(state.activeSection);
     }
   };
 
@@ -706,10 +716,11 @@
         state.siteChannel = null;
       }
       bindPanelEvents();
-      renderAll();
-      await hydrateFromBackend();
-      await hydrateRecipeAccessFromBackend();
-      await hydrateStockFromBackend();
+      renderActiveSection(state.activeSection);
+      await Promise.allSettled([
+        hydrateAdminCoreFromBackend(),
+        ensureSectionData(state.activeSection)
+      ]);
       await initializeAdminNotifications();
       setupBackendEvents();
     } catch (error) {
@@ -786,7 +797,7 @@
       state.selectedProductId = category && category.products[0] ? category.products[0].id : "";
       state.allowEmptyProductSelection = false;
       setActiveSection("category", { collapseSidebar: true, render: false });
-      renderAll();
+      renderActiveSection("category");
     });
     els.productList.addEventListener("click", (event) => {
       const row = event.target.closest("[data-product-id]");
@@ -794,7 +805,7 @@
       state.selectedProductId = row.dataset.productId;
       state.allowEmptyProductSelection = false;
       setActiveSection("product", { collapseSidebar: true, render: false });
-      renderAll();
+      renderActiveSection("product");
     });
     els.productCategoryTabs.addEventListener("click", handleProductCategoryTabs);
     els.productQuickList.addEventListener("click", handleProductQuickList);
@@ -1409,6 +1420,7 @@
   }
 
   function setActiveSection(section, options) {
+    const previousSection = state.activeSection;
     state.activeSection = normalizePanelSection(section) || "overview";
     if (!options || options.persist !== false) {
       if (state.panelConfig && state.panelConfig.behavior.keepLastSection !== false) safeLocalSet(LAST_ACTIVE_SECTION_KEY, state.activeSection);
@@ -1417,9 +1429,18 @@
     if ((!options || options.collapseSidebar !== false) && isAdminMobileSidebar()) {
       setSidebarCollapsed(true, { persist: false });
     }
-    if (!options || options.render !== false) renderAll();
+    if (!options || options.render !== false) renderActiveSection(state.activeSection);
     if (state.activeSection === "dataCenter" && !state.dataImportCenter.historyLoaded && !state.dataImportCenter.busy) {
       loadDataImportHistory().catch(() => {});
+    }
+    if (previousSection !== state.activeSection || options && options.forceLoad) {
+      document.dispatchEvent(new CustomEvent("tahmisci:admin-section-change", { detail: { section: state.activeSection } }));
+      ensureSectionModule(state.activeSection)
+        .then(() => ensureSectionData(state.activeSection))
+        .then(() => syncSectionBackendEvents(state.activeSection))
+        .catch((error) => updateSaveControls(error.message || "Bölüm verisi yüklenemedi"));
+    } else {
+      syncSectionBackendEvents(state.activeSection);
     }
   }
 
@@ -1721,6 +1742,10 @@
     if (!baseUrl || !window.fetch) throw new Error("Backend adresi tanımlı değil.");
 
     const method = String(options && options.method || "GET").toUpperCase();
+    const dedupe = method === "GET" && !(options && options.noDedupe);
+    const dedupeKey = dedupe ? `${method}:${path}` : "";
+    if (dedupeKey && state.requestPromises.has(dedupeKey)) return state.requestPromises.get(dedupeKey);
+    const request = (async () => {
     const rawBody = options && Object.prototype.hasOwnProperty.call(options, "rawBody") ? options.rawBody : null;
     const headers = Object.assign(rawBody ? {} : { "Content-Type": "application/json" }, options && options.headers);
 
@@ -1743,7 +1768,14 @@
       throw error;
     }
 
-    return result;
+      return result;
+    })();
+    if (dedupeKey) state.requestPromises.set(dedupeKey, request);
+    try {
+      return await request;
+    } finally {
+      if (dedupeKey && state.requestPromises.get(dedupeKey) === request) state.requestPromises.delete(dedupeKey);
+    }
   }
 
   async function logoutAdminSession() {
@@ -1894,7 +1926,7 @@
     if (changed) {
       ensureSelection();
       ensureRecipeSelection();
-      renderAll();
+      renderActiveSection(state.activeSection);
       updateSaveControls("Backend bagli");
       window.clearTimeout(hydrateFromBackend.timer);
       hydrateFromBackend.timer = window.setTimeout(() => {
@@ -1928,60 +1960,201 @@
   }
 
   function setupBackendEvents() {
-    const baseUrl = backendBaseUrl();
     setupAdminNotificationRealtime();
-    if (!baseUrl || !window.EventSource) return;
+    syncSectionBackendEvents(state.activeSection);
+  }
 
-    if (!state.menuEventSource) {
-      state.menuEventSource = new EventSource(`${baseUrl}/api/menu/events`);
-      state.menuEventSource.addEventListener("menu", (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          if (!hasMenuContent(payload.menuState)) return;
-          if (state.dirtyMenu || state.saving || state.pendingPublishVerification) return;
-          state.data = normalizeState(payload.menuState);
+  function catalogScopeForSection(section) {
+    if (["overview", "menu", "banner", "category", "product", "bulkPrice", "settings", "menuOutput", "json"].includes(section)) return "menu";
+    if (section === "recipe") return "recipes";
+    if (section === "stock") return "stock";
+    return "";
+  }
+
+  function syncSectionBackendEvents(section) {
+    const baseUrl = backendBaseUrl();
+    if (!baseUrl || !window.EventSource || !els.panelShell || els.panelShell.hidden) return;
+    const scope = catalogScopeForSection(section);
+    const config = {
+      menu: { key: "menuEventSource", path: "/api/menu/events", event: "menu" },
+      recipes: { key: "recipeEventSource", path: "/api/recipes/events", event: "recipes" },
+      stock: { key: "stockEventSource", path: "/api/stock/events", event: "stock" }
+    }[scope];
+    ["menuEventSource", "recipeEventSource", "stockEventSource"].forEach((key) => {
+      if (!state[key] || config && key === config.key) return;
+      state[key].close();
+      state[key] = null;
+    });
+    if (!config || state[config.key]) return;
+    const source = new EventSource(`${baseUrl}${config.path}`, { withCredentials: true });
+    state[config.key] = source;
+    const handle = (event) => handleCatalogEvent(scope, event);
+    source.addEventListener("ready", handle);
+    source.addEventListener(config.event, handle);
+    source.addEventListener("message", handle);
+    // EventSource sunucunun `retry` yönergesiyle kontrollü biçimde yeniden bağlanır.
+  }
+
+  function handleCatalogEvent(scope, event) {
+    let payload;
+    try { payload = JSON.parse(event.data || "{}"); } catch (_error) { return; }
+    const incomingRevision = responseRevision(payload, scope);
+    if (scope === "menu" && hasMenuContent(payload.menuState)) {
+      if (state.dirtyMenu || state.saving || state.pendingPublishVerification) return;
+      state.data = normalizeState(payload.menuState);
+      state.scopeRevisions.menu = incomingRevision;
+      state.loadedScopes.add("menu");
+      safeLocalSet(STORAGE_KEY, JSON.stringify(state.data));
+      if (catalogScopeForSection(state.activeSection) === scope) renderActiveSection(state.activeSection);
+      return;
+    }
+    if (scope === "recipes" && hasRecipeContent(payload.recipeState)) {
+      state.recipes = normalizeRecipeData(payload.recipeState);
+      state.recipeCatalog = normalizeRecipeCatalog(payload.recipeCatalog);
+      state.scopeRevisions.recipes = incomingRevision;
+      state.loadedScopes.add("recipes");
+      saveRecipesLocalOnly();
+      if (state.activeSection === "recipe") renderActiveSection("recipe");
+      return;
+    }
+    if (scope === "stock" && payload.stockState) {
+      if (state.dirtyStock) return;
+      state.stock = normalizeStockStateForAdmin(payload.stockState);
+      state.stockUpdatedAt = payload.updatedAt || state.stockUpdatedAt;
+      state.scopeRevisions.stock = incomingRevision;
+      state.loadedScopes.add("stock");
+      safeLocalSet(STOCK_STORAGE_KEY, JSON.stringify(state.stock));
+      if (state.activeSection === "stock") renderStockPanel();
+      return;
+    }
+    if (incomingRevision <= Number(state.scopeRevisions[scope] || 0) && !payload.requiresRefetch) return;
+    state.loadedScopes.delete(scope);
+    loadSectionScope(scope, { force: true })
+      .then(() => {
+        if (catalogScopeForSection(state.activeSection) === scope) renderActiveSection(state.activeSection);
+      })
+      .catch(() => {});
+  }
+
+  function responseRevision(result, scope) {
+    const source = result && typeof result === "object" ? result : {};
+    const revisions = source.revisions && typeof source.revisions === "object" ? source.revisions : {};
+    const candidates = [
+      source.revision,
+      source[`${scope}Revision`],
+      revisions[scope],
+      scope === "recipes" ? revisions.recipe : undefined,
+      scope === "menu" ? revisions.publish : undefined
+    ];
+    const found = candidates.map(Number).find((value) => Number.isSafeInteger(value) && value >= 0);
+    return found == null ? Number(state.scopeRevisions[scope] || 0) : found;
+  }
+
+  async function hydrateAdminCoreFromBackend() {
+    if (!backendBaseUrl()) return;
+    const [publishResult, defaultsResult] = await Promise.allSettled([
+      backendRequest("/api/admin/publish-state"),
+      backendRequest("/api/admin/defaults")
+    ]);
+    if (publishResult.status === "fulfilled") {
+      state.publishRevision = Number(publishResult.value.revision || 0);
+    }
+    if (defaultsResult.status === "fulfilled") {
+      const defaults = defaultsResult.value.adminDefaults || {};
+      state.adminDefaults = {
+        menuDesign: defaults.menuDesign ? cloneData(defaults.menuDesign) : null,
+        systemSettings: defaults.systemSettings ? cloneData(defaults.systemSettings) : null
+      };
+      syncAdminDefaultUi();
+    }
+  }
+
+  function scopesForSection(section) {
+    if (["overview", "menu", "banner", "category", "product", "bulkPrice", "settings", "menuOutput", "json"].includes(section)) return ["menu"];
+    if (section === "recipe") return ["recipes"];
+    if (section === "stock") return ["stock"];
+    if (section === "staffAccess") return ["staffAccess"];
+    return [];
+  }
+
+  async function ensureSectionData(section, options = {}) {
+    await ensureSectionModule(section);
+    const scopes = scopesForSection(section);
+    await Promise.all(scopes.map((scope) => loadSectionScope(scope, options)));
+    if (state.activeSection === section) renderActiveSection(section);
+  }
+
+  function ensureSectionModule(section) {
+    if (["bulkPrice", "product"].includes(section)) {
+      return loadScriptOnce("pricing", "scripts/pricing.js?v=20260815-performance");
+    }
+    if (section === "staffAccess") {
+      return loadScriptOnce("workforce", "scripts/workforce.js?v=20260815-performance");
+    }
+    return Promise.resolve();
+  }
+
+  function loadScriptOnce(key, source) {
+    if (key === "pricing" && window.TahmisciPricing) return Promise.resolve(window.TahmisciPricing);
+    if (key === "workforce" && window.__tahmisciWorkforceMounted) return Promise.resolve(true);
+    if (state.modulePromises.has(key)) return state.modulePromises.get(key);
+    const promise = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[data-lazy-admin-module="${key}"]`);
+      if (existing && existing.dataset.loaded === "true") return resolve(true);
+      const script = existing || document.createElement("script");
+      script.defer = true;
+      script.src = source;
+      script.dataset.lazyAdminModule = key;
+      script.addEventListener("load", () => {
+        script.dataset.loaded = "true";
+        document.dispatchEvent(new CustomEvent("tahmisci:admin-section-change", { detail: { section: state.activeSection } }));
+        resolve(true);
+      }, { once: true });
+      script.addEventListener("error", () => reject(new Error("Bölüm modülü yüklenemedi. Lütfen yeniden deneyin.")), { once: true });
+      if (!existing) document.head.append(script);
+    }).catch((error) => {
+      state.modulePromises.delete(key);
+      throw error;
+    });
+    state.modulePromises.set(key, promise);
+    return promise;
+  }
+
+  function loadSectionScope(scope, options = {}) {
+    if (!options.force && state.loadedScopes.has(scope)) return Promise.resolve();
+    if (state.sectionLoadPromises.has(scope)) return state.sectionLoadPromises.get(scope);
+    const load = (async () => {
+      if (scope === "menu") {
+        const result = await backendRequest("/api/menu", { skipToken: true, noDedupe: Boolean(options.force) });
+        syncPublishRevision(result);
+        if (hasMenuContent(result.menuState) && !state.dirtyMenu && !state.saving && !state.pendingPublishVerification) {
+          state.data = normalizeState(result.menuState);
+          if (result.pricing && typeof result.pricing === "object") state.data.pricing = cloneData(result.pricing);
           safeLocalSet(STORAGE_KEY, JSON.stringify(state.data));
           ensureSelection();
-          renderAll();
-        } catch (error) {}
-      });
-    }
-
-    if (!state.recipeEventSource) {
-      state.recipeEventSource = new EventSource(`${baseUrl}/api/recipes/events`);
-      state.recipeEventSource.addEventListener("recipes", (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          if (!hasRecipeContent(payload.recipeState)) return;
-          state.recipes = normalizeRecipeData(payload.recipeState);
-          state.recipeCatalog = normalizeRecipeCatalog(payload.recipeCatalog);
+        }
+        state.scopeRevisions.menu = responseRevision(result, "menu");
+      } else if (scope === "recipes") {
+        const result = await backendRequest("/api/recipes", { noDedupe: Boolean(options.force) });
+        if (hasRecipeContent(result.recipeState)) {
+          state.recipes = normalizeRecipeData(result.recipeState);
+          state.recipeCatalog = normalizeRecipeCatalog(result.recipeCatalog);
+          state.recipeLinkReview = Array.isArray(result.recipeLinkReview) ? result.recipeLinkReview : [];
           saveRecipesLocalOnly();
           ensureRecipeSelection();
-          renderAll();
-        } catch (error) {}
-      });
-    }
-
-    // PASIF_SITE_MODULU_BASLANGIC
-    // PASIF MODUL: Site SSE bağlantısı geçici olarak devre dışıdır.
-    // PASIF_SITE_MODULU_BITIS
-
-    if (!state.stockEventSource) {
-      state.stockEventSource = new EventSource(`${baseUrl}/api/stock/events`);
-      state.stockEventSource.addEventListener("stock", (event) => {
-        try {
-          const payload = JSON.parse(event.data || "{}");
-          if (!payload.stockState || state.dirtyStock) return;
-          state.stock = normalizeStockStateForAdmin(payload.stockState);
-          state.stockUpdatedAt = payload.updatedAt || state.stockUpdatedAt;
-          safeLocalSet(STOCK_STORAGE_KEY, JSON.stringify(state.stock));
-          renderStockPanel();
-        } catch (_error) {}
-      });
-    }
-
-    // Geri bildirimler paneldeki Yenile düğmesiyle alınır. Ayrı bir uzun ömürlü
-    // bağlantı açmamak, HTTP/1.1 altında kayıt istekleri için bağlantı bırakır.
+        }
+        state.scopeRevisions.recipes = responseRevision(result, "recipes");
+      } else if (scope === "stock") {
+        await hydrateStockFromBackend({ force: Boolean(options.force) });
+      } else if (scope === "staffAccess") {
+        await hydrateRecipeAccessFromBackend();
+      }
+      state.loadedScopes.add(scope);
+    })().finally(() => {
+      if (state.sectionLoadPromises.get(scope) === load) state.sectionLoadPromises.delete(scope);
+    });
+    state.sectionLoadPromises.set(scope, load);
+    return load;
   }
 
   function bindAdminNotificationEvents() {
@@ -2795,6 +2968,10 @@
     if (scope === "recipes") state.dirtyRecipes = true;
     if (scope === "site") state.dirtySite = true;
     if (scope === "stock") state.dirtyStock = true;
+    const previewScope = scope === "recipe" ? "recipes" : scope;
+    if (Object.prototype.hasOwnProperty.call(state.previewRevisions, previewScope)) {
+      state.previewRevisions[previewScope] = Number(state.previewRevisions[previewScope] || 0) + 1;
+    }
     state.saveStatus = "dirty";
     updateSaveControls(message || "Kaydedilmemiş değişiklik");
   }
@@ -2843,7 +3020,7 @@
     window.clearTimeout(state.renderTimer);
     state.renderTimer = window.setTimeout(() => {
       state.renderTimer = null;
-      renderAll();
+      renderActiveSection(state.activeSection);
     }, 80);
   }
 
@@ -3568,6 +3745,33 @@
     }
   }
 
+  function renderActiveSection(section) {
+    const active = normalizePanelSection(section) || "overview";
+    if (["overview", "menu", "banner", "category", "product", "bulkPrice", "settings", "menuOutput", "json"].includes(active)) ensureSelection();
+    if (active === "recipe") ensureRecipeSelection();
+    if (active === "overview") renderStats();
+    else if (active === "bulkPrice") renderBulkPriceTools();
+    else if (active === "stock") renderStockPanel();
+    else if (["menu", "banner", "category", "product"].includes(active)) {
+      renderLists();
+      renderForms();
+    } else if (active === "recipe") renderRecipeEditor();
+    else if (active === "staffAccess") renderStaffAccess();
+    else if (active === "dataCenter") renderDataImportCenter();
+    else if (active === "settings") renderPanelSettings();
+    else if (active === "menuOutput" && PANEL_MODULES.menuOutput) renderMenuOutput();
+    else if (active === "feedback") renderFeedbackInbox();
+    else if (active === "json") renderJson();
+    renderSections();
+    if (window.TahmisciPricing && typeof window.TahmisciPricing.syncFromAdmin === "function"
+        && ["bulkPrice", "product"].includes(active)) {
+      window.TahmisciPricing.syncFromAdmin();
+    }
+    if (window.TahmisciLivePreview && typeof window.TahmisciLivePreview.notifyDraft === "function") {
+      window.TahmisciLivePreview.notifyDraft();
+    }
+  }
+
   function renderAll() {
     ensureSelection();
     ensureRecipeSelection();
@@ -3895,14 +4099,16 @@
     return normalizeStockStateForAdmin(null);
   }
 
-  async function hydrateStockFromBackend() {
+  async function hydrateStockFromBackend(options = {}) {
     if (!backendBaseUrl()) return;
     try {
-      const result = await backendRequest("/api/stock");
+      const result = await backendRequest("/api/stock", { noDedupe: Boolean(options.force) });
       state.stock = normalizeStockStateForAdmin(result.stockState);
       state.stockUpdatedAt = result.updatedAt || state.stock.updatedAt || "";
+      state.scopeRevisions.stock = responseRevision(result, "stock");
+      state.loadedScopes.add("stock");
       safeLocalSet(STOCK_STORAGE_KEY, JSON.stringify(state.stock));
-      renderStockPanel();
+      if (state.activeSection === "stock") renderStockPanel();
       updateSaveControls("Stok güncel");
       window.clearTimeout(hydrateStockFromBackend.timer);
       hydrateStockFromBackend.timer = window.setTimeout(updateSaveControls, 1200);
@@ -6891,7 +7097,7 @@
     state.allowEmptyProductSelection = Boolean(select);
     state.selectedProductId = select ? "" : (category && category.products[0] ? category.products[0].id : "");
     setActiveSection("product", { collapseSidebar: false, render: false });
-    renderAll();
+    renderActiveSection("product");
   }
 
   function handleProductQuickList(event) {
@@ -6902,7 +7108,7 @@
     if (!state.selectedProductId && button) state.selectedProductId = button.dataset.productChip;
     state.allowEmptyProductSelection = !state.selectedProductId;
     setActiveSection("product", { collapseSidebar: false, render: false });
-    renderAll();
+    renderActiveSection("product");
   }
 
   function handleProductEditorCardClick(event) {

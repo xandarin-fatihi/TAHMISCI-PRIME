@@ -59,7 +59,8 @@
     pollTimer: null,
     previousFocus: null,
     lastLoadedAt: 0,
-    initialDeepLinkConsumed: false
+    initialDeepLinkConsumed: false,
+    preferencesLoaded: false
   };
   const elements = {};
 
@@ -84,7 +85,7 @@
   function bindEvents() {
     document.addEventListener("personel:session-started", handleSessionStarted);
     document.addEventListener("personel:session-ended", handleSessionEnded);
-    document.addEventListener("personel:section-change", handleInitialDeepLink);
+    document.addEventListener("personel:section-change", handleSectionChange);
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", stopRealtime);
     window.addEventListener("beforeunload", stopRealtime);
@@ -115,7 +116,7 @@
       return;
     }
     if (elements.personelNotificationTrigger) elements.personelNotificationTrigger.hidden = false;
-    void Promise.allSettled([loadNotifications(), loadPreferences()]);
+    void refreshUnreadCount();
     connectEvents();
   }
 
@@ -155,7 +156,13 @@
     state.pending.clear();
     state.lastLoadedAt = 0;
     state.initialDeepLinkConsumed = false;
+    state.preferencesLoaded = false;
     updateUnreadUi();
+  }
+
+  function handleSectionChange(event) {
+    handleInitialDeepLink();
+    if (event && event.detail && event.detail.section === "profile" && !state.preferencesLoaded) void loadPreferences();
   }
 
   async function openDrawer() {
@@ -168,7 +175,10 @@
     elements.personelNotificationTrigger?.setAttribute("aria-label", "Bildirimleri kapat");
     document.body.classList.add("is-personel-notification-open");
     window.requestAnimationFrame(() => elements.personelNotificationClose?.focus({ preventScroll: true }));
-    if (!state.lastLoadedAt || Date.now() - state.lastLoadedAt > 10000) await loadNotifications();
+    const pending = [];
+    if (!state.lastLoadedAt || Date.now() - state.lastLoadedAt > 10000) pending.push(loadNotifications());
+    if (!state.preferencesLoaded) pending.push(loadPreferences());
+    if (pending.length) await Promise.allSettled(pending);
   }
 
   function closeDrawer() {
@@ -523,6 +533,7 @@
       state.preferences = { ...DEFAULT_PREFERENCES, ...(result.preferences || result.data || {}) };
       state.capabilities = result.capabilities && typeof result.capabilities === "object" ? { ...result.capabilities } : {};
       if (result.vapidPublicKey && !state.capabilities.vapidPublicKey) state.capabilities.vapidPublicKey = result.vapidPublicKey;
+      state.preferencesLoaded = true;
       fillPreferencesForm();
       await renderPushState();
       setPreferencesMessage("");
