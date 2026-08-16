@@ -42,6 +42,7 @@
 .personel-notification-trigger:focus-visible,
 .personel-notification-close:focus-visible,
 .personel-notification-filters button:focus-visible,
+.personel-notification-views button:focus-visible,
 .personel-notification-card button:focus-visible {
   outline: 3px solid rgba(185, 80, 45, .24);
   outline-offset: 2px;
@@ -93,7 +94,7 @@
   inset: 0 0 0 auto;
   z-index: 430;
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto;
   width: min(430px, 100vw);
   min-width: 0;
   height: 100dvh;
@@ -133,10 +134,38 @@
 
 .personel-notification-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   padding: 12px 16px 8px;
+}
+
+.personel-notification-views {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0 16px 7px;
+  padding: 3px;
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  background: var(--panel-surface-soft);
+}
+
+.personel-notification-views button {
+  min-height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--panel-muted);
+  background: transparent;
+  font: 700 11px/1 var(--panel-font-ui);
+  cursor: pointer;
+}
+
+.personel-notification-views button.is-active {
+  color: #fffaf3;
+  background: var(--panel-coffee);
 }
 
 .personel-notification-toolbar > label {
@@ -244,6 +273,11 @@
   background: linear-gradient(135deg, rgba(255, 250, 243, 1), rgba(247, 236, 223, .84));
 }
 
+.personel-notification-card.is-archived {
+  border-style: dashed;
+  box-shadow: none;
+}
+
 .personel-notification-card.is-unread::before {
   content: "";
   position: absolute;
@@ -349,6 +383,10 @@
   border-color: var(--panel-line);
   color: var(--panel-coffee);
   background: var(--panel-surface-soft);
+}
+
+.personel-notification-card__actions button[data-notification-action="delete"] {
+  color: var(--panel-danger);
 }
 
 .personel-notification-card__actions svg {
@@ -467,6 +505,21 @@ body.is-personel-notification-open {
   font-size: 12px;
 }
 
+.notification-field input[readonly] {
+  color: var(--panel-muted);
+  background: var(--panel-surface-soft);
+  cursor: default;
+}
+
+.notification-email-help {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--panel-muted);
+  font-size: 11px;
+}
+
 .notification-preference-group {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -513,6 +566,71 @@ body.is-personel-notification-open {
   background: var(--panel-surface-soft);
 }
 
+.notification-devices-card {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: 11px;
+  background: var(--panel-surface-soft);
+}
+
+.notification-devices-card > header,
+.notification-device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notification-devices-card > header > div,
+.notification-device-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.notification-devices-card strong,
+.notification-device-copy strong {
+  color: var(--panel-ink);
+  font-size: 12px;
+}
+
+.notification-devices-card span,
+.notification-device-copy time {
+  color: var(--panel-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.notification-device-list {
+  display: grid;
+  gap: 7px;
+}
+
+.notification-device-row,
+.notification-device-empty {
+  padding: 9px 10px;
+  border: 1px solid var(--panel-line);
+  border-radius: 9px;
+  background: var(--panel-surface);
+}
+
+.notification-device-row.is-current {
+  border-color: rgba(85, 107, 47, .28);
+}
+
+.notification-device-current {
+  color: var(--panel-success, #556b2f) !important;
+  font-weight: 800;
+}
+
+.notification-device-empty {
+  color: var(--panel-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
 .notification-push-card > div {
   display: grid;
   gap: 3px;
@@ -554,7 +672,10 @@ body.is-personel-notification-open {
 
   .notification-preferences-card > header,
   .notification-preferences-card > footer,
-  .notification-push-card {
+  .notification-push-card,
+  .notification-email-help,
+  .notification-devices-card > header,
+  .notification-device-row {
     align-items: stretch;
     flex-direction: column;
   }

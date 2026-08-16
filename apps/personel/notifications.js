@@ -2,12 +2,13 @@
   "use strict";
 
   const API_ROOT = "/api/notifications";
+  const DEVICE_STORAGE_KEY = "tahmisci.notifications.personel.device.v1";
   const PAGE_SIZE = 30;
   const FALLBACK_POLL_MS = 15000;
   const MAX_RECONNECT_MS = 30000;
   const BOOLEAN_PREFERENCES = [
     "inAppEnabled", "emailEnabled", "taskNotifications", "shipmentNotifications",
-    "shiftNotifications", "trainingNotifications", "taskReminder24h", "taskReminder2h",
+    "shiftNotifications", "taskReminder24h", "taskReminder2h",
     "overdueReminder", "shiftReminder12h", "shiftReminder2h", "quietHoursEnabled"
   ];
   const DEFAULT_PREFERENCES = Object.freeze({
@@ -18,7 +19,6 @@
     taskNotifications: true,
     shipmentNotifications: true,
     shiftNotifications: true,
-    trainingNotifications: true,
     taskReminder24h: true,
     taskReminder2h: true,
     overdueReminder: true,
@@ -33,7 +33,6 @@
     task: "tasks",
     shipment: "shipment",
     shift: "shift",
-    training: "recipe",
     stock: "stock",
     system: "profile"
   });
@@ -48,9 +47,12 @@
     unreadCount: 0,
     category: "all",
     unreadOnly: false,
+    view: "inbox",
     nextCursor: "",
     preferences: { ...DEFAULT_PREFERENCES },
     capabilities: {},
+    devices: [],
+    devicesLoading: false,
     loading: false,
     pending: new Set(),
     eventSource: null,
@@ -71,12 +73,16 @@
       "personelNotificationTrigger", "personelNotificationBadge", "personelNotificationDrawer",
       "personelNotificationBackdrop", "personelNotificationClose", "personelNotificationUnreadText",
       "personelNotificationReadAll", "personelNotificationUnreadOnly", "personelNotificationFilters",
+      "personelNotificationViews", "personelNotificationClearArchive",
       "personelNotificationMessage", "personelNotificationList", "personelNotificationLoadMore",
       "personelNotificationPreferencesForm", "personelNotificationPreferencesState",
-      "personelNotificationEmail", "personelPushStatus", "personelPushToggle", "recipeFrame"
+      "personelNotificationEmail", "personelPushStatus", "personelPushToggle", "recipeFrame",
+      "personelNotificationManageEmail", "personelNotificationDevices", "personelNotificationDevicesRefresh"
     ].forEach((id) => { elements[id] = document.getElementById(id); });
 
     bindEvents();
+    registerPwaNotificationIntro();
+    syncNotificationViews();
     updateUnreadUi();
     renderNotificationList();
     renderPushState();
@@ -95,15 +101,38 @@
     elements.personelNotificationBackdrop?.addEventListener("click", closeDrawer);
     elements.personelNotificationUnreadOnly?.addEventListener("change", () => {
       state.unreadOnly = Boolean(elements.personelNotificationUnreadOnly.checked);
+      state.view = state.unreadOnly ? "unread" : "inbox";
+      syncNotificationViews();
       void loadNotifications();
     });
+    elements.personelNotificationViews?.addEventListener("click", handleViewClick);
     elements.personelNotificationFilters?.addEventListener("click", handleFilterClick);
     elements.personelNotificationList?.addEventListener("click", handleListClick);
     elements.personelNotificationReadAll?.addEventListener("click", markAllRead);
+    elements.personelNotificationClearArchive?.addEventListener("click", clearArchive);
     elements.personelNotificationLoadMore?.addEventListener("click", () => loadNotifications({ append: true }));
     elements.personelNotificationPreferencesForm?.addEventListener("submit", savePreferences);
     elements.personelPushToggle?.addEventListener("click", togglePushSubscription);
+    elements.personelNotificationManageEmail?.addEventListener("click", openAccountSecurity);
+    elements.personelNotificationDevicesRefresh?.addEventListener("click", () => loadDevices(true));
+    elements.personelNotificationDevices?.addEventListener("click", handleDeviceClick);
+    document.addEventListener("tahmisci:account-security-updated", (event) => {
+      if (event.detail && event.detail.scope === "personel") void loadPreferences();
+    });
     document.addEventListener("keydown", handleDocumentKeydown);
+  }
+
+  function registerPwaNotificationIntro() {
+    if (!window.TahmisciPWA || typeof window.TahmisciPWA.registerNotificationPrompt !== "function") return;
+    window.TahmisciPWA.registerNotificationPrompt({
+      canShow: () => state.active && !state.preview && supportsPush(),
+      onEnable: async () => {
+        if (!state.preferencesLoaded) await loadPreferences();
+        await enablePush();
+        await renderPushState();
+        return true;
+      }
+    });
   }
 
   function handleSessionStarted(event) {
@@ -149,20 +178,29 @@
     state.sessionEndNotified = false;
     state.notifications = [];
     state.unreadCount = 0;
+    state.view = "inbox";
+    state.unreadOnly = false;
     state.nextCursor = "";
     state.preferences = { ...DEFAULT_PREFERENCES };
     state.capabilities = {};
+    state.devices = [];
+    state.devicesLoading = false;
     state.loading = false;
     state.pending.clear();
     state.lastLoadedAt = 0;
     state.initialDeepLinkConsumed = false;
     state.preferencesLoaded = false;
+    if (elements.personelNotificationUnreadOnly) elements.personelNotificationUnreadOnly.checked = false;
+    syncNotificationViews();
     updateUnreadUi();
   }
 
   function handleSectionChange(event) {
     handleInitialDeepLink();
-    if (event && event.detail && event.detail.section === "profile" && !state.preferencesLoaded) void loadPreferences();
+    if (event && event.detail && event.detail.section === "profile") {
+      if (!state.preferencesLoaded) void loadPreferences();
+      void loadDevices();
+    }
   }
 
   async function openDrawer() {
@@ -178,6 +216,7 @@
     const pending = [];
     if (!state.lastLoadedAt || Date.now() - state.lastLoadedAt > 10000) pending.push(loadNotifications());
     if (!state.preferencesLoaded) pending.push(loadPreferences());
+    if (!state.devices.length) pending.push(loadDevices());
     if (pending.length) await Promise.allSettled(pending);
   }
 
@@ -215,6 +254,29 @@
     }
   }
 
+  function handleViewClick(event) {
+    const button = event.target.closest("[data-notification-view]");
+    if (!button) return;
+    const requested = String(button.dataset.notificationView || "inbox");
+    state.view = ["unread", "archived"].includes(requested) ? requested : "inbox";
+    state.unreadOnly = state.view === "unread";
+    if (elements.personelNotificationUnreadOnly) elements.personelNotificationUnreadOnly.checked = state.unreadOnly;
+    syncNotificationViews();
+    void loadNotifications();
+  }
+
+  function syncNotificationViews() {
+    elements.personelNotificationViews?.querySelectorAll("[data-notification-view]").forEach((button) => {
+      const active = button.dataset.notificationView === state.view;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    if (elements.personelNotificationReadAll) elements.personelNotificationReadAll.hidden = state.view === "archived";
+    const unreadLabel = elements.personelNotificationUnreadOnly?.closest("label");
+    if (unreadLabel) unreadLabel.hidden = state.view === "archived";
+    if (elements.personelNotificationClearArchive) elements.personelNotificationClearArchive.hidden = state.view !== "archived";
+  }
+
   function handleFilterClick(event) {
     const button = event.target.closest("[data-notification-category]");
     if (!button) return;
@@ -234,12 +296,17 @@
     setListBusy(true, append);
     showMessage("");
     try {
-      const parameters = new URLSearchParams({ limit: String(PAGE_SIZE) });
+      const parameters = new URLSearchParams({ limit: String(state.view === "archived" ? 100 : PAGE_SIZE) });
       if (state.category !== "all") parameters.set("category", state.category);
       if (state.unreadOnly) parameters.set("unread", "true");
+      if (state.view === "archived") {
+        parameters.set("includeArchived", "true");
+        parameters.set("archived", "true");
+      }
       if (append) parameters.set("cursor", state.nextCursor);
       const result = await request(`${API_ROOT}?${parameters.toString()}`);
-      const incoming = notificationArray(result).map(normalizeNotification).filter((item) => item.id);
+      const listed = notificationArray(result).map(normalizeNotification).filter((item) => item.id);
+      const incoming = state.view === "archived" ? listed.filter((item) => item.archivedAt) : listed.filter((item) => !item.archivedAt);
       state.notifications = append ? mergeUnique(state.notifications, incoming) : incoming;
       state.nextCursor = String(result.nextCursor || result.cursor && result.cursor.next || "");
       applyUnreadCount(result);
@@ -296,7 +363,6 @@
     if (/task|görev|todo|assignment/.test(text)) return "task";
     if (/shipment|sevkiyat/.test(text)) return "shipment";
     if (/shift|vardiya|izin/.test(text)) return "shift";
-    if (/training|eğitim|recipe|reçete|exam|sınav/.test(text)) return "training";
     if (/stock|stok|inventory/.test(text)) return "stock";
     return "system";
   }
@@ -326,7 +392,7 @@
         ? "Bildirimleri kapat"
         : count ? `Bildirimleri aç, ${count} okunmamış bildirim` : "Bildirimleri aç");
     }
-    if (elements.personelNotificationReadAll) elements.personelNotificationReadAll.disabled = count === 0 || state.pending.has("read-all");
+    if (elements.personelNotificationReadAll) elements.personelNotificationReadAll.disabled = count === 0 || state.pending.has("read-all") || state.view === "archived";
     document.title = count ? `(${count > 99 ? "99+" : count}) Tahmisçi Personel` : "Tahmisçi Personel";
   }
 
@@ -346,6 +412,7 @@
     else if (!state.notifications.length) root.append(createStateNode("empty"));
     else state.notifications.forEach((notification) => root.append(createNotificationCard(notification)));
     if (elements.personelNotificationLoadMore) elements.personelNotificationLoadMore.hidden = !state.nextCursor;
+    if (elements.personelNotificationClearArchive) elements.personelNotificationClearArchive.disabled = state.loading || !state.notifications.length;
   }
 
   function createStateNode(kind) {
@@ -368,8 +435,8 @@
       node.append(title, text, retry);
       return node;
     } else {
-      title.textContent = state.unreadOnly ? "Okunmamış bildirim yok" : "Henüz bildirim yok";
-      text.textContent = "Yeni görev, sevkiyat ve vardiya gelişmeleri burada görünecek.";
+      title.textContent = state.view === "archived" ? "Arşivlenmiş bildirim yok" : state.unreadOnly ? "Okunmamış bildirim yok" : "Henüz bildirim yok";
+      text.textContent = state.view === "archived" ? "Arşivlediğiniz bildirimler burada görünür." : "Yeni görev, sevkiyat ve vardiya gelişmeleri burada görünecek.";
     }
     node.append(title, text);
     return node;
@@ -377,7 +444,7 @@
 
   function createNotificationCard(notification) {
     const card = document.createElement("article");
-    card.className = `personel-notification-card is-${notification.severity}${notification.readAt ? "" : " is-unread"}`;
+    card.className = `personel-notification-card is-${notification.severity}${notification.readAt ? "" : " is-unread"}${notification.archivedAt ? " is-archived" : ""}`;
     card.dataset.notificationId = notification.id;
 
     const iconNode = document.createElement("span");
@@ -402,10 +469,14 @@
 
     const actions = document.createElement("div");
     actions.className = "personel-notification-card__actions";
-    actions.append(
-      actionButton(notification.readAt ? "unread" : "read", notification.readAt ? "Okunmadı işaretle" : "Okundu işaretle"),
-      actionButton("archive", "Arşivle")
-    );
+    if (notification.archivedAt) {
+      actions.append(actionButton("restore", "Gelen kutusuna geri yükle"), actionButton("delete", "Kalıcı olarak sil"));
+    } else {
+      actions.append(
+        actionButton(notification.readAt ? "unread" : "read", notification.readAt ? "Okunmadı işaretle" : "Okundu işaretle"),
+        actionButton("archive", "Arşivle")
+      );
+    }
     card.append(iconNode, copy, actions);
     return card;
   }
@@ -416,7 +487,7 @@
     button.dataset.notificationAction = action;
     button.setAttribute("aria-label", label);
     button.title = label;
-    button.innerHTML = icon(action === "archive" ? "archive" : action === "read" ? "check" : "dot");
+    button.innerHTML = icon(action === "archive" ? "archive" : action === "restore" ? "restore" : action === "delete" ? "delete" : action === "read" ? "check" : "dot");
     return button;
   }
 
@@ -430,6 +501,8 @@
     if (action.dataset.notificationAction === "read") void setNotificationRead(notification, true, action);
     if (action.dataset.notificationAction === "unread") void setNotificationRead(notification, false, action);
     if (action.dataset.notificationAction === "archive") void archiveNotification(notification, action);
+    if (action.dataset.notificationAction === "restore") void restoreNotification(notification, action);
+    if (action.dataset.notificationAction === "delete") void deleteNotification(notification, action);
   }
 
   async function openNotification(notification, button) {
@@ -480,6 +553,65 @@
     } finally {
       state.pending.delete(key);
       setButtonBusy(button, false);
+    }
+  }
+
+  async function restoreNotification(notification, button) {
+    const key = `restore:${notification.id}`;
+    if (state.pending.has(key)) return;
+    state.pending.add(key);
+    setButtonBusy(button, true);
+    try {
+      const result = await request(`${API_ROOT}/${encodeURIComponent(notification.id)}/restore`, { method: "PATCH" });
+      state.notifications = state.notifications.filter((item) => item.id !== notification.id);
+      applyUnreadCount(result);
+      renderNotificationList();
+      showMessage("Bildirim gelen kutusuna geri yüklendi.");
+    } catch (error) {
+      showMessage(error.message || "Bildirim geri yüklenemedi.", true);
+    } finally {
+      state.pending.delete(key);
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function deleteNotification(notification, button) {
+    const key = `delete:${notification.id}`;
+    if (state.pending.has(key) || !window.confirm("Bu arşivlenmiş bildirim kalıcı olarak silinsin mi?")) return;
+    state.pending.add(key);
+    setButtonBusy(button, true);
+    try {
+      const result = await request(`${API_ROOT}/${encodeURIComponent(notification.id)}`, { method: "DELETE" });
+      state.notifications = state.notifications.filter((item) => item.id !== notification.id);
+      applyUnreadCount(result);
+      renderNotificationList();
+      showMessage("Bildirim kalıcı olarak silindi.");
+    } catch (error) {
+      showMessage(error.message || "Bildirim silinemedi.", true);
+    } finally {
+      state.pending.delete(key);
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function clearArchive() {
+    const button = elements.personelNotificationClearArchive;
+    if (!button || button.disabled || state.pending.has("clear-archive") || !window.confirm("Arşivdeki tüm bildirimler kalıcı olarak silinsin mi?")) return;
+    state.pending.add("clear-archive");
+    setButtonBusy(button, true, "Temizleniyor…");
+    try {
+      const result = await request(`${API_ROOT}/archive`, { method: "DELETE" });
+      state.notifications = [];
+      state.nextCursor = "";
+      applyUnreadCount(result);
+      renderNotificationList();
+      showMessage(`${Number(result.deletedCount || 0)} arşiv kaydı kalıcı olarak silindi.`);
+    } catch (error) {
+      showMessage(error.message || "Bildirim arşivi temizlenemedi.", true);
+    } finally {
+      state.pending.delete("clear-archive");
+      setButtonBusy(button, false);
+      button.disabled = !state.notifications.length;
     }
   }
 
@@ -536,6 +668,7 @@
       state.preferencesLoaded = true;
       fillPreferencesForm();
       await renderPushState();
+      void loadDevices();
       setPreferencesMessage("");
     } catch (error) {
       setPreferencesMessage(error.message || "Bildirim tercihleri alınamadı.", true);
@@ -549,7 +682,16 @@
     BOOLEAN_PREFERENCES.forEach((name) => {
       if (form.elements[name]) form.elements[name].checked = Boolean(state.preferences[name]);
     });
-    if (form.elements.emailAddress) form.elements.emailAddress.value = state.preferences.emailAddress || "";
+    if (form.elements.emailAddress) {
+      form.elements.emailAddress.value = state.preferences.emailAddress || "";
+      form.elements.emailAddress.readOnly = true;
+      form.elements.emailAddress.setAttribute("aria-readonly", "true");
+    }
+    if (form.elements.emailEnabled) {
+      form.elements.emailEnabled.disabled = !state.preferences.emailVerified;
+      if (!state.preferences.emailVerified) form.elements.emailEnabled.checked = false;
+      form.elements.emailEnabled.title = state.preferences.emailVerified ? "" : "Önce hesap e-postanızı doğrulayın.";
+    }
     if (form.elements.quietHoursStart) form.elements.quietHoursStart.value = state.preferences.quietHoursStart || "22:00";
     if (form.elements.quietHoursEnd) form.elements.quietHoursEnd.value = state.preferences.quietHoursEnd || "07:00";
     toggleQuietHourInputs();
@@ -585,9 +727,9 @@
     const form = event.currentTarget;
     const button = form.querySelector('[type="submit"]');
     const payload = readPreferencesForm();
-    if (payload.emailEnabled && !isValidEmail(payload.emailAddress)) {
-      setPreferencesMessage("E-posta bildirimleri için geçerli bir adres girin.", true);
-      elements.personelNotificationEmail?.focus();
+    if (payload.emailEnabled && (!state.preferences.emailVerified || !isValidEmail(payload.emailAddress))) {
+      setPreferencesMessage("E-posta bildirimleri için önce hesap e-postanızı doğrulayın.", true);
+      elements.personelNotificationManageEmail?.focus();
       return;
     }
     state.pending.add("preferences");
@@ -613,6 +755,119 @@
     if (!elements.personelNotificationPreferencesState) return;
     elements.personelNotificationPreferencesState.textContent = message || "";
     elements.personelNotificationPreferencesState.classList.toggle("is-error", Boolean(message && error));
+  }
+
+  function openAccountSecurity() {
+    const card = document.querySelector('[data-account-security][data-account-scope="personel"]');
+    card?.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" });
+    card?.querySelector("[data-account-email]")?.focus({ preventScroll: true });
+    window.TahmisciAccountSecurity?.refresh("personel");
+  }
+
+  function notificationDeviceId() {
+    let value = "";
+    try { value = window.localStorage.getItem(DEVICE_STORAGE_KEY) || ""; } catch (_error) {}
+    if (value) return value;
+    value = window.crypto && typeof window.crypto.randomUUID === "function"
+      ? window.crypto.randomUUID()
+      : `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    try { window.localStorage.setItem(DEVICE_STORAGE_KEY, value); } catch (_error) {}
+    return value;
+  }
+
+  function notificationDeviceName() {
+    const platform = String(navigator.userAgentData?.platform || navigator.platform || "Tarayıcı").slice(0, 60);
+    const standalone = window.matchMedia("(display-mode: standalone)").matches ? "PWA" : "Web";
+    return `${platform} · ${standalone}`;
+  }
+
+  function notificationDeviceHeaders() {
+    return { "X-Tahmisci-Device-Id": notificationDeviceId() };
+  }
+
+  async function loadDevices(force = false) {
+    if (!state.active || state.preview || !elements.personelNotificationDevices || state.devicesLoading || (!force && state.devices.length)) return;
+    state.devicesLoading = true;
+    elements.personelNotificationDevices.replaceChildren(createDeviceEmpty("Bağlı cihazlar yükleniyor…"));
+    if (elements.personelNotificationDevicesRefresh) elements.personelNotificationDevicesRefresh.disabled = true;
+    try {
+      const result = await request(`${API_ROOT}/push-subscriptions`, { headers: notificationDeviceHeaders() });
+      state.devices = Array.isArray(result.devices) ? result.devices : Array.isArray(result.subscriptions) ? result.subscriptions : [];
+      renderDevices();
+    } catch (error) {
+      elements.personelNotificationDevices.replaceChildren(createDeviceEmpty(error.message || "Bağlı cihazlar alınamadı."));
+    } finally {
+      state.devicesLoading = false;
+      if (elements.personelNotificationDevicesRefresh) elements.personelNotificationDevicesRefresh.disabled = false;
+    }
+  }
+
+  function renderDevices() {
+    const root = elements.personelNotificationDevices;
+    if (!root) return;
+    root.replaceChildren();
+    if (!state.devices.length) {
+      root.append(createDeviceEmpty("Bu hesaba bağlı bildirim cihazı yok."));
+      return;
+    }
+    const currentId = notificationDeviceId();
+    state.devices.forEach((device) => {
+      const id = String(device.id || device.subscriptionId || "");
+      if (!id) return;
+      const current = Boolean(device.current ?? device.isCurrent) || String(device.deviceId || "") === currentId;
+      const row = document.createElement("div");
+      row.className = `notification-device-row${current ? " is-current" : ""}`;
+      const copy = document.createElement("div");
+      copy.className = "notification-device-copy";
+      const title = document.createElement("strong");
+      title.textContent = String(device.deviceName || device.name || "Tarayıcı cihazı");
+      if (current) {
+        const badge = document.createElement("span");
+        badge.className = "notification-device-current";
+        badge.textContent = "Bu cihaz";
+        title.append(" · ", badge);
+      }
+      const time = document.createElement("time");
+      time.textContent = `Son kullanım: ${absoluteTime(device.lastSeenAt || device.updatedAt || device.createdAt)}`;
+      copy.append(title, time);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "ui-button ui-button--ghost ui-button--sm";
+      remove.dataset.notificationDeviceRemove = id;
+      remove.dataset.currentDevice = current ? "true" : "false";
+      remove.textContent = "Kaldır";
+      row.append(copy, remove);
+      root.append(row);
+    });
+  }
+
+  function createDeviceEmpty(message) {
+    const node = document.createElement("div");
+    node.className = "notification-device-empty";
+    node.textContent = message;
+    return node;
+  }
+
+  async function handleDeviceClick(event) {
+    const button = event.target.closest("[data-notification-device-remove]");
+    if (!button || button.disabled) return;
+    const id = String(button.dataset.notificationDeviceRemove || "");
+    if (!id || !window.confirm("Bu cihazın anlık bildirim bağlantısı kaldırılsın mı?")) return;
+    button.disabled = true;
+    try {
+      await request(`${API_ROOT}/push-subscriptions/${encodeURIComponent(id)}`, { method: "DELETE", headers: notificationDeviceHeaders() });
+      if (button.dataset.currentDevice === "true") {
+        const subscription = await currentSubscription().catch(() => null);
+        await subscription?.unsubscribe().catch(() => false);
+      }
+      state.devices = state.devices.filter((device) => String(device.id || device.subscriptionId || "") !== id);
+      renderDevices();
+      await renderPushState();
+      setPreferencesMessage("Bildirim cihazı kaldırıldı.");
+    } catch (error) {
+      setPreferencesMessage(error.message || "Bildirim cihazı kaldırılamadı.", true);
+      button.disabled = false;
+    }
   }
 
   async function renderPushState() {
@@ -689,10 +944,17 @@
     }
     await request(`${API_ROOT}/push-subscriptions`, {
       method: "POST",
-      body: { subscription: subscription.toJSON() }
+      body: {
+        subscription: subscription.toJSON(),
+        deviceId: notificationDeviceId(),
+        deviceName: notificationDeviceName()
+      },
+      headers: notificationDeviceHeaders()
     });
     state.preferences.pushEnabled = true;
     await persistPushPreference(true);
+    state.devices = [];
+    await loadDevices(true);
     setPreferencesMessage("Tarayıcı bildirimleri bu cihaz için etkinleştirildi.");
   }
 
@@ -701,12 +963,15 @@
     if (subscription) {
       await request(`${API_ROOT}/push-subscriptions`, {
         method: "DELETE",
-        body: { endpoint: subscription.endpoint }
+        body: { endpoint: subscription.endpoint },
+        headers: notificationDeviceHeaders()
       });
       await subscription.unsubscribe().catch(() => false);
     }
     state.preferences.pushEnabled = false;
     await persistPushPreference(false);
+    state.devices = [];
+    await loadDevices(true);
     setPreferencesMessage("Tarayıcı bildirimleri bu cihaz için kapatıldı.");
   }
 
@@ -724,7 +989,8 @@
     if (!subscription) return;
     await request(`${API_ROOT}/push-subscriptions`, {
       method: "DELETE",
-      body: { endpoint: subscription.endpoint }
+      body: { endpoint: subscription.endpoint },
+      headers: notificationDeviceHeaders()
     }).catch(() => null);
     await subscription.unsubscribe().catch(() => false);
   }
@@ -808,6 +1074,8 @@
 
   function matchesCurrentFilter(notification) {
     if (state.category !== "all" && notification.category !== state.category) return false;
+    if (state.view === "archived") return Boolean(notification.archivedAt);
+    if (notification.archivedAt) return false;
     return !state.unreadOnly || !notification.readAt;
   }
 
@@ -902,7 +1170,7 @@
     if (/sevkiyat|shipment/i.test(pathname)) return "shipment";
     if (/shift|vardiya/i.test(pathname)) return "shift";
     if (/stok|stock/i.test(pathname)) return "stock";
-    if (/recete|recipe|egitim|training/i.test(pathname)) return "recipe";
+    if (/recete|recipe/i.test(pathname)) return "recipe";
     return "";
   }
 
@@ -912,7 +1180,7 @@
       task: "tasks", tasks: "tasks", gorev: "tasks", görev: "tasks", yapilacaklar: "tasks", yapılacaklar: "tasks",
       shipment: "shipment", shipments: "shipment", sevkiyat: "shipment",
       shift: "shift", shifts: "shift", vardiya: "shift",
-      recipe: "recipe", recete: "recipe", reçete: "recipe", training: "recipe", egitim: "recipe", eğitim: "recipe",
+      recipe: "recipe", recete: "recipe", reçete: "recipe",
       stock: "stock", stok: "stock",
       profile: "profile", profil: "profile"
     };
@@ -977,7 +1245,6 @@
     if (category === "task") return "checklist";
     if (category === "shipment") return "truck";
     if (category === "shift") return "calendar";
-    if (category === "training") return "book";
     if (category === "stock") return "box";
     return "bell";
   }
@@ -988,9 +1255,10 @@
       checklist: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="m8 9 1.5 1.5L12 8M14 9h2M8 15l1.5 1.5L12 14M14 15h2"/>',
       truck: '<path d="M3 6h11v10H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/>',
       calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 2v6M17 2v6M3 10h18"/>',
-      book: '<path d="M4 4h6a3 3 0 0 1 3 3v13a3 3 0 0 0-3-3H4z"/><path d="M20 4h-4a3 3 0 0 0-3 3v13a3 3 0 0 1 3-3h4z"/>',
       box: '<path d="m4 7 8-4 8 4-8 4zM4 7v10l8 4 8-4V7M12 11v10"/>',
       archive: '<path d="M4 8h16v12H4zM3 4h18v4H3zM9 12h6"/>',
+      restore: '<path d="M4 8h16v12H4zM3 4h18v4H3zM8 14h8M11 11l-3 3 3 3"/>',
+      delete: '<path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/>',
       check: '<path d="m5 12 4 4L19 6"/>',
       dot: '<circle cx="12" cy="12" r="4"/>',
       clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',

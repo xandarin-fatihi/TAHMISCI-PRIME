@@ -7,6 +7,7 @@
   const workerScope = String(root.dataset.pwaScope || "").trim();
   const isBackOffice = appId === "personel" || appId === "yonetici";
   const updateCheckKey = `tahmisci:pwa-update-check:${appId}`;
+  const notificationIntroKey = `tahmisci:pwa-notification-intro:${appId}:v1`;
   const updateCheckIntervalMs = 6 * 60 * 60 * 1000;
   const dirtyForms = new WeakSet();
   let waitingWorker = null;
@@ -15,20 +16,168 @@
   let previouslyFocused = null;
   let updateNotice = null;
   let offlineNotice = null;
+  let installNotice = null;
+  let notificationIntroNotice = null;
+  let notificationPromptConfig = null;
+  let notificationPromptCheckPending = false;
+  let deferredInstallPrompt = null;
+
+  window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+  window.addEventListener("appinstalled", handleAppInstalled);
+  document.addEventListener("personel:session-started", scheduleNotificationIntro);
+  document.addEventListener("tahmisci:admin-session-started", scheduleNotificationIntro);
+  document.addEventListener("personel:session-ended", dismissNotificationIntro);
+  document.addEventListener("tahmisci:admin-session-ended", dismissNotificationIntro);
 
   document.addEventListener("DOMContentLoaded", () => {
     bindConnectivityState();
     bindDirtyFormTracking();
+    if (deferredInstallPrompt) showInstallReady();
     void registerServiceWorker();
   });
 
   window.TahmisciPWA = Object.freeze({
     checkForUpdate: () => navigator.serviceWorker && navigator.serviceWorker.getRegistration(workerScope).then((registration) => registration && registration.update()),
+    canInstall: () => Boolean(deferredInstallPrompt && !isStandalone()),
+    promptInstall: requestInstall,
+    registerNotificationPrompt(config) {
+      if (!isBackOffice || !config || typeof config.onEnable !== "function") return false;
+      notificationPromptConfig = config;
+      scheduleNotificationIntro();
+      return true;
+    },
+    showNotificationPrompt: scheduleNotificationIntro,
     hasUnsavedChanges,
     markFormClean(form) {
       if (form instanceof HTMLFormElement) dirtyForms.delete(form);
     }
   });
+
+  function handleBeforeInstallPrompt(event) {
+    event.preventDefault();
+    if (isStandalone()) return;
+    deferredInstallPrompt = event;
+    if (document.body) showInstallReady();
+  }
+
+  function showInstallReady() {
+    if (!deferredInstallPrompt || installNotice || isStandalone()) return;
+    installNotice = createNotice({
+      kind: "install",
+      title: "Uygulama olarak yükleyin",
+      message: "Tahmisçi'yi ana ekranınızdan hızlı ve güvenli biçimde açabilirsiniz.",
+      actionLabel: "Uygulamayı Yükle",
+      onAction: requestInstall,
+      dismissible: true
+    });
+  }
+
+  function requestInstall(button) {
+    const promptEvent = deferredInstallPrompt;
+    if (!promptEvent || isStandalone()) return Promise.resolve(false);
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Yükleme açılıyor…";
+    }
+
+    // prompt() doğrudan tıklama çağrı zincirinde çalışır; izin diyaloğu otomatik başlatılmaz.
+    const promptResult = promptEvent.prompt();
+    return Promise.resolve(promptResult)
+      .then(() => promptEvent.userChoice)
+      .then((choice) => {
+        const accepted = Boolean(choice && choice.outcome === "accepted");
+        deferredInstallPrompt = null;
+        if (installNotice) installNotice.remove();
+        installNotice = null;
+        return accepted;
+      })
+      .catch(() => {
+        if (button) {
+          button.disabled = false;
+          button.textContent = "Uygulamayı Yükle";
+        }
+        return false;
+      });
+  }
+
+  function handleAppInstalled() {
+    deferredInstallPrompt = null;
+    if (installNotice) installNotice.remove();
+    installNotice = null;
+  }
+
+  function scheduleNotificationIntro() {
+    if (notificationPromptCheckPending) return;
+    notificationPromptCheckPending = true;
+    window.setTimeout(() => {
+      notificationPromptCheckPending = false;
+      void showNotificationIntroIfEligible();
+    }, 250);
+  }
+
+  async function showNotificationIntroIfEligible() {
+    if (!document.body || notificationIntroNotice || !notificationPromptConfig || !isBackOffice || !isStandalone()) return;
+    if (!("Notification" in window) || window.Notification.permission !== "default") return;
+    try {
+      if (window.localStorage.getItem(notificationIntroKey)) return;
+    } catch (_error) {}
+    if (typeof notificationPromptConfig.canShow === "function"
+      && !(await Promise.resolve(notificationPromptConfig.canShow()).catch(() => false))) return;
+
+    notificationIntroNotice = createNotice({
+      kind: "push-intro",
+      title: "Telefon bildirimleri",
+      message: "Görev, sevkiyat ve vardiya bildirimlerini telefonundan al.",
+      actionLabel: "Bildirimleri Aç",
+      onAction: enableNotificationsFromIntro,
+      secondaryActionLabel: "Şimdi Değil",
+      onSecondaryAction: postponeNotificationIntro,
+      dismissible: false
+    });
+    focusNoticeAction(notificationIntroNotice);
+  }
+
+  async function enableNotificationsFromIntro(button) {
+    if (!notificationPromptConfig || button.disabled) return;
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "Açılıyor…";
+    try {
+      const enabled = await notificationPromptConfig.onEnable();
+      if (enabled === false) throw new Error("Bildirim izni etkinleştirilemedi.");
+      rememberNotificationIntroChoice("enabled");
+      dismissNotificationIntro();
+    } catch (error) {
+      if ("Notification" in window && window.Notification.permission === "denied") {
+        rememberNotificationIntroChoice("denied");
+        dismissNotificationIntro();
+        return;
+      }
+      button.disabled = false;
+      button.textContent = original;
+      const message = notificationIntroNotice && notificationIntroNotice.querySelector(".pwa-notice__copy span");
+      if (message) message.textContent = error && error.message || "Bildirim izni etkinleştirilemedi. Ayarlardan yeniden deneyebilirsiniz.";
+    }
+  }
+
+  function postponeNotificationIntro() {
+    rememberNotificationIntroChoice("later");
+    dismissNotificationIntro();
+  }
+
+  function rememberNotificationIntroChoice(value) {
+    try { window.localStorage.setItem(notificationIntroKey, String(value || "seen")); } catch (_error) {}
+  }
+
+  function dismissNotificationIntro() {
+    if (notificationIntroNotice) notificationIntroNotice.remove();
+    notificationIntroNotice = null;
+  }
+
+  function isStandalone() {
+    return Boolean(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
+      || window.navigator.standalone === true;
+  }
 
   async function registerServiceWorker() {
     if (!appId || !workerUrl || !workerScope || !("serviceWorker" in navigator) || !isSafeRegistrationOrigin()) return;
@@ -213,6 +362,15 @@
       notice.append(action);
     }
 
+    if (options.secondaryActionLabel && typeof options.onSecondaryAction === "function") {
+      const secondary = document.createElement("button");
+      secondary.type = "button";
+      secondary.className = "pwa-notice__secondary";
+      secondary.textContent = options.secondaryActionLabel;
+      secondary.addEventListener("click", () => options.onSecondaryAction(secondary));
+      notice.append(secondary);
+    }
+
     if (options.dismissible) {
       const close = document.createElement("button");
       close.type = "button";
@@ -234,6 +392,8 @@
   function dismissNotice(notice) {
     notice.remove();
     if (notice === updateNotice) updateNotice = null;
+    if (notice === installNotice) installNotice = null;
+    if (notice === notificationIntroNotice) notificationIntroNotice = null;
     if (previouslyFocused && document.contains(previouslyFocused)) previouslyFocused.focus();
   }
 

@@ -3,9 +3,11 @@
 
   const requestForm = document.getElementById("requestForm");
   const confirmForm = document.getElementById("confirmForm");
-  const emailInput = document.getElementById("emailInput");
-  const personelField = document.getElementById("personelField");
-  const personelInput = document.getElementById("personelInput");
+  const identifierInput = document.getElementById("identifierInput");
+  const scopeInput = document.getElementById("accountScope");
+  const scopeLabel = document.getElementById("accountScopeLabel");
+  const pageTitle = document.getElementById("pageTitle");
+  const pageIntro = document.getElementById("pageIntro");
   const requestButton = document.getElementById("requestButton");
   const confirmButton = document.getElementById("confirmButton");
   const sendAgainButton = document.getElementById("sendAgainButton");
@@ -16,87 +18,102 @@
   const statusBox = document.getElementById("status");
   const loginLink = document.getElementById("loginLink");
   const otpInputs = Array.from(document.querySelectorAll("#otpInputs input"));
-  const state = { busy: false, challengeId: "", scope: "admin", userId: "", maskedEmail: "", accountsLoaded: false };
+  const GENERIC_MESSAGE = "Bilgiler kayıtlarımızla eşleşiyorsa doğrulama kodu gönderildi.";
+  const context = resolveEntryContext();
+  const state = { busy: false, challengeId: "", scope: context.scope, identifier: "" };
 
-  requestForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    requestCode(false).catch(() => {});
-  });
+  applyLockedContext();
+  requestForm.addEventListener("submit", (event) => { event.preventDefault(); requestCode(false).catch(() => {}); });
   confirmForm.addEventListener("submit", submitPassword);
   sendAgainButton.addEventListener("click", () => requestCode(true).catch(() => {}));
   changeAccountButton.addEventListener("click", resetToRequest);
   passwordToggle.addEventListener("click", togglePassword);
   newPasswordInput.addEventListener("input", renderPasswordRules);
-  document.querySelectorAll('input[name="scope"]').forEach((input) => input.addEventListener("change", handleScopeChange));
   otpInputs.forEach((input, index) => {
     input.addEventListener("input", () => handleOtpInput(input, index));
     input.addEventListener("keydown", (event) => handleOtpKeydown(event, index));
     input.addEventListener("paste", handleOtpPaste);
   });
 
-  function selectedScope() {
-    return document.querySelector('input[name="scope"]:checked').value;
+  function resolveEntryContext() {
+    const params = new URLSearchParams(window.location.search);
+    const requestedScope = normalizeScope(params.get("scope"));
+    const referrerScope = scopeFromReferrer(document.referrer);
+    const scope = requestedScope || referrerScope || "admin";
+    return { scope, returnTo: safeReturnTo(params.get("returnTo"), scope) || defaultReturnTo(scope) };
   }
 
-  function handleScopeChange() {
-    state.scope = selectedScope();
-    state.userId = "";
-    state.accountsLoaded = false;
-    personelInput.innerHTML = '<option value="">Hesaplar güvenli doğrulamadan sonra listelenir</option>';
-    personelInput.disabled = true;
-    personelField.hidden = state.scope !== "personel";
-    requestButton.textContent = state.scope === "personel" ? "Personel hesaplarını doğrula" : "Doğrulama kodu gönder";
-    loginLink.href = state.scope === "personel" ? "/personel/" : "/login.html";
+  function normalizeScope(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    return normalized === "personel" || normalized === "admin" ? normalized : "";
+  }
+
+  function scopeFromReferrer(value) {
+    if (!value) return "";
+    try {
+      const url = new URL(value, window.location.origin);
+      if (url.origin !== window.location.origin) return "";
+      if (url.pathname === "/personel" || url.pathname.startsWith("/personel/")) return "personel";
+      if (url.pathname === "/yonetici" || url.pathname.startsWith("/yonetici/") || url.pathname === "/panel" || url.pathname.startsWith("/panel/")) return "admin";
+    } catch (_error) {}
+    return "";
+  }
+
+  function safeReturnTo(value, scope) {
+    if (!value || !scope) return "";
+    try {
+      const url = new URL(String(value), window.location.origin);
+      if (url.origin !== window.location.origin) return "";
+      const allowed = scope === "personel"
+        ? (url.pathname === "/personel" || url.pathname.startsWith("/personel/"))
+        : (url.pathname === "/yonetici" || url.pathname.startsWith("/yonetici/") || url.pathname === "/panel" || url.pathname.startsWith("/panel/"));
+      return allowed ? `${url.pathname}${url.search}${url.hash}` : "";
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function defaultReturnTo(scope) {
+    return scope === "personel" ? "/personel/" : "/yonetici/";
+  }
+
+  function applyLockedContext() {
+    const label = state.scope === "personel" ? "Personel" : "Yönetici";
+    scopeInput.value = state.scope;
+    scopeLabel.textContent = label;
+    pageTitle.textContent = `${label} Şifre Yenileme`;
+    document.title = `${label} Şifre Yenileme | Tahmisçi`;
+    pageIntro.textContent = `${label} hesabınıza ait doğrulanmış e-postaya gönderilen tek kullanımlık kodla şifrenizi yenileyin.`;
+    loginLink.href = context.returnTo;
+    loginLink.textContent = `← ${label} girişine dön`;
   }
 
   async function requestCode(isResend) {
     if (state.busy) return;
-    state.scope = selectedScope();
-    const email = emailInput.value.trim();
-    if (!emailInput.checkValidity()) {
-      showStatus("Geçerli bir e-posta adresi girin.", "error");
-      emailInput.focus();
+    const identifier = identifierInput.value.trim();
+    if (!identifier || identifier.length > 254) {
+      showStatus("Kullanıcı adınızı veya e-posta adresinizi girin.", "error");
+      identifierInput.focus();
       return;
     }
-    const selectedUserId = state.scope === "personel" && !personelInput.disabled ? personelInput.value : state.userId;
-    if (state.scope === "personel" && !personelInput.disabled && !selectedUserId) {
-      showStatus("Şifresi değiştirilecek personel hesabını seçin.", "error");
-      personelInput.focus();
-      return;
-    }
+    state.identifier = identifier;
     setBusy(true, isResend ? "Tekrar gönderiliyor..." : "Kod gönderiliyor...");
     try {
-      const result = await api("/api/admin/password-reset/request", {
-        email,
+      const result = await resetApi("request", {
         scope: state.scope,
-        userId: selectedUserId || undefined
+        identifier,
+        returnTo: context.returnTo,
+        challengeId: isResend ? state.challengeId || undefined : undefined
       });
-      if (result.requiresPersonelSelection) {
-        const accounts = Array.isArray(result.personelAccounts) ? result.personelAccounts : [];
-        state.accountsLoaded = true;
-        personelInput.innerHTML = '<option value="">Personel hesabı seçin</option>' + accounts.map((user) => (
-          `<option value="${escapeAttribute(user.id)}">${escapeHtml(user.name)} · @${escapeHtml(user.username)}</option>`
-        )).join("");
-        personelInput.disabled = false;
-        personelField.hidden = false;
-        requestButton.textContent = "Doğrulama kodu gönder";
-        showStatus(result.message || "Personel hesabını seçin.");
-        personelInput.focus();
-        return;
+      state.challengeId = String(result.challengeId || result.requestId || state.challengeId || "");
+      maskedEmail.textContent = String(result.maskedEmail || "doğrulanmış hesap e-postanıza");
+      showStatus(GENERIC_MESSAGE, "success");
+      if (state.challengeId) {
+        requestForm.hidden = true;
+        confirmForm.hidden = false;
+        clearOtp();
+        window.setTimeout(() => otpInputs[0].focus(), 40);
       }
-      if (!result.challengeId) {
-        showStatus(result.message || "Eğer bilgiler yetkiliyse doğrulama kodu gönderildi.");
-        return;
-      }
-      state.challengeId = result.challengeId;
-      state.userId = result.userId || selectedUserId || "";
-      state.maskedEmail = result.maskedEmail || "yetkili e-posta adresi";
-      maskedEmail.textContent = state.maskedEmail;
-      requestForm.hidden = true;
-      confirmForm.hidden = false;
-      clearOtp();
-      showStatus(result.message || "Doğrulama kodu gönderildi.", "success");
-      window.setTimeout(() => otpInputs[0].focus(), 40);
     } catch (error) {
       showStatus(error.message || "Doğrulama kodu gönderilemedi.", "error");
     } finally {
@@ -109,6 +126,10 @@
     if (state.busy) return;
     const code = otpInputs.map((input) => input.value).join("");
     const password = newPasswordInput.value;
+    if (!state.challengeId) {
+      showStatus("Kurtarma isteği geçersiz. Yeni kod isteyin.", "error");
+      return;
+    }
     if (!/^\d{6}$/.test(code)) {
       showStatus("Altı haneli doğrulama kodunu eksiksiz girin.", "error");
       otpInputs.find((input) => !input.value)?.focus();
@@ -121,28 +142,39 @@
     }
     setBusy(true, "Şifre güncelleniyor...");
     try {
-      const result = await api("/api/admin/password-reset/confirm", {
+      const result = await resetApi("confirm", {
         challengeId: state.challengeId,
-        email: emailInput.value.trim(),
         scope: state.scope,
-        userId: state.userId || undefined,
+        identifier: state.identifier,
         code,
         newPassword: password
       });
-      showStatus(result.message || "Şifre başarıyla güncellendi.", "success");
+      showStatus(result.message || "Şifre başarıyla güncellendi. Tüm açık oturumlar kapatıldı.", "success");
       confirmButton.textContent = "Şifre güncellendi";
-      window.setTimeout(() => {
-        window.location.href = result.redirectTo || (state.scope === "personel" ? "/personel/" : "/login.html");
-      }, 1100);
+      const destination = safeReturnTo(result.redirectTo, state.scope) || context.returnTo;
+      window.setTimeout(() => { window.location.href = destination; }, 1000);
     } catch (error) {
       showStatus(error.message || "Şifre güncellenemedi.", "error");
-      if (Number(error.status) === 401) otpInputs[0].focus();
+      if ([400, 401].includes(Number(error.status))) otpInputs[0].focus();
     } finally {
       setBusy(false);
     }
   }
 
-  async function api(path, body) {
+  async function resetApi(action, body) {
+    const paths = [`/api/account/password-reset/${encodeURIComponent(state.scope)}/${action}`];
+    if (state.scope === "admin") paths.push(`/api/admin/password-reset/${action}`);
+    let lastError = null;
+    for (const path of paths) {
+      try { return await postJson(path, body); } catch (error) {
+        lastError = error;
+        if (Number(error.status) !== 404) throw error;
+      }
+    }
+    throw lastError || new Error("İşlem tamamlanamadı.");
+  }
+
+  async function postJson(path, body) {
     const response = await fetch(path, {
       method: "POST",
       credentials: "include",
@@ -161,37 +193,37 @@
   function setBusy(busy, message) {
     state.busy = busy;
     [requestButton, confirmButton, sendAgainButton, changeAccountButton].forEach((button) => { button.disabled = busy; });
-    document.querySelectorAll('input[name="scope"], #emailInput').forEach((control) => { control.disabled = busy; });
-    personelInput.disabled = busy || !state.accountsLoaded;
+    identifierInput.disabled = busy || requestForm.hidden;
+    otpInputs.forEach((input) => { input.disabled = busy; });
+    newPasswordInput.disabled = busy;
     if (busy && message) showStatus(message);
-    requestButton.textContent = busy ? "Lütfen bekleyin..." : (state.scope === "personel" && !state.accountsLoaded ? "Personel hesaplarını doğrula" : "Doğrulama kodu gönder");
-    confirmButton.textContent = busy ? "Güncelleniyor..." : "Şifreyi değiştir";
+    requestButton.textContent = busy ? "Lütfen bekleyin..." : "Doğrulama kodu gönder";
+    if (confirmButton.textContent !== "Şifre güncellendi") confirmButton.textContent = busy ? "Güncelleniyor..." : "Şifreyi değiştir";
   }
 
   function resetToRequest() {
     if (state.busy) return;
     state.challengeId = "";
-    state.userId = "";
+    state.identifier = "";
     confirmForm.hidden = true;
     requestForm.hidden = false;
+    identifierInput.disabled = false;
     newPasswordInput.value = "";
     clearOtp();
     renderPasswordRules();
-    showStatus("Hesap türünü ve yetkili e-postayı yeniden seçebilirsiniz.");
-    emailInput.focus();
+    showStatus("Hesabınıza ait kullanıcı adını veya e-postayı girin.");
+    identifierInput.focus();
   }
 
   function handleOtpInput(input, index) {
     input.value = input.value.replace(/\D/g, "").slice(-1);
     if (input.value && index < otpInputs.length - 1) otpInputs[index + 1].focus();
   }
-
   function handleOtpKeydown(event, index) {
     if (event.key === "Backspace" && !otpInputs[index].value && index > 0) otpInputs[index - 1].focus();
     if (event.key === "ArrowLeft" && index > 0) { event.preventDefault(); otpInputs[index - 1].focus(); }
     if (event.key === "ArrowRight" && index < otpInputs.length - 1) { event.preventDefault(); otpInputs[index + 1].focus(); }
   }
-
   function handleOtpPaste(event) {
     const digits = String(event.clipboardData?.getData("text") || "").replace(/\D/g, "").slice(0, 6);
     if (!digits) return;
@@ -199,13 +231,12 @@
     otpInputs.forEach((input, index) => { input.value = digits[index] || ""; });
     otpInputs[Math.min(digits.length, 6) - 1].focus();
   }
-
   function clearOtp() { otpInputs.forEach((input) => { input.value = ""; }); }
-  function passwordIsValid(value) { return value.length >= 10 && value.length <= 72 && /[a-zA-Z]/.test(value) && /\d/.test(value); }
+  function passwordIsValid(value) { return value.length >= 10 && value.length <= 72 && /[a-zA-ZÇĞİÖŞÜçğıöşü]/.test(value) && /\d/.test(value); }
   function renderPasswordRules() {
     const value = newPasswordInput.value;
     document.getElementById("ruleLength").classList.toggle("is-valid", value.length >= 10 && value.length <= 72);
-    document.getElementById("ruleLetter").classList.toggle("is-valid", /[a-zA-Z]/.test(value));
+    document.getElementById("ruleLetter").classList.toggle("is-valid", /[a-zA-ZÇĞİÖŞÜçğıöşü]/.test(value));
     document.getElementById("ruleNumber").classList.toggle("is-valid", /\d/.test(value));
   }
   function togglePassword() {
@@ -220,11 +251,6 @@
     statusBox.classList.toggle("is-error", kind === "error");
     statusBox.classList.toggle("is-success", kind === "success");
   }
-  function escapeHtml(value) {
-    return String(value || "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
-  }
-  function escapeAttribute(value) { return escapeHtml(value).replace(/`/g, "&#96;"); }
 
-  handleScopeChange();
   renderPasswordRules();
 })();

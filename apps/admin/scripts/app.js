@@ -18,6 +18,7 @@
   const SIDEBAR_BREAKPOINT = window.matchMedia("(max-width: 1180px)");
   const ADMIN_DRAWER_BREAKPOINT = window.matchMedia("(max-width: 900px)");
   const ADMIN_NOTIFICATION_API = "/api/admin/notifications";
+  const ADMIN_NOTIFICATION_DEVICE_KEY = "tahmisci.notifications.admin.device.v1";
   const ADMIN_NOTIFICATION_POLL_MS = 30000;
   const CHANNEL_NAME = "tahmisci-menu-updates";
   const RECIPE_CHANNEL_NAME = "tahmisci-recipe-updates";
@@ -43,7 +44,7 @@
     product: "Ürün düzenleme",
     bulkPrice: "Toplu Fiyat Güncelleme",
     dataCenter: "Excel Veri Merkezi",
-    stock: "Stok Düzenleme",
+    stock: "Stok & Sevkiyat",
     menuOutput: "Menü çıktısı",
     recipe: "Reçete Düzenleme",
     site: "Site",
@@ -63,8 +64,8 @@
   const SECTION_DESCRIPTIONS = {
     site: "Web sitenizde görünen tüm içerikleri yönetin. Değişikliklerinizi kaydedip yayınlayarak anında yayına alın.",
     dataCenter: "Menü, fiyat, reçete ve stok çalışma kitaplarını analiz edin; onaylanan taslağı atomik olarak kalıcı veriye uygulayın.",
-    stock: "Stok ürünlerini, seviyelerini, tedarikçileri ve sipariş eşiklerini yönetin.",
-    staffAccess: "Personel hesaplarını yönetin, eğitim/görev programları atayın ve kayıtları takip edin.",
+    stock: "Stok ürünlerini yönetin ve personelden gelen sevkiyatları inceleyip sonuçlandırın.",
+    staffAccess: "Personel hesaplarını, yapılacakları, shift planlarını ve kayıtları yönetin.",
     mudavim: "Sadakat sistemi yönetimi ve müşteri etkileşimi"
   };
   const DEFAULT_PANEL_CONFIG = {
@@ -397,8 +398,10 @@
       category: "all",
       preferences: null,
       capabilities: {},
+      devices: [],
       loading: false,
       preferencesLoading: false,
+      devicesLoading: false,
       mutationKeys: new Set(),
       open: false,
       lastFocus: null
@@ -527,6 +530,7 @@
       "adminNotificationTitle", "adminNotificationSummary", "adminNotificationCategory", "adminNotificationReadAll", "adminNotificationMessage",
       "adminNotificationList", "adminNotificationLoadMore", "adminNotificationSettings", "adminNotificationPreferences",
       "adminNotificationPush", "adminNotificationTest", "adminNotificationSavePreferences", "adminNotificationHealth",
+      "adminNotificationClearArchive", "adminNotificationManageEmail", "adminNotificationDevices", "adminNotificationDevicesRefresh",
       "overviewGrid", "contentGrid", "categoryList", "productList", "saveState", "saveChangesButton", "panelThemeToggle", "addCategoryButton",
       "stockCard", "stockSummaryGrid", "stockCategoryFilter", "stockCategoryChips", "stockSearch", "stockOnlyOrderNeeded", "stockProductList", "stockMovementList", "stockOrderSuggestions",
       "stockEditorCategorySelect", "stockEditorProductSelect", "stockAddCategoryButton", "stockAddProductButton", "stockAddSupplierButton",
@@ -579,7 +583,7 @@
       "productRecipeLinkStatus", "recipeCategorySelect", "recipeProductSelect",
       "addRecipeCategoryButton", "addRecipeProductButton", "addRecipeSizeButton", "deleteRecipeCategoryButton",
       "deleteRecipeProductButton", "recipeCategoryName", "recipeProductName", "recipeSizeList",
-      "staffOverviewGrid", "staffRefreshButton", "staffUserName", "staffUsername", "staffPassword", "staffUserActive",
+      "staffOverviewGrid", "staffRefreshButton", "staffUserName", "staffUsername", "staffUserEmail", "staffUserEmailStatus", "staffPassword", "staffUserActive",
       "staffUserSaveButton", "staffUserResetButton", "staffUserMessage", "staffUserList", "staffUserCount", "staffUserFilter",
       "staffDeleteModal", "staffDeleteName", "staffDeleteUsername", "staffDeleteError", "staffDeleteConsent", "staffDeleteCloseButton", "staffDeleteCancelButton", "staffDeleteConfirmButton",
       "staffAssignmentUser", "staffAssignmentKind", "staffScopeType", "staffAssignmentCategory",
@@ -721,8 +725,10 @@
         hydrateAdminCoreFromBackend(),
         ensureSectionData(state.activeSection)
       ]);
+      applyInitialAdminNavigationTarget();
       await initializeAdminNotifications();
       setupBackendEvents();
+      document.dispatchEvent(new CustomEvent("tahmisci:admin-session-started", { detail: { source: "admin-shell" } }));
     } catch (error) {
       console.error("Panel açılırken hata oluştu:", error);
       els.loginScreen.hidden = true;
@@ -898,24 +904,16 @@
     if (els.staffRefreshButton) els.staffRefreshButton.addEventListener("click", hydrateRecipeAccessFromBackend);
     if (els.staffUserSaveButton) els.staffUserSaveButton.addEventListener("click", saveStaffUser);
     if (els.staffUserResetButton) els.staffUserResetButton.addEventListener("click", resetStaffUserForm);
+    if (els.staffUserEmail) els.staffUserEmail.addEventListener("input", () => {
+      if (els.staffUserEmailStatus) els.staffUserEmailStatus.textContent = "Kaydedildikten sonra personel bu adresi kendi profilinden doğrular.";
+    });
     if (els.staffUserList) els.staffUserList.addEventListener("click", handleStaffUserListClick);
     if (els.staffUserFilter) els.staffUserFilter.addEventListener("click", handleStaffUserFilterClick);
     if (els.staffDeleteModal) els.staffDeleteModal.addEventListener("click", handleStaffDeleteModalClick);
     if (els.staffDeleteConsent) els.staffDeleteConsent.addEventListener("change", syncStaffDeleteConsent);
     if (els.staffDeleteConfirmButton) els.staffDeleteConfirmButton.addEventListener("click", confirmPermanentStaffDelete);
-    if (els.staffAssignmentCategory) els.staffAssignmentCategory.addEventListener("change", () => {
-      renderStaffAssignmentOptions();
-    });
-    if (els.staffAssignmentProduct) els.staffAssignmentProduct.addEventListener("change", () => {
-      renderStaffAssignmentSizeOptions();
-    });
-    if (els.staffAssignmentKind) els.staffAssignmentKind.addEventListener("change", updateStaffAssignmentControls);
-    if (els.staffScopeType) els.staffScopeType.addEventListener("change", updateStaffAssignmentControls);
-    if (els.staffProductPicker) els.staffProductPicker.addEventListener("change", () => {
-      if (els.staffAssignmentMessage) els.staffAssignmentMessage.textContent = "";
-      syncStaffProductPickerChips();
-    });
-    if (els.staffAssignmentCreateButton) els.staffAssignmentCreateButton.addEventListener("click", createStaffAssignment);
+    // PASİF MODÜL: Eğitim / Görev / Sınav Atama — yeniden etkinleştirilmek üzere korunuyor.
+    // bindStaffAssignmentEvents();
     if (els.staffAssignmentList) els.staffAssignmentList.addEventListener("click", handleStaffAssignmentListClick);
     if (els.staffActivityTabs) els.staffActivityTabs.addEventListener("click", handleStaffActivityTabClick);
 
@@ -1120,6 +1118,18 @@
     });
   }
 
+  function bindStaffAssignmentEvents() {
+    if (els.staffAssignmentCategory) els.staffAssignmentCategory.addEventListener("change", renderStaffAssignmentOptions);
+    if (els.staffAssignmentProduct) els.staffAssignmentProduct.addEventListener("change", renderStaffAssignmentSizeOptions);
+    if (els.staffAssignmentKind) els.staffAssignmentKind.addEventListener("change", updateStaffAssignmentControls);
+    if (els.staffScopeType) els.staffScopeType.addEventListener("change", updateStaffAssignmentControls);
+    if (els.staffProductPicker) els.staffProductPicker.addEventListener("change", () => {
+      if (els.staffAssignmentMessage) els.staffAssignmentMessage.textContent = "";
+      syncStaffProductPickerChips();
+    });
+    if (els.staffAssignmentCreateButton) els.staffAssignmentCreateButton.addEventListener("click", createStaffAssignment);
+  }
+
   function bindPanelSettingsEvents() {
     [
       els.settingsLastSectionToggle,
@@ -1151,7 +1161,7 @@
     if (els.siteFaviconFile) els.siteFaviconFile.addEventListener("change", (event) => handleSettingsMediaInput(event, "favicon"));
     if (els.siteLogoClear) els.siteLogoClear.addEventListener("click", () => clearSettingsMedia("logo"));
     if (els.siteFaviconClear) els.siteFaviconClear.addEventListener("click", () => clearSettingsMedia("favicon"));
-    if (els.settingsChangePassword) els.settingsChangePassword.addEventListener("click", () => window.open("/password-reset/", "_blank", "noopener"));
+    if (els.settingsChangePassword) els.settingsChangePassword.addEventListener("click", () => window.open("/password-reset/?scope=admin&returnTo=%2Fyonetici%2F", "_blank", "noopener"));
     if (els.settingsLogoutNow) els.settingsLogoutNow.addEventListener("click", logoutAdminSession);
     if (els.exportMenuData) els.exportMenuData.addEventListener("click", () => exportAdminDataset("menu"));
     if (els.exportRecipeData) els.exportRecipeData.addEventListener("click", () => exportAdminDataset("recipes"));
@@ -1397,7 +1407,30 @@
     const stored = config.behavior && config.behavior.keepLastSection !== false
       ? normalizePanelSection(safeLocalGet(LAST_ACTIVE_SECTION_KEY))
       : "";
-    return resolveHashSection() || stored || normalizePanelSection(config.behavior && config.behavior.defaultSection) || "overview";
+    return resolveAdminNavigationQuery().section || resolveHashSection() || stored || normalizePanelSection(config.behavior && config.behavior.defaultSection) || "overview";
+  }
+
+  function resolveAdminNavigationQuery() {
+    const query = new URLSearchParams(window.location.search);
+    const rawSection = String(query.get("section") || "").trim();
+    const sectionAlias = rawSection.toLocaleLowerCase("tr-TR");
+    let section = normalizeAdminNotificationSection(rawSection);
+    let workforceTarget = String(query.get("workforce") || query.get("panel") || "").trim().toLowerCase();
+    const entityId = String(query.get("entityId") || query.get("shipmentId") || "").trim();
+    if (!workforceTarget && ["shipment", "shipments", "sevkiyat", "stock-shipments", "stok-sevkiyat"].includes(sectionAlias)) {
+      workforceTarget = "shipments";
+    }
+    if (["shipment", "sevkiyat"].includes(workforceTarget)) workforceTarget = "shipments";
+    if (workforceTarget === "operations") workforceTarget = "shipments";
+    if (workforceTarget === "shipments") section = "stock";
+    return { section, workforceTarget, entityId };
+  }
+
+  function applyInitialAdminNavigationTarget() {
+    const target = resolveAdminNavigationQuery();
+    if (!target.section) return;
+    if (target.workforceTarget === "shipments") replaceAdminNavigationQuery("stock", "shipments", target.entityId);
+    revealAdminNavigationTarget(target.section, target.workforceTarget, target.entityId);
   }
 
   function resolveHashSection() {
@@ -1792,6 +1825,7 @@
 
   function handleSessionEnded(message) {
     closeBackendEvents();
+    document.dispatchEvent(new CustomEvent("tahmisci:admin-session-ended", { detail: { source: "admin-shell", message: message || SESSION_REQUIRED_MESSAGE } }));
     closeAdminNotificationDrawer({ restoreFocus: false });
     state.saving = false;
     if (els.panelShell) {
@@ -2088,8 +2122,8 @@
     if (["bulkPrice", "product"].includes(section)) {
       return loadScriptOnce("pricing", "scripts/pricing.js?v=20260815-performance");
     }
-    if (section === "staffAccess") {
-      return loadScriptOnce("workforce", "scripts/workforce.js?v=20260815-performance");
+    if (section === "staffAccess" || section === "stock") {
+      return loadScriptOnce("workforce", "scripts/workforce.js?v=20260816-stock-shipments");
     }
     return Promise.resolve();
   }
@@ -2159,12 +2193,14 @@
 
   function bindAdminNotificationEvents() {
     if (!els.adminNotificationTrigger || !els.adminNotificationDrawer) return;
+    registerAdminPwaNotificationIntro();
     els.adminNotificationTrigger.addEventListener("click", openAdminNotificationDrawer);
     if (els.adminNotificationClose) els.adminNotificationClose.addEventListener("click", () => closeAdminNotificationDrawer());
     if (els.adminNotificationOverlay) els.adminNotificationOverlay.addEventListener("click", () => closeAdminNotificationDrawer());
     if (els.adminNotificationList) els.adminNotificationList.addEventListener("click", handleAdminNotificationListClick);
     if (els.adminNotificationLoadMore) els.adminNotificationLoadMore.addEventListener("click", () => loadAdminNotifications({ append: true }));
     if (els.adminNotificationReadAll) els.adminNotificationReadAll.addEventListener("click", markAllAdminNotificationsRead);
+    if (els.adminNotificationClearArchive) els.adminNotificationClearArchive.addEventListener("click", clearAdminNotificationArchive);
     if (els.adminNotificationCategory) {
       els.adminNotificationCategory.addEventListener("change", () => {
         state.notificationCenter.category = els.adminNotificationCategory.value || "all";
@@ -2173,7 +2209,8 @@
     }
     document.querySelectorAll("[data-notification-filter]").forEach((button) => {
       button.addEventListener("click", () => {
-        state.notificationCenter.filter = button.dataset.notificationFilter === "unread" ? "unread" : "all";
+        const requested = String(button.dataset.notificationFilter || "all");
+        state.notificationCenter.filter = ["unread", "archived"].includes(requested) ? requested : "all";
         syncAdminNotificationFilters();
         loadAdminNotifications().catch(() => {});
       });
@@ -2183,6 +2220,7 @@
         if (!els.adminNotificationSettings.open) return;
         loadAdminNotificationPreferences().catch(() => {});
         loadAdminNotificationDeliveryHealth().catch(() => {});
+        loadAdminNotificationDevices().catch(() => {});
       });
     }
     if (els.adminNotificationPreferences) els.adminNotificationPreferences.addEventListener("submit", saveAdminNotificationPreferences);
@@ -2192,11 +2230,28 @@
     }
     if (els.adminNotificationPush) els.adminNotificationPush.addEventListener("click", toggleAdminPushSubscription);
     if (els.adminNotificationTest) els.adminNotificationTest.addEventListener("click", sendAdminTestNotification);
+    if (els.adminNotificationDevicesRefresh) els.adminNotificationDevicesRefresh.addEventListener("click", () => loadAdminNotificationDevices(true));
+    if (els.adminNotificationDevices) els.adminNotificationDevices.addEventListener("click", handleAdminNotificationDeviceClick);
+    if (els.adminNotificationManageEmail) els.adminNotificationManageEmail.addEventListener("click", openAdminAccountSecurity);
+    document.addEventListener("tahmisci:account-security-updated", (event) => {
+      if (event.detail && event.detail.scope === "admin") loadAdminNotificationPreferences().catch(() => {});
+    });
     const previewTrigger = document.querySelector("[data-global-preview-trigger]");
     if (previewTrigger) previewTrigger.addEventListener("click", () => {
       if (state.notificationCenter.open) closeAdminNotificationDrawer({ restoreFocus: false });
     });
     document.addEventListener("keydown", handleAdminNotificationKeydown);
+  }
+
+  function registerAdminPwaNotificationIntro() {
+    if (!window.TahmisciPWA || typeof window.TahmisciPWA.registerNotificationPrompt !== "function") return;
+    window.TahmisciPWA.registerNotificationPrompt({
+      canShow: () => Boolean(els.panelShell && !els.panelShell.hidden && supportsAdminPush()),
+      onEnable: async () => {
+        if (!state.notificationCenter.capabilities.vapidPublicKey) await loadAdminNotificationPreferences();
+        return toggleAdminPushSubscription();
+      }
+    });
   }
 
   async function initializeAdminNotifications() {
@@ -2288,12 +2343,19 @@
     if (els.adminNotificationList) els.adminNotificationList.setAttribute("aria-busy", "true");
     if (!append) setAdminNotificationMessage("Bildirimler yükleniyor.");
     try {
-      const query = new URLSearchParams({ limit: "20" });
+      const query = new URLSearchParams({ limit: center.filter === "archived" ? "100" : "20" });
       if (center.filter === "unread") query.set("unread", "true");
+      if (center.filter === "archived") {
+        query.set("includeArchived", "true");
+        query.set("archived", "true");
+      }
       if (center.category !== "all") query.set("category", center.category);
       if (append && center.nextCursor) query.set("cursor", center.nextCursor);
       const result = await backendRequest(`${ADMIN_NOTIFICATION_API}?${query.toString()}`);
-      const incoming = Array.isArray(result.notifications) ? result.notifications : [];
+      const listed = Array.isArray(result.notifications)
+        ? result.notifications.filter((item) => !isRetiredAdminNotification(item))
+        : [];
+      const incoming = center.filter === "archived" ? listed.filter((item) => Boolean(item && item.archivedAt)) : listed.filter((item) => !item || !item.archivedAt);
       const merged = append ? center.items.concat(incoming) : incoming;
       center.items = uniqueAdminNotifications(merged);
       center.nextCursor = String(result.nextCursor || "");
@@ -2319,6 +2381,13 @@
     });
   }
 
+  function isRetiredAdminNotification(notification) {
+    const rawCategory = String(notification && (notification.category || notification.type || notification.kind) || "")
+      .trim()
+      .toLocaleLowerCase("tr-TR");
+    return /^(training|trainings|education|egitim|eğitim|exam|sınav|recipe|reçete)$/.test(rawCategory);
+  }
+
   function renderAdminNotifications() {
     if (!els.adminNotificationList) return;
     const center = state.notificationCenter;
@@ -2327,13 +2396,22 @@
       return;
     }
     if (!center.items.length) {
-      const label = center.filter === "unread" ? "Okunmamış bildiriminiz yok." : "Henüz bildiriminiz yok.";
+      const label = center.filter === "unread"
+        ? "Okunmamış bildiriminiz yok."
+        : center.filter === "archived" ? "Arşivlenmiş bildiriminiz yok." : "Henüz bildiriminiz yok.";
       els.adminNotificationList.innerHTML = `<div class="admin-notification-empty"><div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z"></path><path d="M9 17a3 3 0 0 0 6 0"></path></svg><br>${escapeHTML(label)}</div></div>`;
     } else {
       els.adminNotificationList.innerHTML = center.items.map(renderAdminNotificationCard).join("");
     }
     if (els.adminNotificationLoadMore) els.adminNotificationLoadMore.hidden = !center.nextCursor;
-    if (els.adminNotificationReadAll) els.adminNotificationReadAll.disabled = center.unreadCount < 1 || center.loading;
+    if (els.adminNotificationReadAll) {
+      els.adminNotificationReadAll.hidden = center.filter === "archived";
+      els.adminNotificationReadAll.disabled = center.unreadCount < 1 || center.loading || center.filter === "archived";
+    }
+    if (els.adminNotificationClearArchive) {
+      els.adminNotificationClearArchive.hidden = center.filter !== "archived";
+      els.adminNotificationClearArchive.disabled = center.loading || !center.items.length;
+    }
   }
 
   function renderAdminNotificationCard(notification) {
@@ -2341,13 +2419,14 @@
     const category = normalizeAdminNotificationCategory(notification.category || notification.type || notification.kind);
     const severity = normalizeAdminNotificationSeverity(notification.severity);
     const read = adminNotificationIsRead(notification);
+    const archived = Boolean(notification.archivedAt);
     const title = notification.title || notification.subject || adminNotificationCategoryLabel(category);
     const body = notification.body || notification.message || notification.description || "Bildirim ayrıntısını açın.";
     const createdAt = notification.createdAt || notification.timestamp || notification.sentAt;
     const readAction = read ? "unread" : "read";
     const readLabel = read ? "Okunmamış yap" : "Okundu yap";
     return `
-      <article class="admin-notification-card is-${escapeAttribute(severity)} ${read ? "" : "is-unread"}" data-notification-id="${escapeAttribute(id)}" data-severity="${escapeAttribute(severity)}">
+      <article class="admin-notification-card is-${escapeAttribute(severity)} ${read ? "" : "is-unread"} ${archived ? "is-archived" : ""}" data-notification-id="${escapeAttribute(id)}" data-severity="${escapeAttribute(severity)}">
         <span class="admin-notification-kind" data-kind="${escapeAttribute(category)}" aria-hidden="true">${adminNotificationIcon(category)}</span>
         <div class="admin-notification-copy">
           <button type="button" data-notification-open="${escapeAttribute(id)}">
@@ -2357,8 +2436,11 @@
           <div class="admin-notification-meta"><span>${escapeHTML(adminNotificationCategoryLabel(category))}</span><span class="admin-notification-severity" data-severity="${escapeAttribute(severity)}">${escapeHTML(adminNotificationSeverityLabel(severity))}</span><time datetime="${escapeAttribute(createdAt || "")}">${escapeHTML(formatDateTime(createdAt) || "Az önce")}</time></div>
         </div>
         <div class="admin-notification-actions">
+          ${archived ? `
+          <button type="button" data-notification-action="restore" data-notification-id="${escapeAttribute(id)}" aria-label="Gelen kutusuna geri yükle" title="Geri yükle">${adminNotificationIcon("restore")}</button>
+          <button type="button" data-notification-action="delete" data-notification-id="${escapeAttribute(id)}" aria-label="Kalıcı olarak sil" title="Kalıcı olarak sil">${adminNotificationIcon("delete")}</button>` : `
           <button type="button" data-notification-action="${readAction}" data-notification-id="${escapeAttribute(id)}" aria-label="${readLabel}" title="${readLabel}">${read ? adminNotificationIcon("unread") : adminNotificationIcon("read")}</button>
-          <button type="button" data-notification-action="archive" data-notification-id="${escapeAttribute(id)}" aria-label="Arşivle" title="Arşivle">${adminNotificationIcon("archive")}</button>
+          <button type="button" data-notification-action="archive" data-notification-id="${escapeAttribute(id)}" aria-label="Arşivle" title="Arşivle">${adminNotificationIcon("archive")}</button>`}
         </div>
       </article>`;
   }
@@ -2368,12 +2450,13 @@
       task: `<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="m8 9 1.5 1.5L12 8M8 15h8"></path></svg>`,
       shipment: `<svg viewBox="0 0 24 24"><path d="M3 6h11v11H3zM14 10h4l3 3v4h-7z"></path><circle cx="7" cy="19" r="2"></circle><circle cx="18" cy="19" r="2"></circle></svg>`,
       shift: `<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18M12 13v4l3 1"></path></svg>`,
-      training: `<svg viewBox="0 0 24 24"><path d="M4 4h6a3 3 0 0 1 3 3v13a3 3 0 0 0-3-3H4z"></path><path d="M20 4h-4a3 3 0 0 0-3 3v13a3 3 0 0 1 3-3h4z"></path></svg>`,
       stock: `<svg viewBox="0 0 24 24"><path d="m4 7 8-4 8 4-8 4zM4 7v10l8 4 8-4V7M12 11v10"></path></svg>`,
       system: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg>`,
       read: `<svg viewBox="0 0 24 24"><path d="M4 12.5 9 17l11-11"></path></svg>`,
       unread: `<svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM4 7l8 6 8-6"></path></svg>`,
-      archive: `<svg viewBox="0 0 24 24"><path d="M4 8h16v12H4zM3 4h18v4H3zM9 12h6"></path></svg>`
+      archive: `<svg viewBox="0 0 24 24"><path d="M4 8h16v12H4zM3 4h18v4H3zM9 12h6"></path></svg>`,
+      restore: `<svg viewBox="0 0 24 24"><path d="M4 8h16v12H4zM3 4h18v4H3zM8 14h8M11 11l-3 3 3 3"></path></svg>`,
+      delete: `<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"></path></svg>`
     };
     return icons[kind] || icons.system;
   }
@@ -2383,13 +2466,12 @@
     if (/task|görev|todo|assignment|reminder.*task/.test(text)) return "task";
     if (/shipment|sevkiyat/.test(text)) return "shipment";
     if (/shift|vardiya|izin/.test(text)) return "shift";
-    if (/training|eğitim|recipe|reçete|exam|sınav/.test(text)) return "training";
     if (/stock|stok|inventory/.test(text)) return "stock";
     return "system";
   }
 
   function adminNotificationCategoryLabel(category) {
-    return { task: "Yapılacaklar", shipment: "Sevkiyat", shift: "Vardiya", training: "Eğitim", stock: "Stok", system: "Sistem" }[category] || "Sistem";
+    return { task: "Yapılacaklar", shipment: "Sevkiyat", shift: "Vardiya", stock: "Stok", system: "Sistem" }[category] || "Sistem";
   }
 
   function normalizeAdminNotificationSeverity(value) {
@@ -2415,7 +2497,7 @@
     if (els.adminNotificationSummary) {
       els.adminNotificationSummary.textContent = count ? `${count} okunmamış bildiriminiz var.` : "Tüm bildirimleriniz güncel.";
     }
-    if (els.adminNotificationReadAll) els.adminNotificationReadAll.disabled = count < 1;
+    if (els.adminNotificationReadAll) els.adminNotificationReadAll.disabled = count < 1 || state.notificationCenter.filter === "archived";
   }
 
   function setAdminNotificationMessage(message, tone = "") {
@@ -2430,6 +2512,8 @@
       button.setAttribute("aria-pressed", String(button.dataset.notificationFilter === state.notificationCenter.filter));
     });
     if (els.adminNotificationCategory) els.adminNotificationCategory.value = state.notificationCenter.category;
+    if (els.adminNotificationReadAll) els.adminNotificationReadAll.hidden = state.notificationCenter.filter === "archived";
+    if (els.adminNotificationClearArchive) els.adminNotificationClearArchive.hidden = state.notificationCenter.filter !== "archived";
   }
 
   async function handleAdminNotificationListClick(event) {
@@ -2451,19 +2535,29 @@
 
   async function mutateAdminNotification(id, action, button, options = {}) {
     const center = state.notificationCenter;
+    if (!["read", "unread", "archive", "restore", "delete"].includes(action)) return false;
+    if (action === "delete" && !window.confirm("Bu arşivlenmiş bildirim kalıcı olarak silinsin mi?")) return false;
     const key = `${id}:${action}`;
     if (!id || center.mutationKeys.has(key)) return false;
     center.mutationKeys.add(key);
     if (button) button.disabled = true;
     setAdminNotificationMessage("İşlem uygulanıyor.");
     try {
-      const result = await backendRequest(`${ADMIN_NOTIFICATION_API}/${encodeURIComponent(id)}/${action}`, { method: "PATCH", body: {} });
+      const path = action === "delete"
+        ? `${ADMIN_NOTIFICATION_API}/${encodeURIComponent(id)}`
+        : `${ADMIN_NOTIFICATION_API}/${encodeURIComponent(id)}/${action}`;
+      const result = await backendRequest(path, action === "delete" ? { method: "DELETE" } : { method: "PATCH", body: {} });
       if (result.notification) {
         center.items = center.items.map((item) => String(item.id || item.notificationId) === String(id) ? result.notification : item);
       }
-      if (action === "archive") center.items = center.items.filter((item) => String(item.id || item.notificationId) !== String(id));
+      if (["archive", "restore", "delete"].includes(action)) center.items = center.items.filter((item) => String(item.id || item.notificationId) !== String(id));
       setAdminNotificationUnreadCount(result.unreadCount ?? center.unreadCount);
-      setAdminNotificationMessage(action === "archive" ? "Bildirim arşivlendi." : "Bildirim durumu güncellendi.", "success");
+      const message = {
+        archive: "Bildirim arşivlendi.",
+        restore: "Bildirim gelen kutusuna geri yüklendi.",
+        delete: "Bildirim kalıcı olarak silindi."
+      }[action] || "Bildirim durumu güncellendi.";
+      setAdminNotificationMessage(message, "success");
       if (options.refresh !== false) await loadAdminNotifications();
       else renderAdminNotifications();
       return true;
@@ -2473,6 +2567,27 @@
     } finally {
       center.mutationKeys.delete(key);
       if (button && button.isConnected) button.disabled = false;
+    }
+  }
+
+  async function clearAdminNotificationArchive() {
+    const button = els.adminNotificationClearArchive;
+    if (!button || button.disabled || !window.confirm("Arşivdeki tüm bildirimler kalıcı olarak silinsin mi?")) return;
+    button.disabled = true;
+    const previous = button.textContent;
+    button.textContent = "Temizleniyor...";
+    try {
+      const result = await backendRequest(`${ADMIN_NOTIFICATION_API}/archive`, { method: "DELETE" });
+      state.notificationCenter.items = [];
+      state.notificationCenter.nextCursor = "";
+      setAdminNotificationUnreadCount(result.unreadCount ?? state.notificationCenter.unreadCount);
+      setAdminNotificationMessage(`${Number(result.deletedCount || 0)} arşiv kaydı kalıcı olarak silindi.`, "success");
+      renderAdminNotifications();
+    } catch (error) {
+      setAdminNotificationMessage(error.message || "Bildirim arşivi temizlenemedi.", "error");
+    } finally {
+      button.textContent = previous;
+      button.disabled = state.notificationCenter.loading || !state.notificationCenter.items.length;
     }
   }
 
@@ -2507,8 +2622,8 @@
         const target = new URL(rawLink, window.location.href);
         if (target.origin === window.location.origin && (target.pathname === "/yonetici" || target.pathname.startsWith("/yonetici/"))) {
           section = normalizeAdminNotificationSection(target.searchParams.get("section")) || section;
-          workforceTarget = String(target.searchParams.get("workforce") || workforceTarget).toLowerCase();
-          entityId = String(target.searchParams.get("entityId") || entityId).trim();
+          workforceTarget = String(target.searchParams.get("workforce") || target.searchParams.get("panel") || workforceTarget).toLowerCase();
+          entityId = String(target.searchParams.get("entityId") || target.searchParams.get("shipmentId") || entityId).trim();
           const hashSection = target.hash ? normalizeAdminNotificationSection(decodeURIComponent(target.hash.slice(1))) : "";
           section = hashSection || section;
           if (target.hash) window.history.replaceState(null, "", target.hash);
@@ -2523,51 +2638,83 @@
         entityId = "";
       }
     }
-    if (!section && ["task", "shipment", "shift", "training"].includes(category)) section = "staffAccess";
+    if (["shipment", "sevkiyat"].includes(workforceTarget)) workforceTarget = "shipments";
+    // Eski birleşik Personel operasyon bağlantıları sevkiyat sahibine yönlendirilir.
+    if (workforceTarget === "operations") workforceTarget = "shipments";
+    const targetKind = workforceTarget || ({ task: "tasks", shipment: "shipments", shift: "shifts" }[category] || "");
+    if (targetKind === "shipments" || category === "shipment") {
+      section = "stock";
+      workforceTarget = "shipments";
+    }
+    if (!section && ["task", "shift"].includes(category)) section = "staffAccess";
     if (!section && category === "stock") section = "stock";
     if (!section) section = "overview";
     closeAdminNotificationDrawer();
+    if (workforceTarget) replaceAdminNavigationQuery(section, workforceTarget, entityId);
     setActiveSection(section, { collapseSidebar: true });
-    if (section === "staffAccess") {
-      window.setTimeout(() => {
-        const targetKind = workforceTarget || ({ task: "tasks", shipment: "shipments", shift: "shifts", training: "training" }[category] || "");
-        if (targetKind === "tasks") {
-          const accordion = document.getElementById("workforceTasksAccordion");
-          if (accordion) accordion.open = true;
-        } else if (targetKind === "training") {
-          const assignmentButton = document.getElementById("staffAssignmentCreateButton");
-          const accordion = assignmentButton && assignmentButton.closest("details");
-          if (accordion) accordion.open = true;
-        } else if (targetKind === "shipments" || targetKind === "shifts") {
-          const accordion = document.getElementById("workforceOperationsAccordion");
-          if (accordion) accordion.open = true;
-          const tab = document.querySelector(`[data-workforce-tab="${targetKind === "shifts" ? "shifts" : "shipments"}"]`);
-          if (tab) tab.click();
-        }
-        if (entityId) {
-          window.setTimeout(() => {
-            const escapedId = window.CSS && typeof window.CSS.escape === "function" ? window.CSS.escape(entityId) : entityId.replace(/["\\]/g, "\\$&");
-            const entity = document.querySelector(`[data-task-detail="${escapedId}"], [data-shipment="${escapedId}"], [data-request-id="${escapedId}"]`);
-            if (entity) {
-              entity.click();
-              entity.focus({ preventScroll: true });
-              entity.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-            }
-          }, 80);
-        }
-      }, 40);
-    }
+    revealAdminNavigationTarget(section, workforceTarget || targetKind, entityId);
     document.dispatchEvent(new CustomEvent("tahmisci:admin-notification-open", {
-      detail: { notification: cloneData(notification), category, section }
+      detail: { notification: cloneData(notification), category, section, workforce: workforceTarget || targetKind, entityId }
     }));
+  }
+
+  function replaceAdminNavigationQuery(section, workforceTarget, entityId) {
+    try {
+      const target = new URL(window.location.href);
+      target.searchParams.set("section", section);
+      if (workforceTarget) target.searchParams.set("workforce", workforceTarget);
+      else target.searchParams.delete("workforce");
+      target.searchParams.delete("panel");
+      target.searchParams.delete("shipmentId");
+      if (entityId) target.searchParams.set("entityId", entityId);
+      else target.searchParams.delete("entityId");
+      const hashSection = target.hash ? normalizeAdminNotificationSection(decodeURIComponent(target.hash.slice(1))) : "";
+      if (hashSection && hashSection !== section) target.hash = "";
+      window.history.replaceState(null, "", `${target.pathname}${target.search}${target.hash}`);
+    } catch (_error) {}
+  }
+
+  function revealAdminNavigationTarget(section, workforceTarget, entityId) {
+    const targetKind = String(workforceTarget || "").toLowerCase();
+    if (!targetKind) return;
+    ensureSectionModule(section).then(() => {
+      let attempts = 0;
+      const reveal = () => {
+        attempts += 1;
+        let accordion = null;
+        if (section === "stock" && targetKind === "shipments") {
+          accordion = document.getElementById("workforceShipmentsAccordion");
+        } else if (section === "staffAccess" && targetKind === "tasks") {
+          accordion = document.getElementById("workforceTasksAccordion");
+        } else if (section === "staffAccess" && targetKind === "shifts") {
+          accordion = document.getElementById("workforceShiftsAccordion");
+        }
+        if (accordion && !accordion.open) accordion.open = true;
+        if (!entityId) return;
+        const escapedId = window.CSS && typeof window.CSS.escape === "function" ? window.CSS.escape(entityId) : entityId.replace(/["\\]/g, "\\$&");
+        const entity = document.querySelector(`[data-task-detail="${escapedId}"], [data-shipment="${escapedId}"], [data-request-id="${escapedId}"]`);
+        if (entity) {
+          entity.click();
+          entity.focus({ preventScroll: true });
+          entity.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+          return;
+        }
+        if (section === "stock" && targetKind === "shipments") {
+          const allShipments = document.querySelector('[data-shipment-view="all"]');
+          if (allShipments && !allShipments.classList.contains("is-active")) allShipments.click();
+        }
+        if (attempts < 20) window.setTimeout(reveal, 100);
+      };
+      window.setTimeout(reveal, 0);
+    }).catch((error) => updateSaveControls(error.message || "Bölüm modülü yüklenemedi"));
   }
 
   function normalizeAdminNotificationSection(value) {
     const direct = normalizePanelSection(String(value || ""));
     if (direct) return direct;
     const alias = String(value || "").trim().toLocaleLowerCase("tr-TR");
-    if (["personel", "personnel", "staff", "staffaccess", "staffaccesscard", "tasks", "shipments", "shifts", "training", "egitim", "eğitim"].includes(alias)) return "staffAccess";
-    if (["stok", "stock", "inventory"].includes(alias)) return "stock";
+    if (["personel", "personnel", "staff", "staffaccess", "staffaccesscard", "tasks", "shifts"].includes(alias)) return "staffAccess";
+    if (["stok", "stock", "inventory", "shipment", "shipments", "sevkiyat", "stock-shipments", "stok-sevkiyat"].includes(alias)) return "stock";
     if (["genel-bakis", "genelbakis", "dashboard", "home"].includes(alias)) return "overview";
     return "";
   }
@@ -2599,12 +2746,21 @@
     setNotificationPreferenceInput(form, "emailEnabled", preferences.emailEnabled ?? channels.email ?? false);
     setNotificationPreferenceInput(form, "pushEnabled", preferences.pushEnabled ?? channels.push ?? false);
     const email = form.elements.namedItem("emailAddress");
-    if (email) email.value = String(preferences.emailAddress || "");
+    if (email) {
+      email.value = String(preferences.emailAddress || "");
+      email.readOnly = true;
+      email.setAttribute("aria-readonly", "true");
+    }
+    const emailEnabled = form.elements.namedItem("emailEnabled");
+    if (emailEnabled) {
+      emailEnabled.disabled = !preferences.emailVerified;
+      if (!preferences.emailVerified) emailEnabled.checked = false;
+      emailEnabled.title = preferences.emailVerified ? "" : "Önce hesap e-postanızı doğrulayın.";
+    }
     const categoryFields = {
       taskNotifications: "task",
       shipmentNotifications: "shipment",
       shiftNotifications: "shift",
-      trainingNotifications: "training",
       stockNotifications: "stock"
     };
     Object.entries(categoryFields).forEach(([field, category]) => {
@@ -2654,10 +2810,9 @@
       task: "taskNotifications",
       shipment: "shipmentNotifications",
       shift: "shiftNotifications",
-      training: "trainingNotifications",
       stock: "stockNotifications"
     };
-    const categories = Object.assign({}, current.categories || current.categoryPreferences || {}, { system: true });
+    const categories = { system: true };
     Object.entries(categoryFields).forEach(([category, field]) => { categories[category] = checked(field); });
     const channels = Object.assign({}, current.channels || {}, {
       inApp: checked("inAppEnabled"),
@@ -2666,7 +2821,7 @@
     });
     const reminderFields = ["taskReminder24h", "taskReminder2h", "overdueReminder", "shiftReminder12h", "shiftReminder2h"];
     const reminders = Object.fromEntries(reminderFields.map((field) => [field, checked(field)]));
-    return Object.assign({}, current, {
+    return {
       inAppEnabled: channels.inApp,
       emailEnabled: channels.email,
       pushEnabled: channels.push,
@@ -2676,7 +2831,6 @@
       taskNotifications: categories.task,
       shipmentNotifications: categories.shipment,
       shiftNotifications: categories.shift,
-      trainingNotifications: categories.training,
       stockNotifications: categories.stock,
       systemNotifications: true,
       ...reminders,
@@ -2685,7 +2839,7 @@
       quietHoursStart: value("quietHoursStart", "22:00"),
       quietHoursEnd: value("quietHoursEnd", "08:00"),
       timezone: "Europe/Istanbul"
-    });
+    };
   }
 
   async function saveAdminNotificationPreferences(event) {
@@ -2693,9 +2847,9 @@
     const button = els.adminNotificationSavePreferences;
     if (!button || button.disabled) return false;
     const payload = collectAdminNotificationPreferences();
-    if (payload.emailEnabled && !isValidAdminNotificationEmail(payload.emailAddress)) {
-      setAdminNotificationMessage("E-posta bildirimleri için geçerli bir yönetici adresi girin.", "error");
-      els.adminNotificationPreferences.elements.namedItem("emailAddress")?.focus();
+    if (payload.emailEnabled && (!state.notificationCenter.preferences?.emailVerified || !isValidAdminNotificationEmail(payload.emailAddress))) {
+      setAdminNotificationMessage("E-posta bildirimleri için önce hesap e-postanızı doğrulayın.", "error");
+      els.adminNotificationManageEmail?.focus();
       return false;
     }
     button.disabled = true;
@@ -2725,6 +2879,106 @@
     return text.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
   }
 
+  function openAdminAccountSecurity() {
+    closeAdminNotificationDrawer({ restoreFocus: false });
+    setActiveSection("settings", { collapseSidebar: true });
+    window.setTimeout(() => {
+      const card = document.querySelector('[data-account-security][data-account-scope="admin"]');
+      const details = card && card.closest("details");
+      if (details) details.open = true;
+      card?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
+      card?.querySelector("[data-account-email]")?.focus({ preventScroll: true });
+      window.TahmisciAccountSecurity?.refresh("admin");
+    }, 80);
+  }
+
+  function adminNotificationDeviceId() {
+    let value = safeLocalGet(ADMIN_NOTIFICATION_DEVICE_KEY);
+    if (value) return value;
+    value = window.crypto && typeof window.crypto.randomUUID === "function"
+      ? window.crypto.randomUUID()
+      : `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    safeLocalSet(ADMIN_NOTIFICATION_DEVICE_KEY, value);
+    return value;
+  }
+
+  function adminNotificationDeviceName() {
+    const platform = String(navigator.userAgentData?.platform || navigator.platform || "Tarayıcı").slice(0, 60);
+    const standalone = window.matchMedia("(display-mode: standalone)").matches ? "PWA" : "Web";
+    return `${platform} · ${standalone}`;
+  }
+
+  function adminNotificationDeviceHeaders() {
+    return { "X-Tahmisci-Device-Id": adminNotificationDeviceId() };
+  }
+
+  async function loadAdminNotificationDevices(force = false) {
+    const center = state.notificationCenter;
+    if (!els.adminNotificationDevices || center.devicesLoading || (!force && center.devices.length)) return;
+    center.devicesLoading = true;
+    els.adminNotificationDevices.innerHTML = '<div class="admin-notification-device-empty">Bağlı cihazlar yükleniyor...</div>';
+    if (els.adminNotificationDevicesRefresh) els.adminNotificationDevicesRefresh.disabled = true;
+    try {
+      const result = await backendRequest(`${ADMIN_NOTIFICATION_API}/push-subscriptions`, {
+        headers: adminNotificationDeviceHeaders(),
+        noDedupe: force
+      });
+      center.devices = Array.isArray(result.devices) ? result.devices : Array.isArray(result.subscriptions) ? result.subscriptions : [];
+      renderAdminNotificationDevices();
+    } catch (error) {
+      els.adminNotificationDevices.innerHTML = `<div class="admin-notification-device-empty">${escapeHTML(error.message || "Bağlı cihazlar alınamadı.")}</div>`;
+    } finally {
+      center.devicesLoading = false;
+      if (els.adminNotificationDevicesRefresh) els.adminNotificationDevicesRefresh.disabled = false;
+    }
+  }
+
+  function renderAdminNotificationDevices() {
+    if (!els.adminNotificationDevices) return;
+    const currentId = adminNotificationDeviceId();
+    const devices = state.notificationCenter.devices || [];
+    if (!devices.length) {
+      els.adminNotificationDevices.innerHTML = '<div class="admin-notification-device-empty">Bu hesaba bağlı bildirim cihazı yok.</div>';
+      return;
+    }
+    els.adminNotificationDevices.innerHTML = devices.map((device) => {
+      const id = String(device.id || device.subscriptionId || "");
+      const current = Boolean(device.current ?? device.isCurrent) || String(device.deviceId || "") === currentId;
+      const name = String(device.deviceName || device.name || "Tarayıcı cihazı");
+      const seen = formatDateTime(device.lastSeenAt || device.updatedAt || device.createdAt) || "Zaman bilgisi yok";
+      return `<div class="admin-notification-device-row ${current ? "is-current" : ""}" data-notification-device-row="${escapeAttribute(id)}">
+        <div class="admin-notification-device-copy"><span>${escapeHTML(name)} ${current ? '<small class="admin-notification-device-current">· Bu cihaz</small>' : ""}</span><time>${escapeHTML(`Son kullanım: ${seen}`)}</time></div>
+        <button class="ui-button ui-button--ghost ui-button--sm" type="button" data-notification-device-remove="${escapeAttribute(id)}" data-current-device="${current ? "true" : "false"}">Kaldır</button>
+      </div>`;
+    }).join("");
+  }
+
+  async function handleAdminNotificationDeviceClick(event) {
+    const button = event.target.closest("[data-notification-device-remove]");
+    if (!button || button.disabled) return;
+    const id = String(button.dataset.notificationDeviceRemove || "");
+    if (!id || !window.confirm("Bu cihazın anlık bildirim bağlantısı kaldırılsın mı?")) return;
+    button.disabled = true;
+    try {
+      await backendRequest(`${ADMIN_NOTIFICATION_API}/push-subscriptions/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: adminNotificationDeviceHeaders()
+      });
+      if (button.dataset.currentDevice === "true") {
+        const subscription = await currentAdminPushSubscription().catch(() => null);
+        await subscription?.unsubscribe().catch(() => false);
+        state.notificationCenter.pushSubscribed = false;
+      }
+      state.notificationCenter.devices = state.notificationCenter.devices.filter((device) => String(device.id || device.subscriptionId || "") !== id);
+      renderAdminNotificationDevices();
+      await syncAdminPushSubscriptionState();
+      setAdminNotificationMessage("Bildirim cihazı kaldırıldı.", "success");
+    } catch (error) {
+      setAdminNotificationMessage(error.message || "Bildirim cihazı kaldırılamadı.", "error");
+      button.disabled = false;
+    }
+  }
+
   async function syncAdminPushSubscriptionState() {
     if (!supportsAdminPush() || !els.adminNotificationPush) return;
     try {
@@ -2736,7 +2990,7 @@
 
   async function toggleAdminPushSubscription() {
     const button = els.adminNotificationPush;
-    if (!button || button.disabled) return;
+    if (!button || button.disabled) return false;
     button.disabled = true;
     const previous = button.textContent;
     button.textContent = "İşleniyor...";
@@ -2745,21 +2999,24 @@
       if (!supportsAdminPush()) {
         throw new Error("Bu tarayıcı anlık bildirimi desteklemiyor.");
       }
+      if (!state.notificationCenter.pushSubscribed) {
+        let permission = window.Notification.permission;
+        if (permission === "default") permission = await window.Notification.requestPermission();
+        if (permission !== "granted") throw new Error("Anlık bildirim izni verilmedi.");
+      }
       const registration = await ensureAdminServiceWorker();
       let subscription = await registration.pushManager.getSubscription();
       const pushInput = els.adminNotificationPreferences && els.adminNotificationPreferences.elements.namedItem("pushEnabled");
       if (subscription) {
         await backendRequest(`${ADMIN_NOTIFICATION_API}/push-subscriptions`, {
           method: "DELETE",
-          body: { endpoint: subscription.endpoint }
+          body: { endpoint: subscription.endpoint },
+          headers: adminNotificationDeviceHeaders()
         });
         await subscription.unsubscribe();
         subscription = null;
         if (pushInput) pushInput.checked = false;
       } else {
-        let permission = window.Notification.permission;
-        if (permission === "default") permission = await window.Notification.requestPermission();
-        if (permission !== "granted") throw new Error("Anlık bildirim izni verilmedi.");
         const vapidPublicKey = String(state.notificationCenter.capabilities.vapidPublicKey || "").trim();
         if (!vapidPublicKey) throw new Error("Anlık bildirim sunucu anahtarı tanımlı değil.");
         subscription = await registration.pushManager.subscribe({
@@ -2769,19 +3026,28 @@
         createdSubscription = subscription;
         await backendRequest(`${ADMIN_NOTIFICATION_API}/push-subscriptions`, {
           method: "POST",
-          body: { subscription: subscription.toJSON() }
+          body: {
+            subscription: subscription.toJSON(),
+            deviceId: adminNotificationDeviceId(),
+            deviceName: adminNotificationDeviceName()
+          },
+          headers: adminNotificationDeviceHeaders()
         });
         if (pushInput) pushInput.checked = true;
       }
       const saved = await saveAdminNotificationPreferences();
       if (!saved) throw new Error("Anlık bildirim tercihi kaydedilemedi.");
       state.notificationCenter.pushSubscribed = Boolean(subscription);
+      state.notificationCenter.devices = [];
+      await loadAdminNotificationDevices(true);
       setAdminNotificationMessage(subscription ? "Anlık bildirim etkinleştirildi." : "Anlık bildirim kapatıldı.", "success");
+      return Boolean(subscription);
     } catch (error) {
       if (createdSubscription) {
         await backendRequest(`${ADMIN_NOTIFICATION_API}/push-subscriptions`, {
           method: "DELETE",
           body: { endpoint: createdSubscription.endpoint },
+          headers: adminNotificationDeviceHeaders(),
           skipAuthFailure: true
         }).catch(() => null);
         await createdSubscription.unsubscribe().catch(() => false);
@@ -2790,6 +3056,7 @@
         state.notificationCenter.pushSubscribed = false;
       }
       setAdminNotificationMessage(error.message || "Anlık bildirim ayarı değiştirilemedi.", "error");
+      return false;
     } finally {
       button.disabled = false;
       button.textContent = state.notificationCenter.pushSubscribed ? "Anlık bildirimi kapat" : previous.includes("kapat") ? "Anlık bildirimi etkinleştir" : previous;
@@ -2818,6 +3085,7 @@
     await backendRequest(`${ADMIN_NOTIFICATION_API}/push-subscriptions`, {
       method: "DELETE",
       body: { endpoint: subscription.endpoint },
+      headers: adminNotificationDeviceHeaders(),
       skipAuthFailure: true
     }).catch(() => null);
     await subscription.unsubscribe().catch(() => false);
@@ -4312,7 +4580,7 @@
       product.active = els.stockEditorActive.checked;
       product.updatedAt = new Date().toISOString();
     }
-    markDirty("stock", "Stok düzenlemesi kaydedilmeyi bekliyor");
+    markDirty("stock", "Stok & Sevkiyat değişiklikleri kaydedilmeyi bekliyor");
     renderStockPanel();
   }
 
@@ -5628,8 +5896,9 @@
     const access = state.recipeAccess || { users: [], assignments: [], activity: [] };
     renderStaffOverview(access);
     renderStaffUsers(access.users || []);
-    renderStaffAssignmentOptions();
-    renderStaffAssignments(access.assignments || []);
+    // PASİF MODÜL: Eğitim / Görev / Sınav Atama — yeniden etkinleştirilmek üzere korunuyor.
+    // renderStaffAssignmentOptions();
+    // renderStaffAssignments(access.assignments || []);
     renderStaffActivity(access.activity || []);
     if (els.staffUserMessage) els.staffUserMessage.textContent = state.staffMessage || "";
   }
@@ -5641,14 +5910,14 @@
       return;
     }
     const users = Array.isArray(access && access.users) ? access.users : [];
-    const assignments = Array.isArray(access && access.assignments) ? access.assignments : [];
+    const activityItems = Array.isArray(access && access.activity) ? access.activity : [];
     const activeCount = users.filter((user) => user.active !== false).length;
     const passiveCount = Math.max(0, users.length - activeCount);
     els.staffOverviewGrid.innerHTML = [
       ["Toplam Personel", users.length, "Tüm personel sayısı"],
       ["Aktif Personel", activeCount, "Aktif çalışan personel"],
       ["Pasif Personel", passiveCount, "Pasif durumda personel"],
-      ["Atanmış Programlar", assignments.length, "Toplam atanan program"]
+      ["Kayıtlı Hareketler", activityItems.length, "Korunan personel kayıtları"]
     ].map(([label, value, note]) => `
       <article>
         <span aria-hidden="true"></span>
@@ -5697,6 +5966,7 @@
           <article class="staff-user-row${user.id === state.selectedStaffUserId ? " is-active" : ""}">
             <button class="staff-user-main" type="button" data-staff-user="${escapeAttribute(user.id)}">
               <strong>${escapeHTML(user.name || user.username)}</strong>
+              <small>${escapeHTML(staffUserEmailSummary(user))}</small>
             </button>
             <span>@${escapeHTML(user.username)}</span>
             <em class="${user.active === false ? "is-passive" : "is-active"}">${user.active === false ? "Pasif" : "Aktif"}</em>
@@ -5711,6 +5981,20 @@
         `).join("")}
       </div>
     `;
+  }
+
+  function staffUserEmailValue(user) {
+    return String(user && (user.pendingEmail || user.email) || "").trim().toLowerCase();
+  }
+
+  function staffUserEmailVerified(user) {
+    return Boolean(user && user.email && user.emailVerifiedAt && !user.emailVerificationRequired && !user.pendingEmail);
+  }
+
+  function staffUserEmailSummary(user) {
+    const email = staffUserEmailValue(user);
+    if (!email) return "E-posta eklenmedi";
+    return `${email} · ${staffUserEmailVerified(user) ? "doğrulandı" : "doğrulama bekliyor"}`;
   }
 
   function handleStaffUserListClick(event) {
@@ -5733,6 +6017,8 @@
     state.selectedStaffUserId = user.id;
     if (els.staffUserName) els.staffUserName.value = user.name || "";
     if (els.staffUsername) els.staffUsername.value = user.username || "";
+    if (els.staffUserEmail) els.staffUserEmail.value = staffUserEmailValue(user);
+    if (els.staffUserEmailStatus) els.staffUserEmailStatus.textContent = staffUserEmailSummary(user);
     if (els.staffPassword) els.staffPassword.value = "";
     if (els.staffUserActive) els.staffUserActive.checked = user.active !== false;
     state.staffMessage = "Personel düzenleniyor";
@@ -5787,6 +6073,7 @@
       const mutation = staffMutationOptions(nextActive ? "personnel-reactivate" : "personnel-deactivate", nextActive ? {
         name: user.name || user.username,
         username: user.username,
+        email: staffUserEmailValue(user),
         password: "",
         active: true
       } : {});
@@ -5921,6 +6208,8 @@
         state.selectedStaffUserId = "";
         if (els.staffUserName) els.staffUserName.value = "";
         if (els.staffUsername) els.staffUsername.value = "";
+        if (els.staffUserEmail) els.staffUserEmail.value = "";
+        if (els.staffUserEmailStatus) els.staffUserEmailStatus.textContent = "Personel ilk girişinde bu adresi doğrular.";
         if (els.staffPassword) els.staffPassword.value = "";
         if (els.staffUserActive) els.staffUserActive.checked = true;
       }
@@ -5943,6 +6232,8 @@
     state.staffMessage = "";
     if (els.staffUserName) els.staffUserName.value = "";
     if (els.staffUsername) els.staffUsername.value = "";
+    if (els.staffUserEmail) els.staffUserEmail.value = "";
+    if (els.staffUserEmailStatus) els.staffUserEmailStatus.textContent = "Personel ilk girişinde bu adresi doğrular.";
     if (els.staffPassword) els.staffPassword.value = "";
     if (els.staffUserActive) els.staffUserActive.checked = true;
     renderStaffAccess();
@@ -5953,9 +6244,17 @@
     const payload = {
       name: (els.staffUserName && els.staffUserName.value || "").trim(),
       username: (els.staffUsername && els.staffUsername.value || "").trim(),
+      email: (els.staffUserEmail && els.staffUserEmail.value || "").trim().toLowerCase(),
       password: (els.staffPassword && els.staffPassword.value || "").trim(),
       active: !els.staffUserActive || els.staffUserActive.checked
     };
+
+    if (!isValidAdminNotificationEmail(payload.email)) {
+      state.staffMessage = "Personel hesabı için geçerli bir e-posta adresi girin";
+      if (els.staffUserMessage) els.staffUserMessage.textContent = state.staffMessage;
+      els.staffUserEmail?.focus();
+      return;
+    }
 
     try {
       const mutation = staffMutationOptions(selectedId ? "personnel-update" : "personnel-create", payload);
@@ -5971,6 +6270,7 @@
       applyStaffAccessResponse(result);
       state.selectedStaffUserId = result.user && result.user.id || selectedId || "";
       state.staffMessage = selectedId ? "Personel güncellendi" : "Personel oluşturuldu";
+      if (els.staffUserEmailStatus) els.staffUserEmailStatus.textContent = result.user ? staffUserEmailSummary(result.user) : "Doğrulama bekliyor";
       if (els.staffPassword) els.staffPassword.value = "";
       renderStaffAccess();
     } catch (error) {

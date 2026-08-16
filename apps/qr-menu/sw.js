@@ -1,7 +1,7 @@
 /* Tahmisçi Dijital Menü PWA — scope: / */
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "menu",
-  version: "2026.08.09.1",
+  version: "2026.08.16.2",
   scopePath: "/",
   offlineUrl: "/qr-menu/offline.html",
   offlineAssets: [

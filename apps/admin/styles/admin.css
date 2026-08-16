@@ -1632,6 +1632,13 @@ body:has(.admin-shell[data-active-section="staffAccess"]:not([hidden]))::before 
   font-weight: 900;
 }
 
+#staffUserEmailStatus {
+  color: var(--panel-muted, var(--muted));
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
 .staff-filter {
   gap: 8px;
 }

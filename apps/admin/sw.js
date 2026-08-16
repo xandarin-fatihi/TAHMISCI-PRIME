@@ -1,7 +1,7 @@
 /* Tahmisçi Yönetici PWA — scope: /yonetici/ */
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "yonetici",
-  version: "2026.08.11.2",
+  version: "2026.08.16.4",
   scopePath: "/yonetici/",
   offlineUrl: "/yonetici/offline.html",
   offlineAssets: [
@@ -18,7 +18,9 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
     "/yonetici/scripts/workforce.js",
     "/yonetici/scripts/live-preview.js",
     "/shared/styles/panel-foundation.css",
+    "/shared/styles/account-security.css",
     "/shared/scripts/save-coordinator.js",
+    "/shared/scripts/account-security.js",
     "/shared/scripts/pwa-client.js",
     "/assets/fonts/poppins-regular.ttf",
     "/assets/fonts/poppins-semibold.ttf",

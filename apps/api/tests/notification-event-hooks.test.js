@@ -49,7 +49,7 @@ test.after(async () => {
   await fs.rm(runRoot, { recursive: true, force: true });
 });
 
-test("reçete atama, kaldırma, tamamlama ve tekrar olayları kalıcı bildirim ve SSE üretir", async () => {
+test("pasif eğitim modülünün reçete atama, kaldırma, tamamlama ve tekrar olayları bildirim üretmez", async () => {
   const adminToken = await loginAdmin();
   const user = await createPersonnel(adminToken, `bildirim-${Date.now()}`);
   const personnelCookie = await loginPersonnel(user.username, "Personel123456");
@@ -60,8 +60,8 @@ test("reçete atama, kaldırma, tamamlama ve tekrar olayları kalıcı bildirim 
     const training = await createAssignment(adminToken, user.id, "training");
     assert.equal(training.response.status, 201);
     let snapshot = await store.read();
-    assert.equal(countNotifications(snapshot, "recipe_assignment_created", training.body.assignment.id), 1);
-    assert.ok(published.some((item) => item.eventType === "recipe_assignment_created" && item.recipientId === user.id));
+    assert.equal(countNotifications(snapshot, "recipe_assignment_created", training.body.assignment.id), 0);
+    assert.equal(published.some((item) => item.eventType === "recipe_assignment_created"), false);
 
     const completed = await json(`/api/recipe/assignments/${encodeURIComponent(training.body.assignment.id)}/submit`, {
       method: "POST",
@@ -70,8 +70,8 @@ test("reçete atama, kaldırma, tamamlama ve tekrar olayları kalıcı bildirim 
     });
     assert.equal(completed.response.status, 200);
     snapshot = await store.read();
-    assert.equal(countNotifications(snapshot, "recipe_assignment_completed", training.body.assignment.id), 1);
-    assert.ok(published.some((item) => item.eventType === "recipe_assignment_completed" && item.recipientRole === "manager"));
+    assert.equal(countNotifications(snapshot, "recipe_assignment_completed", training.body.assignment.id), 0);
+    assert.equal(published.some((item) => item.eventType === "recipe_assignment_completed"), false);
 
     const removable = await createAssignment(adminToken, user.id, "homework");
     assert.equal(removable.response.status, 201);
@@ -81,7 +81,7 @@ test("reçete atama, kaldırma, tamamlama ve tekrar olayları kalıcı bildirim 
     });
     assert.equal(removed.response.status, 200);
     snapshot = await store.read();
-    assert.equal(countNotifications(snapshot, "recipe_assignment_removed", removable.body.assignment.id), 1);
+    assert.equal(countNotifications(snapshot, "recipe_assignment_removed", removable.body.assignment.id), 0);
 
     const retryAssignmentId = `retry-assignment-${Date.now()}`;
     await store.update((data) => {
@@ -115,8 +115,8 @@ test("reçete atama, kaldırma, tamamlama ve tekrar olayları kalıcı bildirim 
     assert.equal(retry.response.status, 200);
     assert.equal(retry.body.assignment.status, "retry_required");
     snapshot = await store.read();
-    assert.equal(countNotifications(snapshot, "recipe_assignment_retry_required", retryAssignmentId), 1);
-    assert.ok(published.some((item) => item.eventType === "recipe_assignment_retry_required" && item.recipientId === user.id));
+    assert.equal(countNotifications(snapshot, "recipe_assignment_retry_required", retryAssignmentId), 0);
+    assert.equal(published.some((item) => item.eventType === "recipe_assignment_retry_required"), false);
   } finally {
     unsubscribe();
   }

@@ -16,14 +16,18 @@ test("Personel bildirim merkezi erişilebilir çekmece, filtre ve kalıcı terci
   assert.equal((html.match(/id="personelNotificationTrigger"/g) || []).length, 1);
   assert.match(html, /aria-controls="personelNotificationDrawer"/);
   assert.match(html, /id="personelNotificationDrawer"[\s\S]*role="dialog"[\s\S]*aria-modal="true"/);
-  for (const category of ["all", "task", "shipment", "shift", "training"]) {
+  for (const category of ["all", "task", "shipment", "shift"]) {
     assert.match(html, new RegExp(`data-notification-category="${category}"`));
   }
+  assert.doesNotMatch(html, /data-notification-category="training"/);
   for (const field of [
     "emailAddress", "inAppEnabled", "emailEnabled", "taskNotifications", "shipmentNotifications",
-    "shiftNotifications", "trainingNotifications", "taskReminder24h", "taskReminder2h",
+    "shiftNotifications", "taskReminder24h", "taskReminder2h",
     "overdueReminder", "shiftReminder12h", "shiftReminder2h", "quietHoursEnabled"
   ]) assert.match(html, new RegExp(`name="${field}"`), `${field} tercihi eksik`);
+  assert.doesNotMatch(html, /name="trainingNotifications"|Eğitim ve reçete programı/);
+  assert.match(script, /Yeni görev, sevkiyat ve vardiya gelişmeleri burada görünecek\./);
+  assert.doesNotMatch(script, /trainingNotifications|category === "training"|training:\s*"recipe"/);
 });
 
 test("Personel istemcisi canonical API, doğru unread query, SSE ve polling fallback kullanır", () => {

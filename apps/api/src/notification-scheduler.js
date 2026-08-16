@@ -297,7 +297,9 @@ function createManagerPendingReminders(data, now, created) {
     severity: "warning",
     entityType: "workforce",
     entityId: "pending",
-    deepLink: "/yonetici/?section=personel&workforce=operations",
+    deepLink: shipments
+      ? "/yonetici/?section=stock&workforce=shipments"
+      : "/yonetici/?section=staffAccess&workforce=shifts",
     dedupeKey: `manager-pending:${dateKeyInIstanbul(now)}:${shipments}:${shiftRequests}`
   }, now);
 }

@@ -1017,6 +1017,22 @@ textarea {
   box-shadow: 0 16px 32px rgba(44, 22, 9, 0.22);
 }
 
+.personel-login-help {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-self: center;
+  color: #2C1609;
+  font-size: 13px;
+  font-weight: 900;
+  text-underline-offset: 4px;
+}
+
+.personel-login-help:focus-visible {
+  outline: 3px solid rgba(44, 22, 9, .15);
+  outline-offset: 2px;
+}
+
 .personel-login .form-message {
   margin-top: 2px;
   color: #b42318 !important;

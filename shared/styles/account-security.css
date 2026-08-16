@@ -1,0 +1,224 @@
+/* Yönetici ve personel için ortak doğrulanmış hesap e-postası arayüzü. */
+.account-security-card {
+  width: min(920px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--panel-line, rgba(90, 47, 29, .18));
+  border-radius: var(--panel-card-radius, 14px);
+  color: var(--panel-ink, #2c1609);
+  background: var(--panel-surface, #fffaf3);
+  box-shadow: var(--panel-shadow, 0 10px 28px rgba(61, 31, 16, .08));
+  box-sizing: border-box;
+}
+
+.account-security-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.account-security-head h3,
+.account-security-head h4 {
+  margin: 2px 0 4px;
+  color: var(--panel-ink, #2c1609);
+  font: 700 20px/1.2 var(--panel-font-display, Georgia, serif);
+}
+
+.account-security-head p:not(.eyebrow) {
+  margin: 0;
+  color: var(--panel-muted, #806b5b);
+  font: 500 12px/1.5 var(--panel-font-ui, sans-serif);
+}
+
+.account-security-state {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid var(--panel-line, rgba(90, 47, 29, .18));
+  border-radius: 999px;
+  color: var(--panel-muted, #806b5b);
+  background: var(--panel-surface-soft, #f7ecdf);
+  font: 700 10px/1.2 var(--panel-font-ui, sans-serif);
+}
+
+.account-security-state[data-state="verified"] {
+  border-color: rgba(85, 107, 47, .26);
+  color: var(--panel-success, #556b2f);
+  background: rgba(85, 107, 47, .09);
+}
+
+.account-security-state[data-state="pending"] {
+  border-color: rgba(185, 80, 45, .26);
+  color: var(--panel-accent, #b9502d);
+  background: rgba(185, 80, 45, .08);
+}
+
+.account-security-email-form,
+.account-security-code-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.account-security-card label {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  color: var(--panel-coffee, #5a2f1d);
+  font: 700 11px/1.3 var(--panel-font-ui, sans-serif);
+}
+
+.account-security-card input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--panel-line, rgba(90, 47, 29, .18));
+  border-radius: var(--panel-control-radius, 10px);
+  outline: none;
+  color: var(--panel-ink, #2c1609);
+  background: #fffdf9;
+  font: 600 13px/1.3 var(--panel-font-ui, sans-serif);
+  box-sizing: border-box;
+}
+
+.account-security-card input:focus-visible,
+.account-security-card button:focus-visible {
+  outline: 3px solid rgba(185, 80, 45, .25);
+  outline-offset: 2px;
+}
+
+.account-security-verification {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid rgba(185, 80, 45, .22);
+  border-radius: 11px;
+  background: rgba(185, 80, 45, .06);
+}
+
+.account-security-verification[hidden],
+.account-security-code-form[hidden] {
+  display: none !important;
+}
+
+.account-security-verification > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.account-security-verification strong {
+  font: 700 12px/1.35 var(--panel-font-ui, sans-serif);
+}
+
+.account-security-verification span {
+  color: var(--panel-muted, #806b5b);
+  font: 500 11px/1.45 var(--panel-font-ui, sans-serif);
+}
+
+.account-security-code-form {
+  grid-column: 1 / -1;
+  padding-top: 10px;
+  border-top: 1px solid rgba(185, 80, 45, .16);
+}
+
+.account-security-code-form input {
+  letter-spacing: .24em;
+  font-variant-numeric: tabular-nums;
+}
+
+.account-security-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.account-security-meta > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--panel-line, rgba(90, 47, 29, .16));
+  border-radius: 9px;
+  background: var(--panel-surface-soft, #f7ecdf);
+}
+
+.account-security-meta small {
+  color: var(--panel-muted, #806b5b);
+  font: 600 10px/1.3 var(--panel-font-ui, sans-serif);
+}
+
+.account-security-meta strong {
+  overflow: hidden;
+  color: var(--panel-ink, #2c1609);
+  font: 700 11px/1.35 var(--panel-font-ui, sans-serif);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-security-danger-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid rgba(168, 45, 37, .2);
+  border-radius: 10px;
+  background: rgba(168, 45, 37, .045);
+}
+
+.account-security-danger-row > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.account-security-danger-row strong {
+  color: var(--panel-danger, #a82d25);
+  font: 700 12px/1.35 var(--panel-font-ui, sans-serif);
+}
+
+.account-security-danger-row small {
+  color: var(--panel-muted, #806b5b);
+  font: 500 10px/1.45 var(--panel-font-ui, sans-serif);
+}
+
+.account-security-danger-row .ui-button { flex: 0 0 auto; }
+
+.account-security-message {
+  min-height: 18px;
+  margin: 0;
+  color: var(--panel-muted, #806b5b);
+  font: 600 11px/1.45 var(--panel-font-ui, sans-serif);
+}
+
+.account-security-message[data-tone="success"] { color: var(--panel-success, #556b2f); }
+.account-security-message[data-tone="error"] { color: var(--panel-danger, #a82d25); }
+
+.account-security-card[aria-busy="true"] { opacity: .82; }
+.account-security-card button:disabled,
+.account-security-card input:disabled { cursor: wait; opacity: .62; }
+
+@media (max-width: 640px) {
+  .account-security-head,
+  .account-security-email-form,
+  .account-security-code-form,
+  .account-security-verification {
+    grid-template-columns: 1fr;
+  }
+
+  .account-security-head { flex-direction: column; }
+  .account-security-meta { grid-template-columns: 1fr; }
+  .account-security-verification > button { width: 100%; }
+  .account-security-danger-row { align-items: stretch; flex-direction: column; }
+  .account-security-danger-row .ui-button { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-security-card,
+  .account-security-card * { transition: none !important; }
+}

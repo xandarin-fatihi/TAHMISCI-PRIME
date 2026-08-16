@@ -13,7 +13,7 @@ const {
   registryCodeForEntity
 } = require("./product-code-registry");
 
-const STORE_SCHEMA_VERSION = 14;
+const STORE_SCHEMA_VERSION = 15;
 
 function migrateStore(input) {
   const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
@@ -48,11 +48,13 @@ function migrateStore(input) {
     feedbackUpdatedAt: source.feedbackUpdatedAt || null,
     stockState: normalizeStockState(source.stockState),
     stockUpdatedAt: source.stockUpdatedAt || null,
-    recipeUsers: normalizeArray(source.recipeUsers),
+    recipeUsers: normalizeRecipeUsers(source.recipeUsers),
     recipeAssignments: normalizeArray(source.recipeAssignments),
     recipeActivity: normalizeArray(source.recipeActivity),
     authSessions: normalizeAuthSessions(source.authSessions),
     passwordResetChallenges: normalizePasswordResetChallenges(source.passwordResetChallenges),
+    emailVerificationChallenges: normalizeEmailVerificationChallenges(source.emailVerificationChallenges),
+    securityAudit: normalizeSecurityAudit(source.securityAudit),
     notifications: normalizeNotifications(source.notifications),
     notificationPreferences: normalizeNotificationPreferences(source.notificationPreferences || source.preferences),
     notificationOutbox: normalizeNotificationOutbox(source.notificationOutbox || source.outbox),
@@ -71,6 +73,8 @@ function migrateStore(input) {
     admin: normalizeAdmin(source.admin)
   };
 
+  next.notificationPreferences = reconcileNotificationPreferenceEmails(next.notificationPreferences, next);
+  next.notificationOutbox = reconcileNotificationOutboxRecipients(next.notificationOutbox, next.notifications);
   next.recipeCatalog = reconcileRecipeCatalog(next.recipeState, source.recipeCatalog);
   next.workforceAssignments = reconcileWorkforceAssignments(next.workforceTasks, next.workforceAssignments, next.recipeUsers);
   next.workforceTasks = syncWorkforceTaskAssignees(next.workforceTasks, next.workforceAssignments);
@@ -168,17 +172,64 @@ function normalizePasswordResetChallenges(value) {
     if (!id || !scope || !emailHash || !codeHash) return null;
     return {
       id,
+      purpose: String(item.purpose || "password_reset") === "password_reset" ? "password_reset" : "password_reset",
       emailHash,
       scope,
       targetUserId: String(item.targetUserId || "").trim().slice(0, 160),
+      identifierHash: String(item.identifierHash || "").trim().slice(0, 128),
       codeHash,
+      accountVersion: Math.max(0, Math.trunc(finiteNumber(item.accountVersion, 0))),
       attempts: Math.max(0, Math.trunc(finiteNumber(item.attempts, 0))),
       expiresAt: normalizeStoredDate(item.expiresAt, new Date(0).toISOString()),
       createdAt: normalizeStoredDate(item.createdAt, new Date(0).toISOString()),
       usedAt: item.usedAt ? normalizeStoredDate(item.usedAt, new Date(0).toISOString()) : null,
       revokedAt: item.revokedAt ? normalizeStoredDate(item.revokedAt, new Date(0).toISOString()) : null
     };
-  }).filter(Boolean).slice(-200);
+  }).filter(Boolean).slice(-500);
+}
+
+function normalizeEmailVerificationChallenges(value) {
+  return normalizeArray(value).map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const scope = ["admin", "personel"].includes(String(item.scope || "")) ? String(item.scope) : "";
+    const id = String(item.id || "").trim().slice(0, 160);
+    const targetUserId = String(item.targetUserId || "").trim().slice(0, 160);
+    const destinationHash = String(item.destinationHash || "").trim().slice(0, 128);
+    const codeHash = String(item.codeHash || "").trim().slice(0, 128);
+    if (!id || !scope || !targetUserId || !destinationHash || !codeHash) return null;
+    return {
+      id,
+      purpose: "email_verification",
+      scope,
+      targetUserId,
+      destinationHash,
+      codeHash,
+      accountVersion: Math.max(0, Math.trunc(finiteNumber(item.accountVersion, 0))),
+      attempts: Math.max(0, Math.trunc(finiteNumber(item.attempts, 0))),
+      expiresAt: normalizeStoredDate(item.expiresAt, new Date(0).toISOString()),
+      createdAt: normalizeStoredDate(item.createdAt, new Date(0).toISOString()),
+      usedAt: item.usedAt ? normalizeStoredDate(item.usedAt, new Date(0).toISOString()) : null,
+      revokedAt: item.revokedAt ? normalizeStoredDate(item.revokedAt, new Date(0).toISOString()) : null
+    };
+  }).filter(Boolean).slice(-500);
+}
+
+function normalizeSecurityAudit(value) {
+  return normalizeArray(value).map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const id = String(item.id || "").trim().slice(0, 180);
+    const action = String(item.action || "").trim().slice(0, 100);
+    if (!id || !action) return null;
+    return {
+      id,
+      action,
+      scope: ["admin", "personel"].includes(item.scope) ? item.scope : "",
+      accountId: String(item.accountId || "").slice(0, 160),
+      result: String(item.result || "recorded").slice(0, 80),
+      ipHash: String(item.ipHash || "").slice(0, 64),
+      createdAt: normalizeStoredDate(item.createdAt, new Date(0).toISOString())
+    };
+  }).filter(Boolean).slice(-2000);
 }
 
 function normalizeNotifications(value) {
@@ -205,8 +256,10 @@ function normalizeNotifications(value) {
       metadata: normalizeNotificationMetadata(item.metadata),
       inAppVisible: item.inAppVisible !== false,
       createdAt: normalizeStoredDate(item.createdAt, new Date(0).toISOString()),
+      updatedAt: normalizeStoredDate(item.updatedAt || item.createdAt, new Date(0).toISOString()),
       readAt: item.readAt ? normalizeStoredDate(item.readAt, new Date(0).toISOString()) : null,
-      archivedAt: item.archivedAt ? normalizeStoredDate(item.archivedAt, new Date(0).toISOString()) : null
+      archivedAt: item.archivedAt ? normalizeStoredDate(item.archivedAt, new Date(0).toISOString()) : null,
+      deletedAt: item.deletedAt ? normalizeStoredDate(item.deletedAt, new Date(0).toISOString()) : null
     };
   }).filter(Boolean);
   const byEvent = new Map();
@@ -217,6 +270,8 @@ function normalizeNotifications(value) {
     else {
       current.readAt = current.readAt || item.readAt;
       current.archivedAt = current.archivedAt || item.archivedAt;
+      current.deletedAt = current.deletedAt || item.deletedAt;
+      if (String(item.updatedAt || "") > String(current.updatedAt || "")) current.updatedAt = item.updatedAt;
     }
   }
   const deduped = [...byEvent.values()];
@@ -249,7 +304,6 @@ function normalizeNotificationPreferences(value) {
       taskNotifications: notificationPreferenceFlag(item, "taskNotifications", "tasks", true),
       shiftNotifications: notificationPreferenceFlag(item, "shiftNotifications", "shifts", true),
       shipmentNotifications: notificationPreferenceFlag(item, "shipmentNotifications", "shipments", true),
-      trainingNotifications: notificationPreferenceFlag(item, "trainingNotifications", "training", true),
       stockNotifications: notificationPreferenceFlag(item, "stockNotifications", "stock", true),
       systemNotifications: notificationPreferenceFlag(item, "systemNotifications", "system", true),
       reminderNotifications: notificationPreferenceFlag(item, "reminderNotifications", "reminders", true),
@@ -270,20 +324,42 @@ function normalizeNotificationPreferences(value) {
   return [...byOwner.values()].slice(-2000);
 }
 
+function reconcileNotificationPreferenceEmails(preferences, data) {
+  return (Array.isArray(preferences) ? preferences : []).map((preference) => {
+    if (!preference) return preference;
+    const account = preference.ownerRole === "manager"
+      ? data && data.admin
+      : (Array.isArray(data && data.recipeUsers) ? data.recipeUsers : [])
+        .find((item) => item && String(item.id || "") === String(preference.ownerId || ""));
+    const candidate = account && account.emailVerifiedAt
+      ? String(account.emailNormalized || account.email || "").trim().toLowerCase().slice(0, 254)
+      : "";
+    const verifiedEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate) ? candidate : "";
+    return {
+      ...preference,
+      emailEnabled: Boolean(preference.emailEnabled && verifiedEmail),
+      emailAddress: verifiedEmail,
+      emailVerified: Boolean(verifiedEmail)
+    };
+  });
+}
+
 function normalizeNotificationOutbox(value) {
   const normalized = normalizeArray(value).map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return null;
     const id = String(item.id || "").trim().slice(0, 180);
     const notificationId = String(item.notificationId || "").trim().slice(0, 180);
     const channel = ["email", "push"].includes(item.channel) ? item.channel : "";
+    const recipientRole = normalizeNotificationRole(item.recipientRole);
+    const recipientId = recipientRole === "manager" ? "manager" : String(item.recipientId || "").trim().slice(0, 160);
     if (!id || !notificationId || !channel) return null;
     return {
       ...item,
       id,
       notificationId,
       channel,
-      recipientRole: normalizeNotificationRole(item.recipientRole),
-      recipientId: String(item.recipientId || "").trim().slice(0, 160),
+      recipientRole,
+      recipientId,
       status: normalizeOutboxStatus(item.status),
       attemptCount: Math.max(0, Math.trunc(finiteNumber(item.attemptCount ?? item.attempts, 0))),
       nextAttemptAt: normalizeStoredDate(item.nextAttemptAt, new Date(0).toISOString()),
@@ -301,9 +377,18 @@ function normalizeNotificationOutbox(value) {
   }).filter(Boolean);
   const byDelivery = new Map();
   for (const item of normalized) {
-    const key = item.dedupeKey || `${item.notificationId}\u0000${item.channel}\u0000${item.channel === "push" ? item.subscriptionId || item.destination : "email"}`;
+    const role = normalizeNotificationRole(item.recipientRole);
+    const recipientId = role === "manager" ? "manager" : String(item.recipientId || "");
+    const logicalDelivery = `${item.notificationId}\u0000${item.channel}\u0000${item.channel === "push"
+      ? item.subscriptionId || item.destination
+      : String(item.destination || "").toLowerCase() || "email"}`;
+    const key = `${role}\u0000${recipientId}\u0000${logicalDelivery}`;
     const current = byDelivery.get(key);
-    if (!current || outboxStatusPriority(item.status) > outboxStatusPriority(current.status)) byDelivery.set(key, item);
+    const priority = outboxStatusPriority(item.status);
+    const currentPriority = outboxStatusPriority(current && current.status);
+    if (!current
+      || priority > currentPriority
+      || (priority === currentPriority && String(item.updatedAt || "") > String(current.updatedAt || ""))) byDelivery.set(key, item);
   }
   const deduped = [...byDelivery.values()];
   if (deduped.length <= 20000) return deduped;
@@ -311,6 +396,40 @@ function normalizeNotificationOutbox(value) {
   const completed = deduped.filter((item) => !["pending", "processing"].includes(item.status))
     .sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)));
   return active.concat(completed.slice(0, Math.max(0, 20000 - active.length)));
+}
+
+function reconcileNotificationOutboxRecipients(items, notifications) {
+  const notificationsById = new Map();
+  for (const notification of Array.isArray(notifications) ? notifications : []) {
+    if (!notification || !notification.id) continue;
+    if (!notificationsById.has(notification.id)) notificationsById.set(notification.id, []);
+    notificationsById.get(notification.id).push(notification);
+  }
+  return (Array.isArray(items) ? items : []).map((item) => {
+    if (!item) return item;
+    const candidates = notificationsById.get(item.notificationId) || [];
+    const claimedRole = normalizeNotificationRole(item.recipientRole);
+    const claimedId = claimedRole === "manager" ? "manager" : String(item.recipientId || "");
+    let notification = candidates.find((entry) => entry.recipientRole === claimedRole
+      && String(entry.recipientRole === "manager" ? "manager" : entry.recipientId || "") === claimedId);
+    if (!notification && !claimedRole && candidates.length === 1) notification = candidates[0];
+    if (notification) {
+      return {
+        ...item,
+        recipientRole: notification.recipientRole,
+        recipientId: notification.recipientId
+      };
+    }
+    if (!candidates.length || !claimedRole || !claimedId) return item;
+    return {
+      ...item,
+      status: item.status === "sent" ? "sent" : "cancelled",
+      nextAttemptAt: null,
+      lockedAt: null,
+      lockedBy: "",
+      lastError: item.status === "sent" ? item.lastError : "Bildirim teslim alıcısı eşleşmediği için iptal edildi."
+    };
+  });
 }
 
 function normalizePushSubscriptions(value) {
@@ -339,16 +458,37 @@ function normalizePushSubscriptions(value) {
         auth: String(subscription.keys.auth || "").slice(0, 500)
       } : {},
       userAgent: String(item.userAgent || "").slice(0, 500),
+      deviceId: String(item.deviceId || "").trim().slice(0, 180),
+      deviceName: String(item.deviceName || "").trim().slice(0, 120),
       createdAt: normalizeStoredDate(item.createdAt, new Date(0).toISOString()),
       updatedAt: normalizeStoredDate(item.updatedAt || item.createdAt, new Date(0).toISOString()),
+      lastSeenAt: normalizeStoredDate(item.lastSeenAt || item.updatedAt || item.createdAt, new Date(0).toISOString()),
       lastSuccessAt: item.lastSuccessAt ? normalizeStoredDate(item.lastSuccessAt, new Date(0).toISOString()) : null,
       failureCount: Math.max(0, Math.trunc(finiteNumber(item.failureCount, 0))),
-      disabledAt: item.disabledAt ? normalizeStoredDate(item.disabledAt, new Date(0).toISOString()) : null
+      disabledAt: item.disabledAt ? normalizeStoredDate(item.disabledAt, new Date(0).toISOString()) : null,
+      revokedAt: item.revokedAt ? normalizeStoredDate(item.revokedAt, new Date(0).toISOString()) : null
     };
   }).filter(Boolean);
-  const byOwnerEndpoint = new Map();
-  for (const item of normalized) byOwnerEndpoint.set(`${item.ownerRole}\u0000${item.ownerId}\u0000${item.endpoint}`, item);
-  return [...byOwnerEndpoint.values()].slice(-5000);
+  const byOwnerDevice = new Map();
+  for (const item of normalized) {
+    const identity = item.deviceId ? `device:${item.deviceId}` : `endpoint:${item.endpoint}`;
+    const key = `${item.ownerRole}\u0000${item.ownerId}\u0000${identity}`;
+    const current = byOwnerDevice.get(key);
+    if (!current || String(item.updatedAt || "") >= String(current.updatedAt || "")) byOwnerDevice.set(key, item);
+  }
+  const deduped = [...byOwnerDevice.values()];
+  const activeByEndpoint = new Map();
+  const retained = [];
+  for (const item of deduped.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))) {
+    if (item.revokedAt) {
+      retained.push(item);
+      continue;
+    }
+    if (activeByEndpoint.has(item.endpoint)) continue;
+    activeByEndpoint.set(item.endpoint, item);
+    retained.push(item);
+  }
+  return retained.slice(0, 5000);
 }
 
 function normalizeNotificationSchedulerState(value) {
@@ -685,15 +825,51 @@ function normalizeContentMode(mode, recipeId, manualContent) {
   return manualContent ? "manual" : "hidden";
 }
 
+function normalizeRecipeUsers(value) {
+  return normalizeArray(value).map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    return {
+      ...item,
+      ...normalizeAccountSecurity(item)
+    };
+  }).filter(Boolean);
+}
+
 function normalizeAdmin(admin) {
   const source = admin && typeof admin === "object" && !Array.isArray(admin) ? admin : {};
   return {
     ...source,
+    ...normalizeAccountSecurity(source),
     passwordHash: String(source.passwordHash || ""),
     recipePasswordHash: String(source.recipePasswordHash || source.passwordHash || ""),
     updatedAt: source.updatedAt || null,
     recipeUpdatedAt: source.recipeUpdatedAt || source.updatedAt || null
   };
+}
+
+function normalizeAccountSecurity(source) {
+  const email = normalizeSecurityEmail(source.emailNormalized || source.email);
+  const pendingCandidate = normalizeSecurityEmail(source.pendingEmail);
+  const pendingEmail = pendingCandidate && pendingCandidate !== email ? pendingCandidate : "";
+  const emailVerifiedAt = email && source.emailVerifiedAt
+    ? normalizeStoredDate(source.emailVerifiedAt, null)
+    : null;
+  return {
+    email,
+    emailNormalized: email,
+    pendingEmail,
+    emailVerifiedAt,
+    emailVerificationRequired: Boolean(source.emailVerificationRequired) || !emailVerifiedAt || Boolean(pendingEmail),
+    emailVerificationVersion: Math.max(0, Math.trunc(finiteNumber(source.emailVerificationVersion, 0))),
+    lastPasswordResetAt: source.lastPasswordResetAt
+      ? normalizeStoredDate(source.lastPasswordResetAt, null)
+      : null
+  };
+}
+
+function normalizeSecurityEmail(value) {
+  const email = String(value || "").trim().toLowerCase().slice(0, 254);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
 }
 
 function normalizeAuthSessions(items) {

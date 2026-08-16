@@ -79,8 +79,9 @@ test("kullanıcıya açık hesap ve personel işlemleri Yönetici dilini kullan�
   assert.match(login, /Tahmisçi Yönetici Girişi/);
   assert.match(login, /Tahmisçi Yönetici Paneli/);
   assert.doesNotMatch(login, />Admin Paneli</);
-  assert.match(passwordReset, /Yönetici ve Personel Şifre Değiştirme/);
-  assert.doesNotMatch(passwordReset, />Admin ve Personel Şifre Değiştirme</);
+  assert.match(passwordReset, /<h1 id="pageTitle">Şifremi Unuttum<\/h1>/);
+  assert.match(passwordReset, /id="accountScopeLabel">Yönetici<\/strong>/);
+  assert.doesNotMatch(passwordReset, />Admin(?: ve Personel)? Şifre Değiştirme</);
   assert.match(workforce, /Yöneticiye Bildir/);
   assert.doesNotMatch(workforce, />Admine Bildir</);
 });

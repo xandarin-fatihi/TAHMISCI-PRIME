@@ -865,6 +865,49 @@ test("admin ve personel cookie oturumları birbirinden ayrılır", async () => {
   assert.equal((await json("/api/admin/me", { headers: { Origin: baseUrl, Cookie: secondAdminCookie } })).response.status, 200);
 });
 
+test("admin personel e-postasını benzersiz ve doğrulama bekleyen hesap alanı olarak yönetir", async () => {
+  const token = await login();
+  const suffix = Date.now();
+  const username = `email-personel-${suffix}`;
+  const firstEmail = `Personel-${suffix}@Tahmisci.Test`;
+  const created = await json("/api/admin/recipe-users", {
+    method: "POST",
+    headers: adminHeaders(token),
+    body: JSON.stringify({ name: "E-posta Personeli", username, password: "Personel123456", email: firstEmail })
+  });
+  assert.equal(created.response.status, 201);
+  assert.equal(created.body.user.email, firstEmail.toLowerCase());
+  assert.equal(created.body.user.emailVerifiedAt, null);
+  assert.equal(created.body.user.emailVerificationRequired, true);
+  assert.deepEqual(created.body.user.security.email, created.body.user.email);
+
+  const duplicate = await json("/api/admin/recipe-users", {
+    method: "POST",
+    headers: adminHeaders(token),
+    body: JSON.stringify({ name: "Çakışan E-posta", username: `${username}-dup`, password: "Personel123456", email: firstEmail })
+  });
+  assert.equal(duplicate.response.status, 409);
+  assert.equal("users" in duplicate.body, false, "benzersizlik hatası personel listesini sızdırmamalı");
+
+  await store.update((data) => {
+    const user = data.recipeUsers.find((item) => item.id === created.body.user.id);
+    user.emailVerifiedAt = new Date().toISOString();
+    user.emailVerificationRequired = false;
+    return data;
+  });
+  const nextEmail = `yeni-${suffix}@tahmisci.test`;
+  const updated = await json(`/api/admin/recipe-users/${encodeURIComponent(created.body.user.id)}`, {
+    method: "PUT",
+    headers: adminHeaders(token),
+    body: JSON.stringify({ name: "E-posta Personeli", username, active: true, email: nextEmail })
+  });
+  assert.equal(updated.response.status, 200);
+  assert.equal(updated.body.user.email, firstEmail.toLowerCase(), "doğrulanmış adres onay gelene kadar korunmalı");
+  assert.equal(updated.body.user.pendingEmail, nextEmail);
+  assert.equal(updated.body.user.emailVerificationRequired, true);
+  assert.ok((await store.read()).securityAudit.some((item) => item.action === "personnel_email_assigned" && item.accountId === created.body.user.id));
+});
+
 test("personel yaşam döngüsü oturumları kapatır, geçmiş kimliği korur ve kalıcı silmeyi güvenle uygular", async () => {
   const adminToken = await login();
   const username = `lifecycle-${Date.now()}`;
@@ -1170,43 +1213,80 @@ test("bireysel personel reseti hedef hesabı günceller, kod bağlamını ve otu
   });
   const firstCookie = responseCookie(firstLogin.response);
   const secondCookie = responseCookie(secondLogin.response);
+
+  const firstEmail = `reset-hedef-${suffix}@tahmisci.test`;
+  const changedEmail = await json("/api/account/personel/email/change", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl, Cookie: firstCookie },
+    body: JSON.stringify({ email: firstEmail })
+  });
+  assert.equal(changedEmail.response.status, 200);
+  assert.equal(changedEmail.body.security.emailVerificationRequired, true);
+  const verification = await json("/api/account/personel/email-verification/request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl, Cookie: firstCookie },
+    body: JSON.stringify({})
+  });
+  assert.equal(verification.response.status, 200);
+  assert.match(verification.body.maskedEmail, /@tahmisci\.test$/);
+  const verified = await json("/api/account/personel/email-verification/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl, Cookie: firstCookie },
+    body: JSON.stringify({ challengeId: verification.body.challengeId, code: "654321" })
+  });
+  assert.equal(verified.response.status, 200);
+  assert.ok(verified.body.security.emailVerifiedAt);
+
   const before = await store.read();
   const firstHashBefore = before.recipeUsers.find((user) => user.id === firstId).passwordHash;
   const secondHashBefore = before.recipeUsers.find((user) => user.id === secondId).passwordHash;
   const sharedHashBefore = before.admin.recipePasswordHash;
+  await store.update((data) => {
+    const now = new Date().toISOString();
+    data.pushSubscriptions.push(
+      { ownerRole: "personnel", ownerId: firstId, endpoint: `https://push.test/${firstId}`, createdAt: now, updatedAt: now },
+      { ownerRole: "personnel", ownerId: secondId, endpoint: `https://push.test/${secondId}`, createdAt: now, updatedAt: now }
+    );
+    data.notificationPreferences.push({
+      ownerRole: "personnel",
+      ownerId: firstId,
+      pushEnabled: true,
+      emailEnabled: false,
+      createdAt: now,
+      updatedAt: now
+    });
+    return data;
+  });
 
-  const discovery = await json("/api/admin/password-reset/request", {
+  const discovery = await json("/api/account/password-reset/personel/request", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
-    body: JSON.stringify({ email: "reset@tahmisci.test", scope: "personel" })
+    body: JSON.stringify({ identifier: "bilinmeyen-personel", scope: "personel" })
   });
   assert.equal(discovery.response.status, 200);
-  assert.equal(discovery.body.requiresPersonelSelection, true);
-  assert.ok(discovery.body.personelAccounts.some((user) => user.id === firstId));
+  assert.ok(discovery.body.challengeId, "bilinmeyen hesap da ayrım yapmayan bir challenge almalı");
+  assert.equal("personelAccounts" in discovery.body, false);
 
   const unauthorized = await json("/api/admin/password-reset/request", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
-    body: JSON.stringify({ email: "unknown@tahmisci.test", scope: "personel" })
+    body: JSON.stringify({ identifier: firstCreated.body.user.username, scope: "personel" })
   });
-  assert.equal(unauthorized.response.status, 200);
-  assert.equal("personelAccounts" in unauthorized.body, false);
-  assert.equal("challengeId" in unauthorized.body, false);
+  assert.equal(unauthorized.response.status, 400, "eski admin alias'ı personel kapsamına açılamamalı");
 
-  const requested = await json("/api/admin/password-reset/request", {
+  const requested = await json("/api/account/password-reset/personel/request", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
-    body: JSON.stringify({ email: "reset@tahmisci.test", scope: "personel", userId: firstId })
+    body: JSON.stringify({ identifier: firstCreated.body.user.username, scope: "personel" })
   });
   assert.equal(requested.response.status, 200);
   assert.ok(requested.body.challengeId);
 
-  const wrongScope = await json("/api/admin/password-reset/confirm", {
+  const wrongScope = await json("/api/account/password-reset/admin/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
     body: JSON.stringify({
       challengeId: requested.body.challengeId,
-      email: "reset@tahmisci.test",
       scope: "admin",
       code: "654321",
       newPassword: "YeniPersonel123"
@@ -1214,28 +1294,24 @@ test("bireysel personel reseti hedef hesabı günceller, kod bağlamını ve otu
   });
   assert.equal(wrongScope.response.status, 400);
 
-  const wrongTarget = await json("/api/admin/password-reset/confirm", {
+  const wrongTarget = await json("/api/account/password-reset/personel/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
     body: JSON.stringify({
       challengeId: requested.body.challengeId,
-      email: "reset@tahmisci.test",
-      scope: "personel",
-      userId: secondId,
+      scope: "admin",
       code: "654321",
       newPassword: "YeniPersonel123"
     })
   });
   assert.equal(wrongTarget.response.status, 400);
 
-  const confirmed = await json("/api/admin/password-reset/confirm", {
+  const confirmed = await json("/api/account/password-reset/personel/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
     body: JSON.stringify({
       challengeId: requested.body.challengeId,
-      email: "reset@tahmisci.test",
       scope: "personel",
-      userId: firstId,
       code: "654321",
       newPassword: "YeniPersonel123"
     })
@@ -1252,17 +1328,19 @@ test("bireysel personel reseti hedef hesabı günceller, kod bağlamını ve otu
   assert.equal(after.admin.recipePasswordHash, sharedHashBefore, "bireysel personel reseti ortak reçete şifresini değiştirmemeli");
   assert.ok(after.authSessions.filter((session) => session.role === "personel" && session.userId === firstId).every((session) => session.revokedAt));
   assert.ok(after.authSessions.some((session) => session.role === "personel" && session.userId === secondId && !session.revokedAt));
+  assert.ok(after.pushSubscriptions.filter((item) => item.ownerId === firstId).every((item) => item.revokedAt), "hedef hesabın push abonelikleri iptal edilmeli");
+  assert.ok(after.pushSubscriptions.some((item) => item.ownerId === secondId && !item.revokedAt), "diğer hesabın push aboneliği korunmalı");
+  assert.equal(after.notificationPreferences.find((item) => item.ownerId === firstId).pushEnabled, false);
+  assert.ok(after.securityAudit.some((item) => item.action === "password_reset_completed" && item.accountId === firstId));
   assert.equal((await json("/api/workforce/me", { headers: { Origin: baseUrl, Cookie: firstCookie } })).response.status, 401);
   assert.equal((await json("/api/workforce/me", { headers: { Origin: baseUrl, Cookie: secondCookie } })).response.status, 200);
 
-  const reused = await json("/api/admin/password-reset/confirm", {
+  const reused = await json("/api/account/password-reset/personel/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
     body: JSON.stringify({
       challengeId: requested.body.challengeId,
-      email: "reset@tahmisci.test",
       scope: "personel",
-      userId: firstId,
       code: "654321",
       newPassword: "BaskaPersonel123"
     })
@@ -1279,20 +1357,46 @@ test("bireysel personel reseti hedef hesabı günceller, kod bağlamını ve otu
 
 test("reset kodu yenilenince eskisi geçersiz olur, süre ve deneme sınırı uygulanır", async () => {
   const data = await store.read();
-  const target = data.recipeUsers.find((user) => user.active !== false && user.passwordHash);
+  let target = data.recipeUsers.find((user) => user.active !== false && user.passwordHash);
+  if (!target) {
+    const token = await login();
+    const created = await json("/api/admin/recipe-users", {
+      method: "POST",
+      headers: adminHeaders(token),
+      body: JSON.stringify({ name: "Reset Limit Hedefi", username: `reset-limit-${Date.now()}`, password: "Personel123456" })
+    });
+    assert.equal(created.response.status, 201);
+    target = created.body.user;
+  }
   assert.ok(target);
-  const request = async () => json("/api/admin/password-reset/request", {
+  await store.update((next) => {
+    const stored = next.recipeUsers.find((user) => user.id === target.id);
+    stored.email = `reset-limit-${target.id}@tahmisci.test`;
+    stored.emailNormalized = stored.email;
+    stored.pendingEmail = "";
+    stored.emailVerifiedAt = new Date().toISOString();
+    stored.emailVerificationRequired = false;
+    return next;
+  });
+  const request = async () => json("/api/account/password-reset/personel/request", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
-    body: JSON.stringify({ email: "reset@tahmisci.test", scope: "personel", userId: target.id })
+    body: JSON.stringify({ identifier: target.username, scope: "personel" })
   });
   const first = await request();
+  const throttled = await request();
+  assert.equal(first.body.challengeId, throttled.body.challengeId, "yeniden gönderim bekleme süresi uygulanmalı");
+  await store.update((next) => {
+    const challenge = next.passwordResetChallenges.find((item) => item.id === first.body.challengeId);
+    challenge.createdAt = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    return next;
+  });
   const second = await request();
   assert.notEqual(first.body.challengeId, second.body.challengeId);
-  const oldCode = await json("/api/admin/password-reset/confirm", {
+  const oldCode = await json("/api/account/password-reset/personel/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
-    body: JSON.stringify({ challengeId: first.body.challengeId, email: "reset@tahmisci.test", scope: "personel", userId: target.id, code: "654321", newPassword: "SinirPersonel123" })
+    body: JSON.stringify({ challengeId: first.body.challengeId, scope: "personel", code: "654321", newPassword: "SinirPersonel123" })
   });
   assert.equal(oldCode.response.status, 400);
 
@@ -1301,10 +1405,10 @@ test("reset kodu yenilenince eskisi geçersiz olur, süre ve deneme sınırı uy
     challenge.expiresAt = new Date(Date.now() - 1000).toISOString();
     return next;
   });
-  const expired = await json("/api/admin/password-reset/confirm", {
+  const expired = await json("/api/account/password-reset/personel/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
-    body: JSON.stringify({ challengeId: second.body.challengeId, email: "reset@tahmisci.test", scope: "personel", userId: target.id, code: "654321", newPassword: "SinirPersonel123" })
+    body: JSON.stringify({ challengeId: second.body.challengeId, scope: "personel", code: "654321", newPassword: "SinirPersonel123" })
   });
   assert.equal(expired.response.status, 400);
   assert.match(expired.body.message, /süresi doldu/i);
@@ -1312,10 +1416,10 @@ test("reset kodu yenilenince eskisi geçersiz olur, süre ve deneme sınırı uy
   const attemptChallenge = await request();
   let last;
   for (let index = 0; index < 6; index += 1) {
-    last = await json("/api/admin/password-reset/confirm", {
+    last = await json("/api/account/password-reset/personel/confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: baseUrl },
-      body: JSON.stringify({ challengeId: attemptChallenge.body.challengeId, email: "reset@tahmisci.test", scope: "personel", userId: target.id, code: "000000", newPassword: "SinirPersonel123" })
+      body: JSON.stringify({ challengeId: attemptChallenge.body.challengeId, scope: "personel", code: "000000", newPassword: "SinirPersonel123" })
     });
   }
   assert.equal(last.response.status, 429);
@@ -1323,25 +1427,61 @@ test("reset kodu yenilenince eskisi geçersiz olur, süre ve deneme sınırı uy
 
 test("admin reseti yalnızca admin oturumlarını iptal eder", async () => {
   const adminToken = await login();
+  const adminEmail = `admin-security-${Date.now()}@tahmisci.test`;
+  const securityBefore = await json("/api/account/admin/security", { headers: adminHeaders(adminToken) });
+  assert.equal(securityBefore.response.status, 200);
+  const emailChanged = await json("/api/account/admin/email/change", {
+    method: "POST",
+    headers: adminHeaders(adminToken),
+    body: JSON.stringify({ scope: "admin", email: adminEmail })
+  });
+  assert.equal(emailChanged.response.status, 200);
+  const emailChallenge = await json("/api/account/admin/email-verification/request", {
+    method: "POST",
+    headers: adminHeaders(adminToken),
+    body: JSON.stringify({ scope: "admin" })
+  });
+  assert.equal(emailChallenge.response.status, 200);
+  const emailVerified = await json("/api/account/admin/email-verification/confirm", {
+    method: "POST",
+    headers: adminHeaders(adminToken),
+    body: JSON.stringify({ scope: "admin", challengeId: emailChallenge.body.challengeId, code: "654321" })
+  });
+  assert.equal(emailVerified.response.status, 200);
+  assert.equal(emailVerified.body.security.email, adminEmail);
+
   const before = await store.read();
   const oldAdminHash = before.admin.passwordHash;
   const activePersonelSession = before.authSessions.find((session) => session.role === "personel" && !session.revokedAt);
-  const requested = await json("/api/admin/password-reset/request", {
+  await store.update((data) => {
+    const now = new Date().toISOString();
+    data.pushSubscriptions.push({ ownerRole: "manager", ownerId: "manager", endpoint: `https://push.test/admin-${Date.now()}`, createdAt: now, updatedAt: now });
+    return data;
+  });
+  const scopeEscape = await json("/api/admin/password-reset/request", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
-    body: JSON.stringify({ email: "reset@tahmisci.test", scope: "admin" })
+    body: JSON.stringify({ identifier: "reset@tahmisci.test", scope: "personel" })
+  });
+  assert.equal(scopeEscape.response.status, 400);
+  const requested = await json("/api/account/password-reset/admin/request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl },
+    body: JSON.stringify({ identifier: adminEmail, scope: "admin" })
   });
   assert.equal(requested.response.status, 200);
-  const confirmed = await json("/api/admin/password-reset/confirm", {
+  const confirmed = await json("/api/account/password-reset/admin/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
-    body: JSON.stringify({ challengeId: requested.body.challengeId, email: "reset@tahmisci.test", scope: "admin", code: "654321", newPassword: "YeniAdmin12345" })
+    body: JSON.stringify({ challengeId: requested.body.challengeId, scope: "admin", code: "654321", newPassword: "YeniAdmin12345" })
   });
   assert.equal(confirmed.response.status, 200);
   assert.equal(confirmed.body.redirectTo, "/login.html");
   assert.equal((await json("/api/admin/me", { headers: adminHeaders(adminToken) })).response.status, 401);
   const after = await store.read();
   assert.ok(after.authSessions.filter((session) => session.role === "admin").every((session) => session.revokedAt));
+  assert.ok(after.pushSubscriptions.filter((item) => item.ownerRole === "manager").every((item) => item.revokedAt));
+  assert.ok(after.securityAudit.some((item) => item.action === "password_reset_completed" && item.scope === "admin"));
   if (activePersonelSession) {
     assert.ok(after.authSessions.some((session) => session.id === activePersonelSession.id && !session.revokedAt));
   }
@@ -1370,18 +1510,18 @@ test("eski ortak reçete şifresi yalnızca bireysel personel hesabı bulunmayan
     return data;
   });
 
-  const requested = await json("/api/admin/password-reset/request", {
+  const requested = await json("/api/account/password-reset/personel/request", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
-    body: JSON.stringify({ email: "reset@tahmisci.test", scope: "personel" })
+    body: JSON.stringify({ identifier: "reset@tahmisci.test", scope: "personel" })
   });
   assert.equal(requested.response.status, 200);
   assert.ok(requested.body.challengeId);
   assert.equal(requested.body.requiresPersonelSelection, undefined);
-  const confirmed = await json("/api/admin/password-reset/confirm", {
+  const confirmed = await json("/api/account/password-reset/personel/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
-    body: JSON.stringify({ challengeId: requested.body.challengeId, email: "reset@tahmisci.test", scope: "personel", code: "654321", newPassword: "LegacyPersonel123" })
+    body: JSON.stringify({ challengeId: requested.body.challengeId, scope: "personel", code: "654321", newPassword: "LegacyPersonel123" })
   });
   assert.equal(confirmed.response.status, 200);
   const legacyAfter = await store.read();
@@ -1397,14 +1537,13 @@ test("eski ortak reçete şifresi yalnızca bireysel personel hesabı bulunmayan
   });
 });
 
-test("şifre değiştirme sayfası gerçek hesap seçimi ve erişilebilir OTP bileşenlerini sunar", async () => {
+test("şifre yenileme sayfası giriş kaynağına kilitlenir ve erişilebilir OTP bileşenlerini sunar", async () => {
   const response = await fetch(`${baseUrl}/password-reset/`);
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Yönetici ve Personel Şifre Değiştirme/);
-  assert.match(html, /name="scope" value="admin"/);
-  assert.match(html, /name="scope" value="personel"/);
-  assert.match(html, /id="personelInput"/);
+  assert.match(html, /Güvenli Şifre Yenileme/);
+  assert.match(html, /id="accountScope" type="hidden"/);
+  assert.doesNotMatch(html, /name="scope"|id="personelInput"/);
   assert.equal((html.match(/aria-label="Doğrulama kodu \d\. hane"/g) || []).length, 6);
   assert.match(html, /autocomplete="one-time-code"/);
   assert.match(html, /\/assets\/scripts\/password-reset\.js/);
@@ -1414,7 +1553,10 @@ test("şifre değiştirme sayfası gerçek hesap seçimi ve erişilebilir OTP bi
   const scriptResponse = await fetch(`${baseUrl}/assets/scripts/password-reset.js`);
   assert.equal(scriptResponse.status, 200);
   assert.match(scriptResponse.headers.get("content-type") || "", /javascript/i);
-  assert.match(await scriptResponse.text(), /handleOtpPaste/);
+  const script = await scriptResponse.text();
+  assert.match(script, /handleOtpPaste/);
+  assert.match(script, /password-reset\/\$\{encodeURIComponent\(state\.scope\)\}/);
+  assert.doesNotMatch(script, /personelAccounts/);
 });
 
 test("devre dışı site SSE endpoint'i açıkça 410 döner", async () => {

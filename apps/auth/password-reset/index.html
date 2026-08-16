@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Yönetici ve Personel Şifre Değiştirme | Tahmisçi</title>
+  <title>Güvenli Şifre Yenileme | Tahmisçi</title>
   <style>
     :root {
       color-scheme: light;
@@ -101,31 +101,20 @@
       outline-offset: 2px;
     }
 
-    .account-switch {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 6px;
-      padding: 5px;
+    .account-scope {
+      display: flex;
+      min-height: 44px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 10px;
       background: var(--surface-soft);
-    }
-
-    .account-switch label { min-width: 0; cursor: pointer; }
-    .account-switch input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-    .account-switch span {
-      display: grid;
-      min-height: 42px;
-      place-items: center;
-      border: 1px solid transparent;
-      border-radius: 9px;
       color: var(--muted);
-      font-size: 13px;
-      font-weight: 800;
-      text-align: center;
+      font-size: 12px;
     }
-    .account-switch input:checked + span { border-color: rgba(90, 47, 29, .28); background: var(--surface); color: var(--coffee); box-shadow: 0 5px 14px rgba(69, 35, 18, .08); }
-    .account-switch input:focus-visible + span { outline: 3px solid rgba(185, 80, 45, .28); outline-offset: 2px; }
+    .account-scope strong { color: var(--coffee); font-size: 13px; }
 
     .authorized-note, .masked-email {
       display: grid;
@@ -214,35 +203,25 @@
       <header class="auth-head">
         <img class="brand-logo" src="/assets/brand/logo-primary.png" alt="Tahmisçi Coffee">
         <p class="eyebrow">Güvenli Hesap İşlemi</p>
-        <h1 id="pageTitle">Yönetici ve Personel Şifre Değiştirme</h1>
-        <p class="intro">Yetkili e-posta adresinize gönderilen doğrulama koduyla yönetici veya personel şifrenizi güvenle yenileyin.</p>
+        <h1 id="pageTitle">Şifremi Unuttum</h1>
+        <p class="intro" id="pageIntro">Doğrulanmış hesap e-postanıza gönderilen tek kullanımlık kodla şifrenizi güvenle yenileyin.</p>
       </header>
 
       <form id="requestForm" class="step" novalidate>
-        <fieldset class="field" style="border:0;margin:0;padding:0">
-          <legend class="field-label">Hesap türü</legend>
-          <div class="account-switch" role="radiogroup" aria-label="Hesap türü">
-            <label><input type="radio" name="scope" value="admin" checked><span>Yönetici</span></label>
-            <label><input type="radio" name="scope" value="personel"><span>Personel</span></label>
-          </div>
-        </fieldset>
-
-        <label class="field" id="personelField" hidden>
-          <span class="field-label">Personel hesabı</span>
-          <select id="personelInput" disabled>
-            <option value="">Hesaplar güvenli doğrulamadan sonra listelenir</option>
-          </select>
-          <span class="field-help">Doğrulama kodu yalnızca seçtiğiniz personel hesabı için geçerli olur.</span>
-        </label>
+        <div class="field">
+          <span class="field-label">Hesap kapsamı</span>
+          <div class="account-scope" aria-live="polite"><span>Bu kurtarma bağlantısı kilitlidir.</span><strong id="accountScopeLabel">Yönetici</strong></div>
+          <input id="accountScope" type="hidden" value="admin">
+        </div>
 
         <label class="field">
-          <span class="field-label">Yetkili e-posta</span>
-          <input id="emailInput" type="email" autocomplete="email" inputmode="email" required autofocus placeholder="ornek@tahmisci.com">
+          <span class="field-label">Kullanıcı adı veya e-posta</span>
+          <input id="identifierInput" type="text" autocomplete="username" required autofocus maxlength="254" placeholder="Kullanıcı adı veya e-posta">
         </label>
 
         <div class="authorized-note">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4.5 6v5.5c0 4.6 3.2 7.8 7.5 9.5 4.3-1.7 7.5-4.9 7.5-9.5V6z"/><path d="m9 12 2 2 4-4"/></svg>
-          <span>Hesap bilgileri yalnızca sunucudaki yetkili reset e-postasıyla eşleştiğinde işlenir.</span>
+          <span>Güvenliğiniz için hesabın varlığı veya e-posta durumu bu ekranda açıklanmaz.</span>
         </div>
 
         <button class="ui-button ui-button--primary" id="requestButton" type="submit">Doğrulama kodu gönder</button>
@@ -284,12 +263,12 @@
           <button class="ui-button ui-button--primary" id="confirmButton" type="submit">Şifreyi değiştir</button>
           <div class="inline-actions">
             <button class="ui-button ui-button--secondary" id="sendAgainButton" type="button">Kodu tekrar gönder</button>
-            <button class="ui-button ui-button--text" id="changeAccountButton" type="button">Hesap veya e-postayı değiştir</button>
+            <button class="ui-button ui-button--text" id="changeAccountButton" type="button">Hesap bilgisini değiştir</button>
           </div>
         </div>
       </form>
 
-      <div class="status" id="status" role="status" aria-live="polite">Hesap türünü ve yetkili e-postayı girin.</div>
+      <div class="status" id="status" role="status" aria-live="polite">Hesabınıza ait kullanıcı adını veya e-postayı girin.</div>
       <footer class="auth-footer"><a id="loginLink" href="/yonetici/">← Giriş ekranına dön</a></footer>
     </section>
   </main>

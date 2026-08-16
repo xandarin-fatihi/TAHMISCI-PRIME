@@ -14,14 +14,16 @@
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20260801-phase2">
   <link rel="stylesheet" href="styles/admin-compact.css?v=20260809-prephase6-shift-layout">
   <link rel="stylesheet" href="styles/admin-components.css?v=20260809-excel-center-closure">
-  <link rel="stylesheet" href="styles/notifications.css?v=20260811-notification-center">
-  <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260809-phase6">
+  <link rel="stylesheet" href="styles/notifications.css?v=20260816-notification-cleanup">
+  <link rel="stylesheet" href="/shared/styles/account-security.css?v=20260816-account-security">
+  <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260816-account-notifications">
   <script src="/shared/scripts/category-icons.js?v=20260714"></script>
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
   <script src="/shared/scripts/menu-design-schema.js?v=20260802-prephase4-design-chain"></script>
-  <script src="scripts/app.js?v=20260815-performance" defer></script>
+  <script src="scripts/app.js?v=20260816-notification-cleanup" defer></script>
   <script src="scripts/live-preview.js?v=20260802-preview-settings" defer></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260809-phase6" defer></script>
+  <script src="/shared/scripts/account-security.js?v=20260816-account-security" defer></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260816-install-prompt" defer></script>
 </head>
 <body>
   <section class="login-screen" id="loginScreen">
@@ -33,7 +35,7 @@
         <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Panel şifresi">
       </label>
       <button class="primary-action ui-button ui-button--primary ui-button--block" type="submit">Panele Gir</button>
-      <a class="login-help-link" href="/password-reset/">Şifremi unuttum</a>
+      <a class="login-help-link" href="/password-reset/?scope=admin&amp;returnTo=%2Fyonetici%2F">Şifremi unuttum</a>
       <p class="login-error" id="loginError" hidden>Şifre hatalı. Lütfen tekrar deneyin.</p>
     </form>
   </section>
@@ -67,7 +69,7 @@
         <a href="#productEditorCard" data-panel-section="product"><svg aria-hidden="true"><use href="#panel-icon-product"/></svg><span class="panel-nav-label">Ürün Düzenleme</span></a>
         <a href="#bulkPriceCard" data-panel-section="bulkPrice"><svg aria-hidden="true"><use href="#panel-icon-price"/></svg><span class="panel-nav-label">Toplu Fiyat Güncelleme</span></a>
         <a href="#dataImportCenter" data-panel-section="dataCenter"><svg aria-hidden="true"><use href="#panel-icon-import"/></svg><span class="panel-nav-label">Excel Veri Merkezi</span></a>
-        <a href="#stockCard" data-panel-section="stock"><svg aria-hidden="true"><use href="#panel-icon-stock"/></svg><span class="panel-nav-label">Stok Düzenleme</span></a>
+        <a href="#stockCard" data-panel-section="stock" aria-label="Stok &amp; Sevkiyat"><svg aria-hidden="true"><use href="#panel-icon-stock"/></svg><span class="panel-nav-label">Stok &amp; Sevkiyat</span></a>
         <a href="#recipeEditorCard" data-panel-section="recipe"><svg aria-hidden="true"><use href="#panel-icon-recipe"/></svg><span class="panel-nav-label">Reçete Düzenleme</span></a>
         <!-- PASIF_SITE_MODULU_BASLANGIC
         <a href="#siteEditorCard" data-panel-section="site">Site</a>
@@ -370,7 +372,23 @@
         </section>
       </section>
 
-      <section class="section-panel stock-admin-panel" id="stockCard" data-section-panel="stock">
+      <section class="section-panel stock-admin-panel" id="stockCard" data-section-panel="stock" aria-labelledby="stockPageTitle">
+        <div class="staff-page-head stock-page-head">
+          <div>
+            <p class="eyebrow">Stok &amp; Sevkiyat Yönetimi</p>
+            <h3 id="stockPageTitle">Stok &amp; Sevkiyat</h3>
+            <p>Stok kayıtlarını yönetin ve personelden gelen sevkiyatları inceleyin.</p>
+          </div>
+        </div>
+
+        <div class="stock-domain-stack stock-main-col">
+        <details class="stock-accordion stock-domain-accordion" id="stockManagementAccordion" open>
+          <summary>
+            <span class="stock-step">1</span>
+            <span><strong>Stok Yönetimi</strong><small>Stok ürünlerini, hareketleri ve sipariş önerilerini yönetin.</small></span>
+            <i aria-hidden="true"></i>
+          </summary>
+          <div class="stock-accordion-body">
         <div class="stock-summary-grid" id="stockSummaryGrid"></div>
 
         <div class="stock-admin-layout">
@@ -419,7 +437,7 @@
             <section class="panel-card stock-list-card">
               <div class="stock-section-heading stock-list-heading">
                 <div>
-                  <h4>Stok Düzenleme</h4>
+                  <h4>Stok Yönetimi</h4>
                   <p>Kategorileri ve stok ürünlerini düzenleyin; değişiklikler personel ekranına anında yansır.</p>
                 </div>
               </div>
@@ -458,6 +476,24 @@
               <div class="stock-order-list" id="stockOrderSuggestions"></div>
             </section>
           </aside>
+        </div>
+          </div>
+        </details>
+
+        <details class="stock-accordion workforce-accordion" id="workforceShipmentsAccordion">
+          <summary>
+            <span class="stock-step">2</span>
+            <span><strong>Sevkiyat Onayları</strong><small>Personelden gelen sevkiyatları inceleyin, onaylayın veya reddedin.</small></span>
+            <i aria-hidden="true"></i>
+          </summary>
+          <div class="stock-accordion-body">
+            <section class="staff-box staff-box-wide workforce-panel" aria-label="Sevkiyat onayları">
+              <div id="workforceShipmentsPanel">
+                <div class="workforce-loading">Sevkiyat verileri yükleniyor...</div>
+              </div>
+            </section>
+          </div>
+        </details>
         </div>
       </section>
 
@@ -535,6 +571,37 @@
                   <summary><span>3</span><strong>Güvenlik</strong><i aria-hidden="true"></i></summary>
                   <div class="settings-accordion-body">
                     <p class="muted">Giriş denemesi sınırı sunucu tarafından uygulanır. Bu ekranda sahte bir güvenlik sayacı tutulmaz.</p>
+                    <section class="account-security-card" data-account-security data-account-scope="admin" aria-labelledby="adminAccountSecurityTitle">
+                      <header class="account-security-head">
+                        <div>
+                          <p class="eyebrow">Hesap güvenliği</p>
+                          <h4 id="adminAccountSecurityTitle">Doğrulanmış yönetici e-postası</h4>
+                          <p>Şifre kurtarma ve güvenlik bildirimleri yalnız doğrulanmış hesap adresine gönderilir.</p>
+                        </div>
+                        <span class="account-security-state" id="adminAccountEmailState" data-account-email-state>Denetlenmedi</span>
+                      </header>
+                      <form class="account-security-email-form" id="adminAccountEmailForm" data-account-email-form novalidate>
+                        <label><span>Hesap e-postası</span><input id="adminAccountEmail" data-account-email type="email" name="email" maxlength="254" autocomplete="email" required placeholder="yonetici@tahmisci.com"></label>
+                        <button class="ui-button ui-button--secondary" id="adminAccountEmailSave" type="submit">E-postayı kaydet</button>
+                      </form>
+                      <div class="account-security-verification" data-account-verification hidden>
+                        <div><strong data-account-verification-title>E-posta doğrulaması gerekli</strong><span data-account-verification-copy>Adrese altı haneli güvenlik kodu gönderin.</span></div>
+                        <button class="ui-button ui-button--secondary" id="adminAccountEmailVerificationRequest" data-account-email-send type="button">Doğrulama kodu gönder</button>
+                        <form class="account-security-code-form" id="adminAccountEmailVerificationForm" data-account-email-confirm-form hidden novalidate>
+                          <label><span>Altı haneli kod</span><input id="adminAccountEmailCode" data-account-email-code type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>
+                          <button class="ui-button ui-button--primary" id="adminAccountEmailVerificationConfirm" type="submit">E-postayı doğrula</button>
+                        </form>
+                      </div>
+                      <div class="account-security-meta">
+                        <span><small>Etkin adres</small><strong data-account-current-email>Henüz eklenmedi</strong></span>
+                        <span><small>Son şifre yenileme</small><strong data-account-password-reset>Bilgi yok</strong></span>
+                      </div>
+                      <div class="account-security-danger-row">
+                        <span><strong>Tüm cihazlardan çıkış yap</strong><small>Açık oturumları ve hesaba bağlı bildirim cihazlarını güvenle kapatır.</small></span>
+                        <button class="ui-button ui-button--danger ui-button--sm" type="button" data-account-logout-all>Tümünden çıkış yap</button>
+                      </div>
+                      <p class="account-security-message" id="adminAccountSecurityMessage" data-account-security-message role="status" aria-live="polite"></p>
+                    </section>
                     <div class="settings-security-actions">
                       <button class="line-action" id="settingsChangePassword" type="button">Şifreyi değiştir</button>
                       <button class="line-action" id="settingsLogoutNow" type="button">Oturumu kapat</button>
@@ -1606,7 +1673,7 @@
               <div>
                 <p class="eyebrow">Personel Yönetimi</p>
                 <h3>Personel</h3>
-                <p>Personel hesaplarını yönetin, eğitim/görev programları atayın ve kayıtları takip edin.</p>
+                <p>Personel hesaplarını, yapılacakları, shift planlarını ve kayıt defterini yönetin.</p>
               </div>
             </div>
 
@@ -1641,6 +1708,11 @@
                         <input id="staffUsername" type="text" autocomplete="off" placeholder="Kullanıcı adı">
                       </label>
                       <label>
+                        <span>Hesap e-postası</span>
+                        <input id="staffUserEmail" type="email" autocomplete="email" maxlength="254" required placeholder="personel@tahmisci.com">
+                        <small id="staffUserEmailStatus">Personel ilk girişinde bu adresi doğrular.</small>
+                      </label>
+                      <label>
                         <span>Şifre</span>
                         <input id="staffPassword" type="password" autocomplete="new-password" placeholder="Şifre belirleyin">
                       </label>
@@ -1668,7 +1740,9 @@
                 </div>
               </details>
 
-              <details class="staff-accordion" open>
+              <!-- // PASİF MODÜL: Eğitim / Görev / Sınav Atama — yeniden etkinleştirilmek üzere korunuyor. -->
+              <template id="inactiveStaffTrainingModule">
+              <details class="staff-accordion">
                 <summary class="staff-accordion-head">
                   <span class="staff-step">2</span>
                   <div>
@@ -1745,10 +1819,45 @@
                   </section>
                 </div>
               </details>
+              </template>
+
+              <details class="staff-accordion workforce-accordion" id="workforceTasksAccordion">
+                <summary class="staff-accordion-head">
+                  <span class="staff-step">2</span>
+                  <div>
+                    <h4>Yapılacaklar</h4>
+                    <p>Bireysel veya toplu görev atayın.</p>
+                  </div>
+                  <span class="staff-accordion-chevron" aria-hidden="true"></span>
+                </summary>
+                <div class="staff-accordion-body">
+                  <section class="staff-box staff-box-wide workforce-panel" id="workforceTasksPanel">
+                    <div class="workforce-loading">Görevler yükleniyor...</div>
+                  </section>
+                </div>
+              </details>
+
+              <details class="staff-accordion workforce-accordion" id="workforceShiftsAccordion">
+                <summary class="staff-accordion-head">
+                  <span class="staff-step">3</span>
+                  <div>
+                    <h4>Shift Yönetimi</h4>
+                    <p>Haftalık vardiya planlarını ve personel taleplerini yönetin.</p>
+                  </div>
+                  <span class="staff-accordion-chevron" aria-hidden="true"></span>
+                </summary>
+                <div class="staff-accordion-body">
+                  <section class="staff-box staff-box-wide workforce-panel">
+                    <div id="workforceShiftsPanel">
+                      <div class="workforce-loading">Shift verileri yükleniyor...</div>
+                    </div>
+                  </section>
+                </div>
+              </details>
 
               <details class="staff-accordion" id="staffRecordsAccordion">
                 <summary class="staff-accordion-head staff-record-head">
-                  <span class="staff-step">3</span>
+                  <span class="staff-step">4</span>
                   <div>
                     <h4>Kayıt Defteri</h4>
                     <p>Atanan programlar ve personel aktiviteleri.</p>
@@ -1781,44 +1890,6 @@
                       <button type="button" data-staff-activity-tab="security">Güvenlik</button>
                     </div>
                     <div class="staff-activity-list" id="staffActivityList"></div>
-                  </section>
-                </div>
-              </details>
-
-              <details class="staff-accordion workforce-accordion" id="workforceTasksAccordion">
-                <summary class="staff-accordion-head">
-                  <span class="staff-step">4</span>
-                  <div>
-                    <h4>Yapılacaklar</h4>
-                    <p>Bireysel veya toplu görev atayın.</p>
-                  </div>
-                  <span class="staff-accordion-chevron" aria-hidden="true"></span>
-                </summary>
-                <div class="staff-accordion-body">
-                  <section class="staff-box staff-box-wide workforce-panel" id="workforceTasksPanel">
-                    <div class="workforce-loading">Görevler yükleniyor...</div>
-                  </section>
-                </div>
-              </details>
-
-              <details class="staff-accordion workforce-accordion" id="workforceOperationsAccordion">
-                <summary class="staff-accordion-head">
-                  <span class="staff-step">5</span>
-                  <div>
-                    <h4>Sevkiyat ve Shift Yönetimi</h4>
-                    <p>Sevkiyat onaylarını ve haftalık vardiyaları yönetin.</p>
-                  </div>
-                  <span class="staff-accordion-chevron" aria-hidden="true"></span>
-                </summary>
-                <div class="staff-accordion-body">
-                  <section class="staff-box staff-box-wide workforce-panel">
-                    <div class="workforce-section-tabs" role="tablist" aria-label="Sevkiyat ve shift yönetimi">
-                      <button class="is-active" type="button" role="tab" data-workforce-tab="shipments">Sevkiyat Onayları</button>
-                      <button type="button" role="tab" data-workforce-tab="shifts">Shift Yönetimi</button>
-                    </div>
-                    <div id="workforceOperationsPanel">
-                      <div class="workforce-loading">Operasyon verileri yükleniyor...</div>
-                    </div>
                   </section>
                 </div>
               </details>
@@ -2052,8 +2123,9 @@
 
     <div class="admin-notification-toolbar">
       <div class="admin-notification-filters" role="group" aria-label="Bildirim durumu">
-        <button type="button" data-notification-filter="all" aria-pressed="true">Tümü</button>
+        <button type="button" data-notification-filter="all" aria-pressed="true">Gelen kutusu</button>
         <button type="button" data-notification-filter="unread" aria-pressed="false">Okunmamış</button>
+        <button type="button" data-notification-filter="archived" aria-pressed="false">Arşiv</button>
       </div>
       <label class="admin-notification-category">
         <span class="sr-only">Bildirim kategorisi</span>
@@ -2062,12 +2134,12 @@
           <option value="task">Yapılacaklar</option>
           <option value="shipment">Sevkiyat</option>
           <option value="shift">Shift</option>
-          <option value="training">Eğitim</option>
           <option value="stock">Stok</option>
           <option value="system">Sistem</option>
         </select>
       </label>
       <button class="ui-button ui-button--ghost ui-button--sm" id="adminNotificationReadAll" type="button">Tümünü okundu yap</button>
+      <button class="ui-button ui-button--ghost ui-button--sm" id="adminNotificationClearArchive" type="button" hidden>Arşivi temizle</button>
     </div>
 
     <p class="admin-notification-message" id="adminNotificationMessage" role="status" aria-live="polite"></p>
@@ -2084,9 +2156,10 @@
       </summary>
       <form id="adminNotificationPreferences" class="admin-notification-preferences">
         <label class="admin-notification-email">
-          <span>Yönetici bildirim e-postası</span>
-          <input type="email" name="emailAddress" maxlength="254" autocomplete="email" placeholder="yonetici@tahmisci.com">
+          <span>Doğrulanmış yönetici e-postası</span>
+          <input type="email" name="emailAddress" maxlength="254" autocomplete="email" placeholder="Önce hesap e-postanızı doğrulayın" readonly aria-readonly="true" aria-describedby="adminNotificationEmailHelp">
         </label>
+        <div class="admin-notification-email-help" id="adminNotificationEmailHelp"><span>Bildirim e-postası hesap güvenliği alanından yönetilir.</span><button class="ui-button ui-button--ghost ui-button--sm" id="adminNotificationManageEmail" type="button">Hesap e-postasını yönet</button></div>
         <fieldset>
           <legend>Kanallar</legend>
           <label><input type="checkbox" name="inAppEnabled"> <span>Panel içi bildirim</span></label>
@@ -2098,7 +2171,6 @@
           <label><input type="checkbox" name="taskNotifications"> <span>Yapılacaklar</span></label>
           <label><input type="checkbox" name="shipmentNotifications"> <span>Sevkiyat</span></label>
           <label><input type="checkbox" name="shiftNotifications"> <span>Vardiya ve talepler</span></label>
-          <label><input type="checkbox" name="trainingNotifications"> <span>Eğitim ve reçete</span></label>
           <label><input type="checkbox" name="stockNotifications"> <span>Kritik stok</span></label>
           <label><input type="checkbox" checked disabled> <span>Kritik sistem olayları</span></label>
         </fieldset>
@@ -2121,6 +2193,10 @@
           <button class="ui-button ui-button--secondary ui-button--sm" id="adminNotificationPush" type="button">Anlık bildirimi etkinleştir</button>
           <button class="ui-button ui-button--ghost ui-button--sm" id="adminNotificationTest" type="button">Test bildirimi gönder</button>
         </div>
+        <section class="admin-notification-devices" aria-labelledby="adminNotificationDevicesTitle">
+          <header><div><strong id="adminNotificationDevicesTitle">Bağlı bildirim cihazları</strong><small>Hesabınıza bağlı tarayıcıları görüntüleyin ve artık kullanmadıklarınızı kaldırın.</small></div><button class="ui-button ui-button--ghost ui-button--sm" id="adminNotificationDevicesRefresh" type="button">Yenile</button></header>
+          <div class="admin-notification-device-list" id="adminNotificationDevices" aria-live="polite"></div>
+        </section>
         <button class="ui-button ui-button--primary ui-button--block" id="adminNotificationSavePreferences" type="submit">Ayarları kaydet</button>
         <div class="admin-notification-health" id="adminNotificationHealth" aria-live="polite"></div>
       </form>

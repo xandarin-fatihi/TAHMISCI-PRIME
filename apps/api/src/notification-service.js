@@ -3,7 +3,7 @@
 const crypto = require("crypto");
 const { EventEmitter } = require("events");
 
-const NOTIFICATION_CATEGORIES = Object.freeze(["task", "shipment", "shift", "training", "stock", "system"]);
+const NOTIFICATION_CATEGORIES = Object.freeze(["task", "shipment", "shift", "stock", "system"]);
 const NOTIFICATION_SEVERITIES = Object.freeze(["info", "success", "warning", "critical"]);
 const MAX_NOTIFICATIONS = 10000;
 const MAX_OUTBOX_ITEMS = 20000;
@@ -14,6 +14,8 @@ notificationEvents.setMaxListeners(500);
 function createNotificationInStore(data, input, options = {}) {
   if (!data || typeof data !== "object") throw new TypeError("Bildirim için geçerli store verisi gerekli.");
   const normalized = normalizeNotificationInput(input, options);
+  // PASİF MODÜL: Eğitim bildirimleri yeni kayıt veya teslim kuyruğu üretmez.
+  if (isRetiredNotificationCategory(normalized.category, normalized.eventType)) return null;
   data.notifications = Array.isArray(data.notifications) ? data.notifications : [];
   data.notificationPreferences = Array.isArray(data.notificationPreferences) ? data.notificationPreferences : [];
   data.notificationOutbox = Array.isArray(data.notificationOutbox) ? data.notificationOutbox : [];
@@ -44,6 +46,7 @@ function createNotificationInStore(data, input, options = {}) {
     entityId: normalized.entityId,
     deepLink: normalized.deepLink,
     createdAt,
+    updatedAt: createdAt,
     readAt: null,
     archivedAt: null,
     dedupeKey: normalized.dedupeKey,
@@ -59,8 +62,9 @@ function createNotificationInStore(data, input, options = {}) {
   if (categoryEnabled && preference.pushEnabled) {
     const subscriptions = data.pushSubscriptions.filter((item) => item
       && !item.disabledAt
-      && item.ownerRole === notification.recipientRole
-      && String(item.ownerId) === notification.recipientId);
+      && !item.revokedAt
+      && normalizeRole(item.ownerRole || item.recipientRole) === notification.recipientRole
+      && String(notification.recipientRole === "manager" ? "manager" : item.ownerId || item.recipientId || "") === notification.recipientId);
     for (const subscription of subscriptions) {
       enqueueOutbox(data, notification, "push", subscription.endpoint, { ...options, subscriptionId: subscription.id });
     }
@@ -86,17 +90,18 @@ function getNotificationPreferences(data, ownerRole, ownerId) {
   const categories = existing && existing.categories && typeof existing.categories === "object" ? existing.categories : {};
   const reminders = existing && existing.reminders && typeof existing.reminders === "object" ? existing.reminders : {};
   const masterReminder = existing ? legacyFlag(existing.reminderNotifications, categories.reminder, true) : true;
+  const verifiedEmail = getVerifiedAccountEmail(data, role, id);
   return {
     ownerRole: role,
     ownerId: id,
     inAppEnabled: existing ? legacyFlag(existing.inAppEnabled, existing.inApp, true) : true,
     pushEnabled: existing ? legacyFlag(existing.pushEnabled, existing.push, false) : false,
-    emailEnabled: existing ? legacyFlag(existing.emailEnabled, existing.email, false) : false,
-    emailAddress: normalizeEmail(existing && existing.emailAddress),
+    emailEnabled: Boolean(verifiedEmail && (existing ? legacyFlag(existing.emailEnabled, existing.email, false) : false)),
+    emailAddress: verifiedEmail,
+    emailVerified: Boolean(verifiedEmail),
     taskNotifications: preferenceFlag(existing, "taskNotifications", categories.task ?? categories.tasks, true),
     shipmentNotifications: preferenceFlag(existing, "shipmentNotifications", categories.shipment ?? categories.shipments, true),
     shiftNotifications: preferenceFlag(existing, "shiftNotifications", categories.shift ?? categories.shifts, true),
-    trainingNotifications: preferenceFlag(existing, "trainingNotifications", categories.training ?? categories.trainings, true),
     stockNotifications: preferenceFlag(existing, "stockNotifications", categories.stock, true),
     systemNotifications: preferenceFlag(existing, "systemNotifications", categories.system, true),
     reminderNotifications: masterReminder,
@@ -120,18 +125,26 @@ function updateNotificationPreferencesInStore(data, ownerRole, ownerId, input, o
   const channels = source.channels && typeof source.channels === "object" ? source.channels : {};
   const categories = source.categories && typeof source.categories === "object" ? source.categories : {};
   const reminders = source.reminders && typeof source.reminders === "object" ? source.reminders : {};
+  const verifiedEmail = getVerifiedAccountEmail(data, current.ownerRole, current.ownerId);
+  const requestedEmailEnabled = booleanValue(source.emailEnabled, booleanValue(channels.email, current.emailEnabled));
+  if (requestedEmailEnabled && !verifiedEmail) {
+    const error = new Error("E-posta bildirimleri için doğrulanmış hesap e-postası gerekli.");
+    error.status = 409;
+    error.code = "EMAIL_VERIFICATION_REQUIRED";
+    throw error;
+  }
   const masterReminder = booleanValue(source.reminderNotifications, booleanValue(categories.reminder, current.reminderNotifications));
   const masterWasExplicit = typeof source.reminderNotifications === "boolean" || typeof categories.reminder === "boolean";
   const next = {
     ...current,
     inAppEnabled: booleanValue(source.inAppEnabled, booleanValue(channels.inApp, current.inAppEnabled)),
     pushEnabled: booleanValue(source.pushEnabled, booleanValue(channels.push, current.pushEnabled)),
-    emailEnabled: booleanValue(source.emailEnabled, booleanValue(channels.email, current.emailEnabled)),
-    emailAddress: normalizeEmail(source.emailAddress !== undefined ? source.emailAddress : current.emailAddress),
+    emailEnabled: Boolean(requestedEmailEnabled && verifiedEmail),
+    emailAddress: verifiedEmail,
+    emailVerified: Boolean(verifiedEmail),
     taskNotifications: booleanValue(source.taskNotifications, booleanValue(categories.task ?? categories.tasks, current.taskNotifications)),
     shipmentNotifications: booleanValue(source.shipmentNotifications, booleanValue(categories.shipment ?? categories.shipments, current.shipmentNotifications)),
     shiftNotifications: booleanValue(source.shiftNotifications, booleanValue(categories.shift ?? categories.shifts, current.shiftNotifications)),
-    trainingNotifications: booleanValue(source.trainingNotifications, booleanValue(categories.training ?? categories.trainings, current.trainingNotifications)),
     stockNotifications: booleanValue(source.stockNotifications, booleanValue(categories.stock, current.stockNotifications)),
     systemNotifications: booleanValue(source.systemNotifications, booleanValue(categories.system, current.systemNotifications)),
     reminderNotifications: masterReminder,
@@ -146,11 +159,6 @@ function updateNotificationPreferencesInStore(data, ownerRole, ownerId, input, o
     timezone: normalizeTimezone(source.timezone || current.timezone),
     updatedAt: nowIso(options.now)
   };
-  if (next.emailAddress && !isValidEmail(next.emailAddress)) {
-    const error = new Error("Geçerli bir bildirim e-posta adresi girin.");
-    error.status = 400;
-    throw error;
-  }
   const index = data.notificationPreferences.findIndex((item) => item
     && normalizeRole(item.ownerRole || item.recipientRole) === current.ownerRole
     && String(current.ownerRole === "manager" ? "manager" : item.ownerId || item.recipientId || "") === current.ownerId);
@@ -160,7 +168,8 @@ function updateNotificationPreferencesInStore(data, ownerRole, ownerId, input, o
 }
 
 function publishNotificationEvent(notification) {
-  if (!notification || !notification.id) return;
+  if (!notification || !notification.id
+    || isRetiredNotificationCategory(notification.category, notification.eventType)) return;
   notificationEvents.emit("notification", notification);
 }
 
@@ -169,9 +178,21 @@ function subscribeNotificationEvents(listener) {
   return () => notificationEvents.off("notification", listener);
 }
 
+function publishNotificationStateEvent(event) {
+  if (!event || !normalizeRole(event.recipientRole) || !event.recipientId) return;
+  notificationEvents.emit("state", event);
+}
+
+function subscribeNotificationStateEvents(listener) {
+  notificationEvents.on("state", listener);
+  return () => notificationEvents.off("state", listener);
+}
+
 function recipientMatches(notification, role, id) {
   const normalizedRole = normalizeRole(role);
+  if (!normalizedRole) return false;
   const normalizedId = normalizedRole === "manager" ? "manager" : String(id || "").trim();
+  if (!normalizedId) return false;
   return Boolean(notification
     && normalizeRole(notification.recipientRole) === normalizedRole
     && String(normalizedRole === "manager" ? "manager" : notification.recipientId) === normalizedId);
@@ -208,19 +229,26 @@ function normalizeNotificationInput(input, options = {}) {
 function enqueueOutbox(data, notification, channel, destination, options = {}) {
   if (!data || !notification || !["email", "push"].includes(channel)) return null;
   data.notificationOutbox = Array.isArray(data.notificationOutbox) ? data.notificationOutbox : [];
+  const recipientRole = normalizeRole(notification.recipientRole);
+  const recipientId = recipientRole === "manager" ? "manager" : String(notification.recipientId || "").trim();
+  if (!recipientRole || !recipientId) return null;
   const normalizedDestination = channel === "email" ? normalizeEmail(destination) : String(destination || "").trim().slice(0, 2048);
   if (!normalizedDestination) return null;
   const suffix = channel === "push" ? options.subscriptionId || normalizedDestination : "email";
   const dedupeKey = `${notification.id}:${channel}:${suffix}`.slice(0, 240);
-  const existing = data.notificationOutbox.find((item) => item && item.dedupeKey === dedupeKey);
+  const existing = data.notificationOutbox.find((item) => item
+    && item.dedupeKey === dedupeKey
+    && item.channel === channel
+    && normalizeRole(item.recipientRole) === recipientRole
+    && String(recipientRole === "manager" ? "manager" : item.recipientId || "") === recipientId);
   if (existing) return existing;
   const createdAt = notification.createdAt || nowIso(options.now);
   const item = {
     id: `notification-outbox-${crypto.randomUUID()}`,
     notificationId: notification.id,
     channel,
-    recipientRole: notification.recipientRole,
-    recipientId: notification.recipientId,
+    recipientRole,
+    recipientId,
     destination: normalizedDestination,
     status: "pending",
     attemptCount: 0,
@@ -245,7 +273,7 @@ function preferenceCategoryEnabled(preference, category) {
     case "task": return preference.taskNotifications;
     case "shipment": return preference.shipmentNotifications;
     case "shift": return preference.shiftNotifications;
-    case "training": return preference.trainingNotifications;
+    case "training": return false;
     case "stock": return preference.stockNotifications;
     default: return preference.systemNotifications;
   }
@@ -259,6 +287,13 @@ function normalizeNotificationCategory(value) {
   if (["training", "trainings", "egitim", "sinav", "recete"].some((term) => key.includes(term))) return "training";
   if (["stock", "stok"].some((term) => key.includes(term))) return "stock";
   return "system";
+}
+
+function isRetiredNotificationCategory(value, eventType = "") {
+  if (normalizeNotificationCategory(value) === "training") return true;
+  const event = normalizeLookup(eventType);
+  return ["recipe assignment", "training assigned", "training completed", "training started", "retry training"]
+    .some((term) => event.includes(term));
 }
 
 function normalizeRole(value) {
@@ -293,8 +328,8 @@ function sanitizeMetadata(value, depth = 0) {
 
 function retainNotifications(items, maxItems = MAX_NOTIFICATIONS) {
   if (!Array.isArray(items) || items.length <= maxItems) return items;
-  const protectedItems = items.filter((item) => item && !item.readAt && !item.archivedAt);
-  const removable = items.filter((item) => !item || item.readAt || item.archivedAt)
+  const protectedItems = items.filter((item) => item && !item.deletedAt && !item.readAt && !item.archivedAt);
+  const removable = items.filter((item) => !item || item.deletedAt || item.readAt || item.archivedAt)
     .sort((left, right) => String(right && right.createdAt || "").localeCompare(String(left && left.createdAt || "")));
   const slots = Math.max(0, maxItems - protectedItems.length);
   return protectedItems.concat(removable.slice(0, slots))
@@ -323,6 +358,17 @@ function isValidEmail(value) {
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase().slice(0, 254);
+}
+
+function getVerifiedAccountEmail(data, ownerRole, ownerId) {
+  const role = normalizeRole(ownerRole);
+  const account = role === "manager"
+    ? data && data.admin
+    : (Array.isArray(data && data.recipeUsers) ? data.recipeUsers : [])
+      .find((item) => item && String(item.id || "") === String(ownerId || ""));
+  if (!account || !account.emailVerifiedAt) return "";
+  const email = normalizeEmail(account.emailNormalized || account.email);
+  return isValidEmail(email) ? email : "";
 }
 
 function normalizeClock(value, fallback) {
@@ -380,15 +426,19 @@ module.exports = {
   createNotificationsInStore,
   enqueueOutbox,
   getNotificationPreferences,
+  getVerifiedAccountEmail,
   isMandatoryNotification,
+  isRetiredNotificationCategory,
   normalizeNotificationCategory,
   normalizeRole,
   preferenceCategoryEnabled,
   publishNotificationEvent,
+  publishNotificationStateEvent,
   recipientMatches,
   retainNotifications,
   retainOutbox,
   sanitizeMetadata,
   subscribeNotificationEvents,
+  subscribeNotificationStateEvents,
   updateNotificationPreferencesInStore
 };

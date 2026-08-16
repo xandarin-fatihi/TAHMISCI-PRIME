@@ -59,6 +59,7 @@
       custom: { startTime: "12:00", endTime: "20:00" }
     }
   };
+  const refreshTokens = new Map();
   let activePreviewSection = "staffAccess";
 
   function requestId(prefix) {
@@ -80,6 +81,8 @@
   function acceptMutationResult(result) {
     const revision = Number(result && (result.revision ?? result.workforceRevision));
     if (Number.isInteger(revision) && revision >= 0) state.workforceRevision = revision;
+    // Mutasyon sonrası sayaçlar ve stok etkisi yalnız backend'in güncel cevabından yeniden okunur.
+    state.stale = true;
     return result;
   }
 
@@ -238,11 +241,24 @@
     }
     if (workforce.stockState) state.stock = workforce.stockState;
     else {
+      let bridgedStock = null;
       try {
-        const stock = await api("/api/stock");
-        state.stock = stock.stockState || state.stock;
-      } catch (_error) {
-        state.stock = { products: [] };
+        const snapshot = window.TahmisciAdminBridge && typeof window.TahmisciAdminBridge.snapshot === "function"
+          ? window.TahmisciAdminBridge.snapshot()
+          : null;
+        if (snapshot && snapshot.stockState && Array.isArray(snapshot.stockState.products) && snapshot.stockState.products.length) {
+          bridgedStock = snapshot.stockState;
+        }
+      } catch (_error) {}
+      if (bridgedStock) {
+        state.stock = bridgedStock;
+      } else {
+        try {
+          const stock = await api("/api/stock");
+          state.stock = stock.stockState || state.stock;
+        } catch (_error) {
+          state.stock = { products: [] };
+        }
       }
     }
     if (!state.selectedShipmentId) {
@@ -265,14 +281,13 @@
     const publishedToday = new Set((state.data.shiftPlans || [])
       .filter((item) => item.date === today && item.status === "published" && item.type !== "leave")
       .map((item) => item.personId));
-    const pending = (state.data.shipments || []).filter((item) => item.status === "onay_bekliyor").length
-      + (state.data.shiftRequests || []).filter((item) => item.status === "onay_bekliyor").length;
+    const pendingShiftRequests = (state.data.shiftRequests || []).filter((item) => item.status === "onay_bekliyor").length;
     const stats = state.data.stats || {};
     const cards = [
       ["users", "Toplam Personel", stats.totalPersonnel ?? users.length, "Kayıtlı personel"],
       ["user", "Aktif Personel", stats.activePersonnel ?? users.filter((item) => item.active !== false).length, "Çalışan personel"],
       ["calendar", "Bugünkü Vardiya", stats.todayShift ?? publishedToday.size, "Yayınlanmış vardiya"],
-      ["clock", "Bekleyen İşlem", stats.pendingOperations ?? stats.pendingActions ?? pending, "Sevkiyat ve talepler"]
+      ["clock", "Bekleyen Talep", stats.pendingShiftRequests ?? pendingShiftRequests, "Vardiya ve izin talepleri"]
     ];
     host.innerHTML = cards.map(([name, label, value, note]) => `
       <article class="workforce-stat-card">
@@ -623,6 +638,12 @@
     return (state.stock.products || []).find((item) => String(item.id) === String(productId)) || {};
   }
 
+  function operationHost(kind) {
+    return kind === "shipments"
+      ? $("#workforceShipmentsPanel")
+      : $("#workforceShiftsPanel");
+  }
+
   function shipmentLineValues(line) {
     const product = stockProduct(line.productId);
     const current = Number(line.currentStock ?? line.currentQuantity ?? product.stockQuantity ?? product.quantity ?? 0);
@@ -633,7 +654,7 @@
   }
 
   function renderShipments() {
-    const host = $("#workforceOperationsPanel");
+    const host = operationHost("shipments");
     if (!host) return;
     const allShipments = [...(state.data.shipments || [])].sort((a, b) => {
       if ((a.status === "onay_bekliyor") !== (b.status === "onay_bekliyor")) return a.status === "onay_bekliyor" ? -1 : 1;
@@ -829,7 +850,7 @@
   }
 
   function renderShifts() {
-    const host = $("#workforceOperationsPanel");
+    const host = operationHost("shifts");
     if (!host) return;
     const requests = [...(state.data.shiftRequests || [])].sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0));
     const weekEnd = addDays(state.weekStart, 6);
@@ -1052,26 +1073,32 @@
     }
   }
 
-  function renderOperations() {
-    $$("[data-workforce-tab]").forEach((button) => {
-      const active = button.dataset.workforceTab === state.tab;
-      button.classList.toggle("is-active", active);
-      button.setAttribute("aria-selected", String(active));
-    });
-    if (state.tab === "shifts") renderShifts();
-    else renderShipments();
-  }
-
   async function refresh(section, options = {}) {
-    await load(options);
-    renderOverview();
+    const refreshKey = section || "all";
+    const refreshToken = (refreshTokens.get(refreshKey) || 0) + 1;
+    refreshTokens.set(refreshKey, refreshToken);
+    try {
+      await load(options);
+    } catch (error) {
+      if (refreshTokens.get(refreshKey) !== refreshToken) return;
+      throw error;
+    }
+    if (refreshTokens.get(refreshKey) !== refreshToken) return;
+    if (section !== "shipments") renderOverview();
     if (section === "tasks") renderTasks();
-    else if (section === "shifts" || section === "shipments") {
-      state.tab = section;
-      renderOperations();
+    else if (section === "shifts") {
+      renderShifts();
+    } else if (section === "shipments") {
+      renderShipments();
+    } else if (section === "staffAccess") {
+      renderTasks();
+      renderShifts();
+    } else if (section === "stock") {
+      renderShipments();
     } else {
       renderTasks();
-      renderOperations();
+      renderShipments();
+      renderShifts();
     }
   }
 
@@ -1084,53 +1111,79 @@
 
   window.__tahmisciWorkforcePreviewSection = () => activePreviewSection;
 
+  function activeWorkforceSection(section) {
+    if (section === "stock") return "shipments";
+    if (section !== "staffAccess") return "";
+    if ($("#workforceTasksAccordion")?.open) return "tasks";
+    if ($("#workforceShiftsAccordion")?.open) return "shifts";
+    return "staffAccess";
+  }
+
+  function isWorkforceOwnerSection(section) {
+    return section === "staffAccess" || section === "stock";
+  }
+
   function setupAccordions() {
     let openFound = false;
     $$(".staff-layout > .staff-accordion").forEach((details) => {
       if (details.open && openFound) details.open = false;
       else if (details.open) openFound = true;
+      if (details.dataset.workforceToggleBound === "true") return;
+      details.dataset.workforceToggleBound = "true";
       details.addEventListener("toggle", () => {
-      if (!details.open) return;
-      $$(".staff-layout > .staff-accordion").forEach((other) => {
-        if (other !== details) other.open = false;
-      });
-      if (details.id === "workforceTasksAccordion") {
-        syncLivePreview("tasks");
-        refresh("tasks").catch((error) => showMessage(error.message, "error"));
-      } else if (details.id === "workforceOperationsAccordion") {
-        syncLivePreview(state.tab);
-        refresh(state.tab).catch((error) => showMessage(error.message, "error"));
-      } else {
-        syncLivePreview("staffAccess");
-      }
-      if (details.id === "staffRecordsAccordion" && typeof window.__tahmisciRefreshStaffLedger === "function") {
-        window.__tahmisciRefreshStaffLedger();
-      }
+        if (!details.open) return;
+        $$(".staff-layout > .staff-accordion").forEach((other) => {
+          if (other !== details) other.open = false;
+        });
+        if (details.id === "workforceTasksAccordion") {
+          syncLivePreview("tasks");
+          refresh("tasks").catch((error) => showMessage(error.message, "error"));
+        } else if (details.id === "workforceShiftsAccordion") {
+          syncLivePreview("shifts");
+          refresh("shifts").catch((error) => showMessage(error.message, "error"));
+        } else {
+          syncLivePreview("staffAccess");
+        }
+        if (details.id === "staffRecordsAccordion" && typeof window.__tahmisciRefreshStaffLedger === "function") {
+          window.__tahmisciRefreshStaffLedger();
+        }
       });
     });
+
+    const shipmentsAccordion = $("#workforceShipmentsAccordion");
+    if (shipmentsAccordion && shipmentsAccordion.dataset.workforceToggleBound !== "true") {
+      shipmentsAccordion.dataset.workforceToggleBound = "true";
+      shipmentsAccordion.addEventListener("toggle", () => {
+        if (!shipmentsAccordion.open) return;
+        syncLivePreview("shipments");
+        refresh("shipments").catch((error) => showMessage(error.message, "error"));
+      });
+    }
   }
 
-  async function mount() {
-    if (!$("#workforceTasksPanel") || !$("#workforceOperationsPanel")) return;
+  async function mount(section) {
+    const activeSection = section || (window.TahmisciAdminBridge && window.TahmisciAdminBridge.activeSection());
+    if (!isWorkforceOwnerSection(activeSection)) return;
+    if (!$("#workforceTasksPanel") && !operationHost("shipments") && !operationHost("shifts")) return;
     if (state.mounted) {
       connectWorkforceEvents();
-      return refresh(undefined, { force: state.stale });
+      return refresh(activeWorkforceSection(activeSection), { force: state.stale });
     }
     state.mounted = true;
     window.__tahmisciWorkforceMounted = true;
     setupAccordions();
-    $$(".workforce-section-tabs [data-workforce-tab]").forEach((button) => button.addEventListener("click", () => {
-      state.tab = button.dataset.workforceTab;
-      syncLivePreview(state.tab);
-      renderOperations();
-    }));
     connectWorkforceEvents();
     try {
-      await refresh(undefined, { force: true });
+      await refresh(activeWorkforceSection(activeSection), { force: true });
     } catch (error) {
-      $("#workforceTasksPanel").innerHTML = `<div class="workforce-empty"><h4>Veriler yüklenemedi</h4><p>${esc(error.message)}</p><button class="workforce-line-button ui-button ui-button--secondary" type="button" data-retry-workforce>Tekrar Dene</button></div>`;
-      $("#workforceOperationsPanel").innerHTML = `<div class="workforce-empty"><h4>Operasyon verileri yüklenemedi</h4><p>${esc(error.message)}</p></div>`;
-      $("[data-retry-workforce]")?.addEventListener("click", () => refresh(undefined, { force: true }).catch(() => {}), { once: true });
+      const activeModule = activeWorkforceSection(activeSection);
+      const target = activeModule === "shipments"
+        ? operationHost("shipments")
+        : activeModule === "shifts"
+          ? operationHost("shifts")
+          : $("#workforceTasksPanel");
+      if (target) target.innerHTML = `<div class="workforce-empty"><h4>Veriler yüklenemedi</h4><p>${esc(error.message)}</p><button class="workforce-line-button ui-button ui-button--secondary" type="button" data-retry-workforce>Tekrar Dene</button></div>`;
+      $("[data-retry-workforce]", target || document)?.addEventListener("click", () => refresh(activeModule, { force: true }).catch(() => {}), { once: true });
     }
   }
 
@@ -1152,10 +1205,8 @@
       state.workforceRevision = Math.max(state.workforceRevision, revision);
       state.stale = true;
       const section = window.TahmisciAdminBridge && window.TahmisciAdminBridge.activeSection();
-      if (section !== "staffAccess" || state.busy || document.activeElement?.closest(".workforce-panel")) return;
-      const tasksOpen = $("#workforceTasksAccordion")?.open;
-      const operationsOpen = $("#workforceOperationsAccordion")?.open;
-      refresh(tasksOpen ? "tasks" : operationsOpen ? state.tab : undefined, { force: true }).catch(() => {});
+      if (!isWorkforceOwnerSection(section) || state.busy || document.activeElement?.closest(".workforce-panel")) return;
+      refresh(activeWorkforceSection(section), { force: true }).catch(() => {});
     };
     source.addEventListener("ready", handle);
     source.addEventListener("workforce", handle);
@@ -1174,7 +1225,7 @@
     state.reconnectTimer = window.setTimeout(() => {
       state.reconnectTimer = null;
       const section = window.TahmisciAdminBridge && window.TahmisciAdminBridge.activeSection();
-      if (section === "staffAccess") connectWorkforceEvents();
+      if (isWorkforceOwnerSection(section)) connectWorkforceEvents();
     }, delay);
   }
 
@@ -1190,14 +1241,14 @@
 
   function handleAdminSectionChange(event) {
     const section = event.detail && event.detail.section;
-    if (section === "staffAccess") mount().catch(() => {});
+    if (isWorkforceOwnerSection(section)) mount(section).catch(() => {});
     else disconnectWorkforceEvents();
   }
 
   document.addEventListener("tahmisci:admin-section-change", handleAdminSectionChange);
   const startWhenActive = () => {
     const section = window.TahmisciAdminBridge && window.TahmisciAdminBridge.activeSection();
-    if (section === "staffAccess") mount().catch(() => {});
+    if (isWorkforceOwnerSection(section)) mount(section).catch(() => {});
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startWhenActive, { once: true });
   else startWhenActive();

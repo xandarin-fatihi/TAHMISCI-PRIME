@@ -26,6 +26,13 @@ const { registerPricingRoutes } = require("./pricing-routes");
 const { registerDataImportRoutes } = require("./data-import-routes");
 const { registerCatalogCleanupRoutes } = require("./catalog-cleanup-routes");
 const { registerAdminDefaultRoutes } = require("./admin-defaults");
+const {
+  appendSecurityAudit,
+  assignUnverifiedAccountEmail,
+  normalizeAccountEmail,
+  publicAccountSecurity,
+  registerAccountSecurityRoutes
+} = require("./account-security-routes");
 const notificationService = require("./notification-service");
 const { registerNotificationRoutes } = require("./notification-routes");
 const { createNotificationDeliveryWorker } = require("./notification-delivery");
@@ -225,6 +232,19 @@ const passwordResetConfirmLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => config.nodeEnv === "test"
+});
+
+registerAccountSecurityRoutes({
+  app,
+  store,
+  auth,
+  config,
+  mailService,
+  bcrypt,
+  validatePassword,
+  requireRequestOrigin: requireAdminOrMainRequestOrigin,
+  requestLimiter: passwordResetRequestLimiter,
+  confirmLimiter: passwordResetConfirmLimiter
 });
 
 const importOperationLimiter = rateLimit({
@@ -700,9 +720,14 @@ app.post("/api/admin/recipe-users", requireAdminRequestOrigin, auth.requireAdmin
     const name = String(req.body && req.body.name || "").trim().slice(0, 80);
     const username = normalizeRecipeUsername(req.body && req.body.username);
     const password = String(req.body && req.body.password || "");
+    const rawEmail = String(req.body && req.body.email || "").trim();
+    const email = normalizeAccountEmail(rawEmail);
 
     const userError = validateRecipeUserInput({ name, username, password, requirePassword: true });
     if (userError) return res.status(400).json({ ok: false, message: userError });
+    if (rawEmail && (rawEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+      return res.status(400).json({ ok: false, message: "Geçerli bir e-posta adresi girin." });
+    }
 
     const passwordHash = await bcrypt.hash(password, config.bcryptRounds);
     const now = new Date().toISOString();
@@ -712,6 +737,13 @@ app.post("/api/admin/recipe-users", requireAdminRequestOrigin, auth.requireAdmin
       username,
       passwordHash,
       active: true,
+      email: "",
+      emailNormalized: "",
+      pendingEmail: "",
+      emailVerifiedAt: null,
+      emailVerificationRequired: true,
+      emailVerificationVersion: 0,
+      lastPasswordResetAt: null,
       createdAt: now,
       updatedAt: now,
       lastLoginAt: null
@@ -731,6 +763,16 @@ app.post("/api/admin/recipe-users", requireAdminRequestOrigin, auth.requireAdmin
         const error = new Error("Bu kullanici adi zaten kayitli.");
         error.status = 409;
         throw error;
+      }
+      if (email) {
+        assignUnverifiedAccountEmail(data, "personel", user, email, now);
+        appendSecurityAudit(data, req, {
+          action: "personnel_email_assigned",
+          scope: "personel",
+          accountId: user.id,
+          result: "pending_verification",
+          createdAt: now
+        }, config);
       }
       data.recipeUsers = (data.recipeUsers || []).concat(user);
       appendRecipeActivity(data, makeRecipeActivity({
@@ -774,9 +816,15 @@ app.put("/api/admin/recipe-users/:id", requireAdminRequestOrigin, auth.requireAd
     const username = normalizeRecipeUsername(req.body && req.body.username);
     const password = String(req.body && req.body.password || "");
     const active = req.body && req.body.active !== false;
+    const emailSupplied = Boolean(req.body && Object.prototype.hasOwnProperty.call(req.body, "email"));
+    const rawEmail = emailSupplied ? String(req.body.email || "").trim() : "";
+    const email = normalizeAccountEmail(rawEmail);
 
     const userError = validateRecipeUserInput({ name, username, password, requirePassword: false });
     if (userError) return res.status(400).json({ ok: false, message: userError });
+    if (rawEmail && (rawEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+      return res.status(400).json({ ok: false, message: "Geçerli bir e-posta adresi girin." });
+    }
 
     const passwordHash = password ? await bcrypt.hash(password, config.bcryptRounds) : "";
     const now = new Date().toISOString();
@@ -810,6 +858,16 @@ app.put("/api/admin/recipe-users/:id", requireAdminRequestOrigin, auth.requireAd
       user.username = username;
       user.active = active;
       user.updatedAt = now;
+      if (emailSupplied) {
+        const security = assignUnverifiedAccountEmail(data, "personel", user, email, now);
+        appendSecurityAudit(data, req, {
+          action: email ? "personnel_email_assigned" : "personnel_email_cleared",
+          scope: "personel",
+          accountId: user.id,
+          result: email ? (security.emailVerifiedAt && !security.pendingEmail ? "verified_unchanged" : "pending_verification") : "cleared",
+          createdAt: now
+        }, config);
+      }
       if (passwordHash) user.passwordHash = passwordHash;
       if (passwordHash || active === false) {
         revokeStoredSessions(data, (session) => session.role === "personel" && session.userId === id, now);
@@ -1011,7 +1069,6 @@ app.post("/api/admin/recipe-assignments", requireAdminRequestOrigin, auth.requir
     const adminNote = String(req.body && req.body.adminNote || "").trim().slice(0, 1000);
     const now = new Date().toISOString();
     let assignment = null;
-    const pendingNotifications = [];
 
     const nextStore = await store.update((data) => {
       const user = (data.recipeUsers || []).find((item) => item.id === userId);
@@ -1097,30 +1154,9 @@ app.post("/api/admin/recipe-assignments", requireAdminRequestOrigin, auth.requir
         req,
         createdAt: now
       }));
-      queueAppNotification(data, pendingNotifications, {
-        recipientRole: "personnel",
-        recipientId: user.id,
-        category: "training",
-        eventType: "recipe_assignment_created",
-        title: "Yeni eğitim programı atandı",
-        body: assignment.title,
-        severity: assignmentKind === "exam" || assignmentKind === "retraining" ? "warning" : "info",
-        entityType: "recipe_assignment",
-        entityId: assignment.id,
-        deepLink: `/personel/?section=recipe&assignmentId=${encodeURIComponent(assignment.id)}`,
-        dedupeKey: `recipe-assignment-created:${assignment.id}:${user.id}`,
-        metadata: {
-          assignmentTitle: assignment.title,
-          assignmentKind,
-          category: assignment.category,
-          product: assignment.product,
-          size: assignment.size
-        }
-      });
       return data;
     });
 
-    publishAppNotifications(pendingNotifications);
     res.status(201).json({
       ok: true,
       assignment: publicRecipeAssignment(assignment, true),
@@ -1135,33 +1171,11 @@ app.post("/api/admin/recipe-assignments", requireAdminRequestOrigin, auth.requir
 app.delete("/api/admin/recipe-assignments/:id", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
   try {
     const id = String(req.params.id || "").trim();
-    const pendingNotifications = [];
     const nextStore = await store.update((data) => {
-      const assignment = (data.recipeAssignments || []).find((item) => item.id === id);
       data.recipeAssignments = (data.recipeAssignments || []).filter((item) => item.id !== id);
-      if (assignment) {
-        queueAppNotification(data, pendingNotifications, {
-          recipientRole: "personnel",
-          recipientId: assignment.userId,
-          category: "training",
-          eventType: "recipe_assignment_removed",
-          title: "Eğitim ataması kaldırıldı",
-          body: assignment.title || assignment.product || "Atama kaldırıldı.",
-          severity: "warning",
-          entityType: "recipe_assignment",
-          entityId: assignment.id,
-          deepLink: "/personel/?section=recipe",
-          dedupeKey: `recipe-assignment-removed:${assignment.id}:${assignment.userId}`,
-          metadata: {
-            assignmentTitle: assignment.title || "",
-            assignmentKind: assignment.assignmentKind || assignment.assignmentType || ""
-          }
-        });
-      }
       return data;
     });
 
-    publishAppNotifications(pendingNotifications);
     res.json({
       ok: true,
       assignments: publicRecipeAssignments(nextStore.recipeAssignments || [], true)
@@ -1257,7 +1271,6 @@ app.post("/api/recipe/assignments/:id/submit", requireAdminOrMainRequestOrigin, 
       : [];
     const now = new Date().toISOString();
     let updatedAssignment = null;
-    const pendingNotifications = [];
 
     const nextStore = await store.update((data) => {
       const assignment = (data.recipeAssignments || []).find((item) => item.id === id && item.userId === payload.userId);
@@ -1299,7 +1312,6 @@ app.post("/api/recipe/assignments/:id/submit", requireAdminOrMainRequestOrigin, 
           req,
           createdAt: now
         }));
-        queueRecipeAssignmentCompletionNotification(data, pendingNotifications, assignment, payload, now);
         return data;
       }
 
@@ -1332,9 +1344,6 @@ app.post("/api/recipe/assignments/:id/submit", requireAdminOrMainRequestOrigin, 
           req,
           createdAt: now
         }));
-        if (assignment.status === "completed") {
-          queueRecipeAssignmentCompletionNotification(data, pendingNotifications, assignment, payload, now);
-        }
         return data;
       }
 
@@ -1383,35 +1392,9 @@ app.post("/api/recipe/assignments/:id/submit", requireAdminOrMainRequestOrigin, 
         req,
         createdAt: now
       }));
-      if (passed) {
-        queueRecipeAssignmentCompletionNotification(data, pendingNotifications, assignment, payload, now);
-      } else {
-        queueAppNotification(data, pendingNotifications, {
-          recipientRole: "personnel",
-          recipientId: payload.userId,
-          category: "training",
-          eventType: "recipe_assignment_retry_required",
-          title: "Tekrar gerekli",
-          body: `${assignment.title || assignment.product || "Eğitim programı"} için yeniden deneme gerekiyor. Sonuç: %${scorePercent}.`,
-          severity: "warning",
-          entityType: "recipe_assignment",
-          entityId: assignment.id,
-          deepLink: `/personel/?section=recipe&assignmentId=${encodeURIComponent(assignment.id)}`,
-          dedupeKey: `recipe-assignment-retry:${assignment.id}:${assignment.retryCount}`,
-          metadata: {
-            assignmentTitle: assignment.title || "",
-            assignmentKind: kind,
-            score,
-            total,
-            scorePercent,
-            retryCount: assignment.retryCount
-          }
-        });
-      }
       return data;
     });
 
-    publishAppNotifications(pendingNotifications);
     res.json({
       ok: true,
       assignment: publicRecipeAssignment(updatedAssignment, false),
@@ -1478,208 +1461,6 @@ app.post("/api/admin/password", requireAdminRequestOrigin, passwordLimiter, asyn
     });
 
     res.json({ ok: true, message: "Panel sifresi guncellendi." });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/admin/password-reset/request", requireAdminOrMainRequestOrigin, passwordResetRequestLimiter, async (req, res, next) => {
-  try {
-    const email = normalizeEmail(req.body && req.body.email);
-    const scope = normalizePasswordScope(req.body && req.body.scope);
-    const requestedUserId = String(req.body && (req.body.userId || req.body.personelId) || "").trim();
-    if (!isEmailLike(email)) {
-      return res.status(400).json({ ok: false, message: "Geçerli bir e-posta adresi girin." });
-    }
-
-    if (!isPasswordResetConfigured()) {
-      return res.status(503).json({
-        ok: false,
-        message: "E-posta ile şifre değiştirme henüz yapılandırılmamış."
-      });
-    }
-
-    if (!scope) {
-      return res.status(400).json({ ok: false, message: "Yönetici veya personel hesabını seçin." });
-    }
-
-    if (!isAuthorizedResetEmail(email)) {
-      return res.json({
-        ok: true,
-        message: resetRequestPublicMessage()
-      });
-    }
-
-    const current = await store.read();
-    const activeUsers = (Array.isArray(current.recipeUsers) ? current.recipeUsers : [])
-      .filter((user) => user && user.active !== false && user.id && user.passwordHash);
-    if (scope === "personel" && activeUsers.length && !requestedUserId) {
-      return res.json({
-        ok: true,
-        requiresPersonelSelection: true,
-        personelAccounts: activeUsers.map(passwordResetPublicUser),
-        message: "Şifresi değiştirilecek personel hesabını seçin."
-      });
-    }
-
-    let targetUserId = "";
-    let accountLabel = "Yönetici hesabı";
-    if (scope === "personel") {
-      if (activeUsers.length) {
-        const target = activeUsers.find((user) => String(user.id) === requestedUserId);
-        if (!target) return res.json({ ok: true, message: resetRequestPublicMessage() });
-        targetUserId = String(target.id);
-        accountLabel = `${target.name || target.username || "Personel"} (${target.username || "personel"})`;
-      } else {
-        targetUserId = "legacy";
-        accountLabel = "Eski personel hesabı";
-      }
-    }
-
-    const challengeId = `reset-${crypto.randomUUID()}`;
-    const code = config.passwordResetTestCode || String(crypto.randomInt(0, 1000000)).padStart(6, "0");
-    const createdAt = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + resetCodeTtlMs()).toISOString();
-    const emailHash = hashResetEmail(email);
-    const codeHash = hashResetCode({ challengeId, email, scope, targetUserId, code });
-    await store.update((data) => {
-      const now = new Date().toISOString();
-      data.passwordResetChallenges = (Array.isArray(data.passwordResetChallenges) ? data.passwordResetChallenges : [])
-        .map((entry) => {
-          if (!entry || entry.usedAt || entry.revokedAt) return entry;
-          if (entry.emailHash === emailHash && entry.scope === scope && String(entry.targetUserId || "") === targetUserId) {
-            return { ...entry, revokedAt: now };
-          }
-          return entry;
-        })
-        .concat({
-          id: challengeId,
-          emailHash,
-          scope,
-          targetUserId,
-          codeHash,
-          attempts: 0,
-          expiresAt,
-          createdAt,
-          usedAt: null,
-          revokedAt: null
-        })
-        .slice(-200);
-      return data;
-    });
-
-    await sendPasswordResetEmail(email, code, { scope, accountLabel });
-
-    res.json({
-      ok: true,
-      challengeId,
-      scope,
-      userId: targetUserId === "legacy" ? null : targetUserId,
-      maskedEmail: maskEmail(email),
-      message: `Doğrulama kodu gönderildi. Kod ${config.passwordResetCodeTtlMinutes} dakika geçerlidir.`
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/admin/password-reset/confirm", requireAdminOrMainRequestOrigin, passwordResetConfirmLimiter, async (req, res, next) => {
-  try {
-    const email = normalizeEmail(req.body && req.body.email);
-    const code = String(req.body && req.body.code || "").replace(/\D/g, "");
-    const newPassword = String(req.body && req.body.newPassword || "");
-    const scope = normalizePasswordScope(req.body && req.body.scope);
-    const challengeId = String(req.body && req.body.challengeId || "").trim();
-    const targetUserId = scope === "personel"
-      ? String(req.body && (req.body.userId || req.body.personelId) || "").trim()
-      : "";
-
-    if (!isPasswordResetConfigured()) {
-      return res.status(503).json({
-        ok: false,
-        message: "E-posta ile şifre değiştirme henüz yapılandırılmamış."
-      });
-    }
-
-    if (!isAuthorizedResetEmail(email) || code.length !== 6 || !/^reset-[a-f0-9-]{36}$/i.test(challengeId)) {
-      return res.status(400).json({ ok: false, message: "Doğrulama bilgileri geçersiz." });
-    }
-
-    if (!scope) {
-      return res.status(400).json({ ok: false, message: "Yönetici veya personel hesabını seçin." });
-    }
-
-    const passwordError = validatePassword(newPassword);
-    if (passwordError) {
-      return res.status(400).json({ ok: false, message: passwordError });
-    }
-
-    const passwordHash = await bcrypt.hash(newPassword, config.bcryptRounds);
-    let outcome = { status: 400, message: "Doğrulama bilgileri geçersiz." };
-    await store.update((data) => {
-      const changedAt = new Date().toISOString();
-      const entry = (Array.isArray(data.passwordResetChallenges) ? data.passwordResetChallenges : [])
-        .find((item) => item && item.id === challengeId);
-      if (!entry || entry.usedAt || entry.revokedAt
-        || entry.emailHash !== hashResetEmail(email)
-        || entry.scope !== scope
-        || (scope === "personel" && String(entry.targetUserId || "") !== (targetUserId || "legacy"))) {
-        return data;
-      }
-      if (Date.parse(entry.expiresAt) <= Date.now()) {
-        entry.revokedAt = changedAt;
-        outcome = { status: 400, message: "Doğrulama kodunun süresi doldu. Yeni kod isteyin." };
-        return data;
-      }
-      entry.attempts = Number(entry.attempts || 0) + 1;
-      if (entry.attempts > 5) {
-        entry.revokedAt = changedAt;
-        outcome = { status: 429, message: "Çok fazla hatalı deneme yapıldı. Yeni kod isteyin." };
-        return data;
-      }
-      const expectedHash = hashResetCode({
-        challengeId,
-        email,
-        scope,
-        targetUserId: String(entry.targetUserId || ""),
-        code
-      });
-      if (!safeEqual(entry.codeHash, expectedHash)) {
-        outcome = { status: 401, message: "Doğrulama kodu hatalı." };
-        return data;
-      }
-
-      if (scope === "admin") {
-        data.admin.passwordHash = passwordHash;
-        data.admin.updatedAt = changedAt;
-        revokeStoredSessions(data, (session) => session.role === "admin", changedAt);
-        outcome = { status: 200, message: "Yönetici şifresi güncellendi.", redirectTo: "/login.html" };
-      } else if (entry.targetUserId === "legacy" && !(data.recipeUsers || []).length) {
-        data.admin.recipePasswordHash = passwordHash;
-        data.admin.recipeUpdatedAt = changedAt;
-        revokeStoredSessions(data, (session) => session.role === "personel", changedAt);
-        outcome = { status: 200, message: "Eski personel şifresi güncellendi.", redirectTo: "/personel/" };
-      } else {
-        const target = (Array.isArray(data.recipeUsers) ? data.recipeUsers : [])
-          .find((user) => user && user.active !== false && String(user.id) === String(entry.targetUserId));
-        if (!target) return data;
-        target.passwordHash = passwordHash;
-        target.updatedAt = changedAt;
-        revokeStoredSessions(data, (session) => session.role === "personel" && String(session.userId || "") === String(target.id), changedAt);
-        outcome = { status: 200, message: "Personel şifresi güncellendi.", redirectTo: "/personel/" };
-      }
-      entry.usedAt = changedAt;
-      return data;
-    });
-
-    if (outcome.status !== 200) return res.status(outcome.status).json({ ok: false, message: outcome.message });
-    if (scope === "personel") {
-      auth.clearRecipeCookie(res);
-      return res.json({ ok: true, message: outcome.message, redirectTo: outcome.redirectTo });
-    }
-
-    auth.clearAdminCookie(res);
-    res.json({ ok: true, message: outcome.message, redirectTo: outcome.redirectTo });
   } catch (error) {
     next(error);
   }
@@ -2377,18 +2158,6 @@ async function prepareRuntime() {
     dataImportRuntime.ready()
   ]);
   await seedStoreIfEmpty(store, projectRoot);
-  if (config.notificationsManagerEmail) {
-    await store.update((data, context = {}) => {
-      const exists = (data.notificationPreferences || []).some((item) => item
-        && item.ownerRole === "manager" && item.ownerId === "manager");
-      if (exists) return context.noChange !== undefined ? context.noChange : data;
-      notificationService.updateNotificationPreferencesInStore(data, "manager", "manager", {
-        emailEnabled: config.notificationsEmailEnabled === true,
-        emailAddress: config.notificationsManagerEmail
-      });
-      return data;
-    });
-  }
   if (config.notificationWorkersEnabled) {
     notificationDeliveryWorker.start();
     notificationScheduler.start();
@@ -2761,7 +2530,7 @@ function setDocumentResponseHeaders(req, res) {
 function isSensitiveApiRequest(req) {
   if (!String(req.path || "").startsWith("/api/")) return false;
   if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) return true;
-  return /^\/api\/(?:admin|notifications(?:\/|$)|workforce|recipe(?:\/|$)|recipes(?:\/|$)|stock(?:\/|$)|media(?:\/|$)|feedback(?:\/|$))/i.test(req.path);
+  return /^\/api\/(?:account(?:\/|$)|admin|notifications(?:\/|$)|workforce|recipe(?:\/|$)|recipes(?:\/|$)|stock(?:\/|$)|media(?:\/|$)|feedback(?:\/|$))/i.test(req.path);
 }
 
 function sanitizeLogLine(value) {
@@ -3928,32 +3697,6 @@ function publishAppNotifications(pending) {
   }
 }
 
-function queueRecipeAssignmentCompletionNotification(data, pending, assignment, user, createdAt) {
-  const personId = String(user && user.userId || assignment && assignment.userId || "").trim();
-  const personName = String(user && (user.name || user.username) || assignment && (assignment.name || assignment.username) || "Personel").trim();
-  queueAppNotification(data, pending, {
-    recipientRole: "manager",
-    recipientId: "manager",
-    category: "training",
-    eventType: "recipe_assignment_completed",
-    title: "Eğitim programı tamamlandı",
-    body: `${personName}, ${assignment.title || assignment.product || "eğitim programını"} tamamladı.`,
-    severity: "success",
-    entityType: "recipe_assignment",
-    entityId: assignment.id,
-    deepLink: `/yonetici/?section=staffAccess&entityId=${encodeURIComponent(assignment.id)}`,
-    dedupeKey: `recipe-assignment-completed:${assignment.id}:${personId}`,
-    metadata: {
-      assignmentTitle: assignment.title || "",
-      assignmentKind: assignment.assignmentKind || assignment.assignmentType || "",
-      personId,
-      personName,
-      completedAt: assignment.completedAt || createdAt
-    },
-    createdAt
-  });
-}
-
 function queueStockThresholdNotifications(data, pending, previousState, nextState, context = {}) {
   const previousProducts = new Map((previousState && previousState.products || []).map((product) => [String(product.id), product]));
   const operationId = String(context.operationId || context.updatedAt || Date.now()).slice(0, 160);
@@ -4154,117 +3897,6 @@ function closeRevisionClient(client, clients, end = true) {
   }
 }
 
-function isPasswordResetConfigured() {
-  return Boolean(config.passwordResetEmail && ((config.smtpUser && config.smtpPass) || config.passwordResetTestCode));
-}
-
-function isAuthorizedResetEmail(email) {
-  const current = normalizeEmail(email);
-  return Boolean(current && safeEqual(current, config.passwordResetEmail));
-}
-
-function normalizeEmail(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function normalizePasswordScope(value) {
-  const scope = String(value || "").toLowerCase().trim();
-  if (["admin", "panel"].includes(scope)) return "admin";
-  if (["personel", "recipe", "recete", "reçete"].includes(scope)) return "personel";
-  return "";
-}
-
-function isEmailLike(value) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ""));
-}
-
-function resetCodeTtlMs() {
-  return config.passwordResetCodeTtlMinutes * 60 * 1000;
-}
-
-function hashResetEmail(email) {
-  return crypto
-    .createHmac("sha256", config.jwtSecret)
-    .update(`reset-email:${normalizeEmail(email)}`)
-    .digest("hex");
-}
-
-function hashResetCode({ challengeId, email, scope, targetUserId, code }) {
-  return crypto
-    .createHmac("sha256", config.jwtSecret)
-    .update([
-      String(challengeId || ""),
-      normalizeEmail(email),
-      String(scope || ""),
-      String(targetUserId || ""),
-      String(code || "")
-    ].join(":"))
-    .digest("hex");
-}
-
-async function sendPasswordResetEmail(email, code, context = {}) {
-  if (config.nodeEnv === "test" && config.passwordResetTestCode) return;
-  const transporter = passwordResetMailTransporter();
-  const minutes = config.passwordResetCodeTtlMinutes;
-  const from = config.smtpFrom || config.smtpUser;
-  const accountLabel = String(context.accountLabel || (context.scope === "personel" ? "Personel hesabı" : "Yönetici hesabı"));
-
-  await transporter.sendMail({
-    from,
-    to: email,
-    subject: "Tahmisçi şifre doğrulama kodu",
-    text: [
-      `Tahmisçi ${accountLabel} şifresini değiştirmek için doğrulama kodunuz:`,
-      "",
-      code,
-      "",
-      `Bu kod ${minutes} dakika geçerlidir.`,
-      "Bu isteği siz yapmadıysanız bu e-postayı yok sayın."
-    ].join("\n"),
-    html: [
-      "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#152016\">",
-      "<h2>Tahmisçi şifre doğrulama</h2>",
-      `<p>${escapeHtml(accountLabel)} şifresini değiştirmek için doğrulama kodunuz:</p>`,
-      `<p style=\"font-size:30px;font-weight:800;letter-spacing:0.18em\">${code}</p>`,
-      `<p>Bu kod ${minutes} dakika geçerlidir.</p>`,
-      "<p>Bu isteği siz yapmadıysanız bu e-postayı yok sayın.</p>",
-      "</div>"
-    ].join("")
-  });
-}
-
-function resetRequestPublicMessage() {
-  return "Eğer e-posta ve hesap bilgileri yetkiliyse doğrulama kodu gönderildi.";
-}
-
-function passwordResetPublicUser(user) {
-  return {
-    id: String(user.id || ""),
-    name: String(user.name || user.username || "Personel").slice(0, 80),
-    username: String(user.username || "").slice(0, 40)
-  };
-}
-
-function maskEmail(email) {
-  const [local = "", domain = ""] = normalizeEmail(email).split("@");
-  if (!local || !domain) return "";
-  const visible = local.slice(0, Math.min(2, local.length));
-  return `${visible}${"*".repeat(Math.max(3, local.length - visible.length))}@${domain}`;
-}
-
-function escapeHtml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function passwordResetMailTransporter() {
-  return mailService.getTransporter();
-}
-
 function validateRecipeUserInput({ name, username, password, requirePassword }) {
   if (!name || name.length < 2) return "Ad soyad en az 2 karakter olmali.";
   if (!username || username.length < 3) return "Kullanici adi en az 3 karakter olmali.";
@@ -4287,6 +3919,7 @@ function normalizeRecipeUsername(value) {
 
 function publicRecipeUser(user) {
   if (!user) return null;
+  const security = publicAccountSecurity(user);
   return {
     id: user.id,
     name: user.name || user.username,
@@ -4297,7 +3930,13 @@ function publicRecipeUser(user) {
     active: user.active !== false,
     createdAt: user.createdAt || null,
     updatedAt: user.updatedAt || null,
-    lastLoginAt: user.lastLoginAt || null
+    lastLoginAt: user.lastLoginAt || null,
+    email: security.email,
+    pendingEmail: security.pendingEmail,
+    emailVerifiedAt: security.emailVerifiedAt,
+    emailVerificationRequired: security.emailVerificationRequired,
+    lastPasswordResetAt: security.lastPasswordResetAt,
+    security
   };
 }
 

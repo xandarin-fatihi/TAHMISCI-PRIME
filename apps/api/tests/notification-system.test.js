@@ -18,6 +18,7 @@ const { createNotificationDeliveryWorker, retryDelayMs } = require("../src/notif
 const { createNotificationScheduler } = require("../src/notification-scheduler");
 const { registerNotificationRoutes } = require("../src/notification-routes");
 const { absoluteNotificationLink, createMailService } = require("../src/mail-service");
+const { createPushService, safeDeepLink } = require("../src/push-service");
 
 test("bildirim migration'ı canonical koleksiyonları geriye uyumlu ve veri kaybetmeden normalize eder", () => {
   const migrated = migrateStore({
@@ -43,16 +44,44 @@ test("bildirim migration'ı canonical koleksiyonları geriye uyumlu ve veri kayb
   assert.equal(migrated.notificationPreferences[0].ownerRole, "manager");
   assert.equal(migrated.notificationPreferences[0].ownerId, "manager");
   assert.equal(migrated.notificationPreferences[0].inAppEnabled, false);
+  assert.equal(migrated.notificationPreferences[0].emailEnabled, false);
+  assert.equal(migrated.notificationPreferences[0].emailVerified, false);
   assert.equal(migrated.notificationPreferences[0].taskNotifications, false);
-  assert.equal(migrated.notificationPreferences[0].trainingNotifications, false);
+  assert.equal("trainingNotifications" in migrated.notificationPreferences[0], false);
   assert.equal(migrated.notificationPreferences[0].stockNotifications, false);
   assert.equal(migrated.notificationPreferences[0].taskReminder24h, false);
   assert.equal(migrated.notificationPreferences[0].shiftReminder2h, false);
   assert.equal(migrated.notificationOutbox.length, 1);
   assert.equal(migrated.notificationOutbox[0].status, "sent");
   assert.equal(migrated.notificationOutbox[0].attemptCount, 2);
+  assert.equal(migrated.notificationOutbox[0].recipientRole, "personnel");
+  assert.equal(migrated.notificationOutbox[0].recipientId, "p1");
   assert.equal(migrated.notificationSchedulerState.leaseOwner, "worker");
   assert.equal(migrated.notificationSchedulerState.criticalStockState.s1.revision, 2);
+});
+
+test("bildirim migration'ı outbox dedupe'ını sahip bazında ve aktif push endpoint'ini tekil tutar", () => {
+  const migrated = migrateStore({
+    notifications: [
+      { id: "n-p1", recipientRole: "personnel", recipientId: "p1", title: "P1" },
+      { id: "n-p2", recipientRole: "personnel", recipientId: "p2", title: "P2" }
+    ],
+    notificationOutbox: [
+      { id: "o-p1", notificationId: "n-p1", recipientRole: "personnel", recipientId: "p1", channel: "email", destination: "p1@example.com", dedupeKey: "legacy-same", status: "pending" },
+      { id: "o-p2", notificationId: "n-p2", recipientRole: "personnel", recipientId: "p2", channel: "email", destination: "p2@example.com", dedupeKey: "legacy-same", status: "pending" }
+    ],
+    pushSubscriptions: [
+      { id: "push-old", ownerRole: "personnel", ownerId: "p1", endpoint: "https://push.example/shared", deviceId: "old", updatedAt: "2026-08-01T00:00:00Z" },
+      { id: "push-new", ownerRole: "personnel", ownerId: "p2", endpoint: "https://push.example/shared", deviceId: "new", updatedAt: "2026-08-02T00:00:00Z" },
+      { id: "device-old-endpoint", ownerRole: "personnel", ownerId: "p2", endpoint: "https://push.example/rotated-old", deviceId: "rotated", updatedAt: "2026-08-01T00:00:00Z" },
+      { id: "device-new-endpoint", ownerRole: "personnel", ownerId: "p2", endpoint: "https://push.example/rotated-new", deviceId: "rotated", updatedAt: "2026-08-03T00:00:00Z" }
+    ]
+  });
+  assert.deepEqual(migrated.notificationOutbox.map((item) => item.id).sort(), ["o-p1", "o-p2"]);
+  assert.equal(migrated.pushSubscriptions.some((item) => item.id === "push-old"), false);
+  assert.equal(migrated.pushSubscriptions.some((item) => item.id === "push-new"), true);
+  assert.equal(migrated.pushSubscriptions.some((item) => item.id === "device-old-endpoint"), false);
+  assert.equal(migrated.pushSubscriptions.some((item) => item.id === "device-new-endpoint"), true);
 });
 
 test("retention önce okunmuş ve arşivlenmiş kayıtları temizler, okunmamış bildirimi düşürmez", () => {
@@ -93,10 +122,125 @@ test("merkezi servis dedupe, canonical kategori, tercih ve atomik outbox kuralla
 
   const preferences = getNotificationPreferences(data, "personnel", "p1");
   assert.equal(preferences.emailAddress, "personel@example.com");
-  assert.equal(preferences.trainingNotifications, false);
+  assert.equal("trainingNotifications" in preferences, false);
   assert.equal(preferences.stockNotifications, false);
   assert.equal(preferences.taskReminder24h, false);
   assert.equal(preferences.shiftReminder2h, true);
+});
+
+test("pasif eğitim kategorisi yeni bildirim veya tercih alanı üretmez, legacy kaydı korur", () => {
+  const data = emptyNotificationStore();
+  const created = createNotificationInStore(data, {
+    recipientRole: "personnel", recipientId: "p1", category: "training",
+    eventType: "recipe_assignment_created", title: "Eski eğitim bildirimi"
+  });
+  assert.equal(created, null);
+  assert.equal(data.notifications.length, 0);
+
+  const preferences = updateNotificationPreferencesInStore(data, "personnel", "p1", {
+    categories: { training: true, task: false }
+  });
+  assert.equal("trainingNotifications" in preferences, false);
+  assert.equal(preferences.taskNotifications, false);
+  assert.equal("trainingNotifications" in data.notificationPreferences[0], false);
+
+  const migrated = migrateStore({
+    notifications: [{
+      id: "legacy-training", recipientRole: "personnel", recipientId: "p1",
+      category: "training", eventType: "recipe_assignment_created", title: "Geçmiş eğitim",
+      createdAt: "2026-08-01T10:00:00.000Z"
+    }]
+  });
+  assert.equal(migrated.notifications.length, 1, "legacy kayıt veri kaybı olmadan korunmalı");
+  assert.equal(migrated.notifications[0].category, "training", "legacy kategori system olarak görünürleşmemeli");
+});
+
+test("legacy eğitim bildirimi aktif API listesi, sayaç ve teslim kanalından güvenle dışlanır", async (t) => {
+  const data = emptyNotificationStore();
+  createNotificationInStore(data, {
+    id: "active-task", recipientRole: "personnel", recipientId: "p1",
+    category: "task", title: "Aktif görev", dedupeKey: "active-task"
+  });
+  updateNotificationPreferencesInStore(data, "personnel", "p1", { emailEnabled: true });
+  data.notifications.push({
+    id: "legacy-training", recipientRole: "personnel", recipientId: "p1",
+    category: "system", eventType: "recipe_assignment_created", title: "Geçmiş eğitim",
+    body: "Eski kayıt", severity: "info", createdAt: "2026-08-01T10:00:00.000Z",
+    updatedAt: "2026-08-01T10:00:00.000Z", readAt: null, archivedAt: null, inAppVisible: true
+  });
+  data.notificationOutbox.push({
+    id: "legacy-training-outbox", notificationId: "legacy-training", channel: "email",
+    recipientRole: "personnel", recipientId: "p1", destination: "personel@example.com",
+    status: "pending", attemptCount: 0, nextAttemptAt: "2026-08-01T10:00:00.000Z",
+    dedupeKey: "legacy-training:email", createdAt: "2026-08-01T10:00:00.000Z",
+    updatedAt: "2026-08-01T10:00:00.000Z"
+  });
+  const store = memoryStore(data);
+  let deliveryCalls = 0;
+  const worker = createNotificationDeliveryWorker({
+    store,
+    config: { notificationsEmailEnabled: true },
+    clock: () => new Date("2026-08-09T10:00:00Z"),
+    mailService: { isConfigured: () => true, async sendNotificationEmail() { deliveryCalls += 1; } },
+    pushService: { isConfigured: () => false, async sendNotificationPush() {} }
+  });
+  const { server, base } = await notificationServer(store, worker);
+  t.after(() => closeServer(server));
+
+  let response = await fetch(`${base}/api/notifications`);
+  let body = await response.json();
+  assert.equal(response.status, 200);
+  assert.deepEqual(body.notifications.map((item) => item.id), ["active-task"]);
+  assert.equal(body.unreadCount, 1);
+  assert.equal((await fetch(`${base}/api/notifications?category=training`)).status, 400);
+  assert.equal((await fetch(`${base}/api/notifications/legacy-training/read`, { method: "PATCH" })).status, 404);
+
+  const delivery = await worker.tick();
+  assert.equal(delivery.processed, 1);
+  assert.equal(delivery.sent, 0);
+  assert.equal(deliveryCalls, 0);
+  const snapshot = await store.read();
+  assert.equal(snapshot.notificationOutbox.find((item) => item.id === "legacy-training-outbox").status, "cancelled");
+  assert.equal(snapshot.notifications.some((item) => item.id === "legacy-training"), true, "legacy kayıt silinmemeli");
+});
+
+test("e-posta tercihi yalnız doğrulanmış hesap adresini kullanır ve istemci adresini yok sayar", () => {
+  const data = emptyNotificationStore();
+  data.recipeUsers[0].emailVerifiedAt = null;
+  assert.throws(() => updateNotificationPreferencesInStore(data, "personnel", "p1", {
+    emailEnabled: true,
+    emailAddress: "baska@example.com"
+  }), (error) => error && error.status === 409 && error.code === "EMAIL_VERIFICATION_REQUIRED");
+
+  const disabled = updateNotificationPreferencesInStore(data, "personnel", "p1", {
+    emailEnabled: false,
+    emailAddress: "baska@example.com"
+  });
+  assert.equal(disabled.emailAddress, "");
+  assert.equal(disabled.emailVerified, false);
+
+  data.recipeUsers[0].emailVerifiedAt = "2026-08-09T09:00:00.000Z";
+  const enabled = updateNotificationPreferencesInStore(data, "personnel", "p1", {
+    emailEnabled: true,
+    emailAddress: "saldirgan@example.net"
+  });
+  assert.equal(enabled.emailAddress, "personel@example.com");
+  assert.equal(enabled.emailVerified, true);
+  createNotificationInStore(data, {
+    recipientRole: "personnel", recipientId: "p1", title: "Doğrulanmış adres", dedupeKey: "verified-email"
+  });
+  assert.deepEqual(data.notificationOutbox.map((item) => item.destination), ["personel@example.com"]);
+});
+
+test("outbox dedupe farklı sahiplerin aynı bildirim kimliğini birbirine karıştırmaz", () => {
+  const data = emptyNotificationStore();
+  updateNotificationPreferencesInStore(data, "personnel", "p1", { emailEnabled: true });
+  updateNotificationPreferencesInStore(data, "personnel", "p2", { emailEnabled: true });
+  const input = { id: "shared-id", title: "Ortak kimlik", category: "system" };
+  createNotificationInStore(data, { ...input, recipientRole: "personnel", recipientId: "p1", dedupeKey: "shared-p1" });
+  createNotificationInStore(data, { ...input, recipientRole: "personnel", recipientId: "p2", dedupeKey: "shared-p2" });
+  assert.equal(data.notificationOutbox.length, 2);
+  assert.deepEqual(data.notificationOutbox.map((item) => item.recipientId).sort(), ["p1", "p2"]);
 });
 
 test("kritik sistem ve veri bütünlüğü bildirimi uygulama içi tercihle kapatılamaz", () => {
@@ -231,6 +375,64 @@ test("outbox 1dk, 5dk, 30dk ve 2sa retry takvimini izler ve tek başarılı tesl
   assert.equal((await worker.health()).delivered, 1);
 });
 
+test("teslim işçisi yinelenen outbox kayıtlarını bir kez gönderir", async () => {
+  const data = emptyNotificationStore();
+  updateNotificationPreferencesInStore(data, "manager", "manager", { emailEnabled: true });
+  createNotificationInStore(data, {
+    id: "dedupe-delivery-notification", recipientRole: "manager", recipientId: "manager",
+    title: "Tek teslim", dedupeKey: "dedupe-delivery"
+  }, { now: "2026-08-09T10:00:00Z" });
+  const duplicate = {
+    ...data.notificationOutbox[0],
+    id: "duplicate-outbox",
+    dedupeKey: "legacy-farkli-anahtar",
+    createdAt: "2026-08-09T10:00:01.000Z",
+    updatedAt: "2026-08-09T10:00:01.000Z"
+  };
+  data.notificationOutbox.push(duplicate);
+  const store = memoryStore(data);
+  let calls = 0;
+  const worker = createNotificationDeliveryWorker({
+    store,
+    config: { notificationsEmailEnabled: true },
+    clock: () => new Date("2026-08-09T10:00:02Z"),
+    mailService: { isConfigured: () => true, async sendNotificationEmail() { calls += 1; } },
+    pushService: { isConfigured: () => false, async sendNotificationPush() {} }
+  });
+  const result = await worker.tick();
+  const snapshot = await store.read();
+  assert.equal(result.sent, 1);
+  assert.equal(calls, 1);
+  assert.equal(snapshot.notificationOutbox.filter((item) => item.status === "sent").length, 1);
+  assert.equal(snapshot.notificationOutbox.filter((item) => item.status === "cancelled").length, 1);
+  await assert.rejects(worker.retry("duplicate-outbox"), (error) => error && error.status === 409
+    && /daha önce başarıyla/.test(error.message));
+});
+
+test("teslim işçisi outbox ile bildirim alıcısı uyuşmadığında kanala veri sızdırmaz", async () => {
+  const data = emptyNotificationStore();
+  updateNotificationPreferencesInStore(data, "personnel", "p1", { emailEnabled: true });
+  createNotificationInStore(data, {
+    id: "owner-isolation-notification", recipientRole: "personnel", recipientId: "p1",
+    title: "P1 sırrı", dedupeKey: "owner-isolation"
+  });
+  data.notificationOutbox[0].recipientId = "p2";
+  data.notificationOutbox[0].destination = "personel2@example.com";
+  const store = memoryStore(data);
+  let calls = 0;
+  const worker = createNotificationDeliveryWorker({
+    store,
+    config: { notificationsEmailEnabled: true },
+    mailService: { isConfigured: () => true, async sendNotificationEmail() { calls += 1; } },
+    pushService: { isConfigured: () => false, async sendNotificationPush() {} }
+  });
+  await worker.tick();
+  const outbox = (await store.read()).notificationOutbox[0];
+  assert.equal(calls, 0);
+  assert.equal(outbox.status, "failed");
+  assert.match(outbox.lastError, /OUTBOX_RECIPIENT_MISMATCH/);
+});
+
 test("sessiz saatlerde e-posta ve push denemesi tüketilmeden saat sonuna ertelenir", async () => {
   const data = emptyNotificationStore();
   updateNotificationPreferencesInStore(data, "manager", "manager", {
@@ -329,6 +531,27 @@ test("ortak mail servisi güvenli mutlak deep link ve dosya/URL erişim kilidi �
   assert.doesNotMatch(message.html, /<tamamlandı>/);
 });
 
+test("Push payload aynı bildirimi tag ile dedupe eder ve rol dışı deep-link'i reddeder", async () => {
+  let sentPayload = null;
+  const push = createPushService({
+    vapidPublicKey: "public", vapidPrivateKey: "private", vapidSubject: "mailto:push@example.com"
+  }, {
+    webPush: {
+      setVapidDetails() {},
+      async sendNotification(_subscription, payload) { sentPayload = JSON.parse(payload); return { statusCode: 201 }; }
+    }
+  });
+  await push.sendNotificationPush({
+    id: "push-id", recipientRole: "personnel", title: "Push", deepLink: "/yonetici/?section=stock", category: "task"
+  }, { endpoint: "https://push.example/device", keys: { p256dh: "x", auth: "y" } });
+  assert.equal(sentPayload.data.deepLink, "/personel/");
+  assert.equal(sentPayload.data.recipientRole, "personnel");
+  assert.equal(sentPayload.tag, "tahmisci-personnel-push-id");
+  assert.equal(sentPayload.renotify, false);
+  assert.equal(safeDeepLink("/yonetici/?section=stock", "/personel/", "personnel"), "/personel/");
+  assert.equal(safeDeepLink("/personel/?section=tasks", "/personel/", "personnel"), "/personel/?section=tasks");
+});
+
 test("Push 410 yanıtı geçersiz aboneliği kaldırır fakat ana bildirimi korur", async () => {
   const data = emptyNotificationStore();
   updateNotificationPreferencesInStore(data, "personnel", "p1", { pushEnabled: true });
@@ -400,7 +623,7 @@ test("bildirim API'si sahiplik, filtre, cursor, limit, tercih, sağlık ve retry
     body: JSON.stringify({ categories: { training: false, stock: false }, reminders: { task24h: false, shift2h: false } })
   });
   const preferenceResult = await preferenceResponse.json();
-  assert.equal(preferenceResult.preferences.trainingNotifications, false);
+  assert.equal("trainingNotifications" in preferenceResult.preferences, false);
   assert.equal(preferenceResult.preferences.stockNotifications, false);
   assert.equal(preferenceResult.preferences.taskReminder24h, false);
   assert.equal(preferenceResult.preferences.shiftReminder2h, false);
@@ -410,6 +633,113 @@ test("bildirim API'si sahiplik, filtre, cursor, limit, tercih, sağlık ve retry
   const retry = await fetch(`${base}/api/admin/notifications/outbox/outbox-1/retry`, { method: "POST" });
   assert.equal(retry.status, 200);
   assert.equal(retriedId, "outbox-1");
+});
+
+test("bildirim durumları, arşiv temizliği ve bağlı cihazlar hesap sahipliğinde izole kalır", async (t) => {
+  const data = emptyNotificationStore();
+  createNotificationInStore(data, {
+    id: "shared-notification-id", recipientRole: "personnel", recipientId: "p2",
+    title: "P2 aynı kimlik", dedupeKey: "p2-shared"
+  });
+  createNotificationInStore(data, {
+    id: "shared-notification-id", recipientRole: "personnel", recipientId: "p1",
+    title: "P1 aynı kimlik", dedupeKey: "p1-shared"
+  });
+  const ownArchived = createNotificationInStore(data, {
+    id: "own-archived", recipientRole: "personnel", recipientId: "p1",
+    title: "P1 arşiv", dedupeKey: "p1-archive"
+  });
+  ownArchived.archivedAt = "2026-08-09T12:00:00.000Z";
+  const foreignArchived = createNotificationInStore(data, {
+    id: "foreign-archived", recipientRole: "personnel", recipientId: "p2",
+    title: "P2 arşiv", dedupeKey: "p2-archive"
+  });
+  foreignArchived.archivedAt = "2026-08-09T12:00:00.000Z";
+  data.pushSubscriptions.push(
+    {
+      id: "device-p1", ownerRole: "personnel", ownerId: "p1", endpoint: "https://push.example/p1",
+      deviceId: "browser-p1", deviceName: "P1 tarayıcı", subscription: { endpoint: "https://push.example/p1", keys: { p256dh: "x", auth: "y" } },
+      createdAt: "2026-08-09T10:00:00.000Z", updatedAt: "2026-08-09T10:00:00.000Z", lastSeenAt: "2026-08-09T10:00:00.000Z"
+    },
+    {
+      id: "device-p2", ownerRole: "personnel", ownerId: "p2", endpoint: "https://push.example/p2",
+      deviceId: "browser-p2", deviceName: "P2 tarayıcı", subscription: { endpoint: "https://push.example/p2", keys: { p256dh: "x", auth: "y" } },
+      createdAt: "2026-08-09T11:00:00.000Z", updatedAt: "2026-08-09T11:00:00.000Z", lastSeenAt: "2026-08-09T11:00:00.000Z"
+    }
+  );
+  data.notificationOutbox.push(
+    { id: "shared-delivery-p1", notificationId: "shared-notification-id", channel: "push", recipientRole: "personnel", recipientId: "p1", destination: "https://push.example/p1", subscriptionId: "device-p1", status: "pending" },
+    { id: "shared-delivery-p2", notificationId: "shared-notification-id", channel: "push", recipientRole: "personnel", recipientId: "p2", destination: "https://push.example/p2", subscriptionId: "device-p2", status: "pending" },
+    { id: "device-delivery-p1", notificationId: "another-p1", channel: "push", recipientRole: "personnel", recipientId: "p1", destination: "https://push.example/p1", subscriptionId: "device-p1", status: "pending" },
+    { id: "device-delivery-p2", notificationId: "another-p2", channel: "push", recipientRole: "personnel", recipientId: "p2", destination: "https://push.example/p2", subscriptionId: "device-p2", status: "pending" }
+  );
+  const store = memoryStore(data);
+  const { server, base } = await notificationServer(store, { health: async () => ({}), retry: async () => ({}) });
+  t.after(() => closeServer(server));
+
+  let response = await fetch(`${base}/api/notifications/shared-notification-id/archive`, { method: "PATCH" });
+  let body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.unreadCount, 0);
+
+  body = await (await fetch(`${base}/api/notifications?includeArchived=true&unread=true`)).json();
+  assert.equal(body.notifications.some((item) => item.archivedAt), false, "okunmamış filtresi arşivi dışlamalıdır");
+  body = await (await fetch(`${base}/api/notifications?archived=true`)).json();
+  assert.deepEqual(body.notifications.map((item) => item.id).sort(), ["own-archived", "shared-notification-id"]);
+
+  body = await (await fetch(`${base}/api/notifications/shared-notification-id/restore`, { method: "PATCH" })).json();
+  assert.equal(body.unreadCount, 1);
+  response = await fetch(`${base}/api/notifications/shared-notification-id`, { method: "DELETE" });
+  assert.equal(response.status, 200);
+  let snapshot = await store.read();
+  assert.equal(snapshot.notifications.some((item) => item.id === "shared-notification-id" && item.recipientId === "p1"), false);
+  assert.equal(snapshot.notifications.some((item) => item.id === "shared-notification-id" && item.recipientId === "p2"), true);
+  assert.equal(snapshot.notificationOutbox.find((item) => item.id === "shared-delivery-p1").status, "cancelled");
+  assert.equal(snapshot.notificationOutbox.find((item) => item.id === "shared-delivery-p2").status, "pending");
+
+  body = await (await fetch(`${base}/api/notifications/archive`, { method: "DELETE" })).json();
+  assert.equal(body.deletedCount, 1);
+  snapshot = await store.read();
+  assert.equal(snapshot.notifications.some((item) => item.id === "foreign-archived"), true);
+
+  body = await (await fetch(`${base}/api/notifications/push-subscriptions`, {
+    headers: { "x-tahmisci-device-id": "browser-p1" }
+  })).json();
+  assert.deepEqual(body.devices.map((item) => item.id), ["device-p1"]);
+  assert.equal(body.devices[0].isCurrent, true);
+  assert.equal("endpoint" in body.devices[0], false);
+
+  response = await fetch(`${base}/api/notifications/push-subscriptions/device-p2`, { method: "DELETE" });
+  assert.equal(response.status, 404);
+  response = await fetch(`${base}/api/notifications/push-subscriptions`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ endpoint: "https://push.example/p2", keys: { p256dh: "x", auth: "y" } })
+  });
+  assert.equal(response.status, 409);
+
+  response = await fetch(`${base}/api/notifications/push-subscriptions/device-p1`, { method: "DELETE" });
+  assert.equal(response.status, 200);
+  snapshot = await store.read();
+  assert.ok(snapshot.pushSubscriptions.find((item) => item.id === "device-p1").revokedAt);
+  assert.equal(snapshot.pushSubscriptions.find((item) => item.id === "device-p2").revokedAt || null, null);
+  assert.equal(snapshot.notificationOutbox.find((item) => item.id === "device-delivery-p1").status, "cancelled");
+  assert.equal(snapshot.notificationOutbox.find((item) => item.id === "device-delivery-p2").status, "pending");
+
+  response = await fetch(`${base}/api/notifications/push-subscriptions`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-tahmisci-device-id": "browser-new", "user-agent": "Mozilla/5.0 Chrome/120" },
+    body: JSON.stringify({
+      deviceName: "Kasa tableti",
+      subscription: { endpoint: "https://push.example/new", keys: { p256dh: "x", auth: "y" } }
+    })
+  });
+  body = await response.json();
+  assert.equal(response.status, 201);
+  assert.equal(body.subscription.deviceName, "Kasa tableti");
+  body = await (await fetch(`${base}/api/notifications/push-subscriptions`, {
+    headers: { "x-tahmisci-device-id": "browser-new" }
+  })).json();
+  assert.equal(body.devices.find((item) => item.deviceId === "browser-new").current, true);
 });
 
 test("SSE yalnız oturum sahibinin güvenli bildirim olayını gerçek zamanlı iletir", async (t) => {
@@ -447,6 +777,19 @@ test("SSE yalnız oturum sahibinin güvenli bildirim olayını gerçek zamanlı 
     assert.match(received, /event: notification/);
     assert.match(received, /Canlı bildirim/);
     assert.doesNotMatch(received, /Yabancı/);
+    const stateResponse = await fetch(`${base}/api/notifications/${encodeURIComponent(own.id)}/read`, { method: "PATCH" });
+    assert.equal(stateResponse.status, 200);
+    const stateDeadline = Date.now() + 2000;
+    while (!received.includes('"action":"read"') && Date.now() < stateDeadline) {
+      const chunk = await Promise.race([
+        reader.read(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("SSE durum zaman aşımı")), 500))
+      ]);
+      if (chunk.done) break;
+      received += decoder.decode(chunk.value, { stream: true });
+    }
+    assert.match(received, /"action":"read"/);
+    assert.match(received, /"requiresRefetch":true/);
   } finally {
     controller.abort();
     await reader.cancel().catch(() => {});
@@ -461,7 +804,15 @@ function emptyNotificationStore() {
   return {
     notifications: [], notificationPreferences: [], notificationOutbox: [], pushSubscriptions: [],
     notificationSchedulerState: {}, workforceTasks: [], workforceAssignments: [], workforceShiftPlans: [],
-    workforceShipments: [], workforceShiftRequests: [], recipeUsers: [], stockState: { products: [] }
+    workforceShipments: [], workforceShiftRequests: [],
+    admin: {
+      email: "manager@example.com", emailNormalized: "manager@example.com", emailVerifiedAt: "2026-08-01T00:00:00.000Z"
+    },
+    recipeUsers: [
+      { id: "p1", active: true, email: "personel@example.com", emailNormalized: "personel@example.com", emailVerifiedAt: "2026-08-01T00:00:00.000Z" },
+      { id: "p2", active: true, email: "personel2@example.com", emailNormalized: "personel2@example.com", emailVerifiedAt: "2026-08-01T00:00:00.000Z" }
+    ],
+    stockState: { products: [] }
   };
 }
 

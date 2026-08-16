@@ -6,10 +6,14 @@ const {
   NOTIFICATION_SEVERITIES,
   createNotificationInStore,
   getNotificationPreferences,
+  isRetiredNotificationCategory,
   normalizeNotificationCategory,
+  normalizeRole,
   publishNotificationEvent,
+  publishNotificationStateEvent,
   recipientMatches,
   subscribeNotificationEvents,
+  subscribeNotificationStateEvents,
   updateNotificationPreferencesInStore
 } = require("./notification-service");
 
@@ -44,7 +48,7 @@ function registerNotificationRoutes(options) {
       } catch (error) { next(error); }
     });
 
-    for (const action of ["read", "unread", "archive"]) {
+    for (const action of ["read", "unread", "archive", "restore"]) {
       app.patch(`${prefix}/:id/${action}`, ...guards, async (req, res, next) => {
         try {
           const owner = recipientFromRequest(req, role);
@@ -56,28 +60,86 @@ function registerNotificationRoutes(options) {
             if (action === "read") item.readAt = timestamp;
             if (action === "unread") item.readAt = null;
             if (action === "archive") item.archivedAt = timestamp;
+            if (action === "restore") item.archivedAt = null;
+            item.updatedAt = timestamp;
             notification = publicNotification(item);
             return data;
           });
-          noStore(res).json({ ok: true, notification, unreadCount: unreadCount(saved, owner) });
+          const count = unreadCount(saved, owner);
+          publishNotificationStateEvent({
+            recipientRole: owner.role, recipientId: owner.id, action,
+            notificationId, notification, unreadCount: count, updatedAt: notification.updatedAt
+          });
+          noStore(res).json({ ok: true, notification, unreadCount: count });
         } catch (error) { next(error); }
       });
     }
+
+    app.delete(`${prefix}/archive`, ...guards, riskOperationLimiter, async (req, res, next) => {
+      try {
+        const owner = recipientFromRequest(req, role);
+        let deletedCount = 0;
+        const saved = await store.update((data) => {
+          const archived = (data.notifications || [])
+            .filter((item) => item && !isRetiredNotificationCategory(item.category, item.eventType)
+              && recipientMatches(item, owner.role, owner.id) && item.archivedAt && !item.deletedAt);
+          const archivedRecords = new Set(archived);
+          const archivedIds = new Set(archived.map((item) => item.id));
+          deletedCount = archived.length;
+          if (!deletedCount) return data;
+          data.notifications = (data.notifications || []).filter((item) => !archivedRecords.has(item));
+          cancelNotificationOutbox(data, owner, archivedIds, "Bildirim arşivi kullanıcı tarafından temizlendi.");
+          return data;
+        });
+        const count = unreadCount(saved, owner);
+        publishNotificationStateEvent({
+          recipientRole: owner.role, recipientId: owner.id, action: "archive-cleared",
+          deletedCount, unreadCount: count, updatedAt: new Date().toISOString()
+        });
+        noStore(res).json({ ok: true, deletedCount, unreadCount: count });
+      } catch (error) { next(error); }
+    });
+
+    app.delete(`${prefix}/:id`, ...guards, riskOperationLimiter, async (req, res, next) => {
+      try {
+        const owner = recipientFromRequest(req, role);
+        const notificationId = validateId(req.params.id, "Bildirim kimliği");
+        const saved = await store.update((data) => {
+          const owned = findOwnedNotification(data, notificationId, owner);
+          data.notifications = (data.notifications || []).filter((item) => item !== owned);
+          cancelNotificationOutbox(data, owner, new Set([notificationId]), "Bildirim kullanıcı tarafından silindi.");
+          return data;
+        });
+        const count = unreadCount(saved, owner);
+        publishNotificationStateEvent({
+          recipientRole: owner.role, recipientId: owner.id, action: "deleted",
+          notificationId, unreadCount: count, updatedAt: new Date().toISOString()
+        });
+        noStore(res).json({ ok: true, deletedId: notificationId, unreadCount: count });
+      } catch (error) { next(error); }
+    });
 
     app.post(`${prefix}/read-all`, ...guards, async (req, res, next) => {
       try {
         const owner = recipientFromRequest(req, role);
         const timestamp = new Date().toISOString();
         let updatedCount = 0;
-        await store.update((data) => {
+        const saved = await store.update((data) => {
           for (const item of data.notifications || []) {
-            if (!recipientMatches(item, owner.role, owner.id) || item.archivedAt || item.readAt || item.inAppVisible === false) continue;
+            if (!recipientMatches(item, owner.role, owner.id) || isRetiredNotificationCategory(item.category, item.eventType)
+              || item.deletedAt || item.archivedAt || item.readAt || item.inAppVisible === false) continue;
             item.readAt = timestamp;
+            item.updatedAt = timestamp;
             updatedCount += 1;
           }
           return data;
         });
-        noStore(res).json({ ok: true, updatedCount, unreadCount: 0 });
+        const count = unreadCount(saved, owner);
+        publishNotificationStateEvent({
+          recipientRole: owner.role, recipientId: owner.id, action: "read-all",
+          updatedCount, unreadCount: count, updatedAt: timestamp
+        });
+        noStore(res).json({ ok: true, updatedCount, unreadCount: count });
       } catch (error) { next(error); }
     });
 
@@ -85,10 +147,11 @@ function registerNotificationRoutes(options) {
       try {
         const owner = recipientFromRequest(req, role);
         const data = req.storeSnapshot || await store.read();
+        const preferences = getNotificationPreferences(data, owner.role, owner.id);
         noStore(res).json({
           ok: true,
-          preferences: getNotificationPreferences(data, owner.role, owner.id),
-          capabilities: notificationCapabilities(pushService)
+          preferences,
+          capabilities: notificationCapabilities(pushService, preferences)
         });
       } catch (error) { next(error); }
     });
@@ -101,31 +164,61 @@ function registerNotificationRoutes(options) {
           preferences = updateNotificationPreferencesInStore(data, owner.role, owner.id, req.body || {});
           return data;
         });
-        noStore(res).json({ ok: true, preferences, capabilities: notificationCapabilities(pushService) });
+        noStore(res).json({ ok: true, preferences, capabilities: notificationCapabilities(pushService, preferences) });
       } catch (error) { next(error); }
     };
     app.put(`${prefix}/preferences`, ...guards, updatePreferences);
     app.patch(`${prefix}/preferences`, ...guards, updatePreferences);
 
+    app.get(`${prefix}/push-subscriptions`, ...guards, async (req, res, next) => {
+      try {
+        const owner = recipientFromRequest(req, role);
+        const data = req.storeSnapshot || await store.read();
+        const currentDeviceId = normalizedDeviceId(req.get("x-tahmisci-device-id"));
+        const devices = (data.pushSubscriptions || [])
+          .filter((item) => pushSubscriptionMatches(item, owner) && !item.revokedAt)
+          .sort((a, b) => String(b.lastSeenAt || b.updatedAt || "").localeCompare(String(a.lastSeenAt || a.updatedAt || "")))
+          .map((item) => publicPushDevice(item, currentDeviceId));
+        noStore(res).json({ ok: true, devices, subscriptions: devices });
+      } catch (error) { next(error); }
+    });
+
     app.post(`${prefix}/push-subscriptions`, ...guards, riskOperationLimiter, async (req, res, next) => {
       try {
         const owner = recipientFromRequest(req, role);
         const subscription = validatePushSubscription(req.body && (req.body.subscription || req.body));
+        const deviceId = normalizedDeviceId(req.body && req.body.deviceId || req.get("x-tahmisci-device-id"));
+        const deviceName = normalizedDeviceName(req.body && req.body.deviceName, req.get("user-agent"));
         let saved = null;
         await store.update((data) => {
           data.pushSubscriptions = Array.isArray(data.pushSubscriptions) ? data.pushSubscriptions : [];
-          const foreign = data.pushSubscriptions.find((item) => item && item.endpoint === subscription.endpoint
-            && (item.ownerRole !== owner.role || String(item.ownerId) !== owner.id));
+          const foreign = data.pushSubscriptions.find((item) => item && !item.revokedAt && item.endpoint === subscription.endpoint
+            && !pushSubscriptionMatches(item, owner));
           if (foreign) {
             const error = new Error("Bu Push aboneliği başka bir hesaba bağlı.");
             error.status = 409;
             throw error;
           }
-          const current = data.pushSubscriptions.find((item) => item
-            && item.ownerRole === owner.role
-            && item.ownerId === owner.id
+          const currentByDevice = deviceId && data.pushSubscriptions.find((item) => pushSubscriptionMatches(item, owner)
+            && item.deviceId === deviceId);
+          const currentByEndpoint = data.pushSubscriptions.find((item) => pushSubscriptionMatches(item, owner)
             && item.endpoint === subscription.endpoint);
+          const current = currentByDevice || currentByEndpoint;
           const timestamp = new Date().toISOString();
+          const superseded = new Set();
+          for (const item of data.pushSubscriptions) {
+            if (!item || item === current || !pushSubscriptionMatches(item, owner)) continue;
+            if (item.endpoint === subscription.endpoint || deviceId && item.deviceId === deviceId) superseded.add(item);
+          }
+          if (superseded.size) {
+            const supersededIds = [...superseded].map((item) => item.id);
+            const supersededEndpoints = [...superseded].map((item) => item.endpoint);
+            data.pushSubscriptions = data.pushSubscriptions.filter((item) => !superseded.has(item));
+            cancelPushOutbox(data, owner, supersededIds, supersededEndpoints, "Cihaz aboneliği yenilendi.", timestamp);
+          }
+          if (current && current.endpoint && current.endpoint !== subscription.endpoint) {
+            cancelPushOutbox(data, owner, [current.id], [current.endpoint], "Cihaz aboneliği yenilendi.", timestamp);
+          }
           saved = {
             id: current && current.id || `push-subscription-${crypto.randomUUID()}`,
             ownerRole: owner.role,
@@ -133,17 +226,22 @@ function registerNotificationRoutes(options) {
             endpoint: subscription.endpoint,
             subscription,
             keys: subscription.keys,
+            deviceId: deviceId || (current && current.deviceId) || "",
+            deviceName: deviceName || (current && current.deviceName) || "Bu cihaz",
             userAgent: String(req.get("user-agent") || "").slice(0, 500),
-            createdAt: current && current.createdAt || timestamp,
+            createdAt: (current && current.createdAt) || timestamp,
             updatedAt: timestamp,
-            lastSuccessAt: current && current.lastSuccessAt || null,
-            failureCount: current && current.failureCount || 0
+            lastSeenAt: timestamp,
+            lastSuccessAt: (current && current.lastSuccessAt) || null,
+            failureCount: (current && current.failureCount) || 0,
+            disabledAt: null,
+            revokedAt: null
           };
           if (current) Object.assign(current, saved);
           else data.pushSubscriptions.push(saved);
           return data;
         });
-        noStore(res).status(201).json({ ok: true, subscription: { id: saved.id, endpoint: saved.endpoint } });
+        noStore(res).status(201).json({ ok: true, subscription: publicPushDevice(saved, deviceId, { includeEndpoint: true }) });
       } catch (error) { next(error); }
     });
 
@@ -154,32 +252,38 @@ function registerNotificationRoutes(options) {
         if (!endpoint) throw badRequest("Push aboneliği endpoint bilgisi gerekli.");
         let removed = 0;
         await store.update((data) => {
-          const before = (data.pushSubscriptions || []).length;
-          const removedIds = (data.pushSubscriptions || []).filter((item) => item
-            && item.ownerRole === owner.role
-            && String(item.ownerId) === owner.id
-            && item.endpoint === endpoint).map((item) => item.id);
-          data.pushSubscriptions = (data.pushSubscriptions || []).filter((item) => !(item
-            && item.ownerRole === owner.role
-            && item.ownerId === owner.id
-            && item.endpoint === endpoint));
-          removed = before - data.pushSubscriptions.length;
-          for (const item of data.notificationOutbox || []) {
-            if (item && item.channel === "push" && item.recipientRole === owner.role
-              && String(item.recipientId) === owner.id
-              && (item.destination === endpoint || removedIds.includes(item.subscriptionId))
-              && ["pending", "processing"].includes(item.status)) {
-              item.status = "cancelled";
-              item.nextAttemptAt = null;
-              item.lockedAt = null;
-              item.lockedBy = "";
-              item.lastError = "Push aboneliği kullanıcı tarafından kaldırıldı.";
-              item.updatedAt = new Date().toISOString();
-            }
+          const timestamp = new Date().toISOString();
+          const matches = (data.pushSubscriptions || []).filter((item) => pushSubscriptionMatches(item, owner)
+            && item.endpoint === endpoint && !item.revokedAt);
+          for (const item of matches) {
+            item.revokedAt = timestamp;
+            item.updatedAt = timestamp;
           }
+          removed = matches.length;
+          cancelPushOutbox(data, owner, matches.map((item) => item.id), [endpoint], "Push aboneliği kullanıcı tarafından kaldırıldı.", timestamp);
           return data;
         });
         noStore(res).json({ ok: true, removed });
+      } catch (error) { next(error); }
+    });
+
+    app.delete(`${prefix}/push-subscriptions/:id`, ...guards, riskOperationLimiter, async (req, res, next) => {
+      try {
+        const owner = recipientFromRequest(req, role);
+        const subscriptionId = validateId(req.params.id, "Cihaz kimliği");
+        let removed = 0;
+        await store.update((data) => {
+          const owned = (data.pushSubscriptions || []).find((item) => item && item.id === subscriptionId
+            && pushSubscriptionMatches(item, owner) && !item.revokedAt);
+          if (!owned) throw notFound("Bağlı cihaz bulunamadı.");
+          const timestamp = new Date().toISOString();
+          owned.revokedAt = timestamp;
+          owned.updatedAt = timestamp;
+          cancelPushOutbox(data, owner, [owned.id], [owned.endpoint], "Cihaz bildirimi kullanıcı tarafından kapatıldı.", timestamp);
+          removed = 1;
+          return data;
+        });
+        noStore(res).json({ ok: true, removed, revokedId: subscriptionId });
       } catch (error) { next(error); }
     });
 
@@ -210,7 +314,8 @@ function registerNotificationRoutes(options) {
         }, notificationEventRevision);
         const deliveredIds = new Set();
         const listener = (notification) => {
-          if (closed || !recipientMatches(notification, owner.role, owner.id) || notification.inAppVisible === false) return;
+          if (closed || !recipientMatches(notification, owner.role, owner.id)
+            || isRetiredNotificationCategory(notification.category, notification.eventType) || notification.inAppVisible === false) return;
           const notificationId = String(notification.id || "");
           if (notificationId && deliveredIds.has(notificationId)) return;
           if (notificationId) {
@@ -229,9 +334,25 @@ function registerNotificationRoutes(options) {
           }, notificationEventRevision);
         };
         const unsubscribe = subscribeNotificationEvents(listener);
+        const stateListener = (event) => {
+          if (closed || !recipientMatches(event, owner.role, owner.id)) return;
+          if (Number.isSafeInteger(Number(event.unreadCount))) currentUnreadCount = Math.max(0, Number(event.unreadCount));
+          notificationEventRevision = nextNotificationRevision(notificationEventRevision, { updatedAt: event.updatedAt });
+          writeSse(res, "notification", {
+            revision: notificationEventRevision,
+            scope: "notifications",
+            action: String(event.action || "updated"),
+            requiresRefetch: true,
+            notificationId: String(event.notificationId || ""),
+            deletedCount: Math.max(0, Number(event.deletedCount || 0)),
+            updatedCount: Math.max(0, Number(event.updatedCount || 0)),
+            unreadCount: currentUnreadCount
+          }, notificationEventRevision);
+        };
+        const unsubscribeState = subscribeNotificationStateEvents(stateListener);
         const heartbeat = setInterval(() => res.write(": keepalive\n\n"), 25000);
         if (typeof heartbeat.unref === "function") heartbeat.unref();
-        req.once("close", () => { closed = true; clearInterval(heartbeat); unsubscribe(); });
+        req.once("close", () => { closed = true; clearInterval(heartbeat); unsubscribe(); unsubscribeState(); });
       } catch (error) { next(error); }
     });
 
@@ -291,11 +412,18 @@ function listNotifications(data, owner, query) {
   const severity = parseSeverityFilter(query.severity);
   const cursor = String(query.cursor || "").trim();
   if (cursor.length > 180) throw badRequest("Bildirim imleci geçersiz.");
+  const archivedOnly = String(query.archived || "") === "true" || String(query.status || "").toLowerCase() === "archived";
+  const includeArchived = archivedOnly || String(query.includeArchived || "") === "true";
   let items = (data.notifications || []).filter((item) => item
     && recipientMatches(item, owner.role, owner.id)
+    && !isRetiredNotificationCategory(item.category, item.eventType)
+    && !item.deletedAt
     && item.inAppVisible !== false
-    && (String(query.includeArchived || "") === "true" || !item.archivedAt));
-  if ([query.unread, query.unreadOnly].some((value) => String(value || "") === "true")) items = items.filter((item) => !item.readAt);
+    && (includeArchived || !item.archivedAt));
+  if (archivedOnly) items = items.filter((item) => Boolean(item.archivedAt));
+  if ([query.unread, query.unreadOnly].some((value) => String(value || "") === "true")) {
+    items = items.filter((item) => !item.readAt && !item.archivedAt);
+  }
   if (category) items = items.filter((item) => normalizeNotificationCategory(item.category) === category);
   if (severity) items = items.filter((item) => item.severity === severity);
   items.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || String(b.id).localeCompare(String(a.id)));
@@ -315,14 +443,20 @@ function listNotifications(data, owner, query) {
 function unreadCount(data, owner) {
   return (data.notifications || []).filter((item) => item
     && recipientMatches(item, owner.role, owner.id)
+    && !isRetiredNotificationCategory(item.category, item.eventType)
+    && !item.deletedAt
     && item.inAppVisible !== false
     && !item.archivedAt
     && !item.readAt).length;
 }
 
 function findOwnedNotification(data, id, owner) {
-  const item = (data.notifications || []).find((entry) => entry && entry.id === String(id || ""));
-  if (!item || !recipientMatches(item, owner.role, owner.id)) {
+  const item = (data.notifications || []).find((entry) => entry
+    && entry.id === String(id || "")
+    && !entry.deletedAt
+    && !isRetiredNotificationCategory(entry.category, entry.eventType)
+    && recipientMatches(entry, owner.role, owner.id));
+  if (!item) {
     const error = new Error("Bildirim bulunamadı.");
     error.status = 404;
     throw error;
@@ -343,14 +477,94 @@ function publicNotification(item) {
     deepLink: item.deepLink || "",
     metadata: item.metadata || {},
     createdAt: item.createdAt,
+    updatedAt: item.updatedAt || item.createdAt,
     readAt: item.readAt || null,
     archivedAt: item.archivedAt || null
   };
 }
 
-function notificationCapabilities(pushService) {
+function notificationCapabilities(pushService, preferences = {}) {
   const pushSupported = Boolean(pushService && pushService.isConfigured());
-  return { pushSupported, vapidPublicKey: pushSupported ? pushService.publicKey : "" };
+  const emailVerified = preferences.emailVerified === true;
+  return {
+    pushSupported,
+    vapidPublicKey: pushSupported ? pushService.publicKey : "",
+    emailSupported: emailVerified,
+    emailVerified
+  };
+}
+
+function pushSubscriptionMatches(item, owner) {
+  if (!item || !owner) return false;
+  const role = normalizeRole(item.ownerRole || item.recipientRole);
+  const id = role === "manager" ? "manager" : String(item.ownerId || item.recipientId || "");
+  return role === owner.role && id === owner.id;
+}
+
+function normalizedDeviceId(value) {
+  const id = String(value || "").trim().replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 180);
+  return id;
+}
+
+function normalizedDeviceName(value, userAgent) {
+  const explicit = String(value || "").trim().replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").slice(0, 120);
+  if (explicit) return explicit;
+  const agent = String(userAgent || "");
+  if (/Edg\//i.test(agent)) return "Microsoft Edge";
+  if (/Firefox\//i.test(agent)) return "Firefox";
+  if (/(?:Chrome|CriOS)\//i.test(agent)) return "Google Chrome";
+  if (/Safari\//i.test(agent) && !/Chrome|Chromium|Android/i.test(agent)) return "Safari";
+  return "Bu cihaz";
+}
+
+function publicPushDevice(item, currentDeviceId, options = {}) {
+  const deviceId = normalizedDeviceId(item && item.deviceId);
+  const deviceName = normalizedDeviceName(item && item.deviceName, item && item.userAgent);
+  const device = {
+    id: String(item && item.id || ""),
+    deviceId,
+    deviceName,
+    name: deviceName,
+    createdAt: item && item.createdAt || null,
+    updatedAt: item && item.updatedAt || null,
+    lastSeenAt: item && (item.lastSeenAt || item.updatedAt || item.createdAt) || null,
+    lastSuccessAt: item && item.lastSuccessAt || null,
+    disabledAt: item && item.disabledAt || null,
+    status: item && item.disabledAt ? "disabled" : "active",
+    current: Boolean(currentDeviceId && deviceId && currentDeviceId === deviceId)
+  };
+  device.isCurrent = device.current;
+  if (options.includeEndpoint) device.endpoint = String(item && item.endpoint || "");
+  return device;
+}
+
+function cancelNotificationOutbox(data, owner, notificationIds, reason, timestamp = new Date().toISOString()) {
+  cancelOutboxItems(data, (item) => item
+    && notificationIds.has(item.notificationId)
+    && normalizeRole(item.recipientRole) === owner.role
+    && String(owner.role === "manager" ? "manager" : item.recipientId || "") === owner.id, reason, timestamp);
+}
+
+function cancelPushOutbox(data, owner, subscriptionIds, endpoints, reason, timestamp = new Date().toISOString()) {
+  const ids = new Set((subscriptionIds || []).filter(Boolean));
+  const destinations = new Set((endpoints || []).filter(Boolean));
+  cancelOutboxItems(data, (item) => item
+    && item.channel === "push"
+    && normalizeRole(item.recipientRole) === owner.role
+    && String(owner.role === "manager" ? "manager" : item.recipientId || "") === owner.id
+    && (ids.has(item.subscriptionId) || destinations.has(item.destination)), reason, timestamp);
+}
+
+function cancelOutboxItems(data, matches, reason, timestamp) {
+  for (const item of data.notificationOutbox || []) {
+    if (!matches(item) || ["sent", "cancelled"].includes(item.status)) continue;
+    item.status = "cancelled";
+    item.nextAttemptAt = null;
+    item.lockedAt = null;
+    item.lockedBy = "";
+    item.lastError = String(reason || "Bildirim teslimi kullanıcı tarafından iptal edildi.").slice(0, 500);
+    item.updatedAt = timestamp;
+  }
 }
 
 function validatePushSubscription(value) {
@@ -373,14 +587,15 @@ function writeSse(res, event, payload, id) {
 function newestNotificationRevision(data, owner) {
   let revision = 0;
   for (const item of data.notifications || []) {
-    if (!item || !recipientMatches(item, owner.role, owner.id)) continue;
-    revision = Math.max(revision, Date.parse(item.createdAt || "") || 0);
+    if (!item || item.deletedAt || isRetiredNotificationCategory(item.category, item.eventType)
+      || !recipientMatches(item, owner.role, owner.id)) continue;
+    revision = Math.max(revision, Date.parse(item.updatedAt || item.createdAt || "") || 0);
   }
   return revision;
 }
 
 function nextNotificationRevision(current, notification) {
-  const hinted = Date.parse(notification && notification.createdAt || "") || 0;
+  const hinted = Date.parse(notification && (notification.updatedAt || notification.createdAt) || "") || 0;
   return hinted > current ? hinted : current + 1;
 }
 
@@ -395,6 +610,12 @@ function badRequest(message) {
   return error;
 }
 
+function notFound(message) {
+  const error = new Error(message);
+  error.status = 404;
+  return error;
+}
+
 function validateId(value, label) {
   const id = String(value || "").trim();
   if (!id || id.length > 180 || /[\u0000-\u001f\u007f]/.test(id)) throw badRequest(`${label} geçersiz.`);
@@ -406,6 +627,9 @@ function parseCategoryFilter(value) {
   if (!text) return "";
   const category = normalizeNotificationCategory(text);
   const normalizedInput = text.toLocaleLowerCase("tr-TR").replace(/[_-]+/g, " ");
+  if (!NOTIFICATION_CATEGORIES.includes(category)) {
+    throw badRequest(`Kategori ${NOTIFICATION_CATEGORIES.join(", ")} değerlerinden biri olmalıdır.`);
+  }
   if (category === "system" && !["system", "sistem", "reminder", "hatırlatma", "hatirlatma"].includes(normalizedInput)) {
     throw badRequest(`Kategori ${NOTIFICATION_CATEGORIES.join(", ")} değerlerinden biri olmalıdır.`);
   }

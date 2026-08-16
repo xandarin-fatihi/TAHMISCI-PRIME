@@ -1,7 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
-const { getNotificationPreferences } = require("./notification-service");
+const { getNotificationPreferences, isRetiredNotificationCategory, normalizeRole } = require("./notification-service");
 
 const RETRY_DELAYS_MS = Object.freeze([60 * 1000, 5 * 60 * 1000, 30 * 60 * 1000, 2 * 60 * 60 * 1000]);
 
@@ -63,8 +63,10 @@ function createNotificationDeliveryWorker(options) {
           item.status = "pending";
           item.lockedAt = null;
           item.lockedBy = "";
+          item.updatedAt = now.toISOString();
         }
       }
+      cancelDuplicateOutboxDeliveries(data.notificationOutbox, now.toISOString());
       const candidate = data.notificationOutbox
         .filter((item) => item && item.status === "pending"
           && Number(item.attemptCount || 0) < maxAttempts
@@ -85,8 +87,17 @@ function createNotificationDeliveryWorker(options) {
 
   async function deliver(item) {
     const snapshot = await store.read();
-    const notification = (snapshot.notifications || []).find((entry) => entry && entry.id === item.notificationId);
-    if (!notification) return finish(item, permanentError("Bildirim kaydı bulunamadı.", "NOTIFICATION_MISSING"));
+    const notificationsWithId = (snapshot.notifications || []).filter((entry) => entry && entry.id === item.notificationId);
+    const notification = notificationsWithId.find((entry) => deliveryMatchesNotification(item, entry));
+    if (!notification) {
+      const code = notificationsWithId.length ? "OUTBOX_RECIPIENT_MISMATCH" : "NOTIFICATION_MISSING";
+      const message = notificationsWithId.length ? "Bildirim teslim alıcısı eşleşmiyor." : "Bildirim kaydı bulunamadı.";
+      return finish(item, permanentError(message, code));
+    }
+    if (isRetiredNotificationCategory(notification.category, notification.eventType)) {
+      return cancel(item, "Pasif eğitim bildirimi teslim edilmedi.");
+    }
+    if (notification.deletedAt) return cancel(item, "Bildirim silindiği için teslim iptal edildi.");
     if (!recipientIsActive(snapshot, notification.recipientRole, notification.recipientId)) {
       await removeRecipientSubscriptions(notification.recipientRole, notification.recipientId);
       return cancel(item, "Alıcı hesabı aktif değil.");
@@ -112,9 +123,8 @@ function createNotificationDeliveryWorker(options) {
         if (!pushConfigured) {
           throw permanentError("Web Push kanalı yapılandırılmamış.", "PUSH_NOT_CONFIGURED");
         }
-        const subscription = (snapshot.pushSubscriptions || []).find((entry) => entry && !entry.disabledAt
-          && entry.ownerRole === notification.recipientRole
-          && String(entry.ownerId) === String(notification.recipientId)
+        const subscription = (snapshot.pushSubscriptions || []).find((entry) => entry && !entry.disabledAt && !entry.revokedAt
+          && pushSubscriptionBelongsToDelivery(entry, item)
           && (entry.id === item.subscriptionId || entry.endpoint === item.destination));
         if (!subscription) throw permanentError("Push aboneliği bulunamadı.", "PUSH_SUBSCRIPTION_MISSING");
         await pushService.sendNotificationPush(notification, subscription.subscription || subscription);
@@ -201,6 +211,7 @@ function createNotificationDeliveryWorker(options) {
     await store.update((data) => {
       const before = (data.pushSubscriptions || []).length;
       data.pushSubscriptions = (data.pushSubscriptions || []).filter((entry) => !(entry
+        && pushSubscriptionBelongsToDelivery(entry, item)
         && (entry.id === item.subscriptionId || entry.endpoint === item.destination)));
       return data.pushSubscriptions.length === before ? noChange(store, data) : data;
     });
@@ -246,6 +257,7 @@ function createNotificationDeliveryWorker(options) {
     const timestamp = nowDate(clock).toISOString();
     await store.update((data) => {
       const subscription = (data.pushSubscriptions || []).find((entry) => entry
+        && pushSubscriptionBelongsToDelivery(entry, item)
         && (entry.id === item.subscriptionId || entry.endpoint === item.destination));
       if (subscription) {
         subscription.failureCount = Math.max(0, Number(subscription.failureCount || 0)) + 1;
@@ -264,6 +276,15 @@ function createNotificationDeliveryWorker(options) {
       if (!item) throw requestError(404, "Bildirim teslim kaydı bulunamadı.");
       if (item.status === "sent") throw requestError(409, "Başarıyla teslim edilen bildirim yeniden gönderilemez.");
       if (["pending", "processing"].includes(item.status)) throw requestError(409, "Bildirim teslimi zaten bekliyor veya işleniyor.");
+      const notification = (data.notifications || []).find((entry) => entry
+        && entry.id === item.notificationId
+        && !entry.deletedAt
+        && deliveryMatchesNotification(item, entry));
+      if (!notification) throw requestError(409, "Bildirim kaydı veya teslim alıcısı artık geçerli değil.");
+      const deliveryKey = outboxDeliveryKey(item);
+      const alreadySent = deliveryKey && (data.notificationOutbox || []).some((entry) => entry && entry !== item
+        && entry.status === "sent" && outboxDeliveryKey(entry) === deliveryKey);
+      if (alreadySent) throw requestError(409, "Aynı bildirim teslimi daha önce başarıyla tamamlandı.");
       const now = nowDate(clock).toISOString();
       item.status = "pending";
       item.attemptCount = 0;
@@ -293,7 +314,8 @@ function createNotificationDeliveryWorker(options) {
       delivered: sent,
       email: { pending: count("pending", "email"), sent: count("sent", "email"), failed: count("failed", "email") },
       push: { pending: count("pending", "push"), sent: count("sent", "push"), failed: count("failed", "push") },
-      invalidPushSubscriptions: (data.pushSubscriptions || []).filter((item) => item && (item.disabledAt || Number(item.failureCount || 0) >= 3)).length,
+      invalidPushSubscriptions: (data.pushSubscriptions || []).filter((item) => item && !item.revokedAt
+        && (item.disabledAt || Number(item.failureCount || 0) >= 3)).length,
       lastProcessedAt: data.notificationSchedulerState && data.notificationSchedulerState.lastOutboxRunAt || null,
       lastSuccessAt: data.notificationSchedulerState && data.notificationSchedulerState.lastOutboxSuccessAt || null,
       workerRunning: !stopped
@@ -342,6 +364,85 @@ function hasClaimableOutboxItem(items, now, staleBefore, maxAttempts) {
     if (item.status !== "pending" || Number(item.attemptCount || 0) >= maxAttempts) return false;
     return !item.nextAttemptAt || !Number.isFinite(Date.parse(item.nextAttemptAt)) || Date.parse(item.nextAttemptAt) <= timestamp;
   });
+}
+
+function cancelDuplicateOutboxDeliveries(items, timestamp) {
+  const groups = new Map();
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item || !["pending", "processing", "sent"].includes(item.status)) continue;
+    const key = outboxDeliveryKey(item);
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const sent = group.filter((item) => item.status === "sent")
+      .sort((left, right) => String(left.sentAt || left.updatedAt || left.id || "")
+        .localeCompare(String(right.sentAt || right.updatedAt || right.id || "")))[0];
+    if (sent) {
+      for (const item of group) {
+        if (item !== sent && ["pending", "processing"].includes(item.status)) cancelDuplicateOutboxItem(item, timestamp);
+      }
+      continue;
+    }
+    const processing = group.filter((item) => item.status === "processing")
+      .sort((left, right) => String(left.lockedAt || left.updatedAt || left.id || "")
+        .localeCompare(String(right.lockedAt || right.updatedAt || right.id || "")));
+    if (processing.length) {
+      const keep = processing[0];
+      for (const item of group) {
+        if (item !== keep && ["pending", "processing"].includes(item.status)) cancelDuplicateOutboxItem(item, timestamp);
+      }
+      continue;
+    }
+    const pending = group.filter((item) => item.status === "pending")
+      .sort((left, right) => String(left.createdAt || left.nextAttemptAt || left.id || "")
+        .localeCompare(String(right.createdAt || right.nextAttemptAt || right.id || "")));
+    for (const item of pending.slice(1)) cancelDuplicateOutboxItem(item, timestamp);
+  }
+}
+
+function cancelDuplicateOutboxItem(item, timestamp) {
+  item.status = "cancelled";
+  item.nextAttemptAt = null;
+  item.lockedAt = null;
+  item.lockedBy = "";
+  item.lastError = "Yinelenen bildirim teslim kaydı iptal edildi.";
+  item.updatedAt = timestamp;
+}
+
+function outboxDeliveryKey(item) {
+  const role = normalizeRole(item && item.recipientRole);
+  const recipientId = role === "manager" ? "manager" : String(item && item.recipientId || "").trim();
+  const notificationId = String(item && item.notificationId || "").trim();
+  const channel = String(item && item.channel || "").trim();
+  if (!role || !recipientId || !notificationId || !["email", "push"].includes(channel)) return "";
+  const suffix = channel === "push"
+    ? String(item.subscriptionId || item.destination || "")
+    : String(item.destination || "").trim().toLowerCase();
+  if (!suffix) return "";
+  return `${role}\u0000${recipientId}\u0000${notificationId}\u0000${channel}\u0000${suffix}`;
+}
+
+function deliveryMatchesNotification(item, notification) {
+  if (!item || !notification) return false;
+  const notificationRole = normalizeRole(notification.recipientRole);
+  const itemRole = normalizeRole(item.recipientRole);
+  if (!notificationRole || notificationRole !== itemRole) return false;
+  const notificationId = notificationRole === "manager" ? "manager" : String(notification.recipientId || "");
+  const itemRecipientId = itemRole === "manager" ? "manager" : String(item.recipientId || "");
+  return notificationId === itemRecipientId;
+}
+
+function pushSubscriptionBelongsToDelivery(subscription, item) {
+  if (!subscription || !item) return false;
+  const subscriptionRole = normalizeRole(subscription.ownerRole || subscription.recipientRole);
+  const itemRole = normalizeRole(item.recipientRole);
+  if (!subscriptionRole || subscriptionRole !== itemRole) return false;
+  const subscriptionId = subscriptionRole === "manager" ? "manager" : String(subscription.ownerId || subscription.recipientId || "");
+  const recipientId = itemRole === "manager" ? "manager" : String(item.recipientId || "");
+  return subscriptionId === recipientId;
 }
 
 function noChange(store, data) {
