@@ -13,7 +13,7 @@ const {
   registryCodeForEntity
 } = require("./product-code-registry");
 
-const STORE_SCHEMA_VERSION = 15;
+const STORE_SCHEMA_VERSION = 16;
 
 function migrateStore(input) {
   const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
@@ -74,6 +74,7 @@ function migrateStore(input) {
   };
 
   next.notificationPreferences = reconcileNotificationPreferenceEmails(next.notificationPreferences, next);
+  clearLegacyUnverifiedPersonelAdminEmails(next);
   next.notificationOutbox = reconcileNotificationOutboxRecipients(next.notificationOutbox, next.notifications);
   next.recipeCatalog = reconcileRecipeCatalog(next.recipeState, source.recipeCatalog);
   next.workforceAssignments = reconcileWorkforceAssignments(next.workforceTasks, next.workforceAssignments, next.recipeUsers);
@@ -464,6 +465,7 @@ function normalizePushSubscriptions(value) {
       updatedAt: normalizeStoredDate(item.updatedAt || item.createdAt, new Date(0).toISOString()),
       lastSeenAt: normalizeStoredDate(item.lastSeenAt || item.updatedAt || item.createdAt, new Date(0).toISOString()),
       lastSuccessAt: item.lastSuccessAt ? normalizeStoredDate(item.lastSuccessAt, new Date(0).toISOString()) : null,
+      lastFailureAt: item.lastFailureAt ? normalizeStoredDate(item.lastFailureAt, new Date(0).toISOString()) : null,
       failureCount: Math.max(0, Math.trunc(finiteNumber(item.failureCount, 0))),
       disabledAt: item.disabledAt ? normalizeStoredDate(item.disabledAt, new Date(0).toISOString()) : null,
       revokedAt: item.revokedAt ? normalizeStoredDate(item.revokedAt, new Date(0).toISOString()) : null
@@ -833,6 +835,33 @@ function normalizeRecipeUsers(value) {
       ...normalizeAccountSecurity(item)
     };
   }).filter(Boolean);
+}
+
+function clearLegacyUnverifiedPersonelAdminEmails(data) {
+  const adminEmail = normalizeSecurityEmail(data && data.admin && (data.admin.emailNormalized || data.admin.email));
+  if (!adminEmail) return;
+  const clearedAt = new Date().toISOString();
+  for (const account of Array.isArray(data.recipeUsers) ? data.recipeUsers : []) {
+    const email = normalizeSecurityEmail(account && (account.emailNormalized || account.email));
+    const isUnverifiedLegacyDefault = account
+      && email === adminEmail
+      && !account.emailVerifiedAt
+      && !account.pendingEmail
+      && Math.max(0, Math.trunc(finiteNumber(account.emailVerificationVersion, 0))) === 0;
+    if (!isUnverifiedLegacyDefault) continue;
+    account.email = "";
+    account.emailNormalized = "";
+    account.emailVerificationRequired = true;
+    data.securityAudit = normalizeSecurityAudit((Array.isArray(data.securityAudit) ? data.securityAudit : []).concat({
+      id: `security-migration-${crypto.randomUUID()}`,
+      action: "legacy_personel_admin_email_cleared",
+      scope: "personel",
+      accountId: String(account.id || ""),
+      result: "unverified_default_removed",
+      ipHash: "",
+      createdAt: clearedAt
+    }));
+  }
 }
 
 function normalizeAdmin(admin) {

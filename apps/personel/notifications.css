@@ -636,6 +636,14 @@ body.is-personel-notification-open {
   gap: 3px;
 }
 
+.notification-push-card .notification-push-actions {
+  display: flex;
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: end;
+  gap: 8px;
+}
+
 .notification-push-card strong {
   font-size: 13px;
 }
@@ -673,6 +681,7 @@ body.is-personel-notification-open {
   .notification-preferences-card > header,
   .notification-preferences-card > footer,
   .notification-push-card,
+  .notification-push-card .notification-push-actions,
   .notification-email-help,
   .notification-devices-card > header,
   .notification-device-row {

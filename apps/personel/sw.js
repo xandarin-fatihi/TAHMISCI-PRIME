@@ -1,7 +1,7 @@
 /* Tahmisçi Personel PWA — scope: /personel/ */
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "personel",
-  version: "2026.08.16.3",
+  version: "2026.08.16.4",
   scopePath: "/personel/",
   offlineUrl: "/personel/offline.html",
   offlineAssets: [

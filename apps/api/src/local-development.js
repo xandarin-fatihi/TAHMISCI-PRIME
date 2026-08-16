@@ -13,6 +13,20 @@ const LOCAL_DEFAULTS = Object.freeze({
   managerKey: "tahmisci-local-development-manager-key-2026-never-production"
 });
 
+const PRESERVED_DELIVERY_ENV_KEYS = Object.freeze([
+  "PASSWORD_RESET_EMAIL",
+  "SMTP_HOST",
+  "SMTP_PORT",
+  "SMTP_SECURE",
+  "SMTP_USER",
+  "SMTP_PASS",
+  "SMTP_FROM",
+  "VAPID_SUBJECT",
+  "VAPID_PUBLIC_KEY",
+  "VAPID_PRIVATE_KEY",
+  "NOTIFICATION_WORKERS_ENABLED"
+]);
+
 function getLocalPaths(kind = "dev") {
   if (!new Set(["dev", "smoke"]).has(kind)) throw new Error("Invalid local run type.");
   const prefix = kind === "dev" ? "local-dev" : "local-smoke";
@@ -35,6 +49,9 @@ function buildLocalEnvironment({ port = 6060, kind = "dev", environment = proces
   const credentials = getLocalCredentials(environment);
   const localhostOrigin = `http://localhost:${safePort}`;
   const loopbackOrigin = `http://127.0.0.1:${safePort}`;
+  const preservedDeliveryEnvironment = Object.fromEntries(PRESERVED_DELIVERY_ENV_KEYS
+    .filter((key) => Object.prototype.hasOwnProperty.call(environment, key))
+    .map((key) => [key, String(environment[key])]));
   return {
     NODE_ENV: "development",
     TAHMISCI_LOCAL_DEV: "true",
@@ -52,11 +69,8 @@ function buildLocalEnvironment({ port = 6060, kind = "dev", environment = proces
     DEFAULT_RECIPE_PASSWORD: credentials.recipePassword,
     JWT_SECRET: LOCAL_DEFAULTS.jwtSecret,
     PASSWORD_MANAGER_KEY: LOCAL_DEFAULTS.managerKey,
-    PASSWORD_RESET_EMAIL: "",
-    SMTP_USER: "",
-    SMTP_PASS: "",
-    SMTP_FROM: "",
-    BCRYPT_ROUNDS: "10"
+    BCRYPT_ROUNDS: "10",
+    ...preservedDeliveryEnvironment
   };
 }
 
@@ -102,6 +116,7 @@ function isKnownLocalCredential(value) {
 
 module.exports = {
   LOCAL_DEFAULTS,
+  PRESERVED_DELIVERY_ENV_KEYS,
   assertOwnedLocalTarget,
   buildLocalEnvironment,
   getLocalCredentials,

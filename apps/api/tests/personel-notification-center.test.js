@@ -53,6 +53,19 @@ test("Personel push izni sadece düğme eyleminden istenir ve çıkışta abonel
   assert.match(shell, /TahmisciPersonelNotifications\.beforeLogout/);
 });
 
+test("Personel push arayüzü durumları ayırır ve testi yalnız mevcut abonelikten gönderir", () => {
+  assert.match(html, /id="personelPushTest"[^>]*hidden[^>]*>Test bildirimi gönder/);
+  assert.match(script, /Telefon bildirimleri sunucuda henüz etkinleştirilmemiş\./);
+  assert.match(script, /Bu tarayıcı PWA bildirimlerini desteklemiyor\./);
+  assert.match(script, /Tarayıcı bildirim izni kapalı\. Site ayarlarından izin verin\./);
+  assert.match(script, /Bildirim hizmeti başlatılamadı\./);
+  assert.match(script, /Bildirim aboneliği sunucuya kaydedilemedi\./);
+  assert.match(script, /iPhone\/iPad’de bildirimleri kullanmak için siteyi Safari’den Ana Ekran’a ekleyip oradan açın\./);
+  assert.match(script, /`\$\{API_ROOT\}\/test`/);
+  assert.match(script, /body:\s*\{ channels:\s*\["push"\], deviceId:\s*notificationDeviceId\(\) \}/);
+  assert.match(script, /Bildirimler açık · \$\{name\} · Son kayıt:/);
+});
+
 test("Personel deep-link resolver mevcut sekmeleri, hash rotalarını ve entity hedeflerini güvenle açar", () => {
   assert.match(script, /url\.origin !== window\.location\.origin/);
   assert.match(script, /normalizePersonelNotificationSection\(url\.hash/);

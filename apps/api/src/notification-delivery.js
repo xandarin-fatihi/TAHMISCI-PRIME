@@ -140,7 +140,7 @@ function createNotificationDeliveryWorker(options) {
         || [404, 410].includes(statusCode)
         || ["SMTP_NOT_CONFIGURED", "EMAIL_NOT_CONFIGURED", "PUSH_NOT_CONFIGURED", "INVALID_EMAIL_DESTINATION", "PUSH_SUBSCRIPTION_MISSING", "UNSUPPORTED_CHANNEL"].includes(error && error.code);
       if (item.channel === "push") {
-        if ([404, 410].includes(statusCode)) await removePushSubscription(item);
+        if ([404, 410].includes(statusCode)) await disablePushSubscription(item, statusCode);
         else if (!permanent) await recordPushFailure(item);
       }
       if (!permanent) logError("Bildirim teslimi başarısız", safeDeliveryError(error));
@@ -207,13 +207,30 @@ function createNotificationDeliveryWorker(options) {
     return { sent: false, deferred: true, nextAttemptAt };
   }
 
-  async function removePushSubscription(item) {
+  async function disablePushSubscription(item, statusCode) {
+    const timestamp = nowDate(clock).toISOString();
     await store.update((data) => {
-      const before = (data.pushSubscriptions || []).length;
-      data.pushSubscriptions = (data.pushSubscriptions || []).filter((entry) => !(entry
+      const subscription = (data.pushSubscriptions || []).find((entry) => entry
         && pushSubscriptionBelongsToDelivery(entry, item)
-        && (entry.id === item.subscriptionId || entry.endpoint === item.destination)));
-      return data.pushSubscriptions.length === before ? noChange(store, data) : data;
+        && (entry.id === item.subscriptionId || entry.endpoint === item.destination));
+      if (!subscription) return noChange(store, data);
+      subscription.disabledAt = subscription.disabledAt || timestamp;
+      subscription.lastFailureAt = timestamp;
+      subscription.failureCount = Math.max(0, Number(subscription.failureCount || 0)) + 1;
+      subscription.updatedAt = timestamp;
+      for (const pending of data.notificationOutbox || []) {
+        if (!pending || pending.id === item.id || pending.channel !== "push"
+          || !["pending", "processing"].includes(pending.status)
+          || !pushSubscriptionBelongsToDelivery(subscription, pending)
+          || !(pending.subscriptionId === subscription.id || pending.destination === subscription.endpoint)) continue;
+        pending.status = "cancelled";
+        pending.nextAttemptAt = null;
+        pending.lockedAt = null;
+        pending.lockedBy = "";
+        pending.lastError = `Push aboneliği ${statusCode === 404 ? "bulunamadığı" : "sona erdiği"} için devre dışı bırakıldı.`;
+        pending.updatedAt = timestamp;
+      }
+      return data;
     });
   }
 

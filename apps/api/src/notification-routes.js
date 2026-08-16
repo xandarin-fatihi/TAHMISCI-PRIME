@@ -287,6 +287,77 @@ function registerNotificationRoutes(options) {
       } catch (error) { next(error); }
     });
 
+    if (!admin) {
+      app.post(`${prefix}/test`, ...guards, riskOperationLimiter, async (req, res, next) => {
+        try {
+          if (!pushService || typeof pushService.isConfigured !== "function" || !pushService.isConfigured()
+            || typeof pushService.sendNotificationPush !== "function") {
+            throw httpError(503, "Telefon bildirimleri sunucuda henüz etkinleştirilmemiş.");
+          }
+          const owner = recipientFromRequest(req, role);
+          const requestedSubscriptionId = String(req.body && req.body.subscriptionId || "").trim();
+          if (requestedSubscriptionId) validateId(requestedSubscriptionId, "Cihaz kimliği");
+          const requestedDeviceId = normalizedDeviceId(req.body && req.body.deviceId || req.get("x-tahmisci-device-id"));
+          const data = req.storeSnapshot || await store.read();
+          const subscriptions = (data.pushSubscriptions || [])
+            .filter((item) => pushSubscriptionMatches(item, owner) && !item.disabledAt && !item.revokedAt)
+            .sort((left, right) => String(right.lastSeenAt || right.updatedAt || right.createdAt || "")
+              .localeCompare(String(left.lastSeenAt || left.updatedAt || left.createdAt || "")));
+          const subscription = requestedSubscriptionId
+            ? subscriptions.find((item) => item.id === requestedSubscriptionId)
+            : requestedDeviceId
+              ? subscriptions.find((item) => normalizedDeviceId(item.deviceId) === requestedDeviceId)
+              : subscriptions[0];
+          if (!subscription) throw httpError(409, "Bu hesap için etkin bir bildirim cihazı bulunamadı. Bildirimleri yeniden açın.");
+
+          const notification = {
+            id: `push-test-${crypto.randomUUID()}`,
+            recipientRole: "personnel",
+            recipientId: owner.id,
+            category: "system",
+            eventType: "notification_test",
+            title: "Tahmisçi test bildirimi",
+            body: "Telefon bildirimleri bu cihazda çalışıyor.",
+            severity: "success",
+            deepLink: "/personel/#notifications"
+          };
+          try {
+            await pushService.sendNotificationPush(notification, subscription.subscription || subscription);
+          } catch (error) {
+            const statusCode = Number(error && (error.statusCode || error.status) || 0);
+            if ([404, 410].includes(statusCode)) {
+              await disableOwnedPushSubscription(store, owner, subscription.id, statusCode);
+              throw httpError(410, "Bildirim aboneliğinin süresi dolmuş. Bildirimleri yeniden açın.");
+            }
+            throw httpError(502, "Test bildirimi teslim edilemedi. Lütfen tekrar deneyin.");
+          }
+          const deliveredAt = new Date().toISOString();
+          await store.update((snapshot) => {
+            const current = (snapshot.pushSubscriptions || []).find((item) => item && item.id === subscription.id
+              && pushSubscriptionMatches(item, owner) && !item.disabledAt && !item.revokedAt);
+            if (current) {
+              current.lastSuccessAt = deliveredAt;
+              current.lastSeenAt = deliveredAt;
+              current.updatedAt = deliveredAt;
+              current.failureCount = 0;
+            }
+            return snapshot;
+          });
+          noStore(res).json({
+            ok: true,
+            delivered: true,
+            deliveredAt,
+            subscription: publicPushDevice({
+              ...subscription,
+              lastSuccessAt: deliveredAt,
+              lastSeenAt: deliveredAt,
+              updatedAt: deliveredAt
+            }, requestedDeviceId)
+          });
+        } catch (error) { next(error); }
+      });
+    }
+
     app.get(`${prefix}/events`, ...guards, async (req, res, next) => {
       try {
         const owner = recipientFromRequest(req, role);
@@ -614,6 +685,36 @@ function notFound(message) {
   const error = new Error(message);
   error.status = 404;
   return error;
+}
+
+function httpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+async function disableOwnedPushSubscription(store, owner, subscriptionId, statusCode) {
+  const timestamp = new Date().toISOString();
+  await store.update((data) => {
+    const subscription = (data.pushSubscriptions || []).find((item) => item && item.id === subscriptionId
+      && pushSubscriptionMatches(item, owner));
+    if (!subscription || subscription.revokedAt) return data;
+    subscription.disabledAt = subscription.disabledAt || timestamp;
+    subscription.lastFailureAt = timestamp;
+    subscription.failureCount = Math.max(0, Number(subscription.failureCount || 0)) + 1;
+    subscription.updatedAt = timestamp;
+    for (const item of data.notificationOutbox || []) {
+      if (!item || item.channel !== "push" || item.subscriptionId !== subscription.id
+        || !["pending", "processing"].includes(item.status)) continue;
+      item.status = "cancelled";
+      item.nextAttemptAt = null;
+      item.lockedAt = null;
+      item.lockedBy = "";
+      item.lastError = `Push aboneliği ${statusCode === 404 ? "bulunamadığı" : "sona erdiği"} için devre dışı bırakıldı.`;
+      item.updatedAt = timestamp;
+    }
+    return data;
+  });
 }
 
 function validateId(value, label) {

@@ -1430,6 +1430,9 @@ test("admin reseti yalnızca admin oturumlarını iptal eder", async () => {
   const adminEmail = `admin-security-${Date.now()}@tahmisci.test`;
   const securityBefore = await json("/api/account/admin/security", { headers: adminHeaders(adminToken) });
   assert.equal(securityBefore.response.status, 200);
+  assert.equal(typeof securityBefore.body.smtpConfigured, "boolean");
+  assert.equal(securityBefore.body.smtpPass, undefined);
+  assert.equal(securityBefore.body.vapidPrivateKey, undefined);
   const emailChanged = await json("/api/account/admin/email/change", {
     method: "POST",
     headers: adminHeaders(adminToken),

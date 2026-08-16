@@ -12,13 +12,13 @@
   <link rel="stylesheet" href="/personel/personel.css?v=20260801-phase2">
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20260801-phase2">
   <link rel="stylesheet" href="/personel/personel-compact.css?v=20260811-mobile-sidebar">
-  <link rel="stylesheet" href="/personel/notifications.css?v=20260816-account-notifications">
+  <link rel="stylesheet" href="/personel/notifications.css?v=20260816-push-status">
   <link rel="stylesheet" href="/shared/styles/account-security.css?v=20260816-account-security">
   <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260816-account-notifications">
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
   <script src="/personel/personel.js?v=20260815-performance" defer></script>
   <script src="/personel/workforce.js?v=20260815-performance" defer></script>
-  <script src="/personel/notifications.js?v=20260816-active-categories" defer></script>
+  <script src="/personel/notifications.js?v=20260816-push-status" defer></script>
   <script src="/shared/scripts/live-preview-receiver.js?v=20260801-phase3" defer></script>
   <script src="/shared/scripts/account-security.js?v=20260816-account-security" defer></script>
   <script src="/shared/scripts/pwa-client.js?v=20260816-install-prompt" defer></script>
@@ -142,7 +142,7 @@
               <span class="account-security-state" id="personelAccountEmailState" data-account-email-state>Denetlenmedi</span>
             </header>
             <form class="account-security-email-form" id="personelAccountEmailForm" data-account-email-form novalidate>
-              <label><span>Hesap e-postası</span><input id="personelAccountEmail" data-account-email type="email" name="email" maxlength="254" autocomplete="email" required placeholder="ornek@tahmisci.com"></label>
+              <label><span>Hesap e-postası</span><input id="personelAccountEmail" data-account-email type="email" name="email" maxlength="254" autocomplete="email" required placeholder="ad.soyad@example.com"></label>
               <button class="ui-button ui-button--secondary" id="personelAccountEmailSave" type="submit">E-postayı kaydet</button>
             </form>
             <div class="account-security-verification" data-account-verification hidden>
@@ -202,7 +202,10 @@
               </fieldset>
               <section class="notification-push-card notification-field--wide" aria-labelledby="personelPushTitle">
                 <div><strong id="personelPushTitle">Tarayıcı bildirimleri</strong><span id="personelPushStatus">Durum denetleniyor…</span></div>
-                <button class="ui-button ui-button--secondary" id="personelPushToggle" type="button">Bildirimleri etkinleştir</button>
+                <div class="notification-push-actions">
+                  <button class="ui-button ui-button--ghost" id="personelPushTest" type="button" hidden>Test bildirimi gönder</button>
+                  <button class="ui-button ui-button--secondary" id="personelPushToggle" type="button">Bildirimleri Aç</button>
+                </div>
               </section>
               <section class="notification-devices-card notification-field--wide" aria-labelledby="personelNotificationDevicesTitle">
                 <header><div><strong id="personelNotificationDevicesTitle">Bağlı bildirim cihazları</strong><span>Hesabınıza bağlı tarayıcıları görüntüleyin ve artık kullanmadıklarınızı kaldırın.</span></div><button class="ui-button ui-button--ghost ui-button--sm" id="personelNotificationDevicesRefresh" type="button">Yenile</button></header>

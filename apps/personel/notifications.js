@@ -51,6 +51,7 @@
     nextCursor: "",
     preferences: { ...DEFAULT_PREFERENCES },
     capabilities: {},
+    pushIssue: null,
     devices: [],
     devicesLoading: false,
     loading: false,
@@ -76,7 +77,7 @@
       "personelNotificationViews", "personelNotificationClearArchive",
       "personelNotificationMessage", "personelNotificationList", "personelNotificationLoadMore",
       "personelNotificationPreferencesForm", "personelNotificationPreferencesState",
-      "personelNotificationEmail", "personelPushStatus", "personelPushToggle", "recipeFrame",
+      "personelNotificationEmail", "personelPushStatus", "personelPushToggle", "personelPushTest", "recipeFrame",
       "personelNotificationManageEmail", "personelNotificationDevices", "personelNotificationDevicesRefresh"
     ].forEach((id) => { elements[id] = document.getElementById(id); });
 
@@ -113,6 +114,7 @@
     elements.personelNotificationLoadMore?.addEventListener("click", () => loadNotifications({ append: true }));
     elements.personelNotificationPreferencesForm?.addEventListener("submit", savePreferences);
     elements.personelPushToggle?.addEventListener("click", togglePushSubscription);
+    elements.personelPushTest?.addEventListener("click", sendPushTest);
     elements.personelNotificationManageEmail?.addEventListener("click", openAccountSecurity);
     elements.personelNotificationDevicesRefresh?.addEventListener("click", () => loadDevices(true));
     elements.personelNotificationDevices?.addEventListener("click", handleDeviceClick);
@@ -125,12 +127,20 @@
   function registerPwaNotificationIntro() {
     if (!window.TahmisciPWA || typeof window.TahmisciPWA.registerNotificationPrompt !== "function") return;
     window.TahmisciPWA.registerNotificationPrompt({
-      canShow: () => state.active && !state.preview && supportsPush(),
+      canShow: () => state.active && !state.preview && state.preferencesLoaded
+        && state.capabilities.pushSupported === true && Boolean(vapidPublicKey())
+        && supportsPush() && Notification.permission === "default",
       onEnable: async () => {
-        if (!state.preferencesLoaded) await loadPreferences();
-        await enablePush();
-        await renderPushState();
-        return true;
+        try {
+          if (!state.preferencesLoaded) await loadPreferences();
+          await enablePush();
+          await renderPushState();
+          return true;
+        } catch (error) {
+          state.pushIssue = normalizePushIssue(error);
+          await renderPushState();
+          throw error;
+        }
       }
     });
   }
@@ -146,6 +156,7 @@
     }
     if (elements.personelNotificationTrigger) elements.personelNotificationTrigger.hidden = false;
     void refreshUnreadCount();
+    void loadPreferences();
     connectEvents();
   }
 
@@ -183,6 +194,7 @@
     state.nextCursor = "";
     state.preferences = { ...DEFAULT_PREFERENCES };
     state.capabilities = {};
+    state.pushIssue = null;
     state.devices = [];
     state.devicesLoading = false;
     state.loading = false;
@@ -670,6 +682,7 @@
       await renderPushState();
       void loadDevices();
       setPreferencesMessage("");
+      window.TahmisciPWA?.showNotificationPrompt?.();
     } catch (error) {
       setPreferencesMessage(error.message || "Bildirim tercihleri alınamadı.", true);
       renderPushState();
@@ -794,6 +807,7 @@
       const result = await request(`${API_ROOT}/push-subscriptions`, { headers: notificationDeviceHeaders() });
       state.devices = Array.isArray(result.devices) ? result.devices : Array.isArray(result.subscriptions) ? result.subscriptions : [];
       renderDevices();
+      void renderPushState();
     } catch (error) {
       elements.personelNotificationDevices.replaceChildren(createDeviceEmpty(error.message || "Bağlı cihazlar alınamadı."));
     } finally {
@@ -871,40 +885,85 @@
   }
 
   async function renderPushState() {
-    const supported = supportsPush();
-    const key = vapidPublicKey();
+    const browserSupported = browserSupportsPush();
     let subscription = null;
-    if (supported) subscription = await currentSubscription().catch(() => null);
     if (!elements.personelPushToggle || !elements.personelPushStatus) return;
 
-    if (!supported) {
+    if (elements.personelPushTest) {
+      elements.personelPushTest.hidden = true;
+      elements.personelPushTest.disabled = true;
+    }
+    if (!state.active || !state.preferencesLoaded) {
+      elements.personelPushStatus.textContent = state.active ? "Durum denetleniyor…" : "Oturum açtıktan sonra bildirim durumu denetlenir.";
+      elements.personelPushToggle.textContent = "Bildirimleri Aç";
+      elements.personelPushToggle.disabled = true;
+      return;
+    }
+    if (isIosDevice() && !isStandaloneMode()) {
+      elements.personelPushStatus.textContent = "iPhone/iPad’de bildirimleri kullanmak için siteyi Safari’den Ana Ekran’a ekleyip oradan açın.";
+      elements.personelPushToggle.textContent = "Ana Ekran gerekli";
+      elements.personelPushToggle.disabled = true;
+      return;
+    }
+    if (!browserSupported) {
       elements.personelPushStatus.textContent = "Bu tarayıcı PWA bildirimlerini desteklemiyor. Uygulama içi bildirimler açık kalır.";
       elements.personelPushToggle.textContent = "Desteklenmiyor";
       elements.personelPushToggle.disabled = true;
       return;
     }
-    if (Notification.permission === "denied") {
-      elements.personelPushStatus.textContent = "Bildirim izni tarayıcı ayarlarından engellenmiş.";
-      elements.personelPushToggle.textContent = "Tarayıcıdan engellendi";
+    if (!window.isSecureContext) {
+      elements.personelPushStatus.textContent = "Telefon bildirimleri için güvenli HTTPS bağlantısı gerekir.";
+      elements.personelPushToggle.textContent = "Güvenli bağlantı gerekli";
       elements.personelPushToggle.disabled = true;
       return;
     }
-    if (!key) {
-      elements.personelPushStatus.textContent = "Web Push sunucuda yapılandırılmamış. Uygulama içi bildirimler çalışmaya devam eder.";
+    if (Notification.permission === "denied") {
+      elements.personelPushStatus.textContent = "Tarayıcı bildirim izni kapalı. Site ayarlarından izin verin.";
+      elements.personelPushToggle.textContent = "İzin kapalı";
+      elements.personelPushToggle.disabled = true;
+      return;
+    }
+    if (state.capabilities.pushSupported === false || !vapidPublicKey()) {
+      elements.personelPushStatus.textContent = "Telefon bildirimleri sunucuda henüz etkinleştirilmemiş.";
       elements.personelPushToggle.textContent = "Yapılandırılmamış";
       elements.personelPushToggle.disabled = true;
       return;
     }
+    if (state.pushIssue) {
+      elements.personelPushStatus.textContent = state.pushIssue.message;
+      elements.personelPushToggle.textContent = "Tekrar dene";
+      elements.personelPushToggle.dataset.pushAction = "enable";
+      elements.personelPushToggle.disabled = state.pending.has("push");
+      return;
+    }
+    try {
+      subscription = await currentSubscription();
+    } catch (_error) {
+      elements.personelPushStatus.textContent = "Bildirim hizmeti başlatılamadı. Sayfayı yenileyip tekrar deneyin.";
+      elements.personelPushToggle.textContent = "Tekrar dene";
+      elements.personelPushToggle.dataset.pushAction = "enable";
+      elements.personelPushToggle.disabled = state.pending.has("push");
+      return;
+    }
     elements.personelPushToggle.disabled = state.pending.has("push");
     if (subscription) {
-      elements.personelPushStatus.textContent = "Bu cihaz bildirim almaya hazır.";
+      const device = currentPushDevice();
+      const name = String(device?.deviceName || device?.name || notificationDeviceName());
+      const registeredAt = device && (device.lastSeenAt || device.updatedAt || device.createdAt);
+      elements.personelPushStatus.textContent = registeredAt
+        ? `Bildirimler açık · ${name} · Son kayıt: ${absoluteTime(registeredAt)}`
+        : `Bildirimler açık · ${name}`;
       elements.personelPushToggle.textContent = "Tarayıcı bildirimlerini kapat";
       elements.personelPushToggle.dataset.pushAction = "disable";
+      if (elements.personelPushTest) {
+        elements.personelPushTest.hidden = false;
+        elements.personelPushTest.disabled = state.pending.has("push-test");
+      }
     } else {
       elements.personelPushStatus.textContent = Notification.permission === "granted"
         ? "İzin verildi; bu cihaz henüz abone değil."
-        : "İzin yalnızca düğmeye bastığınızda istenir.";
-      elements.personelPushToggle.textContent = "Bildirimleri etkinleştir";
+        : "İzin yalnızca Bildirimleri Aç düğmesine bastığınızda istenir.";
+      elements.personelPushToggle.textContent = "Bildirimleri Aç";
       elements.personelPushToggle.dataset.pushAction = "enable";
     }
   }
@@ -912,13 +971,15 @@
   async function togglePushSubscription() {
     if (!state.active || state.preview || state.pending.has("push") || !supportsPush()) return;
     state.pending.add("push");
+    state.pushIssue = null;
     elements.personelPushToggle.disabled = true;
     try {
       const subscription = await currentSubscription();
-      if (subscription || elements.personelPushToggle.dataset.pushAction === "disable") await disablePush(subscription);
+      if (subscription && elements.personelPushToggle.dataset.pushAction === "disable") await disablePush(subscription);
       else await enablePush();
       await renderPushState();
     } catch (error) {
+      state.pushIssue = normalizePushIssue(error);
       setPreferencesMessage(error.message || "Tarayıcı bildirimi ayarlanamadı.", true);
     } finally {
       state.pending.delete("push");
@@ -928,34 +989,83 @@
 
   async function enablePush() {
     const key = vapidPublicKey();
-    if (!key) throw new Error("Web Push sunucuda yapılandırılmamış.");
+    if (!key || state.capabilities.pushSupported === false) {
+      throw pushError("server-config", "Telefon bildirimleri sunucuda henüz etkinleştirilmemiş.");
+    }
     const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
     if (permission !== "granted") {
-      await renderPushState();
-      throw new Error("Bildirim izni verilmedi. İsterseniz tarayıcı site ayarlarından değiştirebilirsiniz.");
+      throw pushError("permission-denied", "Tarayıcı bildirim izni kapalı. Site ayarlarından izin verin.");
     }
-    const registration = await ensurePersonelServiceWorker();
+    let registration;
+    try {
+      registration = await ensurePersonelServiceWorker();
+    } catch (_error) {
+      throw pushError("service-worker", "Bildirim hizmeti başlatılamadı. Sayfayı yenileyip tekrar deneyin.");
+    }
     let subscription = await registration.pushManager.getSubscription();
     if (!subscription) {
-      subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: decodeBase64Url(key)
-      });
+      try {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: decodeBase64Url(key)
+        });
+      } catch (_error) {
+        throw pushError("browser-subscription", "Tarayıcı bildirim aboneliği oluşturulamadı. Site ayarlarını kontrol edip tekrar deneyin.");
+      }
     }
-    await request(`${API_ROOT}/push-subscriptions`, {
-      method: "POST",
-      body: {
-        subscription: subscription.toJSON(),
-        deviceId: notificationDeviceId(),
-        deviceName: notificationDeviceName()
-      },
-      headers: notificationDeviceHeaders()
-    });
+    try {
+      await request(`${API_ROOT}/push-subscriptions`, {
+        method: "POST",
+        body: {
+          subscription: subscription.toJSON(),
+          deviceId: notificationDeviceId(),
+          deviceName: notificationDeviceName()
+        },
+        headers: notificationDeviceHeaders()
+      });
+    } catch (_error) {
+      throw pushError("backend-subscription", "Bildirim aboneliği sunucuya kaydedilemedi. Bağlantınızı kontrol edip tekrar deneyin.");
+    }
+    state.pushIssue = null;
     state.preferences.pushEnabled = true;
     await persistPushPreference(true);
     state.devices = [];
     await loadDevices(true);
     setPreferencesMessage("Tarayıcı bildirimleri bu cihaz için etkinleştirildi.");
+  }
+
+  async function sendPushTest() {
+    if (!state.active || state.preview || state.pending.has("push-test") || !supportsPush()) return;
+    const subscription = await currentSubscription().catch(() => null);
+    if (!subscription) {
+      setPreferencesMessage("Önce bu cihazda bildirimleri açın.", true);
+      await renderPushState();
+      return;
+    }
+    state.pending.add("push-test");
+    if (elements.personelPushTest) elements.personelPushTest.disabled = true;
+    setPreferencesMessage("Test bildirimi gönderiliyor…");
+    try {
+      const result = await request(`${API_ROOT}/test`, {
+        method: "POST",
+        body: { channels: ["push"], deviceId: notificationDeviceId() },
+        headers: notificationDeviceHeaders()
+      });
+      if (result.subscription) {
+        const delivered = result.subscription;
+        const deliveredId = String(delivered.id || delivered.subscriptionId || "");
+        state.devices = state.devices.map((device) => String(device.id || device.subscriptionId || "") === deliveredId
+          ? { ...device, ...delivered }
+          : device);
+        renderDevices();
+      }
+      setPreferencesMessage(result.message || "Test bildirimi bu cihaza gönderildi.");
+    } catch (error) {
+      setPreferencesMessage(error.message || "Test bildirimi gönderilemedi.", true);
+    } finally {
+      state.pending.delete("push-test");
+      await renderPushState();
+    }
   }
 
   async function disablePush(existingSubscription) {
@@ -969,6 +1079,7 @@
       await subscription.unsubscribe().catch(() => false);
     }
     state.preferences.pushEnabled = false;
+    state.pushIssue = null;
     await persistPushPreference(false);
     state.devices = [];
     await loadDevices(true);
@@ -996,7 +1107,11 @@
   }
 
   function supportsPush() {
-    return Boolean(window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
+    return Boolean(window.isSecureContext && browserSupportsPush());
+  }
+
+  function browserSupportsPush() {
+    return Boolean("serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
   }
 
   function vapidPublicKey() {
@@ -1013,6 +1128,33 @@
     if (!supportsPush()) return null;
     const registration = await navigator.serviceWorker.getRegistration("/personel/");
     return registration ? registration.pushManager.getSubscription() : null;
+  }
+
+  function currentPushDevice() {
+    const currentId = notificationDeviceId();
+    return state.devices.find((device) => Boolean(device.current ?? device.isCurrent) || String(device.deviceId || "") === currentId) || null;
+  }
+
+  function isIosDevice() {
+    return /iPad|iPhone|iPod/.test(String(navigator.userAgent || ""))
+      || navigator.platform === "MacIntel" && Number(navigator.maxTouchPoints || 0) > 1;
+  }
+
+  function isStandaloneMode() {
+    return Boolean(window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true);
+  }
+
+  function pushError(code, message) {
+    const error = new Error(message);
+    error.pushCode = code;
+    return error;
+  }
+
+  function normalizePushIssue(error) {
+    return {
+      code: String(error && error.pushCode || "unknown"),
+      message: String(error && error.message || "Tarayıcı bildirimi ayarlanamadı.")
+    };
   }
 
   function decodeBase64Url(value) {

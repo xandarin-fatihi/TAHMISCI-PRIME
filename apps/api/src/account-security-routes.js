@@ -40,7 +40,12 @@ function registerAccountSecurityRoutes(options) {
       const data = await requestStore(req, store);
       const account = resolveAuthenticatedAccount(data, req, req.accountScope);
       if (!account) return res.status(404).json({ ok: false, message: "Hesap bulunamadı." });
-      return res.json({ ok: true, scope: req.accountScope, security: publicAccountSecurity(account) });
+      return res.json({
+        ok: true,
+        scope: req.accountScope,
+        security: publicAccountSecurity(account),
+        smtpConfigured: Boolean(mailService.isConfigured && mailService.isConfigured())
+      });
     } catch (error) {
       return next(error);
     }
@@ -447,6 +452,7 @@ async function requestStore(req, store) {
 function resolveAuthenticatedAccount(data, req, scope) {
   if (scope === "admin") return data && data.admin || null;
   const userId = String(req.recipeUser && req.recipeUser.id || req.recipe && req.recipe.userId || "").trim();
+  if (!userId) return null;
   return (Array.isArray(data && data.recipeUsers) ? data.recipeUsers : [])
     .find((user) => user && String(user.id || "") === userId && user.active !== false) || null;
 }
@@ -463,22 +469,12 @@ function resolveResetAccount(data, scope, identifier, config) {
   }
   const users = Array.isArray(data && data.recipeUsers) ? data.recipeUsers : [];
   const account = users.find((user) => {
-    if (!user || user.active === false) return false;
+    if (!user || user.active === false || !String(user.id || "").trim()) return false;
     const verified = verifiedAccountEmail(user);
     return normalizeIdentifier(user.username) === identifier || (verified && normalizeIdentifier(verified) === identifier);
   });
   const destination = account && verifiedAccountEmail(account);
   if (account && destination) return { account, destination, passwordField: "passwordHash", updatedAtField: "updatedAt" };
-  const emergency = normalizeAccountEmail(config.passwordResetEmail);
-  if (!users.length && data && data.admin && emergency && normalizeIdentifier(emergency) === identifier) {
-    return {
-      account: data.admin,
-      destination: emergency,
-      legacyPersonel: true,
-      passwordField: "recipePasswordHash",
-      updatedAtField: "recipeUpdatedAt"
-    };
-  }
   return null;
 }
 
@@ -489,17 +485,7 @@ function resolveChallengeAccount(data, scope, accountId, config) {
     const destination = verifiedAccountEmail(account) || normalizeAccountEmail(config.passwordResetEmail);
     return destination ? { account, destination, passwordField: "passwordHash", updatedAtField: "updatedAt" } : null;
   }
-  if (String(accountId || "") === "legacy" && data && data.admin
-    && !(Array.isArray(data.recipeUsers) && data.recipeUsers.length)) {
-    const destination = normalizeAccountEmail(config.passwordResetEmail);
-    return destination ? {
-      account: data.admin,
-      destination,
-      legacyPersonel: true,
-      passwordField: "recipePasswordHash",
-      updatedAtField: "recipeUpdatedAt"
-    } : null;
-  }
+  if (!String(accountId || "").trim()) return null;
   const account = (Array.isArray(data && data.recipeUsers) ? data.recipeUsers : [])
     .find((user) => user && user.active !== false && String(user.id || "") === String(accountId || ""));
   const destination = account && verifiedAccountEmail(account);
@@ -535,7 +521,7 @@ function verifiedAccountEmail(account) {
 
 function accountIdentity(scope, account) {
   if (scope === "admin") return "manager";
-  return String(account && account.id || "legacy").trim() || "legacy";
+  return String(account && account.id || "").trim();
 }
 
 function publicAccountSecurity(account) {
@@ -644,13 +630,11 @@ function syncVerifiedNotificationEmail(data, scope, accountId, email, updatedAt)
 }
 
 function revokeAccountSessionsAndPush(data, scope, accountId, now) {
-  const legacyPersonel = scope === "personel" && accountId === "legacy";
+  if (scope === "personel" && !String(accountId || "").trim()) return;
   data.authSessions = (Array.isArray(data.authSessions) ? data.authSessions : []).map((session) => {
     const matches = scope === "admin"
       ? session && session.role === "admin"
-      : session && session.role === "personel" && (legacyPersonel
-        ? !String(session.userId || "")
-        : String(session.userId || "") === accountId);
+      : session && session.role === "personel" && String(session.userId || "") === accountId;
     return matches && !session.revokedAt ? { ...session, revokedAt: now } : session;
   });
   const ownerRole = scope === "admin" ? "manager" : "personnel";
@@ -762,6 +746,7 @@ function httpError(status, message) {
 }
 
 module.exports = {
+  accountIdentity,
   applyPendingEmail,
   appendSecurityAudit,
   assignUnverifiedAccountEmail,
@@ -769,5 +754,7 @@ module.exports = {
   normalizeAccountEmail,
   publicAccountSecurity,
   registerAccountSecurityRoutes,
+  resolveChallengeAccount,
+  resolveResetAccount,
   revokeAccountSessionsAndPush
 };

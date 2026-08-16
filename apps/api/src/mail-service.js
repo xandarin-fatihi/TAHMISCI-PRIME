@@ -7,7 +7,11 @@ function createMailService(config, options = {}) {
   const transportFactory = options.transportFactory || nodemailer.createTransport;
 
   function isConfigured() {
-    return Boolean(config.smtpHost && config.smtpPort && config.smtpUser && config.smtpPass);
+    return Boolean(config.smtpHost && config.smtpPort && config.smtpUser && config.smtpPass && config.smtpFrom);
+  }
+
+  function getCapability() {
+    return { smtpConfigured: isConfigured() };
   }
 
   function getTransporter() {
@@ -101,7 +105,7 @@ function createMailService(config, options = {}) {
     transporter = null;
   }
 
-  return { close, getTransporter, isConfigured, sendAccountSecurityCode, sendNotificationEmail };
+  return { close, getCapability, getTransporter, isConfigured, sendAccountSecurityCode, sendNotificationEmail };
 }
 
 function escapeHtml(value) {

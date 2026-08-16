@@ -4,8 +4,11 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  accountIdentity,
   assignUnverifiedAccountEmail,
   publicAccountSecurity,
+  resolveChallengeAccount,
+  resolveResetAccount,
   revokeAccountSessionsAndPush
 } = require("../src/account-security-routes");
 const { createMailService } = require("../src/mail-service");
@@ -44,6 +47,26 @@ test("hesap güvenliği alanları ve challenge koleksiyonları kalıcı store'da
   assert.equal(migrated.passwordResetChallenges[0].identifierHash, "identifier-hash");
   assert.equal(migrated.emailVerificationChallenges[0].purpose, "email_verification");
   assert.deepEqual(migrated.securityAudit, []);
+});
+
+test("migration yalnız doğrulanmamış legacy yönetici e-postası kopyasını temizler", () => {
+  const verifiedAt = "2026-08-01T12:00:00.000Z";
+  const migrated = migrateStore({
+    admin: { passwordHash: "admin-hash", email: "admin@example.test", emailVerifiedAt: verifiedAt },
+    recipeUsers: [
+      { id: "legacy-copy", username: "legacy", email: "ADMIN@example.test" },
+      { id: "verified-owner", username: "verified", email: "admin@example.test", emailVerifiedAt: verifiedAt }
+    ]
+  });
+
+  const legacyCopy = migrated.recipeUsers.find((item) => item.id === "legacy-copy");
+  const verifiedOwner = migrated.recipeUsers.find((item) => item.id === "verified-owner");
+  assert.equal(legacyCopy.email, "");
+  assert.equal(legacyCopy.emailVerifiedAt, null);
+  assert.equal(legacyCopy.emailVerificationRequired, true);
+  assert.equal(verifiedOwner.email, "admin@example.test");
+  assert.equal(verifiedOwner.emailVerifiedAt, verifiedAt);
+  assert.ok(migrated.securityAudit.some((item) => item.action === "legacy_personel_admin_email_cleared" && item.accountId === "legacy-copy"));
 });
 
 test("admin tarafından atanan personel e-postası benzersiz kalır ve eski doğrulama kodunu iptal eder", () => {
@@ -109,6 +132,48 @@ test("hesap güvenliği e-postası güvenli içerik ve taşıma seçenekleriyle 
   await service.close();
 });
 
+test("SMTP capability yalnız güvenli boolean döndürür ve gönderen olmadan yapılandırılmış sayılmaz", () => {
+  const baseConfig = {
+    smtpHost: "smtp.example.test",
+    smtpPort: 465,
+    smtpSecure: true,
+    smtpUser: "mailer@example.test",
+    smtpPass: "secret"
+  };
+  const incomplete = createMailService(baseConfig);
+  assert.deepEqual(incomplete.getCapability(), { smtpConfigured: false });
+  assert.equal(JSON.stringify(incomplete.getCapability()).includes("secret"), false);
+
+  const complete = createMailService({ ...baseConfig, smtpFrom: "Tahmisci <mailer@example.test>" });
+  assert.deepEqual(complete.getCapability(), { smtpConfigured: true });
+  assert.deepEqual(Object.keys(complete.getCapability()), ["smtpConfigured"]);
+});
+
+test("personel reset çözümlemesi yönetici kurtarma adresi ve legacy kimliğini reddeder", () => {
+  const config = { passwordResetEmail: "admin-recovery@example.test" };
+  const admin = { passwordHash: "admin-hash", recipePasswordHash: "recipe-admin-hash" };
+  const withoutPersonnel = { admin, recipeUsers: [] };
+  assert.equal(resolveResetAccount(withoutPersonnel, "personel", "admin-recovery@example.test", config), null);
+  assert.equal(resolveChallengeAccount(withoutPersonnel, "personel", "legacy", config), null);
+  assert.equal(accountIdentity("personel", admin), "");
+
+  const verifiedPerson = {
+    id: "person-1",
+    active: true,
+    username: "barista",
+    email: "barista@example.test",
+    emailNormalized: "barista@example.test",
+    emailVerifiedAt: "2026-08-01T12:00:00.000Z",
+    passwordHash: "person-hash"
+  };
+  const withPersonnel = { admin, recipeUsers: [verifiedPerson] };
+  const match = resolveResetAccount(withPersonnel, "personel", "barista", config);
+  assert.equal(match.account, verifiedPerson);
+  assert.equal(match.destination, "barista@example.test");
+  assert.equal(match.passwordField, "passwordHash");
+  assert.equal("legacyPersonel" in match, false);
+});
+
 test("tüm cihazlardan çıkış yalnız hedef hesabın oturum ve push bağlarını iptal eder", () => {
   const now = "2026-08-16T14:00:00.000Z";
   const data = {
@@ -136,4 +201,16 @@ test("tüm cihazlardan çıkış yalnız hedef hesabın oturum ve push bağları
   assert.equal(data.pushSubscriptions[1].revokedAt, null);
   assert.equal(data.notificationPreferences[0].pushEnabled, false);
   assert.equal(data.notificationPreferences[1].pushEnabled, true);
+});
+
+test("kimliği olmayan personel için legacy oturum veya push iptali yapılmaz", () => {
+  const data = {
+    authSessions: [{ id: "unbound", role: "personel", userId: null, revokedAt: null }],
+    pushSubscriptions: [{ id: "legacy-device", ownerRole: "personnel", ownerId: "legacy", revokedAt: null }],
+    notificationPreferences: [{ ownerRole: "personnel", ownerId: "legacy", pushEnabled: true }]
+  };
+  revokeAccountSessionsAndPush(data, "personel", "", "2026-08-16T14:00:00.000Z");
+  assert.equal(data.authSessions[0].revokedAt, null);
+  assert.equal(data.pushSubscriptions[0].revokedAt, null);
+  assert.equal(data.notificationPreferences[0].pushEnabled, true);
 });

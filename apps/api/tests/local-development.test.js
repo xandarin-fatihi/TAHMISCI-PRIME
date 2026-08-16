@@ -6,6 +6,7 @@ const { spawnSync } = require("node:child_process");
 const test = require("node:test");
 const {
   LOCAL_DEFAULTS,
+  PRESERVED_DELIVERY_ENV_KEYS,
   assertOwnedLocalTarget,
   buildLocalEnvironment,
   getLocalPaths
@@ -20,6 +21,30 @@ test("local dev paths stay outside production storage", () => {
   assert.match(environment.DATA_FILE, /local-dev-store\.json$/);
   assert.match(environment.MEDIA_DIR, /storage[\\/]+media[\\/]+local-dev$/);
   assert.notEqual(path.basename(environment.DATA_FILE), "store.json");
+});
+
+test("local dev kullanıcının SMTP, VAPID, worker ve reset ortamını aynen korur", () => {
+  const configured = {
+    PASSWORD_RESET_EMAIL: "admin-recovery@example.test",
+    SMTP_HOST: "smtp.example.test",
+    SMTP_PORT: "587",
+    SMTP_SECURE: "false",
+    SMTP_USER: "sender@example.test",
+    SMTP_PASS: "smtp-secret",
+    SMTP_FROM: "Tahmisci <sender@example.test>",
+    VAPID_SUBJECT: "mailto:push@example.test",
+    VAPID_PUBLIC_KEY: "public-key",
+    VAPID_PRIVATE_KEY: "private-key",
+    NOTIFICATION_WORKERS_ENABLED: "true"
+  };
+  const environment = buildLocalEnvironment({ port: 8081, kind: "dev", environment: configured });
+
+  for (const key of PRESERVED_DELIVERY_ENV_KEYS) assert.equal(environment[key], configured[key], `${key} korunmalı`);
+
+  const withoutDeliveryConfiguration = buildLocalEnvironment({ port: 8082, kind: "dev", environment: {} });
+  for (const key of PRESERVED_DELIVERY_ENV_KEYS) {
+    assert.equal(Object.prototype.hasOwnProperty.call(withoutDeliveryConfiguration, key), false, `${key} için zorunlu local default üretilmemeli`);
+  }
 });
 
 test("local reset safety check rejects production target", () => {

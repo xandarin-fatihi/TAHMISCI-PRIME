@@ -550,32 +550,130 @@ test("Push payload aynı bildirimi tag ile dedupe eder ve rol dışı deep-link'
   assert.equal(sentPayload.renotify, false);
   assert.equal(safeDeepLink("/yonetici/?section=stock", "/personel/", "personnel"), "/personel/");
   assert.equal(safeDeepLink("/personel/?section=tasks", "/personel/", "personnel"), "/personel/?section=tasks");
+  assert.equal("privateKey" in push, false);
+  assert.doesNotMatch(JSON.stringify(push), /private/i);
 });
 
-test("Push 410 yanıtı geçersiz aboneliği kaldırır fakat ana bildirimi korur", async () => {
+test("Push 404/410 yanıtı geçersiz aboneliği devre dışı bırakır fakat ana bildirimi korur", async () => {
+  for (const statusCode of [404, 410]) {
+    const data = emptyNotificationStore();
+    updateNotificationPreferencesInStore(data, "personnel", "p1", { pushEnabled: true });
+    data.pushSubscriptions.push({
+      id: `sub-${statusCode}`, ownerRole: "personnel", ownerId: "p1", endpoint: `https://push.example/gone-${statusCode}`,
+      subscription: { endpoint: `https://push.example/gone-${statusCode}`, keys: { p256dh: "x", auth: "y" } }
+    });
+    createNotificationInStore(data, {
+      recipientRole: "personnel", recipientId: "p1", title: "Push", dedupeKey: `push-${statusCode}`
+    });
+    const store = memoryStore(data);
+    const worker = createNotificationDeliveryWorker({
+      store,
+      config: {},
+      mailService: { isConfigured: () => false, async sendNotificationEmail() {} },
+      pushService: {
+        isConfigured: () => true,
+        async sendNotificationPush() { throw Object.assign(new Error("Gone"), { statusCode }); }
+      },
+      logError() {}
+    });
+    await worker.tick();
+    const snapshot = await store.read();
+    assert.equal(snapshot.notifications.length, 1);
+    assert.equal(snapshot.pushSubscriptions.length, 1);
+    assert.ok(snapshot.pushSubscriptions[0].disabledAt);
+    assert.ok(snapshot.pushSubscriptions[0].lastFailureAt);
+    assert.equal(snapshot.notificationOutbox[0].status, "failed");
+  }
+});
+
+test("personel test push endpointi yalnız oturum sahibinin aktif cihazına gönderir ve capability private key döndürmez", async (t) => {
   const data = emptyNotificationStore();
-  updateNotificationPreferencesInStore(data, "personnel", "p1", { pushEnabled: true });
-  data.pushSubscriptions.push({
-    id: "sub-410", ownerRole: "personnel", ownerId: "p1", endpoint: "https://push.example/gone",
-    subscription: { endpoint: "https://push.example/gone", keys: { p256dh: "x", auth: "y" } }
-  });
-  createNotificationInStore(data, { recipientRole: "personnel", recipientId: "p1", title: "Push", dedupeKey: "push-410" });
-  const store = memoryStore(data);
-  const worker = createNotificationDeliveryWorker({
-    store,
-    config: {},
-    mailService: { isConfigured: () => false, async sendNotificationEmail() {} },
-    pushService: {
-      isConfigured: () => true,
-      async sendNotificationPush() { throw Object.assign(new Error("Gone"), { statusCode: 410 }); }
+  data.pushSubscriptions.push(
+    {
+      id: "test-device-p1", ownerRole: "personnel", ownerId: "p1", endpoint: "https://push.example/test-p1",
+      deviceId: "browser-p1", deviceName: "P1 telefonu", createdAt: "2026-08-16T10:00:00.000Z",
+      updatedAt: "2026-08-16T10:00:00.000Z", lastSeenAt: "2026-08-16T10:00:00.000Z",
+      subscription: { endpoint: "https://push.example/test-p1", keys: { p256dh: "x", auth: "y" } }
     },
-    logError() {}
+    {
+      id: "test-device-p2", ownerRole: "personnel", ownerId: "p2", endpoint: "https://push.example/test-p2",
+      deviceId: "browser-p2", deviceName: "P2 telefonu", createdAt: "2026-08-16T11:00:00.000Z",
+      updatedAt: "2026-08-16T11:00:00.000Z", lastSeenAt: "2026-08-16T11:00:00.000Z",
+      subscription: { endpoint: "https://push.example/test-p2", keys: { p256dh: "x", auth: "y" } }
+    }
+  );
+  const store = memoryStore(data);
+  const deliveries = [];
+  const pushService = {
+    isConfigured: () => true,
+    publicKey: "public-vapid-key",
+    async sendNotificationPush(notification, subscription) {
+      deliveries.push({ notification, endpoint: subscription.endpoint });
+      return { statusCode: 201 };
+    }
+  };
+  const { server, base } = await notificationServer(store, {
+    health: async () => ({}), retry: async () => ({})
+  }, pushService);
+  t.after(() => closeServer(server));
+
+  let response = await fetch(`${base}/api/notifications/preferences`);
+  let body = await response.json();
+  assert.equal(body.capabilities.pushSupported, true);
+  assert.equal(body.capabilities.vapidPublicKey, "public-vapid-key");
+  assert.doesNotMatch(JSON.stringify(body), /private/i);
+
+  response = await fetch(`${base}/api/notifications/test`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-tahmisci-device-id": "browser-p1" },
+    body: JSON.stringify({ subscriptionId: "test-device-p1" })
   });
-  await worker.tick();
+  body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.delivered, true);
+  assert.equal(body.subscription.id, "test-device-p1");
+  assert.equal("endpoint" in body.subscription, false);
+  assert.deepEqual(deliveries.map((item) => item.endpoint), ["https://push.example/test-p1"]);
+  assert.equal(deliveries[0].notification.recipientId, "p1");
+  assert.equal(deliveries[0].notification.deepLink, "/personel/#notifications");
+
+  response = await fetch(`${base}/api/notifications/test`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ subscriptionId: "test-device-p2" })
+  });
+  assert.equal(response.status, 409);
+  assert.equal(deliveries.length, 1);
+});
+
+test("personel test push 404/410 yanıtında yalnız kendi aboneliğini devre dışı bırakır", async (t) => {
+  const data = emptyNotificationStore();
+  data.pushSubscriptions.push(
+    {
+      id: "expired-p1", ownerRole: "personnel", ownerId: "p1", endpoint: "https://push.example/expired-p1",
+      deviceId: "browser-p1", subscription: { endpoint: "https://push.example/expired-p1", keys: { p256dh: "x", auth: "y" } }
+    },
+    {
+      id: "active-p2", ownerRole: "personnel", ownerId: "p2", endpoint: "https://push.example/active-p2",
+      deviceId: "browser-p2", subscription: { endpoint: "https://push.example/active-p2", keys: { p256dh: "x", auth: "y" } }
+    }
+  );
+  const store = memoryStore(data);
+  const { server, base } = await notificationServer(store, {
+    health: async () => ({}), retry: async () => ({})
+  }, {
+    isConfigured: () => true,
+    publicKey: "public-vapid-key",
+    async sendNotificationPush() { throw Object.assign(new Error("Gone"), { statusCode: 410 }); }
+  });
+  t.after(() => closeServer(server));
+
+  const response = await fetch(`${base}/api/notifications/test`, {
+    method: "POST", headers: { "x-tahmisci-device-id": "browser-p1" }
+  });
+  assert.equal(response.status, 410);
   const snapshot = await store.read();
-  assert.equal(snapshot.notifications.length, 1);
-  assert.equal(snapshot.pushSubscriptions.length, 0);
-  assert.equal(snapshot.notificationOutbox[0].status, "failed");
+  assert.ok(snapshot.pushSubscriptions.find((item) => item.id === "expired-p1").disabledAt);
+  assert.equal(snapshot.pushSubscriptions.find((item) => item.id === "active-p2").disabledAt || null, null);
 });
 
 test("bildirim API'si sahiplik, filtre, cursor, limit, tercih, sağlık ve retry sınırlarını korur", async (t) => {
@@ -736,6 +834,21 @@ test("bildirim durumları, arşiv temizliği ve bağlı cihazlar hesap sahipliğ
   body = await response.json();
   assert.equal(response.status, 201);
   assert.equal(body.subscription.deviceName, "Kasa tableti");
+  const firstRegistrationId = body.subscription.id;
+  response = await fetch(`${base}/api/notifications/push-subscriptions`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-tahmisci-device-id": "browser-new", "user-agent": "Mozilla/5.0 Chrome/120" },
+    body: JSON.stringify({
+      deviceName: "Kasa tableti",
+      subscription: { endpoint: "https://push.example/new", keys: { p256dh: "x", auth: "y" } }
+    })
+  });
+  body = await response.json();
+  assert.equal(response.status, 201, "geriye uyumlu kayıt durumu korunmalı");
+  assert.equal(body.subscription.id, firstRegistrationId);
+  snapshot = await store.read();
+  assert.equal(snapshot.pushSubscriptions.filter((item) => item.ownerId === "p1"
+    && item.endpoint === "https://push.example/new" && !item.revokedAt).length, 1);
   body = await (await fetch(`${base}/api/notifications/push-subscriptions`, {
     headers: { "x-tahmisci-device-id": "browser-new" }
   })).json();
@@ -843,7 +956,7 @@ async function setStockQuantity(store, quantity) {
   });
 }
 
-async function notificationServer(store, deliveryWorker) {
+async function notificationServer(store, deliveryWorker, pushService = { isConfigured: () => false, publicKey: "" }) {
   const app = express();
   app.use(express.json());
   const pass = (_req, _res, next) => next();
@@ -854,7 +967,7 @@ async function notificationServer(store, deliveryWorker) {
       requireAdmin(req, _res, next) { req.admin = { role: "admin" }; next(); }
     },
     config: {}, deliveryWorker,
-    pushService: { isConfigured: () => false, publicKey: "" },
+    pushService,
     requireAdminRequestOrigin: pass,
     requireAdminOrMainRequestOrigin: pass,
     riskOperationLimiter: pass
