@@ -277,15 +277,16 @@ test("kararlı eşleme normalize kaydı eski mapping'in önünde tutar ve silinm
   assert.equal(alias.issues.some((issue) => issue.code === "stale_mapping"), false);
 });
 
-test("reçete menüden bağımsız kalır ve menüde olmayan ürün hata olmadan korunur", () => {
+test("ürün kodlu reçete kanonik menü ürününe bağlanır ve menüde olmayan ürün bağımsız korunur", () => {
   const workbooks = completeWorkbooks();
   const linked = analyzeDataImport(emptyData(), { workbooks: { menu: workbooks.menu, recipe: workbooks.recipe }, files: {} }, {
     analysisId: "data-import-analysis-recipe-link"
   });
   const catalogRecord = linked.plan.recipeCatalog.find((item) => item.product === "Yeni Kahve");
+  const linkedMenuProduct = linked.plan.menuState.categories.flatMap((category) => category.products).find((item) => item.name === "Yeni Kahve");
   assert.ok(catalogRecord);
-  assert.equal(catalogRecord.menuProductId, undefined);
-  assert.equal(linked.plan.menuState.categories.flatMap((category) => category.products).find((item) => item.name === "Yeni Kahve").recipeId, undefined);
+  assert.equal(catalogRecord.menuProductId, linkedMenuProduct.id);
+  assert.equal(linkedMenuProduct.recipeId, catalogRecord.id);
 
   const orphanRecipe = workbook({
     Sıcaklar: sheet(["Kategori", "Ürün Adı", "Ölçü"], [{ Kategori: "Sıcaklar", "Ürün Adı": "Menüde Yok", "Ölçü": "Standart" }])
@@ -338,7 +339,9 @@ test("kodlu dört dosya kanonik Ürün Kodu ile bağlanır ve çoklu fiyat ailel
   assert.equal(families.get("standard").standard.price, 105);
   assert.equal(families.get("weight")["100-gr"].price, 80);
   assert.equal(analysis.plan.recipeState.SICAKLAR["Kodlu Latte"]["14 oz"].productCode, "SIC-LAT-KOD");
-  assert.equal(analysis.plan.recipeCatalog.find((item) => item.productCode === "SIC-LAT-KOD").menuProductId, undefined);
+  const linkedRecipe = analysis.plan.recipeCatalog.find((item) => item.productCode === "SIC-LAT-KOD");
+  assert.equal(linkedRecipe.menuProductId, product.id);
+  assert.equal(product.recipeId, linkedRecipe.id);
   assert.equal(analysis.plan.stockState.products[0].productCode, "STK-SUT-BAR");
   assert.ok(analysis.changes.filter((change) => change.product).every((change) => change.productCode || change.workbook === "menu" && change.field === "kategori"));
 });

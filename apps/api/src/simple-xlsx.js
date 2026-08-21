@@ -149,9 +149,21 @@ function parseSheetRows(xml, sharedStrings) {
   rows.headers = headers;
   table.forEach((values) => {
     const row = {};
+    const cells = [];
     headers.forEach((header, index) => {
       if (!header || ["__proto__", "prototype", "constructor"].includes(header.toLowerCase())) return;
+      cells.push({ header, value: values[index] === undefined ? "" : values[index], columnIndex: index });
       row[header] = values[index] === undefined ? "" : values[index];
+    });
+    // Keep the ordinary row object backward compatible while retaining
+    // positional cells for duplicate-column validation (for example two
+    // "100 GR" price columns).  Non-enumerable metadata cannot leak into API
+    // payloads or normal Object.entries consumers.
+    Object.defineProperty(row, "__xlsxCells", {
+      value: cells,
+      enumerable: false,
+      configurable: false,
+      writable: false
     });
     if (Object.values(row).some((value) => String(value || "").trim())) rows.push(row);
   });

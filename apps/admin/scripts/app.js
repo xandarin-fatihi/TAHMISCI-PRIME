@@ -3564,7 +3564,7 @@
   async function saveMenuToBackend() {
     const result = await backendRequest("/api/menu", {
       method: "PUT",
-      body: { menuState: state.data }
+      body: { menuState: state.data, expectedRevision: state.publishRevision }
     });
     syncPublishRevision(result);
   }
@@ -8911,6 +8911,7 @@
           requestId
         }
       });
+      syncPublishRevision(result);
       center.lastResult = result;
       center.analysis = Object.assign({}, analysis, { canApply: false, applied: true, appliedDomains: applicableDomains });
       center.message = `${dataImportDomainListLabel(applicableDomains)} kalıcı veriye uygulandı${blockedDomains.length ? `; ${dataImportDomainListLabel(blockedDomains)} uygulanmadı` : ""}${result.operationId ? ` · İşlem ${result.operationId}` : ""}.`;
@@ -8980,6 +8981,7 @@
         headers: { "Idempotency-Key": requestId, "X-Request-ID": requestId },
         body: { expectedRevision, requestId }
       });
+      syncPublishRevision(result);
       center.lastResult = result;
       center.analysis = null;
       center.message = "Excel aktarımı backend tarafından güvenli biçimde geri alındı.";

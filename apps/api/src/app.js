@@ -313,15 +313,19 @@ app.use("/api/admin/site", disabledModuleResponse);
 // PASIF_SITE_MODULU_BITIS
 
 // Public menu bootstrap stays active even while the separate website editor module is disabled.
-app.get("/api/public/bootstrap", async (_req, res, next) => {
+app.get("/api/public/bootstrap", async (req, res, next) => {
   try {
     const data = await store.read();
     const bootstrap = buildPublicBootstrap(data);
+    const payload = { ok: true, ...bootstrap };
+    const entityTag = catalogEntityTag("public-menu", payload);
     res.set({
-      "Cache-Control": "public, max-age=30, stale-while-revalidate=120",
+      "Cache-Control": "public, max-age=0, must-revalidate",
+      "ETag": entityTag,
       "Vary": "Accept-Language"
     });
-    res.json({ ok: true, ...bootstrap });
+    if (requestEntityTagMatches(req, entityTag)) return res.status(304).end();
+    res.json(payload);
   } catch (error) {
     next(error);
   }
@@ -1466,19 +1470,19 @@ app.post("/api/admin/password", requireAdminRequestOrigin, passwordLimiter, asyn
   }
 });
 
-app.get("/api/menu", async (_req, res, next) => {
+app.get("/api/menu", async (req, res, next) => {
   try {
     const data = await store.read();
-    const streamRevision = resolveScopeRevision(data, "menu");
-    res.json({
-      ok: true,
-      menuState: serializeLegacyMenuState(data.menuState, data.pricing),
-      pricing: data.pricing,
-      revision: data.revisions && data.revisions.pricing || 0,
-      publishRevision: data.revisions && data.revisions.publish || 0,
-      streamRevision,
-      updatedAt: data.menuUpdatedAt || null
+    const payload = buildMenuApiPayload(data);
+    const entityTag = catalogEntityTag("menu", payload);
+    res.set({
+      "Cache-Control": "no-cache, must-revalidate",
+      "ETag": entityTag,
+      "X-Menu-Revision": String(payload.streamRevision),
+      "X-Publish-Revision": String(payload.publishRevision)
     });
+    if (requestEntityTagMatches(req, entityTag)) return res.status(304).end();
+    res.json(payload);
   } catch (error) {
     next(error);
   }
@@ -1489,6 +1493,11 @@ app.put("/api/menu", requireAdminRequestOrigin, auth.requireAdmin, async (req, r
     const menuState = req.body && req.body.menuState;
     const pricingInput = req.body && req.body.pricing || menuState && menuState.pricing;
     const incomingMenuState = pricingInput && menuState ? { ...menuState, pricing: pricingInput } : menuState;
+    const hasExpectedRevision = Boolean(req.body && Object.prototype.hasOwnProperty.call(req.body, "expectedRevision"));
+    const expectedRevision = hasExpectedRevision ? Number(req.body.expectedRevision) : null;
+    if (hasExpectedRevision && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)) {
+      return res.status(400).json({ ok: false, message: "Geçerli expectedRevision gerekli." });
+    }
     const validationError = validateMenuState(incomingMenuState);
     const productCodeError = validateMenuProductCodes(incomingMenuState);
 
@@ -1498,6 +1507,14 @@ app.put("/api/menu", requireAdminRequestOrigin, auth.requireAdmin, async (req, r
 
     const updatedAt = new Date().toISOString();
     const nextStore = await store.update((data) => {
+      const currentPublishRevision = Math.max(0, Number(data.revisions && data.revisions.publish || 0));
+      if (hasExpectedRevision && expectedRevision !== currentPublishRevision) {
+        const conflict = new Error("Menü verisi başka bir işlem tarafından güncellendi. Güncel veriyi yükleyip tekrar deneyin.");
+        conflict.status = 409;
+        conflict.code = "REVISION_CONFLICT";
+        conflict.currentRevision = currentPublishRevision;
+        throw conflict;
+      }
       const beforePricing = menuPricingFingerprint(data.menuState, data.pricing);
       const migrated = migratePricingSystem(pricingInput || data.pricing, incomingMenuState);
       markManualMenuStatusChanges(data.menuState, migrated.menuState);
@@ -1525,6 +1542,14 @@ app.put("/api/menu", requireAdminRequestOrigin, auth.requireAdmin, async (req, r
       updatedAt
     });
   } catch (error) {
+    if (Number(error && error.status) === 409 && error.code === "REVISION_CONFLICT") {
+      return res.status(409).json({
+        ok: false,
+        code: error.code,
+        message: error.message,
+        currentRevision: error.currentRevision
+      });
+    }
     next(error);
   }
 });
@@ -3833,6 +3858,45 @@ function broadcastScopeInvalidation(clients, scope, event, options = {}) {
     sendSse(client.res, event, payload, { id: revision });
   }
   return payload;
+}
+
+function buildMenuApiPayload(data) {
+  const revisions = data && data.revisions || {};
+  return {
+    ok: true,
+    menuState: serializeLegacyMenuState(data.menuState, data.pricing),
+    pricing: data.pricing,
+    revision: Math.max(0, Number(revisions.pricing || 0)),
+    publishRevision: Math.max(0, Number(revisions.publish || 0)),
+    catalogRevision: Math.max(0, Number(revisions.dataImportCatalog || 0)),
+    dataImportRevision: Math.max(0, Number(revisions.dataImport || 0)),
+    streamRevision: resolveScopeRevision(data, "menu"),
+    updatedAt: latestIsoTimestamp(data.menuUpdatedAt, data.pricingUpdatedAt)
+  };
+}
+
+function catalogEntityTag(scope, payload) {
+  const digest = crypto.createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("base64url")
+    .slice(0, 27);
+  return `"${scope}-${digest}"`;
+}
+
+function requestEntityTagMatches(req, entityTag) {
+  const header = String(req && req.headers && req.headers["if-none-match"] || "").trim();
+  if (!header) return false;
+  return header.split(",").some((candidate) => {
+    const normalized = candidate.trim();
+    return normalized === "*" || normalized === entityTag || normalized.replace(/^W\//, "") === entityTag;
+  });
+}
+
+function latestIsoTimestamp(...values) {
+  return values
+    .filter(Boolean)
+    .sort((first, second) => Date.parse(first) - Date.parse(second))
+    .pop() || null;
 }
 
 function resolveScopeRevision(data, scope) {

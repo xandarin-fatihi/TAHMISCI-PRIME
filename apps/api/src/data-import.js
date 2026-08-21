@@ -2,7 +2,7 @@
 
 const crypto = require("crypto");
 const { analyzePricingWorkbook, applyPricingImportPlan } = require("./pricing-excel");
-const { migratePricingSystem, normalizeProductPricing } = require("./pricing");
+const { migratePricingSystem, normalizeProductPricing, pricingOptionsForProduct } = require("./pricing");
 const { isValidProductCode, normalizeProductCode } = require("./store/product-code-registry");
 const {
   normalizeMenuState,
@@ -65,12 +65,40 @@ function analyzeDataImport(data, inputs, context = {}) {
   if (workbooks.recipe) {
     staged.recipeCatalog = reconcileRecipeCatalog(staged.recipeState, staged.recipeCatalog);
     hydrateRecipeCatalogCodes(staged);
-    // Reçete bağımsız bir domaindir. Analiz sırasında menü bağlantılarını yeniden
-    // kurmak menuState'i yan etkili biçimde değiştirdiği için burada yapılmaz.
     staged.recipeLinkReview = [];
+    // Product code is authoritative.  This also allows a recipe to bind to a
+    // menu product created earlier in the very same staged analysis.
+    linkRecipesToCanonicalProducts(staged, sharedContext, {
+      strict: true,
+      mutateMenu: Boolean(workbooks.menu)
+    });
   }
 
-  report.missingPrices = Math.max(report.missingPrices, countProductsWithoutPrice(staged.menuState));
+  const pricingProjection = workbooks.menu || workbooks.pricing
+    ? synchronizeProductPricingProjection(staged, {
+      analysisId,
+      menuSelected: Boolean(workbooks.menu),
+      pricingSelected: Boolean(workbooks.pricing)
+    })
+    : { pendingImportedCodes: [] };
+  if (workbooks.menu || workbooks.pricing) {
+    report.missingPrices = Math.max(report.missingPrices, countProductsWithoutPrice(staged.menuState));
+  }
+  report.pricePendingProducts = pricingProjection.pendingImportedCodes.length;
+  if (workbooks.menu && pricingProjection.pendingImportedCodes.length) {
+    const issue = {
+      workbook: "menu",
+      sheet: "",
+      row: 0,
+      productCode: "",
+      code: "price_pending",
+      severity: workbooks.pricing ? "error" : "warning",
+      message: workbooks.pricing
+        ? `${pricingProjection.pendingImportedCodes.length} yeni ürünün Fiyat Excel'inde geçerli fiyat seçeneği bulunamadı.`
+        : `${pricingProjection.pendingImportedCodes.length} yeni ürün fiyat dosyası uygulanana kadar “fiyat bekliyor” durumunda oluşturulacak.`
+    };
+    issues.push(issue);
+  }
   report.manualInactive = report.manualInactivePreserved;
   report.stockReviewRows = report.manualStockReview;
 
@@ -78,6 +106,7 @@ function analyzeDataImport(data, inputs, context = {}) {
   report.changeCount = changes.length;
   report.warningCount = issues.filter((item) => item.severity === "warning").length;
   report.errorCount = issues.filter((item) => item.severity !== "warning").length;
+  report.blockingErrors = report.errorCount;
   report.archiveBaseline = archiveBaseline;
   report.archiveRatio = archiveBaseline > 0 ? Number((report.archived / archiveBaseline).toFixed(4)) : 0;
   report.requiresArchiveConfirmation = report.archived > 0 && report.archiveRatio >= 0.35;
@@ -113,7 +142,8 @@ function analyzeDataImport(data, inputs, context = {}) {
       recipeLinkReview: staged.recipeLinkReview,
       stockState: staged.stockState,
       mappings: staged.mappings,
-      referenceRewrites: staged.referenceRewrites
+      referenceRewrites: staged.referenceRewrites,
+      readbackManifest: buildImportReadbackManifest(staged, importScopes)
     }
   };
 }
@@ -292,6 +322,7 @@ function analyzeMenuWorkbook(workbook, staged, ctx) {
         changedFields.forEach(([field, oldValue, newValue]) => addChange(ctx, "menu", categoryName, product.name, field, oldValue, newValue, "update", product.active ? "unchanged-active" : "unchanged-passive", product.statusSource === "manual" ? "manager" : "excel", productCode));
       } else ctx.report.unchanged += 1;
     }
+    if (productCode) ctx.report.codeMatches += 1;
     seenProducts.add(product.id);
     upsertMapping(staged.mappings.menu, "product", product.id, source.sheet, productName, ctx.now, ctx.analysisId, productCode);
   }
@@ -357,11 +388,13 @@ function analyzePricing(workbook, staged, ctx) {
 
 function analyzeCodePricingWorkbook(workbook, staged, ctx) {
   const rows = workbookRows(workbook, "pricing", ctx);
+  staged.pricing = staged.pricing && typeof staged.pricing === "object" ? staged.pricing : { schemaVersion: 1, types: [] };
+  if (!Array.isArray(staged.pricing.types)) staged.pricing.types = [];
+  validatePricingOptionHeaders(workbook, staged.pricing, ctx);
   const products = (staged.menuState.categories || []).flatMap((category) => (category.products || []).map((product) => ({ category, product })));
   const byCode = groupedIndex(products, (item) => normalizeProductCode(item.product.productCode));
   const seenCodes = new Set();
-  staged.pricing = staged.pricing && typeof staged.pricing === "object" ? staged.pricing : { schemaVersion: 1, types: [] };
-  if (!Array.isArray(staged.pricing.types)) staged.pricing.types = [];
+  const batches = new Map();
 
   for (const source of rows) {
     const codeInfo = readProductCode(source, ctx, "pricing");
@@ -371,31 +404,36 @@ function analyzeCodePricingWorkbook(workbook, staged, ctx) {
     }
     if (codeInfo.invalid) continue;
     const productCode = codeInfo.code;
-    if (seenCodes.has(productCode)) {
-      addIssue(ctx, "pricing", source, "duplicate_product_code", `“${productCode}” Ürün Kodu fiyat Excel'i içinde birden fazla kez bulundu.`);
-      continue;
-    }
     seenCodes.add(productCode);
     const matches = byCode.get(productCode) || [];
     if (matches.length !== 1) {
-      addIssue(ctx, "pricing", source, matches.length ? "duplicate_product_code" : "orphan_product_code", matches.length
+      addIssue(ctx, "pricing", source, matches.length ? "duplicate_product_code" : "unknown_product_code", matches.length
         ? `“${productCode}” Ürün Kodu birden fazla menü ürününe bağlı.`
         : `“${productCode}” Ürün Kodu menü kataloğunda bulunamadı.`);
       continue;
     }
     const { category, product } = matches[0];
+    ctx.report.codeMatches += 1;
     const rowName = String(cell(source.row, ["ürün adı", "urun adi", "ürün", "urun", "product", "product name"]) || "").trim();
     if (rowName && normalizeSourceName(rowName) !== normalizeSourceName(product.name)) {
       addIssue(ctx, "pricing", source, "product_name_alias", `“${productCode}” kodu menüde “${product.name}” adına bağlı; fiyat satırındaki “${rowName}” adı alias olarak değerlendirildi.`, "warning");
     }
 
-    const entries = [];
-    const recognizedOptions = [];
-    for (const [header, rawValue] of Object.entries(source.row || {})) {
+    let batch = batches.get(productCode);
+    if (!batch) {
+      batch = { category, product, entries: new Map(), recognizedOptions: new Map() };
+      batches.set(productCode, batch);
+    }
+    const rowOptionKeys = new Set();
+    for (const { header, value: rawValue } of pricingCells(source.row)) {
       const option = pricingOptionFromHeader(header, staged.pricing);
       if (!option) continue;
+      const optionKey = `${option.family}\u0000${option.optionId}`;
+      // Duplicate physical headers are reported once by the sheet preflight.
+      if (rowOptionKeys.has(optionKey)) continue;
+      rowOptionKeys.add(optionKey);
       const empty = rawValue === "" || rawValue === null || rawValue === undefined;
-      recognizedOptions.push({ ...option, empty });
+      if (!batch.recognizedOptions.has(optionKey)) batch.recognizedOptions.set(optionKey, option);
       if (empty) continue;
       if (rawValue === "__TAHMISCI_XLSX_FORMULA_VALUE_MISSING__") {
         addIssue(ctx, "pricing", source, "invalid_price_value", `“${header}” formül hücresinin hesaplanmış sayısal değeri bulunamadı.`);
@@ -406,13 +444,34 @@ function analyzeCodePricingWorkbook(workbook, staged, ctx) {
         addIssue(ctx, "pricing", source, "invalid_price", `“${header}” fiyatı geçerli, negatif olmayan bir sayı olmalıdır.`);
         continue;
       }
-      entries.push({ ...option, price: numeric });
+      if (batch.entries.has(optionKey)) {
+        addIssue(ctx, "pricing", source, "duplicate_price_option", `“${productCode}” kodu için “${option.label}” fiyat seçeneği birden fazla kez tanımlandı.`);
+        continue;
+      }
+      batch.entries.set(optionKey, { ...option, price: numeric });
     }
+  }
 
+  for (const [productCode, batch] of batches) {
+    const { category, product } = batch;
+    const entries = [...batch.entries.values()];
     const current = normalizeProductPricing(product.pricing);
     const families = current.families.map((family) => ({ ...family, values: clone(family.values || {}) }));
     let changed = false;
-    for (const familyName of [...new Set(entries.map((entry) => entry.family))]) {
+    const incomingFamilies = [...new Set(entries.map((entry) => entry.family))];
+    if (incomingFamilies.length > 1) {
+      ctx.report.mixedPricingFamilies += 1;
+      ctx.issues.push({
+        workbook: "pricing",
+        sheet: category.name,
+        row: 0,
+        productCode,
+        code: "mixed_pricing_families",
+        severity: "warning",
+        message: `“${productCode}” için ${incomingFamilies.length} fiyat ailesi bulundu; bütün seçenekler korunarak deterministik birincil fiyat tipi seçildi.`
+      });
+    }
+    for (const familyName of incomingFamilies) {
       const familyEntries = entries.filter((entry) => entry.family === familyName);
       const type = ensurePricingFamilyType(staged.pricing, familyName, familyEntries);
       let family = families.find((item) => item.typeId === type.id);
@@ -449,7 +508,8 @@ function analyzeCodePricingWorkbook(workbook, staged, ctx) {
       }
     }
 
-    for (const option of recognizedOptions.filter((item) => item.empty)) {
+    for (const [optionKey, option] of batch.recognizedOptions) {
+      if (batch.entries.has(optionKey)) continue;
       const family = families.find((item) => item.typeId === option.family);
       const previousValue = family && family.values && family.values[option.optionId];
       if (!previousValue || previousValue.sourceType !== "excel" || previousValue.sourceWorkbook !== "pricing"
@@ -468,7 +528,7 @@ function analyzeCodePricingWorkbook(workbook, staged, ctx) {
       addChange(ctx, "pricing", category.name, product.name, option.label, previousValue.price, null, "archive", "deactivate", "excel", productCode);
     }
 
-    const primary = families[0] || { typeId: "standard", values: {} };
+    const primary = choosePrimaryPricingFamily(families, staged.pricing);
     product.pricing = normalizeProductPricing({ typeId: primary.typeId, values: primary.values, families });
     if (!changed) ctx.report.unchanged += 1;
   }
@@ -498,7 +558,7 @@ function analyzeCodePricingWorkbook(workbook, staged, ctx) {
       }
     }
     if (changed) {
-      const primary = pricing.families[0] || { typeId: pricing.typeId, values: pricing.values };
+      const primary = choosePrimaryPricingFamily(pricing.families, staged.pricing);
       product.pricing = normalizeProductPricing({ ...pricing, typeId: primary.typeId, values: primary.values, families: pricing.families });
     }
   }
@@ -506,6 +566,50 @@ function analyzeCodePricingWorkbook(workbook, staged, ctx) {
   const migrated = migratePricingSystem(staged.pricing, staged.menuState);
   staged.pricing = migrated.pricing;
   staged.menuState = migrated.menuState;
+}
+
+function validatePricingOptionHeaders(workbook, pricing, ctx) {
+  for (const sheet of workbook && workbook.SheetNames || []) {
+    const rows = workbook.Sheets && workbook.Sheets[sheet];
+    const seen = new Map();
+    for (const header of Array.isArray(rows && rows.headers) ? rows.headers : []) {
+      const option = pricingOptionFromHeader(header, pricing);
+      if (!option) continue;
+      const key = `${option.family}\u0000${option.optionId}`;
+      if (seen.has(key)) {
+        addIssue(
+          ctx,
+          "pricing",
+          { sheet: String(sheet), rowNumber: 1, productCode: "" },
+          "duplicate_price_option",
+          `“${seen.get(key)}” ve “${header}” sütunları aynı fiyat seçeneğini tekrar tanımlıyor.`
+        );
+      } else {
+        seen.set(key, String(header));
+      }
+    }
+  }
+}
+
+function pricingCells(row) {
+  if (row && Array.isArray(row.__xlsxCells)) return row.__xlsxCells;
+  return Object.entries(row || {}).map(([header, value], columnIndex) => ({ header, value, columnIndex }));
+}
+
+function choosePrimaryPricingFamily(families, pricing) {
+  const source = Array.isArray(families) ? families : [];
+  const orderByType = new Map((pricing && Array.isArray(pricing.types) ? pricing.types : [])
+    .map((type, index) => [String(type.id), Number.isFinite(Number(type.order)) ? Number(type.order) : index]));
+  const priced = source.filter((family) => Object.values(family && family.values || {}).some((value) => {
+    const record = value && typeof value === "object" ? value : { price: value, active: true };
+    return record.active !== false && record.sourcePresent !== false
+      && record.price !== null && record.price !== "" && Number.isFinite(Number(record.price));
+  }));
+  return [...(priced.length ? priced : source)].sort((first, second) => (
+    Number(orderByType.get(String(first.typeId)) ?? Number.MAX_SAFE_INTEGER)
+      - Number(orderByType.get(String(second.typeId)) ?? Number.MAX_SAFE_INTEGER)
+      || String(first.typeId).localeCompare(String(second.typeId))
+  ))[0] || { typeId: "standard", values: {} };
 }
 
 function workbookHasProductCodeHeader(workbook) {
@@ -838,6 +942,10 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
       if (oldQuantity === quantity.value && oldThreshold === threshold) ctx.report.unchanged += 1;
       if (returned) ctx.report.rediscovered += 1;
     }
+    if (productCode) {
+      ctx.report.codeMatches += 1;
+      ctx.report.stockLinks += 1;
+    }
     seen.add(product.id);
     upsertMapping(staged.mappings.stock, "stock-product", product.id, source.sheet, name, ctx.now, ctx.analysisId, productCode);
   }
@@ -1106,8 +1214,9 @@ function linkRecipesToCanonicalProducts(staged, ctx, options = {}) {
     const sizes = staged.recipeState && staged.recipeState[record.category] && staged.recipeState[record.category][record.product] || {};
     const active = Object.values(sizes).some((item) => !item || typeof item !== "object" || (item.active !== false && item.sourcePresent !== false));
     if (!active) continue;
-    let candidates = record.productCode ? byCode.get(normalizeProductCode(record.productCode)) || [] : byName.get(normalizeSourceName(record.product)) || [];
-    if (record.menuProductId) {
+    const authoritativeCode = normalizeProductCode(record.productCode);
+    let candidates = authoritativeCode ? byCode.get(authoritativeCode) || [] : byName.get(normalizeSourceName(record.product)) || [];
+    if (record.menuProductId && !authoritativeCode) {
       const linked = products.find((item) => String(item.product.id) === String(record.menuProductId));
       if (linked) candidates = [linked];
     }
@@ -1115,10 +1224,13 @@ function linkRecipesToCanonicalProducts(staged, ctx, options = {}) {
     if (existingLinks.length) {
       record.menuProductIds = uniqueStrings(existingLinks.map((item) => item.product.id));
       record.menuProductId = record.menuProductIds[0];
-      for (const linked of existingLinks) {
-        linked.product.contentMode = "recipe";
-        linked.product.recipeLinkStatus = "linked";
+      if (options.mutateMenu !== false) {
+        for (const linked of existingLinks) {
+          linked.product.contentMode = "recipe";
+          linked.product.recipeLinkStatus = "linked";
+        }
       }
+      ctx.report.linkedRecipes += 1;
       continue;
     }
     candidates = filterRecipeCandidatesByTemperature(candidates, sizes, record);
@@ -1140,10 +1252,13 @@ function linkRecipesToCanonicalProducts(staged, ctx, options = {}) {
     const { product } = candidates[0];
     record.menuProductId = product.id;
     record.menuProductIds = [product.id];
-    product.recipeId = record.id;
-    product.contentMode = "recipe";
-    product.recipeLinkStatus = "linked";
-    if (!product.recipeSize || !sizes[product.recipeSize]) product.recipeSize = Object.keys(sizes)[0] || "";
+    if (options.mutateMenu !== false) {
+      product.recipeId = record.id;
+      product.contentMode = "recipe";
+      product.recipeLinkStatus = "linked";
+      if (!product.recipeSize || !sizes[product.recipeSize]) product.recipeSize = Object.keys(sizes)[0] || "";
+    }
+    ctx.report.linkedRecipes += 1;
   }
 }
 
@@ -1172,6 +1287,7 @@ function workbookRows(workbook, kind, ctx, sheetFilter = () => true) {
   const result = [];
   const names = Array.isArray(workbook && workbook.SheetNames) ? workbook.SheetNames : [];
   let schemaSheetCount = 0;
+  const workbookUsesProductCodes = workbookHasProductCodeHeader(workbook);
   for (const sheet of names) {
     if (!sheetFilter(sheet)) continue;
     const rows = Array.isArray(workbook.Sheets && workbook.Sheets[sheet]) ? workbook.Sheets[sheet] : [];
@@ -1193,7 +1309,7 @@ function workbookRows(workbook, kind, ctx, sheetFilter = () => true) {
     schemaSheetCount += 1;
     rows.forEach((row, index) => {
       ctx.report.readRows += 1;
-      result.push({ kind, sheet: String(sheet).trim(), row, rowNumber: index + 2, headers, hasProductCodeHeader });
+      result.push({ kind, sheet: String(sheet).trim(), row, rowNumber: index + 2, headers, hasProductCodeHeader, workbookUsesProductCodes });
     });
   }
   if (!schemaSheetCount) {
@@ -1251,10 +1367,20 @@ function sourceMetadata(workbook, sheet, name, now, operationId, statusSource) {
 }
 
 function readProductCode(source, ctx, workbook, options = {}) {
-  if (!source.hasProductCodeHeader) return { coded: false, code: "" };
+  if (!source.hasProductCodeHeader) {
+    if (source.workbookUsesProductCodes) {
+      addIssue(ctx, workbook, source, "missing_product_code", "Kodlu çalışma kitabındaki her katalog sayfasında Ürün Kodu sütunu bulunmalıdır.");
+      return { coded: true, code: "", invalid: true };
+    }
+    return { coded: false, code: "" };
+  }
   const rawCode = cell(source.row, PRODUCT_CODE_HEADERS);
   const code = normalizeProductCode(rawCode);
   source.productCode = code;
+  if (!String(rawCode ?? "").trim()) {
+    addIssue(ctx, workbook, source, "missing_product_code", "Kodlu çalışma kitabındaki her ürün satırında Ürün Kodu zorunludur.");
+    return { coded: true, code: "", invalid: true };
+  }
   if (!isValidProductCode(rawCode, { stock: options.stock === true })) {
     addIssue(
       ctx,
@@ -1262,8 +1388,8 @@ function readProductCode(source, ctx, workbook, options = {}) {
       source,
       "invalid_product_code",
       options.stock
-        ? "Stok Ürün Kodu STK- ile başlayan, en az üç bölümlü güvenli bir kod olmalıdır."
-        : "Ürün Kodu en az üç bölümlü, harf/rakam ve kısa çizgiden oluşan güvenli bir kod olmalıdır."
+        ? "Stok Ürün Kodu STK- ile başlayan, en az iki bölümlü güvenli bir kod olmalıdır."
+        : "Ürün Kodu en az iki bölümlü, harf/rakam ve kısa çizgiden oluşan güvenli bir kod olmalıdır."
     );
     return { coded: true, code: "", invalid: true };
   }
@@ -1393,9 +1519,13 @@ function addIssue(ctx, workbook, source, code, message, severity = "error") {
   ctx.issues.push({ workbook, sheet: source.sheet, row: source.rowNumber, productCode: normalizeProductCode(source.productCode), code, severity, message });
   ctx.report.invalidRows += 1;
   if (code.includes("ambiguous")) ctx.report.ambiguousMatches += 1;
-  if (code === "invalid_product_code") ctx.report.invalidProductCodes += 1;
+  if (code === "invalid_product_code" || code === "missing_product_code") ctx.report.invalidProductCodes += 1;
   if (code === "duplicate_product_code" || code === "duplicate_recipe_measure") ctx.report.duplicateProductCodes += 1;
-  if (code === "orphan_product_code") ctx.report.orphanProductCodes += 1;
+  if (code === "duplicate_price_option") ctx.report.duplicatePriceOptions += 1;
+  if (code === "orphan_product_code" || code === "unknown_product_code") {
+    ctx.report.orphanProductCodes += 1;
+    ctx.report.unknownProductCodes += 1;
+  }
   if (code === "duplicate_recipe_measure") ctx.report.duplicateRecipeMeasures += 1;
 }
 
@@ -1411,9 +1541,11 @@ function baseReport() {
     missingPrices: 0, unmatchedPricing: 0, mixedPricingFamilies: 0, updatedPrices: 0,
     newRecipes: 0, updatedRecipes: 0, unlinkedRecipes: 0,
     newStockProducts: 0, updatedStockProducts: 0, manualStockReview: 0, mergedDuplicates: 0,
-    invalidProductCodes: 0, duplicateProductCodes: 0, orphanProductCodes: 0, duplicateRecipeMeasures: 0,
+    invalidProductCodes: 0, duplicateProductCodes: 0, duplicatePriceOptions: 0,
+    orphanProductCodes: 0, unknownProductCodes: 0, duplicateRecipeMeasures: 0,
+    codeMatches: 0, pricePendingProducts: 0, linkedRecipes: 0, stockLinks: 0,
     warningCount: 0, errorCount: 0, changeCount: 0, archiveBaseline: 0,
-    archiveRatio: 0, requiresArchiveConfirmation: false, canApply: false
+    archiveRatio: 0, requiresArchiveConfirmation: false, blockingErrors: 0, canApply: false
   };
 }
 
@@ -1466,6 +1598,90 @@ function countProductsWithoutPrice(menuState) {
     }
   }
   return count;
+}
+
+function synchronizeProductPricingProjection(staged, options = {}) {
+  const pendingImportedCodes = [];
+  const catalog = staged.pricing || {};
+  for (const category of staged.menuState && staged.menuState.categories || []) {
+    for (const product of category.products || []) {
+      const canonical = normalizeProductPricing(product.pricing);
+      const activeOptions = pricingOptionsForProduct({ pricing: canonical }, catalog)
+        .filter((option) => Number.isFinite(Number(option.price)) && Number(option.price) >= 0)
+        .map((option) => ({
+          id: option.id,
+          optionId: option.optionId,
+          typeId: option.typeId,
+          label: option.label,
+          unit: option.unit || "",
+          ...(option.value !== undefined ? { value: option.value } : {}),
+          price: Number(option.price),
+          active: option.active !== false
+        }));
+      product.priceType = canonical.typeId;
+      product.priceOptions = activeOptions;
+      product.basePrice = activeOptions.length ? activeOptions[0].price : null;
+      product.pricePending = activeOptions.length === 0;
+      product.pricingStatus = product.pricePending ? "pending" : "priced";
+      if (product.active === false || product.sourcePresent === false) continue;
+      if (product.pricePending && options.menuSelected
+        && String(product.lastImportOperationId || "") === String(options.analysisId || "")) {
+        pendingImportedCodes.push(normalizeProductCode(product.productCode) || String(product.id || ""));
+      }
+    }
+  }
+  return { pendingImportedCodes: [...new Set(pendingImportedCodes)].sort() };
+}
+
+function buildImportReadbackManifest(data, scopes) {
+  const selected = normalizeFingerprintScopes(scopes);
+  const manifest = { schemaVersion: 1, scopes: selected };
+  if (selected.includes("menu") || selected.includes("pricing")) {
+    const categories = data && data.menuState && data.menuState.categories || [];
+    const products = categories.flatMap((category) => (category.products || []).map((product) => ({ category, product })));
+    manifest.catalog = {
+      categoryCount: categories.length,
+      productCount: products.length,
+      products: stableSort(products.map(({ category, product }) => {
+        const activeOptions = pricingOptionsForProduct({ pricing: product.pricing }, data.pricing || {})
+          .filter((option) => Number.isFinite(Number(option.price)) && Number(option.price) >= 0);
+        return {
+          categoryId: String(category.id || ""),
+          id: String(product.id || ""),
+          productCode: normalizeProductCode(product.productCode),
+          active: product.active !== false,
+          sourcePresent: product.sourcePresent !== false,
+          pricingStatus: activeOptions.length ? "priced" : "pending",
+          basePrice: activeOptions.length ? Number(activeOptions[0].price) : null,
+          priceOptions: activeOptions.map((option) => ({
+            id: option.id,
+            optionId: option.optionId,
+            typeId: option.typeId,
+            price: Number(option.price)
+          }))
+        };
+      }), menuProductSortKey)
+    };
+  }
+  if (selected.includes("recipes")) {
+    manifest.recipes = {
+      records: stableSort((data && data.recipeCatalog || []).map((record) => ({
+        id: String(record.id || ""),
+        productCode: normalizeProductCode(record.productCode),
+        menuProductId: String(record.menuProductId || ""),
+        category: String(record.category || ""),
+        product: String(record.product || "")
+      })), recipeCatalogSortKey),
+      items: recipeProductCodes(data)
+    };
+  }
+  if (selected.includes("stock")) {
+    manifest.stock = {
+      productCount: (data && data.stockState && data.stockState.products || []).length,
+      products: stockProductCodes(data)
+    };
+  }
+  return normalizeFingerprintValue(manifest);
 }
 
 const IMPORT_DOMAINS = ["catalog", "recipes", "stock"];
@@ -1930,5 +2146,6 @@ module.exports = {
   restoreDomainCatalogSnapshot,
   normalizeSourceName,
   productCodeFingerprint,
+  buildImportReadbackManifest,
   restoreCatalogSnapshot
 };

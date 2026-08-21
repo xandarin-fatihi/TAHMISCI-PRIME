@@ -7,10 +7,12 @@ export class TahmisciBackendClient {
   constructor(baseUrl) {
     this.baseUrl = String(baseUrl || "").replace(/\/+$/, "");
     this.tokenKey = "tahmisci.backend.panel.token";
+    this.publishRevision = null;
   }
 
   async getMenu() {
     const result = await this.request("/api/menu");
+    this.rememberPublishRevision(result);
     return result.menuState;
   }
 
@@ -39,11 +41,17 @@ export class TahmisciBackendClient {
   }
 
   async saveMenu(menuState) {
-    return this.request("/api/menu", {
+    const body = { menuState };
+    if (Number.isSafeInteger(this.publishRevision) && this.publishRevision >= 0) {
+      body.expectedRevision = this.publishRevision;
+    }
+    const result = await this.request("/api/menu", {
       method: "PUT",
       token: this.token,
-      body: { menuState }
+      body
     });
+    this.rememberPublishRevision(result);
+    return result;
   }
 
   async uploadMedia(file, kind = "video") {
@@ -112,6 +120,11 @@ export class TahmisciBackendClient {
 
   get token() {
     return window.sessionStorage.getItem(this.tokenKey) || "";
+  }
+
+  rememberPublishRevision(result) {
+    const revision = Number(result && result.publishRevision);
+    if (Number.isSafeInteger(revision) && revision >= 0) this.publishRevision = revision;
   }
 
   async request(path, options = {}) {

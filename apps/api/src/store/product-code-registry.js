@@ -4,20 +4,22 @@ const crypto = require("crypto");
 
 const PRODUCT_CODE_REGISTRY_SCHEMA_VERSION = 1;
 const PRODUCT_CODE_SCOPES = new Set(["menu", "recipe", "stock"]);
-const PRODUCT_CODE_PATTERN = /^[A-Z0-9]+(?:-[A-Z0-9]+){2,}$/;
+// Product codes are opaque business identifiers.  Normalization must never
+// rewrite their internal content; the only canonical transformations are
+// surrounding whitespace removal and case folding.  Two-part codes such as
+// TEST-<unique-id> are valid, while whitespace/control characters remain
+// invalid rather than being silently removed and potentially colliding.
+const PRODUCT_CODE_PATTERN = /^[A-Z0-9]+(?:-[A-Z0-9]+)+$/;
 
 function normalizeProductCode(value) {
-  return String(value || "")
-    .normalize("NFKC")
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .replace(/\s+/g, "")
+  return String(value ?? "")
+    .normalize("NFC")
     .trim()
-    .toUpperCase()
-    .slice(0, 120);
+    .toUpperCase();
 }
 
 function isValidProductCode(value, options = {}) {
-  const raw = String(value ?? "").normalize("NFKC").trim();
+  const raw = String(value ?? "").normalize("NFC").trim();
   if (!raw || raw.length > 120 || /\s|[\u0000-\u001f\u007f]/u.test(raw)) return false;
   const code = normalizeProductCode(raw);
   if (!PRODUCT_CODE_PATTERN.test(code)) return false;

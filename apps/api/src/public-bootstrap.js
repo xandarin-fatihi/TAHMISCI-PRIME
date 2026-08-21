@@ -2,7 +2,12 @@
 
 const crypto = require("crypto");
 const { chooseRecipeSize, normalizeRecipeItem } = require("./store/migrations");
-const { normalizePricingCatalog, normalizeProductPricing, pricingOptionsForProduct } = require("./pricing");
+const {
+  normalizePricingCatalog,
+  normalizeProductPricing,
+  pricingOptionsForProduct,
+  withLegacyPricing
+} = require("./pricing");
 const { migrateSiteState } = require("./site-state");
 const { isSafeMediaResource } = require("./validators");
 const categoryIcons = require("../../../shared/scripts/category-icons");
@@ -61,20 +66,31 @@ function buildPublicBootstrap(storeData) {
     });
 
   const products = categories.flatMap((category) => category.products);
-  const timestamps = [data.menuUpdatedAt, data.recipeUpdatedAt, data.siteUpdatedAt].filter(Boolean).sort();
+  const timestamps = [
+    data.menuUpdatedAt,
+    data.pricingUpdatedAt,
+    data.recipeUpdatedAt,
+    data.siteUpdatedAt,
+    data.publishUpdatedAt
+  ].filter(Boolean).sort();
   const updatedAt = timestamps[timestamps.length - 1] || null;
+  const revisions = publicRevisions(data.revisions);
   const versionSource = JSON.stringify({
     updatedAt,
-    menuUpdatedAt: data.menuUpdatedAt || null,
-    recipeUpdatedAt: data.recipeUpdatedAt || null,
-    siteUpdatedAt: data.siteUpdatedAt || null,
-    pricingRevision: data.revisions && data.revisions.pricing || 0,
-    productCount: products.length
+    revisions,
+    siteState,
+    pricing,
+    categories
   });
 
   return {
     schemaVersion: 2,
     version: crypto.createHash("sha256").update(versionSource).digest("hex").slice(0, 16),
+    revision: revisions.publish,
+    publishRevision: revisions.publish,
+    pricingRevision: revisions.pricing,
+    catalogRevision: revisions.catalog,
+    revisions,
     updatedAt,
     siteState,
     pricing,
@@ -132,11 +148,14 @@ function publicProduct(product, category, recipeState, catalogById, categoryImag
   const content = resolvePublicContent(product, recipeState, catalogById);
   const productPricing = normalizeProductPricing(product.pricing);
   const priceOptions = pricingOptionsForProduct({ pricing: productPricing }, pricingCatalog);
+  const synchronized = product && product.pricing && product.pricing.typeId
+    ? withLegacyPricing({ ...product, pricing: productPricing }, pricingCatalog)
+    : product;
   const variants = priceOptions.length
     ? priceOptions.map((option) => ({ id: option.id, name: option.label, label: option.label, unit: option.unit, price: option.price }))
-    : normalizeVariants(product);
-  const prices = normalizePrices(product.prices);
-  const basePrice = firstPrice(prices, variants);
+    : normalizeVariants(synchronized);
+  const prices = normalizePrices(synchronized && synchronized.prices);
+  const basePrice = firstPrice(priceOptions, prices, variants);
   const image = productDefaultImage(product, categoryImage);
   return {
     id: String(product.id),
@@ -154,11 +173,11 @@ function publicProduct(product, category, recipeState, catalogById, categoryImag
     style: publicStyle(product.style),
     pricing: productPricing,
     priceOptions,
-    priceMode: String(product.priceMode || "standard"),
+    priceMode: String(synchronized && synchronized.priceMode || product.priceMode || "standard"),
     prices,
     variants,
     basePrice,
-    priceLabel: priceLabel(prices, variants),
+    priceLabel: priceLabel(priceOptions, prices, variants),
     calories: String(product.details?.calories ?? product.calories ?? ""),
     caloriesText: String(product.details?.calories ?? product.calories ?? ""),
     caloriesValue: calorieNumber(product.details?.calories ?? product.calories ?? ""),
@@ -319,19 +338,51 @@ function normalizePrices(value) {
   return result;
 }
 
-function firstPrice(prices, variants) {
-  const values = [...Object.values(prices), ...variants.map((variant) => variant.price)]
-    .filter((value) => Number.isFinite(value) && value > 0);
-  return values.length ? Math.min(...values) : 0;
+function firstPrice(priceOptions, prices, variants) {
+  const canonical = (Array.isArray(priceOptions) ? priceOptions : [])
+    .map((option) => publicPriceNumber(option && option.price))
+    .find((value) => value !== null);
+  if (canonical !== undefined) return canonical;
+  const fallback = [...Object.values(prices || {}), ...(variants || []).map((variant) => variant.price)]
+    .map(publicPriceNumber)
+    .find((value) => value !== null);
+  return fallback === undefined ? 0 : fallback;
 }
 
-function priceLabel(prices, variants) {
-  const values = [...Object.values(prices), ...variants.map((variant) => variant.price)]
-    .filter((value) => Number.isFinite(value) && value > 0)
+function priceLabel(priceOptions, prices, variants) {
+  const canonical = (Array.isArray(priceOptions) ? priceOptions : [])
+    .map((option) => publicPriceNumber(option && option.price))
+    .filter((value) => value !== null);
+  const values = (canonical.length
+    ? canonical
+    : [...Object.values(prices || {}), ...(variants || []).map((variant) => variant.price)]
+      .map(publicPriceNumber)
+      .filter((value) => value !== null))
     .sort((first, second) => first - second);
   if (!values.length) return "";
   const format = (value) => `₺${Number(value).toLocaleString("tr-TR")}`;
   return values[0] === values[values.length - 1] ? format(values[0]) : `${format(values[0])} - ${format(values[values.length - 1])}`;
+}
+
+function publicPriceNumber(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function publicRevisions(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    publish: nonNegativeInteger(source.publish),
+    pricing: nonNegativeInteger(source.pricing),
+    catalog: nonNegativeInteger(source.dataImportCatalog),
+    dataImport: nonNegativeInteger(source.dataImport)
+  };
+}
+
+function nonNegativeInteger(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0 ? number : 0;
 }
 
 function calorieNumber(value) {

@@ -399,6 +399,7 @@
       method: options && options.method || "GET",
       headers,
       credentials: "include",
+      cache: "no-store",
       body: options && options.body ? JSON.stringify(options.body) : undefined
     });
     const result = await response.json().catch(() => ({}));
@@ -457,10 +458,12 @@
   function normalizeProduct(product, categoryId, index, pricingCatalog) {
     if (!product) return null;
     const prices = normalizePrices(product.prices || pricesFromLegacyProduct(product));
-    const priceMode = normalizePriceMode(product, prices);
-    const normalizedPrices = normalizePricesForMode(prices, priceMode);
-    const pricing = normalizeCanonicalProductPricing(product.pricing, priceMode, normalizedPrices, product.variants);
+    const legacyPriceMode = normalizePriceMode(product, prices);
+    const normalizedPrices = normalizePricesForMode(prices, legacyPriceMode);
+    const pricing = normalizeCanonicalProductPricing(product.pricing, legacyPriceMode, normalizedPrices, product.variants);
     const priceOptions = pricingOptionsForProduct(pricing, pricingCatalog);
+    const priceMode = priceOptions.length ? priceModeFromCanonicalPricing(pricing, priceOptions) : legacyPriceMode;
+    const basePrice = firstCanonicalPrice(priceOptions, normalizedPrices);
     return Object.assign({}, product, {
       id: product.id || makeId(`${categoryId}-urun`, product.name || `Ürün ${index + 1}`),
       name: product.name || "Ürün",
@@ -484,8 +487,17 @@
       prices: normalizedPrices,
       pricing,
       priceOptions,
+      basePrice,
       variants: priceOptions.length
-        ? priceOptions.map((option) => ({ id: option.id, label: option.label, name: option.label, unit: option.unit, price: option.price }))
+        ? priceOptions.map((option) => ({
+          id: option.id,
+          optionId: option.optionId,
+          typeId: option.typeId,
+          label: option.label,
+          name: option.label,
+          unit: option.unit,
+          price: option.price
+        }))
         : normalizeVariants(product.variants, normalizedPrices, priceMode),
       popular: Boolean(product.popular),
       kind: product.kind || inferKind("", "", product.name || ""),
@@ -631,14 +643,30 @@
 
   function normalizeCanonicalProductPricing(value, legacyMode, legacyPrices, legacyVariants) {
     if (value && typeof value === "object" && !Array.isArray(value) && value.typeId) {
-      const values = {};
-      Object.entries(value.values && typeof value.values === "object" ? value.values : {}).forEach(([optionId, rawValue]) => {
-        const id = normalizePricingId(optionId);
-        if (!id) return;
-        const source = rawValue && typeof rawValue === "object" && !Array.isArray(rawValue) ? rawValue : { price: rawValue };
-        values[id] = Object.assign({}, source, { price: cleanPriceOrNull(source.price), active: source.active !== false });
+      const typeId = normalizePricingId(value.typeId) || "standard";
+      const values = normalizeCanonicalPricingValues(value.values);
+      const families = [];
+      const familyIds = new Set();
+      (Array.isArray(value.families) ? value.families : []).forEach((family) => {
+        if (!family || typeof family !== "object" || Array.isArray(family)) return;
+        const familyTypeId = normalizePricingId(family.typeId);
+        if (!familyTypeId || familyIds.has(familyTypeId)) return;
+        familyIds.add(familyTypeId);
+        families.push(Object.assign({}, family, {
+          typeId: familyTypeId,
+          values: normalizeCanonicalPricingValues(family.values)
+        }));
       });
-      return Object.assign({}, value, { typeId: normalizePricingId(value.typeId) || "standard", values });
+      const primaryIndex = families.findIndex((family) => family.typeId === typeId);
+      if (primaryIndex >= 0) {
+        families[primaryIndex] = Object.assign({}, families[primaryIndex], {
+          values: Object.assign({}, families[primaryIndex].values, values)
+        });
+      } else {
+        families.unshift({ typeId, values });
+      }
+      const primary = families.find((family) => family.typeId === typeId) || families[0] || { typeId, values };
+      return Object.assign({}, value, { typeId: primary.typeId, values: primary.values, families });
     }
 
     if (legacyMode === "singleDouble") {
@@ -665,28 +693,83 @@
     return { typeId: "standard", values: { standard: { price: cleanPriceOrNull(legacyPrices.standard), active: true } } };
   }
 
+  function normalizeCanonicalPricingValues(rawValues) {
+    const values = {};
+    Object.entries(rawValues && typeof rawValues === "object" && !Array.isArray(rawValues) ? rawValues : {})
+      .forEach(([optionId, rawValue]) => {
+        const id = normalizePricingId(optionId);
+        if (!id) return;
+        const source = rawValue && typeof rawValue === "object" && !Array.isArray(rawValue) ? rawValue : { price: rawValue };
+        values[id] = Object.assign({}, source, { price: cleanPriceOrNull(source.price), active: source.active !== false });
+      });
+    return values;
+  }
+
   function pricingOptionsForProduct(productPricing, pricingCatalog) {
     const catalog = normalizePricingCatalog(pricingCatalog);
-    const type = catalog.types.find((item) => item.id === productPricing.typeId);
-    const knownIds = new Set();
     const result = [];
-    (type && type.options || []).forEach((option) => {
-      knownIds.add(option.id);
-      const value = productPricing.values[option.id];
-      if (!value || option.active === false || value.active === false || value.price === null) return;
-      result.push({ id: option.id, label: option.label, unit: option.unit || "", order: option.order, price: value.price });
-    });
-    Object.entries(productPricing.values || {}).forEach(([optionId, value]) => {
-      if (knownIds.has(optionId) || !value || value.active === false || value.price === null) return;
-      result.push({
-        id: optionId,
-        label: String(value.label || optionId),
-        unit: String(value.unit || ""),
-        order: Number.isFinite(Number(value.order)) ? Number(value.order) : result.length,
-        price: value.price
+    const usedIds = new Set();
+    const families = Array.isArray(productPricing && productPricing.families) && productPricing.families.length
+      ? productPricing.families
+      : [{ typeId: productPricing && productPricing.typeId || "standard", values: productPricing && productPricing.values || {} }];
+    families.forEach((family, familyIndex) => {
+      const typeId = normalizePricingId(family && family.typeId) || "standard";
+      const type = catalog.types.find((item) => item.id === typeId);
+      const values = family && family.values || {};
+      const knownIds = new Set();
+      (type && type.options || []).forEach((option) => {
+        knownIds.add(option.id);
+        const value = values[option.id];
+        if (!value || option.active === false || value.active === false || value.price === null) return;
+        const id = usedIds.has(option.id) ? `${typeId}:${option.id}` : option.id;
+        usedIds.add(id);
+        result.push({
+          id,
+          optionId: option.id,
+          typeId,
+          familyOrder: familyIndex,
+          label: option.label,
+          unit: option.unit || "",
+          order: option.order,
+          price: value.price
+        });
+      });
+      Object.entries(values).forEach(([optionId, value]) => {
+        if (knownIds.has(optionId) || !value || value.active === false || value.price === null) return;
+        const id = usedIds.has(optionId) ? `${typeId}:${optionId}` : optionId;
+        usedIds.add(id);
+        result.push({
+          id,
+          optionId,
+          typeId,
+          familyOrder: familyIndex,
+          label: String(value.label || optionId),
+          unit: String(value.unit || ""),
+          order: Number.isFinite(Number(value.order)) ? Number(value.order) : result.length,
+          price: value.price
+        });
       });
     });
-    return result.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+    return result.sort((a, b) => Number(a.familyOrder || 0) - Number(b.familyOrder || 0) || Number(a.order || 0) - Number(b.order || 0));
+  }
+
+  function priceModeFromCanonicalPricing(pricing, priceOptions) {
+    const familyIds = new Set((priceOptions || []).map((option) => option.typeId).filter(Boolean));
+    if (familyIds.size > 1) return "variants";
+    const typeId = normalizePricingId(pricing && pricing.typeId);
+    if (typeId === "standard") return "standard";
+    if (typeId === "shot") return "singleDouble";
+    if (typeId === "size") return "sizes";
+    return "variants";
+  }
+
+  function firstCanonicalPrice(priceOptions, prices) {
+    const canonical = (Array.isArray(priceOptions) ? priceOptions : [])
+      .map((option) => option && option.price)
+      .find(hasPrice);
+    if (canonical !== undefined) return Number(canonical);
+    const fallback = [prices.standard, prices.k, prices.o, prices.b, prices.single, prices.double].find(hasPrice);
+    return fallback === undefined ? null : Number(fallback);
   }
 
   function normalizePricingId(value) {
@@ -1841,7 +1924,7 @@
   function priceFragments(product) {
     if (Array.isArray(product.priceOptions) && product.priceOptions.length) {
       return product.priceOptions.map((option) => ({
-        label: product.pricing && product.pricing.typeId === "standard" ? "" : (option.label || option.id || ""),
+        label: option.typeId === "standard" && option.optionId === "standard" ? "" : (option.label || option.id || ""),
         price: option.price
       }));
     }
@@ -1874,7 +1957,11 @@
   }
 
   function priceSummary(product) {
-    if (!product || product.priceMode === "standard") {
+    if (!product) return "-";
+    if (Array.isArray(product.priceOptions) && product.priceOptions.length) {
+      return priceFragments(product).map(formatPricePart).join(" | ");
+    }
+    if (product.priceMode === "standard") {
       return formatPrice(product && product.prices && product.prices.standard);
     }
     return priceFragments(product).map(formatPricePart).join(" | ");

@@ -23,7 +23,8 @@ const {
   domainFingerprintSnapshot,
   domainProductCodeFingerprintSnapshot,
   domainCatalogSnapshot,
-  restoreDomainCatalogSnapshot
+  restoreDomainCatalogSnapshot,
+  buildImportReadbackManifest
 } = require("./data-import");
 
 const DRAFT_TTL_MS = 30 * 60 * 1000;
@@ -136,6 +137,7 @@ function registerDataImportRoutes(options) {
       let replay = false;
       let response;
       let rollbackSnapshot = null;
+      let expectedReadbackFingerprint = "";
       const committedState = await store.update(async (data, context = {}) => {
         const previous = await idempotentResponse(data, scope, requestId, coldStore);
         if (previous) {
@@ -189,6 +191,9 @@ function registerDataImportRoutes(options) {
         const beforeProductCodeFingerprint = productCodeFingerprint(data, appliedScopes);
         applyPlan(data, draft.plan, appliedScopes);
         stampImportedMetadata(data, operationId, now, appliedScopes);
+        expectedReadbackFingerprint = readbackManifestFingerprint(
+          buildImportReadbackManifest(draft.plan, appliedScopes)
+        );
         data.revisions.dataImport = revisionBefore + 1;
         bumpDomainRevisions(data, selectedDomains);
         data.revisions.publish = Number(data.revisions.publish || 0) + 1;
@@ -208,6 +213,7 @@ function registerDataImportRoutes(options) {
           pricingRevisionAfter: data.revisions.pricing,
           domainRevisionsBefore: draft.expectedDomainRevisions || {},
           domainRevisionsAfter: domainRevisionSnapshot(data, selectedDomains),
+          expectedReadbackFingerprint,
           beforeFingerprint, beforeProductCodeFingerprint,
           afterFingerprint: "", afterProductCodeFingerprint: "",
           committedFingerprint: "", persistedFingerprint: "",
@@ -239,7 +245,9 @@ function registerDataImportRoutes(options) {
           readback,
           response.changedScopes,
           response.operationId,
-          response.revision
+          response.revision,
+          expectedReadbackFingerprint || String(findImportHistory(committedState, response.operationId)?.expectedReadbackFingerprint || ""),
+          response.changedDomains
         );
         if (!validationDetails.valid) {
           const committedHistory = findImportHistory(committedState, response.operationId)
@@ -255,7 +263,7 @@ function registerDataImportRoutes(options) {
           });
 
           if (!rollbackSnapshot || !committedHistory) {
-            throw clientError(500, `Aktarım doğrulaması başarısız oldu (${rollbackReason}); güvenli geri alma kaydı bulunamadı.`);
+            throw clientError(500, `Aktarım doğrulaması başarısız oldu (${rollbackReason}); güvenli geri alma kaydı bulunamadı.`, validationDetails.failureCode);
           }
 
           const rollbackCommitted = await store.update((data) => {
@@ -263,6 +271,7 @@ function registerDataImportRoutes(options) {
             data.revisions.dataImport = Number(committedHistory.revisionBefore || 0);
             data.revisions.publish = Number(committedHistory.publishRevisionBefore || 0);
             data.revisions.pricing = Number(committedHistory.pricingRevisionBefore || 0);
+            restoreDomainRevisionSnapshot(data, committedHistory.domainRevisionsBefore, response.changedDomains);
             let failed = findImportHistory(data, response.operationId);
             if (!failed) {
               failed = structuredClone(committedHistory);
@@ -300,10 +309,10 @@ function registerDataImportRoutes(options) {
           const suffix = rollbackValidation.verified
             ? "katalog güvenli yedekten geri yüklendi ve doğrulandı"
             : "katalog geri yüklendi ancak rollback readback doğrulaması eşleşmedi";
-          throw clientError(500, `Aktarım yazma doğrulaması başarısız oldu (${rollbackReason}); ${suffix}.`);
+          throw clientError(500, `Aktarım yazma doğrulaması başarısız oldu (${rollbackReason}); ${suffix}.`, validationDetails.failureCode);
         }
 
-        response = { ...response, validationStatus: "verified" };
+        response = { ...response, validationStatus: "verified", readback: validationDetails.readback };
         const validatedAt = new Date().toISOString();
         const validatedState = await store.update(async (data) => {
           const history = findImportHistory(data, response.operationId);
@@ -549,7 +558,7 @@ function broadcastImport(data, scopes, updatedAt, options) {
   if ((set.has("menu") || set.has("pricing")) && typeof options.broadcastPublicUpdate === "function") options.broadcastPublicUpdate(data, "data-import");
 }
 
-function buildReadbackValidation(committed, persisted, scopes, operationId, expectedRevision) {
+function buildReadbackValidation(committed, persisted, scopes, operationId, expectedRevision, expectedReadbackFingerprint, domains) {
   const committedHistory = findImportHistory(committed, operationId);
   const persistedHistory = findImportHistory(persisted, operationId);
   const committedFingerprint = catalogFingerprint(committed, scopes);
@@ -558,6 +567,21 @@ function buildReadbackValidation(committed, persisted, scopes, operationId, expe
   const persistedProductCodeFingerprint = productCodeFingerprint(persisted, scopes);
   const catalogMatches = committedFingerprint === persistedFingerprint;
   const productCodesMatch = committedProductCodeFingerprint === persistedProductCodeFingerprint;
+  const committedManifest = buildImportReadbackManifest(committed, scopes);
+  const persistedManifest = buildImportReadbackManifest(persisted, scopes);
+  const committedReadbackFingerprint = readbackManifestFingerprint(committedManifest);
+  const persistedReadbackFingerprint = readbackManifestFingerprint(persistedManifest);
+  const readbackMatches = committedReadbackFingerprint === persistedReadbackFingerprint;
+  const planMatches = !expectedReadbackFingerprint
+    || (committedReadbackFingerprint === expectedReadbackFingerprint
+      && persistedReadbackFingerprint === expectedReadbackFingerprint);
+  const expectedDomainRevisions = committedHistory && committedHistory.domainRevisionsAfter || {};
+  const committedDomainRevisions = domainRevisionSnapshot(committed, domains || []);
+  const persistedDomainRevisions = domainRevisionSnapshot(persisted, domains || []);
+  const domainRevisionsMatch = Object.keys(expectedDomainRevisions).every((domain) => (
+    Number(committedDomainRevisions[domain]) === Number(expectedDomainRevisions[domain])
+      && Number(persistedDomainRevisions[domain]) === Number(expectedDomainRevisions[domain])
+  ));
   const metadataMatches = Boolean(
     committedHistory
     && persistedHistory
@@ -569,7 +593,15 @@ function buildReadbackValidation(committed, persisted, scopes, operationId, expe
   const reasons = [];
   if (!catalogMatches) reasons.push("katalog fingerprint eşleşmedi");
   if (!productCodesMatch) reasons.push("ürün kodu fingerprint eşleşmedi");
+  if (!readbackMatches) reasons.push("kalıcı readback manifest eşleşmedi");
+  if (!planMatches) reasons.push("uygulanan veri analiz planıyla eşleşmedi");
+  if (!domainRevisionsMatch) reasons.push("domain revizyonları eşleşmedi");
   if (!metadataMatches) reasons.push("işlem metadata veya revizyon kaydı eşleşmedi");
+  const failureCode = !catalogMatches ? "readback_catalog_mismatch"
+    : !productCodesMatch ? "readback_product_code_mismatch"
+      : !readbackMatches ? "readback_manifest_mismatch"
+        : !planMatches ? "readback_plan_mismatch"
+          : (!domainRevisionsMatch || !metadataMatches) ? "readback_revision_mismatch" : "";
   return {
     importId: operationId,
     importScope: Array.isArray(scopes) ? [...scopes] : [],
@@ -580,11 +612,47 @@ function buildReadbackValidation(committed, persisted, scopes, operationId, expe
     persistedProductCodeFingerprint,
     catalogMatches,
     productCodesMatch,
+    expectedReadbackFingerprint,
+    committedReadbackFingerprint,
+    persistedReadbackFingerprint,
+    readbackMatches,
+    planMatches,
+    domainRevisionsMatch,
     metadataMatches,
     valid: reasons.length === 0,
     validationStatus: reasons.length === 0 ? "verified" : "failed",
-    failureReason: reasons.join("; ")
+    failureCode,
+    failureReason: reasons.join("; "),
+    readback: readbackSummary(persistedManifest, persisted, domains)
   };
+}
+
+function readbackSummary(manifest, data, domains) {
+  return {
+    productCount: Number(manifest && manifest.catalog && manifest.catalog.productCount || 0),
+    pricedProductCount: (manifest && manifest.catalog && manifest.catalog.products || [])
+      .filter((product) => product.pricingStatus === "priced").length,
+    recipeCount: Number(manifest && manifest.recipes && manifest.recipes.records && manifest.recipes.records.length || 0),
+    stockProductCount: Number(manifest && manifest.stock && manifest.stock.productCount || 0),
+    revisions: {
+      dataImport: importRevision(data),
+      publish: Number(data && data.revisions && data.revisions.publish || 0),
+      pricing: Number(data && data.revisions && data.revisions.pricing || 0),
+      domains: domainRevisionSnapshot(data, domains || [])
+    }
+  };
+}
+
+function readbackManifestFingerprint(value) {
+  return crypto.createHash("sha256").update(stableCanonicalJson(value)).digest("hex");
+}
+
+function stableCanonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableCanonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableCanonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function applyReadbackAudit(history, details) {
@@ -593,6 +661,7 @@ function applyReadbackAudit(history, details) {
   history.committedProductCodeFingerprint = details.committedProductCodeFingerprint;
   history.persistedProductCodeFingerprint = details.persistedProductCodeFingerprint;
   history.validationStatus = details.valid ? "verified" : "failed";
+  history.validationFailureCode = details.failureCode || "";
   history.validationFailureReason = details.failureReason || "";
   history.validationDetails = { ...details };
 }
@@ -659,6 +728,7 @@ function publicHistory(item) {
     status: item.status || item.kind, canUndo: item.kind === "apply" && item.status !== "failed_readback" && !item.undoneAt,
     importId: item.importId || item.id, importScope: item.importScope || item.scopes || [],
     validationStatus: item.validationStatus || "", validationFailureReason: item.validationFailureReason || "",
+    validationFailureCode: item.validationFailureCode || "",
     validationDetails: item.validationDetails && typeof item.validationDetails === "object"
       ? structuredClone(item.validationDetails)
       : null,
@@ -729,6 +799,14 @@ function bumpDomainRevisions(data, domains) {
   }
 }
 
+function restoreDomainRevisionSnapshot(data, snapshot, domains) {
+  data.revisions = data.revisions || {};
+  for (const domain of normalizeImportDomains(domains)) {
+    const key = domainRevisionKey(domain);
+    if (snapshot && snapshot[domain] !== undefined) data.revisions[key] = Number(snapshot[domain]);
+  }
+}
+
 function assertDomainDraftIsCurrent(data, draft, domains, scopes) {
   const expectedRevisions = draft.expectedDomainRevisions || {};
   const currentRevisions = domainRevisionSnapshot(data, domains);
@@ -758,12 +836,14 @@ async function rememberIdempotency(data, scope, requestId, response, createdAt, 
   const entry = await coldStore.externalizeIdempotency({ scope, requestId, response: structuredClone(response), createdAt });
   data.dataImportIdempotency = (data.dataImportIdempotency || []).concat(entry).slice(-500);
 }
-function clientError(status, message) { const error = new Error(message); error.status = status; return error; }
+function clientError(status, message, code = "") { const error = new Error(message); error.status = status; error.code = code; return error; }
 function routeError(error, res, next) {
   if (error && (error.type === "entity.too.large" || Number(error.status) === 413)) {
     return res.status(413).json({ ok: false, message: "Excel yükleme isteği izin verilen boyut sınırını aşıyor." });
   }
-  if (error && Number(error.status) >= 400 && Number(error.status) < 600) return res.status(Number(error.status)).json({ ok: false, message: error.message });
+  if (error && Number(error.status) >= 400 && Number(error.status) < 600) {
+    return res.status(Number(error.status)).json({ ok: false, ...(error.code ? { code: error.code } : {}), message: error.message });
+  }
   return next(error);
 }
 
