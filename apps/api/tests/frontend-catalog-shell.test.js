@@ -35,6 +35,42 @@ test("Yönetici sidebar tek logo düğmesiyle açılır ve mobil kapalı durumda
   assert.match(css, /\.is-sidebar-collapsed \.sidebar-scroll-region[\s\S]*?display:\s*none/);
 });
 
+test("Yönetici ürün select'leri yalnız change, eski düğmeler yalnız click ile işlenir", () => {
+  const html = source("apps/admin/index.html");
+  const script = source("apps/admin/scripts/app.js");
+  const worker = source("apps/admin/sw.js");
+  const categoryClick = functionSection(script, "handleProductCategoryTabs", "handleProductCategorySelect");
+  const categoryChange = functionSection(script, "handleProductCategorySelect", "handleProductQuickList");
+  const productClick = functionSection(script, "handleProductQuickList", "handleProductSelect");
+  const productChange = functionSection(script, "handleProductSelect", "handleProductEditorCardClick");
+
+  assert.match(script, /els\.productCategoryTabs\.addEventListener\("click", handleProductCategoryTabs\);/);
+  assert.match(script, /els\.productQuickList\.addEventListener\("click", handleProductQuickList\);/);
+  assert.match(script, /els\.productCategoryTabs\.addEventListener\("change", handleProductCategorySelect\);/);
+  assert.match(script, /els\.productQuickList\.addEventListener\("change", handleProductSelect\);/);
+
+  assert.match(categoryClick, /closest\("\[data-product-category-tab\]"\)/);
+  assert.match(categoryClick, /state\.selectedCategoryId = button\.dataset\.productCategoryTab/);
+  assert.doesNotMatch(categoryClick, /data-product-category-select|preventDefault\(/);
+  assert.match(productClick, /closest\("\[data-product-chip\]"\)/);
+  assert.match(productClick, /state\.selectedProductId = button\.dataset\.productChip/);
+  assert.doesNotMatch(productClick, /data-product-select|preventDefault\(/);
+
+  assert.match(categoryChange, /closest\("\[data-product-category-select\]"\)/);
+  assert.match(categoryChange, /state\.selectedCategoryId = select\.value/);
+  assert.match(productChange, /closest\("\[data-product-select\]"\)/);
+  assert.match(productChange, /state\.selectedProductId = select\.value/);
+  for (const handler of [categoryClick, categoryChange, productClick, productChange]) {
+    assert.equal((handler.match(/renderActiveSection\("product"\)/g) || []).length, 1);
+  }
+
+  const appVersion = assetVersion(html, "scripts/app.js");
+  assert.equal(assetVersion(html, "styles/admin.css"), appVersion);
+  assert.match(worker, /version:\s*"(?!2026\.08\.16\.4")[^"]+"/);
+  assert.match(worker, /"\/yonetici\/styles\/admin\.css"/);
+  assert.match(worker, /"\/yonetici\/scripts\/app\.js"/);
+});
+
 test("Excel Veri Merkezi backend analiz, atomik apply ve revizyon kontrollü undo sözleşmesini kullanır", () => {
   const html = source("apps/admin/index.html");
   const script = source("apps/admin/scripts/app.js");
@@ -85,3 +121,18 @@ test("kullanıcıya açık hesap ve personel işlemleri Yönetici dilini kullan�
   assert.match(workforce, /Yöneticiye Bildir/);
   assert.doesNotMatch(workforce, />Admine Bildir</);
 });
+
+function functionSection(script, name, nextName) {
+  const start = script.indexOf(`  function ${name}(`);
+  const end = script.indexOf(`\n  function ${nextName}(`, start);
+  assert.notEqual(start, -1, `${name} bulunamadı`);
+  assert.notEqual(end, -1, `${name} sonu bulunamadı`);
+  return script.slice(start, end);
+}
+
+function assetVersion(html, relativePath) {
+  const escapedPath = relativePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = html.match(new RegExp(`(?:href|src)="${escapedPath}\\?v=([^"&]+)`));
+  assert.ok(match, `${relativePath} sürüm referansı bulunamadı`);
+  return match[1];
+}

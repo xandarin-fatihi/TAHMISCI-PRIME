@@ -815,8 +815,8 @@
     });
     els.productCategoryTabs.addEventListener("click", handleProductCategoryTabs);
     els.productQuickList.addEventListener("click", handleProductQuickList);
-    els.productCategoryTabs.addEventListener("change", handleProductCategoryTabs);
-    els.productQuickList.addEventListener("change", handleProductQuickList);
+    els.productCategoryTabs.addEventListener("change", handleProductCategorySelect);
+    els.productQuickList.addEventListener("change", handleProductSelect);
     if (els.productEditorCard) els.productEditorCard.addEventListener("click", handleProductEditorCardClick);
     bindStockEvents();
     if (PANEL_MODULES.menuOutput) bindMenuOutputEvents();
@@ -7389,23 +7389,39 @@
   }
 
   function handleProductCategoryTabs(event) {
-    const select = event.target.closest("[data-product-category-select]");
     const button = event.target.closest("[data-product-category-tab]");
-    if (!button && !select) return;
-    state.selectedCategoryId = select ? select.value : button.dataset.productCategoryTab;
+    if (!button) return;
+    state.selectedCategoryId = button.dataset.productCategoryTab;
     const category = selectedCategory();
-    state.allowEmptyProductSelection = Boolean(select);
-    state.selectedProductId = select ? "" : (category && category.products[0] ? category.products[0].id : "");
+    state.allowEmptyProductSelection = false;
+    state.selectedProductId = category && category.products[0] ? category.products[0].id : "";
+    setActiveSection("product", { collapseSidebar: false, render: false });
+    renderActiveSection("product");
+  }
+
+  function handleProductCategorySelect(event) {
+    const select = event.target.closest("[data-product-category-select]");
+    if (!select) return;
+    state.selectedCategoryId = select.value;
+    state.allowEmptyProductSelection = true;
+    state.selectedProductId = "";
     setActiveSection("product", { collapseSidebar: false, render: false });
     renderActiveSection("product");
   }
 
   function handleProductQuickList(event) {
-    const select = event.target.closest("[data-product-select]");
     const button = event.target.closest("[data-product-chip]");
-    if (!button && !select) return;
-    state.selectedProductId = select ? select.value : button.dataset.productChip;
-    if (!state.selectedProductId && button) state.selectedProductId = button.dataset.productChip;
+    if (!button) return;
+    state.selectedProductId = button.dataset.productChip;
+    state.allowEmptyProductSelection = !state.selectedProductId;
+    setActiveSection("product", { collapseSidebar: false, render: false });
+    renderActiveSection("product");
+  }
+
+  function handleProductSelect(event) {
+    const select = event.target.closest("[data-product-select]");
+    if (!select) return;
+    state.selectedProductId = select.value;
     state.allowEmptyProductSelection = !state.selectedProductId;
     setActiveSection("product", { collapseSidebar: false, render: false });
     renderActiveSection("product");

@@ -6894,14 +6894,41 @@ body:has(.admin-shell[data-active-section="recipe"]:not([hidden]))::before {
 
 .product-select-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+  align-items: start;
+}
+
+.product-select-grid > .category-tab-strip,
+.product-select-grid > .product-chip-strip {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  max-height: none;
+  margin: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .product-select-field {
   min-width: 0;
   display: grid;
   gap: 7px;
+}
+
+.product-select-grid .product-select-field,
+.product-select-grid .product-select-field select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.product-select-grid .product-select-field select {
+  min-height: 46px;
+  pointer-events: auto;
+  touch-action: manipulation;
 }
 
 .product-select-field span,
@@ -7091,7 +7118,6 @@ body:has(.admin-shell[data-active-section="recipe"]:not([hidden]))::before {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .product-select-grid,
   .product-toggle-grid,
   .product-style-grid,
   .product-detail-grid,
@@ -7184,6 +7210,10 @@ body:has(.admin-shell[data-active-section="recipe"]:not([hidden]))::before {
 }
 
 @media (max-width: 760px) {
+  .product-select-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .admin-shell:is([data-active-section="menu"], [data-active-section="banner"], [data-active-section="category"], [data-active-section="feedback"], [data-active-section="settings"], [data-active-section="product"]) .workspace {
     padding: 14px 12px 20px;
   }
