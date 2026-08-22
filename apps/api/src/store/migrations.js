@@ -15,7 +15,7 @@ const {
 
 const STORE_SCHEMA_VERSION = 17;
 const PROCUREMENT_SCHEMA_VERSION = 1;
-const FATURA_ROLES = new Set(["operasyon", "muhasebe", "satın_alma", "yönetici"]);
+const FATURA_ROLES = new Set(["operasyon", "mal_kabul", "muhasebe", "satın_alma", "yönetici", "özel"]);
 const FATURA_CAPABILITIES = new Set([
   "procurement.read",
   "supplier.read",
@@ -113,6 +113,7 @@ function migrateStore(input) {
   next.recipeLinkReview = linked.review;
   next.productCodeRegistry = normalizeProductCodeRegistry(source.productCodeRegistry, next);
   next.workforceShipments = normalizeWorkforceShipments(source.workforceShipments, next.stockState, next.productCodeRegistry);
+  next.procurement = reconcileProcurementBranchMetadata(next.procurement, source.procurement, next.workforceShipments);
   markWorkforcePersonnelState(next);
   next.workforceMigrationState = {
     version: 1,
@@ -863,15 +864,21 @@ function normalizeRecipeUsers(value) {
     const requestedCapabilities = Array.isArray(item.faturaCapabilities)
       ? item.faturaCapabilities
       : DEFAULT_FATURA_CAPABILITIES;
+    const capabilities = [...new Set(requestedCapabilities
+      .map((capability) => String(capability || "").trim())
+      .filter((capability) => FATURA_CAPABILITIES.has(capability)))];
+    const accessEnabled = typeof item.faturaAccessEnabled === "boolean"
+      ? item.faturaAccessEnabled
+      : capabilities.length > 0;
     return {
       ...item,
       ...normalizeAccountSecurity(item),
+      faturaAccessEnabled: accessEnabled,
       faturaRole: FATURA_ROLES.has(String(item.faturaRole || ""))
         ? String(item.faturaRole)
         : "operasyon",
-      faturaCapabilities: [...new Set(requestedCapabilities
-        .map((capability) => String(capability || "").trim())
-        .filter((capability) => FATURA_CAPABILITIES.has(capability)))]
+      faturaTemplate: procurementText(item.faturaTemplate, 40) || "ozel",
+      faturaCapabilities: accessEnabled ? capabilities : []
     };
   }).filter(Boolean);
 }
@@ -1176,6 +1183,37 @@ function normalizeProcurement(value) {
   };
 }
 
+function reconcileProcurementBranchMetadata(procurement, rawProcurement, shipments) {
+  const raw = rawProcurement && typeof rawProcurement === "object" && !Array.isArray(rawProcurement) ? rawProcurement : {};
+  const shipmentIndex = new Map(normalizeArray(shipments).map((shipment) => [String(shipment.id || ""), shipment]));
+  const rawDocuments = new Map(normalizeArray(raw.documents).map((item) => [String(item && item.id || ""), item]));
+  const rawLedger = new Map(normalizeArray(raw.ledgerEntries).map((item) => [String(item && item.id || ""), item]));
+  const rawPayments = new Map(normalizeArray(raw.payments).map((item) => [String(item && item.id || ""), item]));
+  const documentIndex = new Map(procurement.documents.map((document) => [document.id, document]));
+  const branchFromShipment = (id) => procurementText(shipmentIndex.get(String(id || "")) && shipmentIndex.get(String(id || "")).branchId, 80) || "";
+  for (const document of procurement.documents) {
+    const original = rawDocuments.get(document.id);
+    if (original && original.branchId) continue;
+    const linkedBranch = (document.shipmentIds || []).map(branchFromShipment).find(Boolean);
+    if (linkedBranch) document.branchId = linkedBranch;
+  }
+  for (const entry of procurement.ledgerEntries) {
+    const original = rawLedger.get(entry.id);
+    if (original && original.branchId) continue;
+    const document = documentIndex.get(entry.documentId);
+    entry.branchId = branchFromShipment(entry.shipmentId) || document && document.branchId || entry.branchId || "main";
+  }
+  const ledgerIndex = new Map(procurement.ledgerEntries.map((entry) => [entry.id, entry]));
+  for (const payment of procurement.payments) {
+    const original = rawPayments.get(payment.id);
+    if (original && original.branchId) continue;
+    const entry = ledgerIndex.get(payment.ledgerEntryId);
+    const document = documentIndex.get(payment.documentId);
+    payment.branchId = entry && entry.branchId || document && document.branchId || payment.branchId || "main";
+  }
+  return procurement;
+}
+
 function normalizeProcurementEntities(value, normalizer) {
   const byId = new Map();
   normalizeArray(value).forEach((item, index) => {
@@ -1243,6 +1281,7 @@ function normalizeProcurementDocument(item) {
   return {
     ...item,
     id,
+    branchId: procurementText(item.branchId, 80) || "main",
     supplierId: procurementText(item.supplierId, 180),
     shipmentIds: normalizeProcurementStringArray(item.shipmentIds || (item.shipmentId ? [item.shipmentId] : []), 180),
     shipmentItemIds: normalizeProcurementStringArray(item.shipmentItemIds || item.lineIds, 180),
@@ -1274,6 +1313,7 @@ function normalizeLedgerEntry(item) {
     ...item,
     id,
     supplierId,
+    branchId: procurementText(item.branchId, 80) || "main",
     shipmentId: procurementText(item.shipmentId, 180),
     documentId: procurementText(item.documentId, 180),
     type,
@@ -1299,6 +1339,7 @@ function normalizeProcurementPayment(item) {
     ...item,
     id,
     supplierId,
+    branchId: procurementText(item.branchId, 80) || "main",
     documentId: procurementText(item.documentId, 180),
     ledgerEntryId: procurementText(item.ledgerEntryId, 180),
     amountKurus: Math.abs(normalizeKurus(item.amountKurus, 0)),

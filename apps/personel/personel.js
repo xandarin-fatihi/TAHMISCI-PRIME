@@ -55,7 +55,8 @@
     detailProductId: null,
     pendingProfileAvatar: "",
     mobileSidebar: false,
-    sessionActive: false
+    sessionActive: false,
+    logoutPending: false
   };
 
   const els = {};
@@ -65,9 +66,9 @@
   async function init() {
     [
       "personelApp", "personelLogin", "personelDashboard", "personelLoginForm", "personelUsername", "personelPassword",
-      "loginMessage", "personelLogout", "personelSidebarToggle", "personelSidebar", "personelSidebarOverlay", "sectionKicker", "sectionTitle",
+      "loginMessage", "personelSidebarToggle", "personelSidebar", "personelSidebarOverlay", "sectionKicker", "sectionTitle",
       "sectionDescription", "sectionRecipe", "sectionStock", "sectionProfile", "sectionTasks", "sectionShipment", "sectionShift", "sidebarUser", "profilePopover",
-      "profileMenuAvatar", "profileMenuName",
+      "profileMenuAvatar", "profileMenuName", "profileMenuRole", "profileMenuMessage",
       "recipeFrame", "stockStats", "stockMessage", "stockSearchInput", "stockCategoryPills", "stockGrid",
       "profileForm", "profileName", "profilePhone", "profileAvatarUrl", "profilePhotoInput", "profileBio",
       "profileMessage", "profileAvatar", "stockModal", "stockForm", "stockModalKicker",
@@ -85,7 +86,6 @@
     document.addEventListener("tahmisci:preview-draft", handlePreviewDraftMessage);
     document.addEventListener("personel:session-ended", handlePersonelSessionEnded);
     if (els.personelLoginForm) els.personelLoginForm.addEventListener("submit", login);
-    if (els.personelLogout) els.personelLogout.addEventListener("click", logout);
     if (els.personelSidebarToggle) els.personelSidebarToggle.addEventListener("click", () => {
       const collapsed = !isSidebarCollapsed();
       setSidebarCollapsed(collapsed, { focusDrawer: !collapsed });
@@ -121,6 +121,7 @@
         logout();
       }
     });
+    if (els.profilePopover) els.profilePopover.addEventListener("keydown", handleProfileMenuKeydown);
 
     document.querySelectorAll(".personel-nav [data-section]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -189,7 +190,7 @@
       if (event.key === "Escape") {
         closeStockAction();
         closeStockDetail();
-        closeProfilePopover();
+        closeProfilePopover({ restoreFocus: true });
         if (isMobileSidebar() && !isSidebarCollapsed()) {
           setSidebarCollapsed(true, { persist: false, restoreFocus: true });
         }
@@ -280,19 +281,46 @@
   }
 
   async function logout() {
-    if (window.TahmisciPersonelNotifications && typeof window.TahmisciPersonelNotifications.beforeLogout === "function") {
-      await window.TahmisciPersonelNotifications.beforeLogout().catch(() => null);
+    if (state.logoutPending) return;
+    state.logoutPending = true;
+    setProfileMenuMessage("");
+    const logoutButton = els.profilePopover && els.profilePopover.querySelector('[data-profile-action="logout"]');
+    const originalLabel = logoutButton ? logoutButton.textContent : "";
+    if (logoutButton) {
+      logoutButton.disabled = true;
+      logoutButton.setAttribute("aria-busy", "true");
+      logoutButton.textContent = "Çıkış yapılıyor…";
     }
-    await fetch("/api/recipe/logout", { method: "POST", credentials: "include" }).catch(() => null);
-    localStorage.removeItem(LAST_SECTION_KEY);
-    if (state.sessionActive) {
-      document.dispatchEvent(new CustomEvent("personel:session-ended", {
-        detail: { source: "personel-shell", reason: "logout", message: "" }
-      }));
-      return;
+    try {
+      if (window.TahmisciPersonelNotifications && typeof window.TahmisciPersonelNotifications.beforeLogout === "function") {
+        await window.TahmisciPersonelNotifications.beforeLogout().catch(() => null);
+      }
+      const response = await fetch("/api/recipe/logout", { method: "POST", credentials: "include" });
+      if (!response.ok && response.status !== 401) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.message || "Çıkış işlemi tamamlanamadı.");
+      }
+      localStorage.removeItem(LAST_SECTION_KEY);
+      if (state.sessionActive) {
+        document.dispatchEvent(new CustomEvent("personel:session-ended", {
+          detail: { source: "personel-shell", reason: "logout", message: "" }
+        }));
+        return;
+      }
+      resetPersonelSession();
+      showLogin();
+    } catch (error) {
+      setProfileMenuMessage(error && error.message || "Çıkış işlemi tamamlanamadı.");
+      if (els.profilePopover) els.profilePopover.hidden = false;
+      if (els.sidebarUser) els.sidebarUser.setAttribute("aria-expanded", "true");
+    } finally {
+      state.logoutPending = false;
+      if (logoutButton && logoutButton.isConnected) {
+        logoutButton.disabled = false;
+        logoutButton.removeAttribute("aria-busy");
+        logoutButton.textContent = originalLabel || "Çıkış yap";
+      }
     }
-    resetPersonelSession();
-    showLogin();
   }
 
   function activatePersonelSession(session) {
@@ -473,9 +501,39 @@
     }
   }
 
-  function closeProfilePopover() {
+  function closeProfilePopover(options = {}) {
     if (els.profilePopover) els.profilePopover.hidden = true;
     if (els.sidebarUser) els.sidebarUser.setAttribute("aria-expanded", "false");
+    if (options.restoreFocus && els.sidebarUser) els.sidebarUser.focus();
+  }
+
+  function handleProfileMenuKeydown(event) {
+    if (!els.profilePopover || els.profilePopover.hidden) return;
+    const actions = Array.from(els.profilePopover.querySelectorAll('[role="menuitem"]:not(:disabled)'));
+    if (!actions.length) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeProfilePopover({ restoreFocus: true });
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const current = Math.max(0, actions.indexOf(document.activeElement));
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? actions.length - 1
+        : event.key === "ArrowDown"
+          ? (current + 1) % actions.length
+          : (current - 1 + actions.length) % actions.length;
+    actions[nextIndex].focus();
+  }
+
+  function setProfileMenuMessage(message) {
+    if (!els.profileMenuMessage) return;
+    els.profileMenuMessage.textContent = String(message || "");
+    els.profileMenuMessage.hidden = !message;
   }
 
   function setSection(section, options) {
@@ -920,6 +978,8 @@
     }
     if (els.profileMenuAvatar) els.profileMenuAvatar.innerHTML = avatarContent(name, user.avatarUrl);
     if (els.profileMenuName) els.profileMenuName.textContent = name;
+    if (els.profileMenuRole) els.profileMenuRole.textContent = role;
+    setProfileMenuMessage("");
     renderAvatar(name, user.avatarUrl);
   }
 

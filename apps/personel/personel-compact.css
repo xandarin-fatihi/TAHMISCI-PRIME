@@ -306,6 +306,17 @@ body.is-personel-authenticated {
   font-family: var(--panel-font-ui);
 }
 
+.personel-dashboard .profile-menu-message {
+  margin: 6px 4px 2px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: rgba(143, 47, 35, 0.09);
+  color: var(--panel-danger);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
 .personel-dashboard.is-sidebar-collapsed .profile-popover {
   inset: auto auto 0 calc(100% + 8px);
 }
@@ -733,6 +744,14 @@ body.is-personel-authenticated {
 .wf-product-card > .wf-button {
   min-height: 40px;
   margin: 0 11px 11px;
+}
+
+.workforce-section button {
+  touch-action: manipulation;
+}
+
+#wfShipmentSend {
+  min-height: 44px;
 }
 
 .wf-button[aria-busy="true"]::after {

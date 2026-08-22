@@ -1755,6 +1755,26 @@ test("sevkiyat stok urun koduyla olusturulur ve onay stogu yalnizca bir kez arti
       body: JSON.stringify({ name: "Kodlu Sevkiyat Personeli", username, password })
     });
     assert.equal(created.response.status, 201);
+    const receiverCreated = await json("/api/admin/recipe-users", {
+      method: "POST",
+      headers: adminHeaders(token),
+      body: JSON.stringify({ name: "Fatura Mal Kabul Yetkilisi", username: `shipment-receiver-${suffix}`, password })
+    });
+    assert.equal(receiverCreated.response.status, 201);
+    const procurementContext = await json("/api/procurement/v1/context", { headers: adminHeaders(token) });
+    assert.equal(procurementContext.response.status, 200);
+    const accessRequestId = `shipment-access-${suffix}`;
+    const accessUpdated = await json(`/api/procurement/v1/users/${encodeURIComponent(receiverCreated.body.user.id)}/access`, {
+      method: "PUT",
+      headers: { ...adminHeaders(token), "Idempotency-Key": accessRequestId, "X-Request-ID": accessRequestId },
+      body: JSON.stringify({
+        faturaTemplate: "mal_kabul",
+        faturaAccessEnabled: true,
+        expectedRevision: procurementContext.body.revision,
+        requestId: accessRequestId
+      })
+    });
+    assert.equal(accessUpdated.response.status, 200);
 
     const stockSaved = await json("/api/admin/stock", {
       method: "PUT",
@@ -1800,6 +1820,14 @@ test("sevkiyat stok urun koduyla olusturulur ve onay stogu yalnizca bir kez arti
     assert.equal(reported.body.shipment.status, "onay_bekliyor");
     assert.equal(reported.body.shipment.items[0].stockProductCode, "STK-SHIP-001");
     assert.equal(reported.body.shipment.items[0].stockProductId, "shipment-code-product");
+    assert.equal(reported.body.shipment.branchId, "main");
+    const notificationSnapshot = await store.read();
+    const faturaNotification = notificationSnapshot.notifications.find((item) => item
+      && item.eventType === "shipment_reported"
+      && item.recipientId === receiverCreated.body.user.id
+      && item.entityId === reported.body.shipment.id);
+    assert.ok(faturaNotification, "yetkili Fatura kullanıcısına kalıcı sevkiyat bildirimi yazılmalı");
+    assert.match(faturaNotification.deepLink, /^\/fatura\/\?view=shipments&shipmentId=/);
 
     const pendingStock = await json("/api/stock", {
       headers: { Origin: baseUrl, Cookie: personelCookie }

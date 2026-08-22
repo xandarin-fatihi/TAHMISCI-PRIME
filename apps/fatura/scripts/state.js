@@ -8,9 +8,10 @@ export const CAPABILITIES = {
 };
 
 export const state = {
-  context: null, revision: 0, workforceRevision: 0, activeView: "dashboard", loaded: new Map(), eventSource: null,
+  context: null, revision: 0, workforceRevision: 0, activeView: "dashboard", loaded: new Map(), eventSource: null, notificationEventSource: null,
   suppliers: [], productLinks: [], shipments: [], documents: [], ledgerEntries: [], payments: [], users: [], auditEvents: [],
-  dashboard: null, settings: null, filters: Object.create(null), detail: null
+  notifications: [], unreadCount: 0,
+  dashboard: null, settings: null, accessTemplates: [], sectionDefinitions: [], filters: Object.create(null), detail: null
 };
 
 export function has(capability) {

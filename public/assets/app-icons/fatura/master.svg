@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Tahmisçi Fatura uygulama ikonu</title>
+  <desc id="desc">Krem rozet üzerinde kahverengi fatura, kahve çekirdeği ve onay işareti</desc>
+  <rect width="1024" height="1024" rx="220" fill="#fbf6ee"/>
+  <rect x="54" y="54" width="916" height="916" rx="180" fill="none" stroke="#5a2f1d" stroke-width="24"/>
+  <rect x="83" y="83" width="858" height="858" rx="154" fill="#fffaf3" stroke="#b98b68" stroke-width="7"/>
+  <path d="M286 212h326l126 126v468c0 30-24 54-54 54H286c-30 0-54-24-54-54V266c0-30 24-54 54-54Z" fill="#f7ecdf" stroke="#5a2f1d" stroke-width="28" stroke-linejoin="round"/>
+  <path d="M612 212v126h126" fill="#e8d4bd" stroke="#5a2f1d" stroke-width="28" stroke-linejoin="round"/>
+  <path d="M330 432h308M330 528h308M330 624h180" fill="none" stroke="#5a2f1d" stroke-width="30" stroke-linecap="round"/>
+  <path d="m554 704 54 54 116-136" fill="none" stroke="#b9502d" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M359 334c-30-14-47-46-34-75 14-31 56-42 92-26 35 16 53 55 39 86-13 30-55 32-97 15Z" fill="#5a2f1d"/>
+  <path d="M343 251c36 25 67 52 93 83" fill="none" stroke="#fbf6ee" stroke-width="13" stroke-linecap="round"/>
+</svg>

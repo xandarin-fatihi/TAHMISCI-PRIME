@@ -23,7 +23,8 @@ function registerProcurementRoutes(deps = {}) {
 
   const service = deps.service || createProcurementService({
     store,
-    notificationService: deps.notificationService
+    notificationService: deps.notificationService,
+    notifyWorkforceChange: deps.notifyWorkforceChange
   });
   const documentService = deps.documentService || null;
   const approveWorkforceShipment = deps.approveWorkforceShipment || null;
@@ -78,11 +79,11 @@ function registerProcurementRoutes(deps = {}) {
     res.json(await service.updateProductLink(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.get(`${API_ROOT}/shipments`, ...authenticated, anyCapability(["procurement.read", "receipt.create", "receipt.approve", "accounting.read"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/shipments`, ...authenticated, anyCapability(["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
     res.json(await service.listShipments(req.procurementActor, req.query));
   }));
 
-  app.get(`${API_ROOT}/shipments/:id`, ...authenticated, anyCapability(["procurement.read", "receipt.create", "receipt.approve", "accounting.read"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/shipments/:id`, ...authenticated, anyCapability(["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
     res.json(await service.getShipment(req.procurementActor, req.params.id));
   }));
 
@@ -115,12 +116,6 @@ function registerProcurementRoutes(deps = {}) {
       req
     });
     const current = await service.context(req.procurementActor);
-    service.publishExternalEvent({
-      type: "shipment.stock-approved",
-      entityType: "shipment",
-      entityId: req.params.id,
-      revision: current.revision
-    });
     res.json({
       ...(result && typeof result === "object" ? result : {}),
       ok: true,
@@ -258,7 +253,7 @@ function registerProcurementRoutes(deps = {}) {
     res.send(file.body);
   }));
 
-  app.get(`${API_ROOT}/events`, ...authenticated, anyCapability(["procurement.read", "receipt.create", "documents.read", "accounting.read"]), (req, res) => {
+  app.get(`${API_ROOT}/events`, ...authenticated, anyCapability([...FATURA_CAPABILITIES]), (req, res) => {
     res.set({
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "private, no-cache, no-store, max-age=0, no-transform",
@@ -268,7 +263,16 @@ function registerProcurementRoutes(deps = {}) {
     if (typeof res.flushHeaders === "function") res.flushHeaders();
     res.write(`retry: 5000\n${sseEvent("ready", { ok: true })}`);
     const unsubscribe = service.subscribe((event) => {
-      if (!res.writableEnded) res.write(sseEvent("procurement", event));
+      if (res.writableEnded) return;
+      const payload = req.procurementActor && req.procurementActor.type === "admin"
+        ? event
+        : {
+            type: "procurement.invalidated",
+            revision: Number(event && event.revision || 0),
+            requiresRefetch: true,
+            createdAt: event && event.createdAt || new Date().toISOString()
+          };
+      res.write(sseEvent("procurement", payload));
     });
     const heartbeat = setInterval(() => {
       if (!res.writableEnded) res.write(`: heartbeat ${Date.now()}\n\n`);
@@ -287,7 +291,7 @@ function actorMiddleware(resolveActor) {
   return async function attachProcurementActor(req, res, next) {
     try {
       const actor = await resolveActor(req);
-      if (!actor) return res.status(401).json({ ok: false, message: "Fatura Merkezi oturumu gerekli.", code: "PROCUREMENT_AUTH_REQUIRED" });
+      if (!actor) return res.status(401).json({ ok: false, message: "Tahmisçi Fatura oturumu gerekli.", code: "PROCUREMENT_AUTH_REQUIRED" });
       req.procurementActor = actor;
       return next();
     } catch (error) {
@@ -324,7 +328,9 @@ async function resolveActorFromRequest(req, store) {
     name: String(user.name || user.username || "Personel"),
     role: String(user.faturaRole || "operasyon"),
     branchId: String(user.branchId || "main"),
-    capabilities: [...new Set((Array.isArray(user.faturaCapabilities) ? user.faturaCapabilities : [])
+    accessEnabled: user.faturaAccessEnabled !== false,
+    template: String(user.faturaTemplate || "ozel"),
+    capabilities: user.faturaAccessEnabled === false ? [] : [...new Set((Array.isArray(user.faturaCapabilities) ? user.faturaCapabilities : [])
       .map((item) => String(item || "").trim())
       .filter((item) => FATURA_CAPABILITIES.has(item)))]
   };

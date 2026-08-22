@@ -63,6 +63,8 @@ test("procurement migration geriye uyumlu ve tekrar çalıştırıldığında id
   assert.deepEqual(first.recipeUsers[0].faturaCapabilities, [
     "supplier.read", "receipt.create", "receipt.submit", "documents.read", "documents.upload"
   ]);
+  assert.equal(first.recipeUsers[0].faturaAccessEnabled, true);
+  assert.equal(first.recipeUsers[0].faturaTemplate, "ozel");
   assert.deepEqual(second.procurement, first.procurement);
   assert.equal(second.workforceShipments.length, 1);
 });
@@ -193,6 +195,122 @@ test("capability, pasif tedarikçi ve revision kuralları server tarafında uygu
   assert.equal((await store.read()).workforceShipments.length, 1);
 });
 
+test("Fatura erişim şablonları kalıcıdır, bildirim üretir ve personel sevkiyatları şube kapsamında kalır", async () => {
+  const store = createMemoryStore();
+  let sequence = 0;
+  const workforceInvalidations = [];
+  const service = createProcurementService({
+    store,
+    notificationService,
+    notifyWorkforceChange: (event) => workforceInvalidations.push(event),
+    now: () => new Date("2026-08-22T10:00:00.000Z"),
+    createId: (prefix) => `${prefix}-${++sequence}`
+  });
+
+  const before = await service.listUsers(ADMIN);
+  const malKabul = before.accessTemplates.find((item) => item.key === "mal_kabul");
+  assert.ok(malKabul);
+  assert.deepEqual(malKabul.sections, ["shipments"]);
+
+  const updated = await service.updateUserAccess(ADMIN, "person-1", {
+    faturaTemplate: "mal_kabul",
+    faturaAccessEnabled: true
+  }, mutation("access-template", 0));
+  assert.equal(updated.user.faturaAccessEnabled, true);
+  assert.equal(updated.user.faturaTemplate, "mal_kabul");
+  assert.ok(updated.user.faturaCapabilities.includes("receipt.approve"));
+  assert.deepEqual(updated.user.faturaSections, ["shipments"]);
+  let snapshot = await store.read();
+  assert.equal(snapshot.notifications.filter((item) => item.eventType === "procurement_access_updated").length, 1);
+  assert.equal(snapshot.procurement.auditEvents.at(-1).action, "user-access.update");
+
+  const otherBranchActor = {
+    type: "personel",
+    id: "other-person",
+    name: "Diğer Şube",
+    role: "mal_kabul",
+    branchId: "branch-other",
+    capabilities: ["receipt.approve", "receipt.reject"]
+  };
+  const list = await service.listShipments(otherBranchActor);
+  assert.equal(list.shipments.length, 0);
+  const sameBranchReader = await service.listShipments({
+    ...otherBranchActor,
+    id: "branch-reader",
+    branchId: "main",
+    capabilities: ["procurement.read"]
+  });
+  assert.equal(sameBranchReader.shipments.length, 1, "procurement.read aynı şubedeki Mal Kabul kayıtlarını görmeli");
+  await assert.rejects(
+    service.getShipment(otherBranchActor, "shipment-pending"),
+    (error) => error.status === 404 && error.code === "SHIPMENT_NOT_FOUND"
+  );
+  snapshot = await store.read();
+  assert.equal(snapshot.workforceShipments[0].status, "onay_bekliyor");
+
+  const receiptActor = {
+    type: "personel",
+    id: "receipt-main",
+    name: "Mal Kabul",
+    role: "mal_kabul",
+    branchId: "main",
+    template: "mal_kabul",
+    capabilities: ["receipt.create", "receipt.submit", "receipt.reject", "documents.read", "documents.upload"]
+  };
+  const created = await service.createShipment(receiptActor, {
+    items: [{ stockProductId: "stock-1", quantity: 1, unit: "kg", unitPriceKurus: 12345 }]
+  }, mutation("branch-shipment-create", 1));
+  const submitted = await service.submitShipment(receiptActor, created.shipment.id, {}, mutation("branch-shipment-submit", 2));
+  const projected = await service.getShipment(receiptActor, submitted.shipment.id);
+  assert.equal(projected.ledgerEntries.length, 0, "muhasebe yetkisi olmayan Mal Kabul kullanıcısına cari kayıt sızmamalı");
+  assert.equal(Object.hasOwn(projected.shipment.items[0], "unitPriceKurus"), false, "mali satır alanı capability projection ile gizlenmeli");
+  await service.rejectShipment(receiptActor, submitted.shipment.id, { reason: "Kontrol reddi" }, mutation("branch-shipment-reject", 3));
+  assert.equal(workforceInvalidations.length, 3, "create/submit/reject mutationları workforce SSE invalidation üretmeli");
+  snapshot = await store.read();
+  const rejection = snapshot.notifications.find((item) => item.eventType === "shipment_rejected" && item.entityId === submitted.shipment.id);
+  assert.match(rejection.deepLink, /^\/personel\/\?section=shipment&shipmentId=/);
+});
+
+test("belge, cari ve ödeme kayıtları personel için şube kapsamında kalır", async () => {
+  const store = createMemoryStore();
+  await store.update((data) => {
+    data.procurement.documents = [
+      { id: "doc-main", branchId: "main", documentType: "fatura", originalName: "main.png", createdBy: "main-user" },
+      { id: "doc-other", branchId: "other", documentType: "fatura", originalName: "other.png", createdBy: "other-user" }
+    ];
+    data.procurement.ledgerEntries = [
+      { id: "ledger-main", branchId: "main", supplierId: "supplier-main", type: "adjustment", amountKurus: -100, createdAt: "2026-08-22T08:00:00.000Z" },
+      { id: "ledger-other", branchId: "other", supplierId: "supplier-other", type: "payment", amountKurus: 100, createdAt: "2026-08-22T09:00:00.000Z" }
+    ];
+    data.procurement.payments = [
+      { id: "payment-other", branchId: "other", supplierId: "supplier-other", ledgerEntryId: "ledger-other", amountKurus: 100, status: "recorded" }
+    ];
+    return data;
+  });
+  const service = createService(store);
+  const mainActor = {
+    type: "personel",
+    id: "main-accounting",
+    name: "Ana Şube Muhasebe",
+    branchId: "main",
+    capabilities: ["documents.read", "accounting.read", "accounting.reverse", "payment.reverse"]
+  };
+  const documents = await service.listDocuments(mainActor);
+  assert.deepEqual(documents.documents.map((item) => item.id), ["doc-main"]);
+  await assert.rejects(service.getDocument(mainActor, "doc-other"), (error) => error.status === 404);
+  const ledger = await service.listLedger(mainActor);
+  assert.deepEqual(ledger.entries.map((item) => item.id), ["ledger-main"]);
+  const accountingPosterShipments = await service.listShipments({
+    ...mainActor,
+    capabilities: ["accounting.post"]
+  });
+  assert.equal(accountingPosterShipments.shipments.length, 1, "mutation capability sahibi GET shipments sözleşmesinden dışlanmamalı");
+  await assert.rejects(
+    service.reversePayment(mainActor, "payment-other", { reason: "Yetkisiz" }, mutation("cross-branch-payment", 0)),
+    (error) => error.status === 404 && error.code === "PAYMENT_NOT_FOUND"
+  );
+});
+
 test("route katmanı oturumu/capability'yi zorunlu kılar ve stok onayını ortak callback'e delege eder", async (t) => {
   const store = createMemoryStore();
   const documentsDir = await fs.mkdtemp(path.join(os.tmpdir(), "tahmisci-proc-route-"));
@@ -261,6 +379,32 @@ test("route katmanı oturumu/capability'yi zorunlu kılar ve stok onayını orta
   assert.equal(approvalCalls, 1);
   assert.equal((await store.read()).procurement.ledgerEntries.length, 0);
   assert.equal(typeof runtime.service.subscribe, "function");
+
+  const sseController = new AbortController();
+  const sseResponse = await fetch(`${base}/api/procurement/v1/events`, {
+    headers: { "X-Test-Role": "personel" },
+    signal: sseController.signal
+  });
+  assert.equal(sseResponse.status, 200);
+  const reader = sseResponse.body.getReader();
+  const decoder = new TextDecoder();
+  await reader.read(); // ready olayı
+  runtime.service.publishExternalEvent({
+    type: "document.upload",
+    entityType: "document",
+    entityId: "other-branch-secret-document",
+    branchId: "other",
+    revision: 99
+  });
+  const eventChunk = await Promise.race([
+    reader.read(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("SSE invalidation alınamadı.")), 1500))
+  ]);
+  const personelEvent = decoder.decode(eventChunk.value || new Uint8Array());
+  assert.match(personelEvent, /procurement\.invalidated/);
+  assert.doesNotMatch(personelEvent, /other-branch-secret-document|entityId/);
+  await reader.cancel();
+  sseController.abort();
 
   response = await fetch(`${base}/api/procurement/v1/documents`, {
     method: "POST",

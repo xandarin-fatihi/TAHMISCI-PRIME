@@ -16,7 +16,44 @@ const DOCUMENT_TYPES = new Set(["fatura", "irsaliye", "fiş", "makbuz", "diğer"
 const LEDGER_TYPES = new Set(["invoice", "payment", "credit_note", "reversal", "opening_balance", "adjustment"]);
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9._:-]{8,160}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const PRIVILEGED_SHIPMENT_CAPABILITIES = ["receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "supplier.manage"];
+const PRIVILEGED_SHIPMENT_CAPABILITIES = ["procurement.read", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "supplier.manage"];
+const FATURA_ACCESS_TEMPLATES = Object.freeze({
+  mal_kabul: Object.freeze({
+    key: "mal_kabul",
+    label: "Mal Kabul Personeli",
+    role: "mal_kabul",
+    capabilities: Object.freeze(["supplier.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "documents.read", "documents.upload"])
+  }),
+  satin_alma: Object.freeze({
+    key: "satin_alma",
+    label: "Satın Alma",
+    role: "satın_alma",
+    capabilities: Object.freeze(["procurement.read", "supplier.read", "supplier.manage", "supplierProduct.manage", "receipt.create", "receipt.submit", "documents.read", "documents.upload"])
+  }),
+  muhasebe: Object.freeze({
+    key: "muhasebe",
+    label: "Muhasebe",
+    role: "muhasebe",
+    capabilities: Object.freeze(["supplier.read", "documents.read", "accounting.read", "accounting.post", "accounting.reverse", "payment.create", "payment.reverse"])
+  }),
+  yonetici: Object.freeze({
+    key: "yonetici",
+    label: "Fatura Yöneticisi",
+    role: "yönetici",
+    capabilities: Object.freeze([...FATURA_CAPABILITIES])
+  }),
+  ozel: Object.freeze({ key: "ozel", label: "Özel Yetki", role: "özel", capabilities: Object.freeze([]) })
+});
+const FATURA_SECTION_DEFINITIONS = Object.freeze([
+  Object.freeze({ id: "dashboard", label: "Genel Bakış", all: Object.freeze(["procurement.read"]) }),
+  Object.freeze({ id: "shipments", label: "Mal Kabul", any: Object.freeze(["procurement.read", "receipt.create", "receipt.approve", "receipt.reject", "accounting.read"]) }),
+  Object.freeze({ id: "suppliers", label: "Tedarikçiler", any: Object.freeze(["supplier.read", "receipt.create", "supplier.manage"]) }),
+  Object.freeze({ id: "links", label: "Ürün Eşlemeleri", any: Object.freeze(["procurement.read", "receipt.create", "supplierProduct.manage"]) }),
+  Object.freeze({ id: "documents", label: "Belgeler", all: Object.freeze(["documents.read"]) }),
+  Object.freeze({ id: "ledger", label: "Cari Hesap", all: Object.freeze(["accounting.read"]) }),
+  Object.freeze({ id: "users", label: "Kullanıcı ve Yetkiler", all: Object.freeze(["procurement.users.manage"]) }),
+  Object.freeze({ id: "settings", label: "Ayarlar ve Audit", any: Object.freeze(["procurement.users.manage", "accounting.read"]) })
+]);
 
 function createProcurementService(options = {}) {
   const store = options.store;
@@ -24,6 +61,7 @@ function createProcurementService(options = {}) {
     throw new TypeError("Procurement servisi için kalıcı store gereklidir.");
   }
   const notificationService = options.notificationService || null;
+  const notifyWorkforceChange = typeof options.notifyWorkforceChange === "function" ? options.notifyWorkforceChange : null;
   const now = typeof options.now === "function" ? options.now : () => new Date();
   const createId = typeof options.createId === "function"
     ? options.createId
@@ -41,10 +79,15 @@ function createProcurementService(options = {}) {
     const stockState = normalizeStockState(data.stockState);
     const canReadProducts = ["procurement.read", "receipt.create", "supplierProduct.manage"]
       .some((capability) => hasCapability(actor, capability));
+    const publicActorValue = publicActor(actor);
     return {
       ok: true,
       revision: procurement.revision,
-      actor: publicActor(actor),
+      actor: publicActorValue,
+      access: {
+        enabled: publicActorValue.accessEnabled,
+        sections: visibleFaturaSections(actor)
+      },
       procurement: {
         version: procurement.version,
         revision: procurement.revision,
@@ -227,7 +270,7 @@ function createProcurementService(options = {}) {
   }
 
   async function listShipments(actor, filters = {}) {
-    requireAnyCapability(actor, ["procurement.read", "receipt.create", "receipt.approve", "accounting.read"]);
+    requireAnyCapability(actor, ["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]);
     const { data, procurement } = await readSnapshot();
     const supplierIndex = new Map(procurement.suppliers.map((supplier) => [supplier.id, supplier]));
     let shipments = visibleShipments(data.workforceShipments, actor);
@@ -244,14 +287,17 @@ function createProcurementService(options = {}) {
   }
 
   async function getShipment(actor, shipmentId) {
-    requireAnyCapability(actor, ["procurement.read", "receipt.create", "receipt.approve", "accounting.read"]);
+    requireAnyCapability(actor, ["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]);
     const { data, procurement } = await readSnapshot();
     const shipment = findVisibleShipment(data, actor, shipmentId);
     const supplier = procurement.suppliers.find((item) => item.id === shipment.supplierId);
     const documents = procurement.documents
       .filter((document) => (shipment.evidenceDocumentIds || []).includes(document.id))
       .map(safeDocumentMetadata);
-    const entries = withRunningBalances(procurement.ledgerEntries.filter((entry) => entry.shipmentId === shipment.id));
+    const entries = hasCapability(actor, "accounting.read")
+      ? withRunningBalances(procurement.ledgerEntries.filter((entry) => entry.shipmentId === shipment.id
+        && (actor.type === "admin" || ledgerBranchId(entry, data, procurement) === actorBranchId(actor))))
+      : [];
     return {
       ok: true,
       revision: procurement.revision,
@@ -302,8 +348,11 @@ function createProcurementService(options = {}) {
       };
       data.workforceShipments = (data.workforceShipments || []).concat(shipment);
       linkDocumentsToShipment(procurement, evidenceDocumentIds, shipment);
-      touchWorkforceRevision(data);
-      return helpers.result("shipment", shipment.id, { shipment: publicShipment(shipment, supplier, actor) });
+      const workforceRevisionValue = touchWorkforceRevision(data);
+      return helpers.result("shipment", shipment.id, { shipment: publicShipment(shipment, supplier, actor) }, {
+        branchId: shipment.branchId,
+        workforceRevision: workforceRevisionValue
+      });
     });
   }
 
@@ -338,8 +387,11 @@ function createProcurementService(options = {}) {
       shipment.updatedAt = isoNow(now);
       shipment.revision = positiveRevision(shipment.revision) + 1;
       shipment.expectedRevision = shipment.revision;
-      touchWorkforceRevision(data);
-      return helpers.result("shipment", shipment.id, { shipment: publicShipment(shipment, supplier, actor) });
+      const workforceRevisionValue = touchWorkforceRevision(data);
+      return helpers.result("shipment", shipment.id, { shipment: publicShipment(shipment, supplier, actor) }, {
+        branchId: shipment.branchId,
+        workforceRevision: workforceRevisionValue
+      });
     });
   }
 
@@ -358,7 +410,7 @@ function createProcurementService(options = {}) {
       shipment.updatedAt = timestamp;
       shipment.revision = positiveRevision(shipment.revision) + 1;
       shipment.expectedRevision = shipment.revision;
-      touchWorkforceRevision(data);
+      const workforceRevisionValue = touchWorkforceRevision(data);
       helpers.notifyManager(data, {
         category: "shipment",
         eventType: "shipment_submitted",
@@ -367,8 +419,15 @@ function createProcurementService(options = {}) {
         severity: "warning",
         entityType: "shipment",
         entityId: shipment.id,
-        deepLink: "/fatura/",
+        deepLink: `/yonetici/?section=stock&workforce=shipments&entityId=${encodeURIComponent(shipment.id)}`,
         dedupeKey: `procurement-shipment-submitted:${shipment.id}`
+      });
+      notifyFaturaReceiptUsers(data, helpers, shipment, {
+        eventType: "shipment_submitted",
+        title: "Yeni mal kabul onay bekliyor",
+        body: `${shipment.userName || "Personel"} tarafından ${(shipment.items || []).length} satırlık mal kabul gönderildi.`,
+        severity: "warning",
+        dedupeSuffix: "submitted"
       });
       if (!(shipment.evidenceDocumentIds || []).length) {
         helpers.notifyManager(data, {
@@ -379,12 +438,22 @@ function createProcurementService(options = {}) {
           severity: "warning",
           entityType: "shipment",
           entityId: shipment.id,
-          deepLink: "/fatura/",
+          deepLink: `/yonetici/?section=stock&workforce=shipments&entityId=${encodeURIComponent(shipment.id)}`,
           dedupeKey: `procurement-document-missing:${shipment.id}`
+        });
+        notifyFaturaReceiptUsers(data, helpers, shipment, {
+          eventType: "document_missing",
+          title: "Mal kabul belgesi eksik",
+          body: `${shipment.userName || "Personel"} belge eklemeden mal kabul gönderdi.`,
+          severity: "warning",
+          dedupeSuffix: "document-missing"
         });
       }
       return helpers.result("shipment", shipment.id, {
         shipment: publicShipment(shipment, procurement.suppliers.find((item) => item.id === shipment.supplierId), actor)
+      }, {
+        branchId: shipment.branchId,
+        workforceRevision: workforceRevisionValue
       });
     });
   }
@@ -392,7 +461,7 @@ function createProcurementService(options = {}) {
   async function rejectShipment(actor, shipmentId, input, mutation) {
     requireCapability(actor, "receipt.reject");
     return mutate("shipment.reject", actor, mutation, (data, procurement, helpers) => {
-      const shipment = findById(data.workforceShipments, shipmentId, "Sevkiyat");
+      const shipment = findVisibleShipment(data, actor, shipmentId);
       if (shipment.status !== "onay_bekliyor") throw fail("Yalnız onay bekleyen sevkiyat reddedilebilir.", 409, "SHIPMENT_STATE_CONFLICT");
       if (shipment.stockAppliedAt || shipment.stockMovementRef) throw fail("Stok etkisi uygulanmış sevkiyat reddedilemez.", 409, "STOCK_ALREADY_APPLIED");
       const reason = text(input && (input.reason || input.rejectionReason || input.note), 500);
@@ -408,7 +477,7 @@ function createProcurementService(options = {}) {
         revision: positiveRevision(shipment.revision) + 1
       });
       shipment.expectedRevision = shipment.revision;
-      touchWorkforceRevision(data);
+      const workforceRevisionValue = touchWorkforceRevision(data);
       helpers.notifyPerson(data, shipment.userId, {
         category: "shipment",
         eventType: "shipment_rejected",
@@ -417,11 +486,14 @@ function createProcurementService(options = {}) {
         severity: "warning",
         entityType: "shipment",
         entityId: shipment.id,
-        deepLink: "/fatura/",
+        deepLink: `/personel/?section=shipment&shipmentId=${encodeURIComponent(shipment.id)}`,
         dedupeKey: `procurement-shipment-rejected:${shipment.id}:${shipment.userId}`
       });
       return helpers.result("shipment", shipment.id, {
         shipment: publicShipment(shipment, procurement.suppliers.find((item) => item.id === shipment.supplierId), actor)
+      }, {
+        branchId: shipment.branchId,
+        workforceRevision: workforceRevisionValue
       });
     });
   }
@@ -429,7 +501,7 @@ function createProcurementService(options = {}) {
   async function accountShipment(actor, shipmentId, input, mutation) {
     requireCapability(actor, "accounting.post");
     return mutate("shipment.account", actor, mutation, (data, procurement, helpers) => {
-      const shipment = findById(data.workforceShipments, shipmentId, "Sevkiyat");
+      const shipment = findVisibleShipment(data, actor, shipmentId);
       if (["taslak", "reddedildi"].includes(shipment.status)) {
         throw fail("Taslak veya reddedilmiş sevkiyat muhasebeleştirilemez.", 409, "SHIPMENT_STATE_CONFLICT");
       }
@@ -447,6 +519,7 @@ function createProcurementService(options = {}) {
       const entry = {
         id: createId("ledger"),
         supplierId: supplier.id,
+        branchId: shipmentBranchId(shipment),
         shipmentId: shipment.id,
         documentId: document ? document.id : "",
         type: "invoice",
@@ -477,7 +550,7 @@ function createProcurementService(options = {}) {
       shipment.updatedAt = timestamp;
       shipment.revision = positiveRevision(shipment.revision) + 1;
       shipment.expectedRevision = shipment.revision;
-      touchWorkforceRevision(data);
+      const workforceRevisionValue = touchWorkforceRevision(data);
       helpers.notifyPerson(data, shipment.userId, {
         category: "shipment",
         eventType: "accounting_posted",
@@ -486,12 +559,15 @@ function createProcurementService(options = {}) {
         severity: "success",
         entityType: "shipment",
         entityId: shipment.id,
-        deepLink: "/fatura/",
+        deepLink: `/personel/?section=shipment&shipmentId=${encodeURIComponent(shipment.id)}`,
         dedupeKey: `procurement-accounting-posted:${shipment.id}`
       });
       return helpers.result("ledgerEntry", entry.id, {
         shipment: publicShipment(shipment, supplier, actor),
         ledgerEntry: entry
+      }, {
+        branchId: shipment.branchId,
+        workforceRevision: workforceRevisionValue
       });
     });
   }
@@ -499,7 +575,7 @@ function createProcurementService(options = {}) {
   async function reverseShipmentAccounting(actor, shipmentId, input, mutation) {
     requireCapability(actor, "accounting.reverse");
     return mutate("shipment.account.reverse", actor, mutation, (data, procurement, helpers) => {
-      const shipment = findById(data.workforceShipments, shipmentId, "Sevkiyat");
+      const shipment = findVisibleShipment(data, actor, shipmentId);
       const original = procurement.ledgerEntries.find((entry) => entry.shipmentId === shipment.id && entry.type === "invoice");
       if (!original) throw fail("Ters çevrilecek muhasebe kaydı bulunamadı.", 409, "ACCOUNTING_ENTRY_NOT_FOUND");
       if (procurement.ledgerEntries.some((entry) => entry.reversalOf === original.id)) {
@@ -511,6 +587,7 @@ function createProcurementService(options = {}) {
       const reversal = {
         id: createId("ledger"),
         supplierId: original.supplierId,
+        branchId: shipmentBranchId(shipment),
         shipmentId: shipment.id,
         documentId: original.documentId,
         type: "reversal",
@@ -533,7 +610,7 @@ function createProcurementService(options = {}) {
       shipment.updatedAt = timestamp;
       shipment.revision = positiveRevision(shipment.revision) + 1;
       shipment.expectedRevision = shipment.revision;
-      touchWorkforceRevision(data);
+      const workforceRevisionValue = touchWorkforceRevision(data);
       helpers.notifyPerson(data, shipment.userId, {
         category: "shipment",
         eventType: "accounting_reversed",
@@ -542,12 +619,15 @@ function createProcurementService(options = {}) {
         severity: "warning",
         entityType: "shipment",
         entityId: shipment.id,
-        deepLink: "/fatura/",
+        deepLink: `/personel/?section=shipment&shipmentId=${encodeURIComponent(shipment.id)}`,
         dedupeKey: `procurement-accounting-reversed:${shipment.id}:${reversal.id}`
       });
       return helpers.result("ledgerEntry", reversal.id, {
         shipment: publicShipment(shipment, procurement.suppliers.find((item) => item.id === shipment.supplierId), actor),
         ledgerEntry: reversal
+      }, {
+        branchId: shipment.branchId,
+        workforceRevision: workforceRevisionValue
       });
     });
   }
@@ -562,12 +642,15 @@ function createProcurementService(options = {}) {
       if (supplierId) findSupplier(procurement, supplierId, { active: true });
       const shipmentIds = uniqueStrings(input && input.shipmentIds, 180);
       const shipments = shipmentIds.map((id) => findVisibleShipment(data, actor, id));
+      const shipmentBranches = new Set(shipments.map(shipmentBranchId));
+      if (shipmentBranches.size > 1) throw fail("Tek belge farklı şubelere bağlanamaz.", 409, "DOCUMENT_BRANCH_MISMATCH");
       const timestamp = isoNow(now);
       const duplicate = storedFile.sha256 && procurement.documents.find((document) => document.sha256 === storedFile.sha256
         && document.physicalName === storedFile.physicalName
         && !document.archivedAt);
       const document = {
         id: createId("document"),
+        branchId: shipments.length ? shipmentBranchId(shipments[0]) : actorBranchId(actor),
         supplierId: supplierId || shipments.find((shipment) => shipment.supplierId) && shipments.find((shipment) => shipment.supplierId).supplierId || "",
         shipmentIds,
         shipmentItemIds: uniqueStrings(input && input.shipmentItemIds, 180),
@@ -606,7 +689,7 @@ function createProcurementService(options = {}) {
         shipment.revision = positiveRevision(shipment.revision) + 1;
         shipment.expectedRevision = shipment.revision;
       }
-      if (shipments.length) touchWorkforceRevision(data);
+      const workforceRevisionValue = shipments.length ? touchWorkforceRevision(data) : 0;
       helpers.notifyManager(data, {
         category: "shipment",
         eventType: "document_uploaded",
@@ -621,17 +704,19 @@ function createProcurementService(options = {}) {
       return helpers.result("document", document.id, {
         document: safeDocumentMetadata(document),
         duplicateContent: Boolean(duplicate)
-      }, { duplicatePhysicalDocumentId: duplicate && duplicate.id || "" });
+      }, {
+        duplicatePhysicalDocumentId: duplicate && duplicate.id || "",
+        branchId: document.branchId,
+        workforceRevision: workforceRevisionValue
+      });
     });
   }
 
   async function listDocuments(actor, filters = {}) {
     requireCapability(actor, "documents.read");
     const { data, procurement } = await readSnapshot();
-    const visibleIds = new Set(visibleShipments(data.workforceShipments, actor).map((shipment) => shipment.id));
-    const broad = canViewAllShipments(actor);
     const documents = procurement.documents
-      .filter((document) => broad || document.createdBy === actor.id || (document.shipmentIds || []).some((id) => visibleIds.has(id)))
+      .filter((document) => actor.type === "admin" || documentBranchId(document, data) === actorBranchId(actor))
       .filter((document) => filters.archived === "true" ? Boolean(document.archivedAt) : !document.archivedAt)
       .filter((document) => !filters.supplierId || document.supplierId === String(filters.supplierId))
       .filter((document) => !filters.documentType || document.documentType === String(filters.documentType))
@@ -653,10 +738,12 @@ function createProcurementService(options = {}) {
     requireCapability(actor, "documents.archive");
     return mutate("document.archive", actor, mutation, (data, procurement, helpers) => {
       const document = findById(procurement.documents, documentId, "Belge");
+      assertDocumentVisibility(data, document, actor);
       if (document.archivedAt) throw fail("Belge zaten arşivlenmiş.", 409, "DOCUMENT_ALREADY_ARCHIVED");
       document.archivedAt = isoNow(now);
       document.archivedBy = actor.id;
       document.archiveReason = text(input && (input.reason || input.note), 500);
+      let workforceChanged = false;
       for (const shipment of data.workforceShipments || []) {
         if (!(shipment.evidenceDocumentIds || []).includes(document.id)) continue;
         const liveEvidence = (shipment.evidenceDocumentIds || []).some((id) => {
@@ -664,15 +751,21 @@ function createProcurementService(options = {}) {
           return linked && !linked.archivedAt;
         });
         shipment.evidenceStatus = liveEvidence ? "available" : "archived";
+        workforceChanged = true;
       }
-      return helpers.result("document", document.id, { document: safeDocumentMetadata(document) });
+      const workforceRevisionValue = workforceChanged ? touchWorkforceRevision(data) : 0;
+      return helpers.result("document", document.id, { document: safeDocumentMetadata(document) }, {
+        branchId: documentBranchId(document, data),
+        workforceRevision: workforceRevisionValue
+      });
     });
   }
 
   async function listLedger(actor, filters = {}) {
     requireCapability(actor, "accounting.read");
-    const { procurement } = await readSnapshot();
+    const { data, procurement } = await readSnapshot();
     let entries = procurement.ledgerEntries;
+    if (actor.type !== "admin") entries = entries.filter((entry) => ledgerBranchId(entry, data, procurement) === actorBranchId(actor));
     if (filters.supplierId) entries = entries.filter((entry) => entry.supplierId === String(filters.supplierId));
     if (filters.type && LEDGER_TYPES.has(String(filters.type))) entries = entries.filter((entry) => entry.type === String(filters.type));
     const running = withRunningBalances(entries);
@@ -696,6 +789,7 @@ function createProcurementService(options = {}) {
       let document = null;
       if (documentId) {
         document = findById(procurement.documents, documentId, "Belge");
+        assertDocumentVisibility(data, document, actor);
         if (document.archivedAt) throw fail("Arşivlenmiş belge muhasebeleştirilemez.", 409, "DOCUMENT_ARCHIVED");
         if (document.supplierId && document.supplierId !== supplier.id) {
           throw fail("Belge ile tedarikçi eşleşmiyor.", 409, "DOCUMENT_SUPPLIER_MISMATCH");
@@ -720,6 +814,7 @@ function createProcurementService(options = {}) {
       const entry = {
         id: createId("ledger"),
         supplierId: supplier.id,
+        branchId: document ? documentBranchId(document, data) : actorBranchId(actor),
         shipmentId: "",
         documentId,
         type,
@@ -743,6 +838,7 @@ function createProcurementService(options = {}) {
     requireCapability(actor, "accounting.reverse");
     return mutate("ledger.reverse", actor, mutation, (data, procurement, helpers) => {
       const original = findById(procurement.ledgerEntries, entryId, "Cari hareket");
+      assertLedgerVisibility(data, procurement, original, actor);
       if (original.type === "reversal" || original.reversalOf) throw fail("Ters kayıt yeniden ters çevrilemez.", 409, "REVERSAL_NOT_REVERSIBLE");
       if (original.shipmentId) throw fail("Sevkiyat hareketini sevkiyat ters muhasebe işlemiyle düzeltin.", 409, "USE_SHIPMENT_REVERSAL");
       if (original.sourceType === "payment") throw fail("Ödeme hareketini ödeme ters işlemiyle düzeltin.", 409, "USE_PAYMENT_REVERSAL");
@@ -755,6 +851,7 @@ function createProcurementService(options = {}) {
       const reversal = {
         id: createId("ledger"),
         supplierId: original.supplierId,
+        branchId: ledgerBranchId(original, data, procurement),
         shipmentId: "",
         documentId: original.documentId,
         type: "reversal",
@@ -780,11 +877,13 @@ function createProcurementService(options = {}) {
       const supplier = findSupplier(procurement, input && input.supplierId);
       const amountKurus = positiveKurus(input && input.amountKurus, "Ödeme tutarı");
       const documentId = text(input && input.documentId, 180);
-      if (documentId) findById(procurement.documents, documentId, "Belge");
+      const document = documentId ? findById(procurement.documents, documentId, "Belge") : null;
+      if (document) assertDocumentVisibility(data, document, actor);
       const timestamp = isoNow(now);
       const payment = {
         id: createId("payment"),
         supplierId: supplier.id,
+        branchId: document ? documentBranchId(document, data) : actorBranchId(actor),
         documentId,
         amountKurus,
         paymentDate: validateOptionalDate(input && input.paymentDate, "Ödeme tarihi") || timestamp.slice(0, 10),
@@ -801,6 +900,7 @@ function createProcurementService(options = {}) {
       const entry = {
         id: createId("ledger"),
         supplierId: supplier.id,
+        branchId: payment.branchId,
         shipmentId: "",
         documentId,
         type: "payment",
@@ -837,6 +937,7 @@ function createProcurementService(options = {}) {
     requireCapability(actor, "payment.reverse");
     return mutate("payment.reverse", actor, mutation, (data, procurement, helpers) => {
       const payment = findById(procurement.payments, paymentId, "Ödeme");
+      assertPaymentVisibility(payment, actor);
       if (payment.status === "reversed") throw fail("Ödeme daha önce ters çevrilmiş.", 409, "PAYMENT_ALREADY_REVERSED");
       const original = findById(procurement.ledgerEntries, payment.ledgerEntryId, "Ödeme cari kaydı");
       const reason = text(input && (input.reason || input.note), 1000);
@@ -845,6 +946,7 @@ function createProcurementService(options = {}) {
       const reversal = {
         id: createId("ledger"),
         supplierId: payment.supplierId,
+        branchId: String(payment.branchId || "main"),
         shipmentId: "",
         documentId: payment.documentId,
         type: "reversal",
@@ -891,7 +993,9 @@ function createProcurementService(options = {}) {
     return {
       ok: true,
       revision: procurement.revision,
-      users: (data.recipeUsers || []).map(publicProcurementUser)
+      users: (data.recipeUsers || []).map(publicProcurementUser),
+      accessTemplates: publicAccessTemplates(),
+      sections: publicSectionDefinitions()
     };
   }
 
@@ -899,16 +1003,57 @@ function createProcurementService(options = {}) {
     requireCapability(actor, "procurement.users.manage");
     return mutate("user-access.update", actor, mutation, (data, procurement, helpers) => {
       const user = findById(data.recipeUsers, userId, "Personel");
-      const role = String(input && input.faturaRole || "");
+      const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+      const templateKey = String(source.faturaTemplate || source.template || "ozel").trim();
+      const template = FATURA_ACCESS_TEMPLATES[templateKey];
+      if (!template) throw fail("Fatura yetki şablonu geçersiz.", 400, "INVALID_FATURA_TEMPLATE");
+      const role = templateKey === "ozel" ? String(source.faturaRole || "özel") : template.role;
       if (!FATURA_ROLES.has(role)) throw fail("Fatura rolü geçersiz.", 400, "INVALID_FATURA_ROLE");
-      const capabilities = uniqueStrings(input && input.faturaCapabilities, 100);
+      const requestedCapabilities = templateKey === "ozel"
+        ? uniqueStrings(source.faturaCapabilities, 100)
+        : [...template.capabilities];
+      const accessEnabled = typeof source.faturaAccessEnabled === "boolean"
+        ? source.faturaAccessEnabled
+        : requestedCapabilities.length > 0;
+      const capabilities = accessEnabled ? requestedCapabilities : [];
       if (capabilities.some((capability) => !FATURA_CAPABILITIES.has(capability))) {
         throw fail("Bilinmeyen fatura yetkisi gönderildi.", 400, "INVALID_CAPABILITY");
       }
+      const previous = publicProcurementUser(user);
+      user.faturaAccessEnabled = accessEnabled;
       user.faturaRole = role;
+      user.faturaTemplate = templateKey;
       user.faturaCapabilities = capabilities;
       user.updatedAt = isoNow(now);
-      return helpers.result("personel", user.id, { user: publicProcurementUser(user) });
+      const updated = publicProcurementUser(user);
+      helpers.notifyPerson(data, user.id, {
+        category: "system",
+        eventType: "procurement_access_updated",
+        title: accessEnabled ? "Fatura erişimin güncellendi" : "Fatura erişimin kaldırıldı",
+        body: accessEnabled
+          ? `${template.label} yetki şablonu hesabına uygulandı.`
+          : "Yönetici Fatura uygulaması erişimini kapattı.",
+        severity: accessEnabled ? "info" : "warning",
+        entityType: "procurement_access",
+        entityId: String(user.id),
+        deepLink: "/fatura/",
+        dedupeKey: `procurement-access:${user.id}:${helpers.requestId}`,
+        metadata: { accessEnabled, template: templateKey, role }
+      });
+      return helpers.result("personel", user.id, { user: updated }, {
+        previous: {
+          accessEnabled: previous.faturaAccessEnabled,
+          template: previous.faturaTemplate,
+          role: previous.faturaRole,
+          capabilities: previous.faturaCapabilities.join(",")
+        },
+        next: {
+          accessEnabled: updated.faturaAccessEnabled,
+          template: updated.faturaTemplate,
+          role: updated.faturaRole,
+          capabilities: updated.faturaCapabilities.join(",")
+        }
+      });
     });
   }
 
@@ -993,6 +1138,7 @@ function createProcurementService(options = {}) {
       type: text(event && event.type, 120) || "procurement.updated",
       entityType: text(event && event.entityType, 100),
       entityId: text(event && event.entityId, 180),
+      branchId: text(event && event.branchId, 80),
       revision: nonNegativeInteger(event && event.revision, "Revision"),
       createdAt: event && event.createdAt || isoNow(now)
     });
@@ -1058,6 +1204,8 @@ function createProcurementService(options = {}) {
         entityType: outcome.entityType || "procurement",
         entityId: outcome.resourceId || "",
         revision,
+        branchId: text(outcome.metadata && outcome.metadata.branchId, 80),
+        workforceRevision: Math.max(0, Math.trunc(Number(outcome.metadata && outcome.metadata.workforceRevision || 0))),
         createdAt: isoNow(now)
       };
       return data;
@@ -1065,6 +1213,9 @@ function createProcurementService(options = {}) {
     if (!replayed) {
       publishNotifications(notificationService, pendingNotifications);
       eventBus.emit("change", event);
+      if (notifyWorkforceChange && event.workforceRevision > 0) {
+        notifyWorkforceChange({ revision: event.workforceRevision, scope: "workforce", action: "invalidate" });
+      }
     }
     return response;
   }
@@ -1146,31 +1297,44 @@ function hasCapability(actor, capability) {
 }
 
 function publicActor(actor) {
+  const capabilities = actor.type === "admin" ? [...FATURA_CAPABILITIES] : [...new Set(actor.capabilities || [])];
   return {
     type: actor.type,
     id: actor.id,
     name: actor.name,
     role: actor.role,
     branchId: actor.branchId || "main",
-    capabilities: actor.type === "admin" ? [...FATURA_CAPABILITIES] : [...new Set(actor.capabilities || [])]
+    accessEnabled: actor.type === "admin" || actor.accessEnabled !== false && capabilities.length > 0,
+    template: actor.type === "admin" ? "yonetici" : String(actor.template || "ozel"),
+    capabilities
   };
 }
 
 function publicProcurementUser(user) {
+  const capabilities = [...new Set(Array.isArray(user.faturaCapabilities) ? user.faturaCapabilities : [])];
+  const template = String(user.faturaTemplate || "ozel");
   return {
     id: String(user.id || ""),
     username: String(user.username || ""),
     name: String(user.name || user.username || ""),
     active: user.active !== false,
     branchId: String(user.branchId || "main"),
+    faturaAccessEnabled: user.faturaAccessEnabled !== false && capabilities.length > 0,
     faturaRole: String(user.faturaRole || "operasyon"),
-    faturaCapabilities: [...new Set(Array.isArray(user.faturaCapabilities) ? user.faturaCapabilities : [])]
+    faturaTemplate: template,
+    faturaCapabilities: capabilities,
+    faturaSections: visibleFaturaSections({ type: "personel", template, capabilities })
   };
 }
 
 function visibleShipments(shipments, actor) {
   const source = Array.isArray(shipments) ? shipments : [];
-  return canViewAllShipments(actor) ? source : source.filter((shipment) => String(shipment.userId || "") === String(actor.id));
+  if (actor && actor.type === "admin") return source;
+  const branchId = actorBranchId(actor);
+  const branchShipments = source.filter((shipment) => shipmentBranchId(shipment) === branchId);
+  return canViewAllShipments(actor)
+    ? branchShipments
+    : branchShipments.filter((shipment) => String(shipment.userId || "") === String(actor && actor.id || ""));
 }
 
 function canViewAllShipments(actor) {
@@ -1178,20 +1342,107 @@ function canViewAllShipments(actor) {
 }
 
 function canEditShipment(actor, shipment) {
-  return Boolean(actor && shipment && (actor.type === "admin" || String(shipment.userId || "") === String(actor.id)));
+  return Boolean(actor && shipment && (actor.type === "admin" || (shipmentBranchId(shipment) === actorBranchId(actor)
+    && String(shipment.userId || "") === String(actor.id))));
 }
 
 function findVisibleShipment(data, actor, shipmentId) {
   const shipment = findById(data.workforceShipments, shipmentId, "Sevkiyat");
-  if (!canViewAllShipments(actor) && String(shipment.userId || "") !== String(actor.id)) {
+  const visible = actor && actor.type === "admin"
+    || shipmentBranchId(shipment) === actorBranchId(actor)
+      && (canViewAllShipments(actor) || String(shipment.userId || "") === String(actor && actor.id || ""));
+  if (!visible) {
     throw fail("Sevkiyat bulunamadı.", 404, "SHIPMENT_NOT_FOUND");
   }
   return shipment;
 }
 
+function actorBranchId(actor) {
+  return String(actor && actor.branchId || "main");
+}
+
+function shipmentBranchId(shipment) {
+  return String(shipment && shipment.branchId || "main");
+}
+
+function notifyFaturaReceiptUsers(data, helpers, shipment, input) {
+  const users = Array.isArray(data && data.recipeUsers) ? data.recipeUsers : [];
+  const branchId = shipmentBranchId(shipment);
+  for (const user of users) {
+    if (!user || user.active === false || user.faturaAccessEnabled === false) continue;
+    if (String(user.id || "") === String(shipment.userId || "")) continue;
+    if (String(user.branchId || "main") !== branchId) continue;
+    const capabilities = [...new Set(Array.isArray(user.faturaCapabilities) ? user.faturaCapabilities : [])];
+    const recipient = {
+      type: "personel",
+      id: String(user.id || ""),
+      branchId,
+      capabilities
+    };
+    if (!recipient.id || !canViewAllShipments(recipient)) continue;
+    helpers.notifyPerson(data, recipient.id, {
+      category: "shipment",
+      eventType: input.eventType,
+      title: input.title,
+      body: input.body,
+      severity: input.severity || "info",
+      entityType: "shipment",
+      entityId: String(shipment.id),
+      deepLink: `/fatura/?view=shipments&shipmentId=${encodeURIComponent(shipment.id)}`,
+      dedupeKey: `procurement-${input.dedupeSuffix || input.eventType}:${shipment.id}:${recipient.id}`,
+      metadata: {
+        branchId,
+        personId: String(shipment.userId || ""),
+        itemCount: Array.isArray(shipment.items) ? shipment.items.length : 0
+      }
+    });
+  }
+}
+
+function visibleFaturaSections(actor) {
+  if (actor && actor.type !== "admin" && String(actor.template || actor.faturaTemplate || "") === "mal_kabul") {
+    const canOpenShipments = FATURA_SECTION_DEFINITIONS.find((section) => section.id === "shipments");
+    const any = canOpenShipments && Array.isArray(canOpenShipments.any) ? canOpenShipments.any : [];
+    return any.some((capability) => hasCapability(actor, capability)) ? ["shipments"] : [];
+  }
+  return FATURA_SECTION_DEFINITIONS
+    .filter((section) => {
+      const all = Array.isArray(section.all) ? section.all : [];
+      const any = Array.isArray(section.any) ? section.any : [];
+      return all.every((capability) => hasCapability(actor, capability))
+        && (!any.length || any.some((capability) => hasCapability(actor, capability)));
+    })
+    .map((section) => section.id);
+}
+
+function publicSectionDefinitions() {
+  return FATURA_SECTION_DEFINITIONS.map((section) => ({
+    id: section.id,
+    label: section.label,
+    allCapabilities: [...(section.all || [])],
+    anyCapabilities: [...(section.any || [])]
+  }));
+}
+
+function publicAccessTemplates() {
+  return Object.values(FATURA_ACCESS_TEMPLATES).map((template) => ({
+    key: template.key,
+    label: template.label,
+    role: template.role,
+    capabilities: [...template.capabilities],
+    sections: visibleFaturaSections({ type: "personel", template: template.key, capabilities: [...template.capabilities] })
+  }));
+}
+
 function publicShipment(shipment, supplier, actor) {
+  const canViewFinancials = Boolean(actor && (actor.type === "admin"
+    || ["accounting.read", "accounting.post", "supplier.manage", "supplierProduct.manage"]
+      .some((capability) => hasCapability(actor, capability))));
   return {
     ...shipment,
+    items: (Array.isArray(shipment.items) ? shipment.items : []).map((item) => canViewFinancials
+      ? { ...item }
+      : omitFinancialShipmentFields(item)),
     supplier: supplier ? { id: supplier.id, code: supplier.code, name: supplier.name, active: supplier.active } : null,
     canEdit: shipment.status === "taslak" && canEditShipment(actor, shipment),
     canApprove: shipment.status === "onay_bekliyor" && !shipment.stockAppliedAt && hasCapability(actor, "receipt.approve"),
@@ -1199,6 +1450,13 @@ function publicShipment(shipment, supplier, actor) {
     canAccount: !["taslak", "reddedildi"].includes(shipment.status) && shipment.accountingStatus !== "posted"
       && hasCapability(actor, "accounting.post")
   };
+}
+
+function omitFinancialShipmentFields(item) {
+  const source = item && typeof item === "object" && !Array.isArray(item) ? item : {};
+  const result = { ...source };
+  for (const key of ["unitPriceKurus", "lineTotalKurus", "totalKurus", "purchasePriceKurus", "priceKurus", "costKurus"]) delete result[key];
+  return result;
 }
 
 function publicSupplier(supplier, balanceKurus) {
@@ -1238,6 +1496,7 @@ function safeDocumentMetadata(document) {
   const id = String(source.id || "");
   return {
     id,
+    branchId: String(source.branchId || "main"),
     supplierId: String(source.supplierId || ""),
     shipmentIds: uniqueStrings(source.shipmentIds, 180),
     shipmentItemIds: uniqueStrings(source.shipmentItemIds, 180),
@@ -1385,14 +1644,49 @@ function linkDocumentsToShipment(procurement, documentIds, shipment) {
     if (!document) continue;
     document.shipmentIds = [...new Set([...(document.shipmentIds || []), shipment.id])];
     if (!document.supplierId && shipment.supplierId) document.supplierId = shipment.supplierId;
+    if (!document.branchId) document.branchId = shipmentBranchId(shipment);
   }
 }
 
 function assertDocumentVisibility(data, document, actor) {
-  if (canViewAllShipments(actor) || document.createdBy === actor.id) return;
-  const visibleIds = new Set(visibleShipments(data.workforceShipments, actor).map((shipment) => shipment.id));
-  if ((document.shipmentIds || []).some((id) => visibleIds.has(id))) return;
+  if (actor && actor.type === "admin") return;
+  if (documentBranchId(document, data) === actorBranchId(actor)) return;
   throw fail("Belge bulunamadı.", 404, "DOCUMENT_NOT_FOUND");
+}
+
+function documentBranchId(document, data) {
+  if (document && document.branchId) return String(document.branchId);
+  const shipmentIds = new Set(Array.isArray(document && document.shipmentIds) ? document.shipmentIds.map(String) : []);
+  const linked = (Array.isArray(data && data.workforceShipments) ? data.workforceShipments : [])
+    .find((shipment) => shipmentIds.has(String(shipment.id || "")));
+  return shipmentBranchId(linked);
+}
+
+function ledgerBranchId(entry, data, procurement) {
+  if (entry && entry.branchId) return String(entry.branchId);
+  if (entry && entry.shipmentId) {
+    const shipment = (Array.isArray(data && data.workforceShipments) ? data.workforceShipments : [])
+      .find((item) => String(item.id || "") === String(entry.shipmentId));
+    if (shipment) return shipmentBranchId(shipment);
+  }
+  if (entry && entry.documentId) {
+    const document = (Array.isArray(procurement && procurement.documents) ? procurement.documents : [])
+      .find((item) => String(item.id || "") === String(entry.documentId));
+    if (document) return documentBranchId(document, data);
+  }
+  return "main";
+}
+
+function assertLedgerVisibility(data, procurement, entry, actor) {
+  if (actor && actor.type === "admin") return;
+  if (ledgerBranchId(entry, data, procurement) === actorBranchId(actor)) return;
+  throw fail("Cari hareket bulunamadı.", 404, "LEDGER_ENTRY_NOT_FOUND");
+}
+
+function assertPaymentVisibility(payment, actor) {
+  if (actor && actor.type === "admin") return;
+  if (String(payment && payment.branchId || "main") === actorBranchId(actor)) return;
+  throw fail("Ödeme bulunamadı.", 404, "PAYMENT_NOT_FOUND");
 }
 
 function findSupplier(procurement, supplierId, options = {}) {

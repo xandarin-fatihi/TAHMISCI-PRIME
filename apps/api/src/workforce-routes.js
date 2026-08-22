@@ -21,7 +21,8 @@ function registerWorkforceRoutes(deps) {
     requireAdminRequestOrigin,
     requireAdminOrMainRequestOrigin,
     broadcastStockUpdate,
-    notificationService
+    notificationService,
+    notifyProcurementChange
   } = deps;
 
   const createId = (prefix) => `${prefix}-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
@@ -50,6 +51,29 @@ function registerWorkforceRoutes(deps) {
 
   function personnelNotification(personId, input) {
     return { recipientRole: "personnel", recipientId: String(personId || ""), ...input };
+  }
+
+  function queueFaturaShipmentNotifications(data, pending, shipment) {
+    const receiptCapabilities = new Set(["procurement.read", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "supplier.manage"]);
+    const branchId = String(shipment && shipment.branchId || "main");
+    for (const user of activeUsers(data)) {
+      if (!user || user.faturaAccessEnabled === false || String(user.id || "") === String(shipment.userId || "")) continue;
+      if (String(user.branchId || "main") !== branchId) continue;
+      const capabilities = Array.isArray(user.faturaCapabilities) ? user.faturaCapabilities : [];
+      if (!capabilities.some((item) => receiptCapabilities.has(String(item)))) continue;
+      queueNotification(data, pending, personnelNotification(user.id, {
+        category: "shipment",
+        eventType: "shipment_reported",
+        title: "Yeni mal kabul onay bekliyor",
+        body: `${shipment.userName || "Personel"} tarafından ${(shipment.items || []).length} ürünlük sevkiyat bildirildi.`,
+        severity: "warning",
+        entityType: "shipment",
+        entityId: shipment.id,
+        deepLink: `/fatura/?view=shipments&shipmentId=${encodeURIComponent(shipment.id)}`,
+        dedupeKey: `shipment-reported:${shipment.id}:fatura:${user.id}`,
+        metadata: { branchId, personId: shipment.userId, personName: shipment.userName, itemCount: (shipment.items || []).length }
+      }));
+    }
   }
 
   function operationRequestId(req) {
@@ -112,7 +136,7 @@ function registerWorkforceRoutes(deps) {
     const expectedRaw = req.body && req.body.procurementExpectedRevision;
     const expected = Number(expectedRaw);
     if (!Number.isInteger(expected) || expected < 0) throw fail("Geçerli procurement expectedRevision gerekli.", 400);
-    if (expected !== current) throw fail("Fatura Merkezi verisi başka bir işlemle güncellendi. Yenileyip tekrar deneyin.", 409);
+    if (expected !== current) throw fail("Tahmisçi Fatura verisi başka bir işlemle güncellendi. Yenileyip tekrar deneyin.", 409);
     const revision = current + 1;
     procurement.version = Math.max(1, Math.trunc(Number(procurement.version || 0)));
     procurement.revision = revision;
@@ -127,6 +151,31 @@ function registerWorkforceRoutes(deps) {
       revision,
       requestId,
       metadata: { stockMovementRef },
+      createdAt: timestamp
+    }).slice(-5000);
+    data.revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
+    data.revisions.procurement = revision;
+    return revision;
+  }
+
+  function recordProcurementShipmentReportedAudit(data, actor, shipment, requestId, timestamp) {
+    const procurement = data.procurement && typeof data.procurement === "object" && !Array.isArray(data.procurement)
+      ? data.procurement
+      : (data.procurement = {});
+    const revision = Math.max(0, Math.trunc(Number(procurement.revision || 0))) + 1;
+    procurement.version = Math.max(1, Math.trunc(Number(procurement.version || 0)));
+    procurement.revision = revision;
+    procurement.auditEvents = (Array.isArray(procurement.auditEvents) ? procurement.auditEvents : []).concat({
+      id: createId("procurement-audit"),
+      action: "shipment.reported",
+      entityType: "shipment",
+      entityId: shipment.id,
+      actorType: "personel",
+      actorId: String(actor && actor.id || shipment.userId || ""),
+      actorName: String(actor && (actor.name || actor.username) || shipment.userName || "Personel"),
+      revision,
+      requestId,
+      metadata: { branchId: String(shipment.branchId || "main"), itemCount: (shipment.items || []).length },
       createdAt: timestamp
     }).slice(-5000);
     data.revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
@@ -977,14 +1026,18 @@ function registerWorkforceRoutes(deps) {
               baseQuantity: conversion.quantity,
               baseUnit: product.unit,
               conversionFactor: conversion.factor,
-              packageInfo: conversion.packageInfo || null
+              packageInfo: conversion.packageInfo || null,
+              currentStockSnapshot: roundNumber(Number(product.stockQuantity || 0)),
+              stockAfterApprovalSnapshot: roundNumber(Number(product.stockQuantity || 0) + conversion.quantity)
             };
           });
           const timestamp = isoNow();
+          const reporter = currentStaff(req);
           shipment = {
             id: createId("shipment"),
             userId: req.recipe.userId,
-            userName: currentStaff(req).name || currentStaff(req).username,
+            userName: reporter.name || reporter.username,
+            branchId: String(reporter.branchId || "main"),
             items: lines,
             note: String(body.note || "").trim().slice(0, 250),
             status: "onay_bekliyor",
@@ -1014,12 +1067,23 @@ function registerWorkforceRoutes(deps) {
             dedupeKey: `shipment-reported:${shipment.id}:manager`,
             metadata: { personId: shipment.userId, personName: shipment.userName, itemCount: lines.length }
           }));
+          queueFaturaShipmentNotifications(data, pendingNotifications, shipment);
+          const procurementRevision = recordProcurementShipmentReportedAudit(data, reporter, shipment, requestId, timestamp);
           const revision = touchWorkforceRevision(data);
-          response = { ok: true, requestId, revision, shipment: publicShipment(shipment, stockState) };
+          response = { ok: true, requestId, revision, procurementRevision, shipment: publicShipment(shipment, stockState) };
           recordIdempotent(data, "shipment_create", requestId, shipment.id, revision, { response });
           return data;
         });
         publishNotifications(pendingNotifications);
+        if (!replayed && typeof notifyProcurementChange === "function") {
+          notifyProcurementChange({
+            type: "shipment.reported",
+            entityType: "shipment",
+            entityId: shipment.id,
+            revision: response && response.procurementRevision || 0,
+            createdAt: shipment.createdAt
+          });
+        }
         res.status(replayed ? 200 : 201).json({ ...response, idempotent: replayed || response.idempotent === true });
       } catch (error) {
         next(error);
@@ -1059,6 +1123,10 @@ function registerWorkforceRoutes(deps) {
           assertExpectedRevision(data, body);
           shipment = (data.workforceShipments || []).find((item) => item.id === req.params.id);
           if (!shipment) throw fail("Sevkiyat bulunamadı.", 404);
+          if (decisionActor.type !== "admin"
+            && String(shipment.branchId || "main") !== String(decisionActor.branchId || "main")) {
+            throw fail("Sevkiyat bulunamadı.", 404);
+          }
 
           if (decision === "approve" && shipment.status === "onaylandı" && shipment.stockAppliedAt && shipment.stockMovementRef) {
             idempotent = true;
@@ -1217,6 +1285,15 @@ function registerWorkforceRoutes(deps) {
           broadcastStockUpdate(updatedStockState, updatedAt || saved.stockUpdatedAt || shipment.stockAppliedAt);
         }
         publishNotifications(pendingNotifications);
+        if (!idempotent && typeof notifyProcurementChange === "function") {
+          notifyProcurementChange({
+            type: decision === "approve" ? "shipment.stock-approved" : "shipment.rejected",
+            entityType: "shipment",
+            entityId: shipment.id,
+            revision: response && response.procurementRevision || response && response.revision || 0,
+            createdAt: shipment.updatedAt
+          });
+        }
         if (!response) {
           response = {
             ok: true,
@@ -1829,6 +1906,10 @@ function registerWorkforceRoutes(deps) {
   return {
     approveWorkforceShipment(input = {}) {
       return decideWorkforceShipment({ ...input, decision: "approve" });
+    },
+    invalidateWorkforce(input = {}) {
+      const revision = Math.max(0, Math.trunc(Number(input.revision || 0)));
+      if (revision > 0) broadcastWorkforceInvalidation(revision);
     },
     decideWorkforceShipment
   };

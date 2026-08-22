@@ -748,18 +748,41 @@
         body: JSON.stringify(request.body)
       });
       state.revision = responseRevision(result, state.revision);
+      upsertShipment(result && result.shipment);
       state.cart = [];
       state.shipmentNote = "";
       state.shipmentRequestId = "";
-      await refreshWorkforceData().catch(() => null);
       state.busy = false;
       renderShipment();
       showMessage("shipment", "Sevkiyat bildiriminiz yönetici onayına gönderildi.", "success");
+      refreshShipmentInBackground();
+      return result;
     } catch (error) {
       showMutationError("shipment", error);
       setBusy(button, false, "");
       throw error;
     }
+  }
+
+  function upsertShipment(shipment) {
+    if (!shipment || !shipment.id) return;
+    const shipmentId = String(shipment.id);
+    state.data.shipments = [
+      shipment,
+      ...(state.data.shipments || []).filter((item) => String(item && item.id || "") !== shipmentId)
+    ];
+    state.data.revision = Math.max(Number(state.data.revision || 0), Number(state.revision || 0));
+    state.loaded = true;
+    state.loadedScopes.add("shipments");
+    state.staleScopes.delete("shipments");
+  }
+
+  function refreshShipmentInBackground() {
+    state.staleScopes.add("shipments");
+    window.setTimeout(() => {
+      if (state.sessionEnded) return;
+      void loadWorkforceData("shipment", { force: true }).catch(() => null);
+    }, 250);
   }
 
   function shipmentHistory(shipment) {

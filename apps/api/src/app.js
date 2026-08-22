@@ -1889,19 +1889,24 @@ app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireRe
   }
 });
 
+let procurementRuntime = null;
 const workforceRuntime = registerWorkforceRoutes({
   app, store, auth, crypto, normalizeStockState,
   requireAdminRequestOrigin, requireAdminOrMainRequestOrigin,
   broadcastStockUpdate,
-  notificationService
+  notificationService,
+  notifyProcurementChange(event) {
+    if (procurementRuntime && procurementRuntime.service) procurementRuntime.service.publishExternalEvent(event);
+  }
 });
 
-registerProcurementRoutes({
+procurementRuntime = registerProcurementRoutes({
   app,
   store,
   auth,
   config,
   notificationService,
+  notifyWorkforceChange: workforceRuntime.invalidateWorkforce,
   documentService: procurementDocumentService,
   approveWorkforceShipment: workforceRuntime.approveWorkforceShipment,
   requireRequestOrigin: requireAdminOrMainRequestOrigin,
