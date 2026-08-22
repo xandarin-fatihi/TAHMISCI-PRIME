@@ -13,7 +13,35 @@ const {
   registryCodeForEntity
 } = require("./product-code-registry");
 
-const STORE_SCHEMA_VERSION = 16;
+const STORE_SCHEMA_VERSION = 17;
+const PROCUREMENT_SCHEMA_VERSION = 1;
+const FATURA_ROLES = new Set(["operasyon", "muhasebe", "satın_alma", "yönetici"]);
+const FATURA_CAPABILITIES = new Set([
+  "procurement.read",
+  "supplier.read",
+  "supplier.manage",
+  "supplierProduct.manage",
+  "receipt.create",
+  "receipt.submit",
+  "receipt.approve",
+  "receipt.reject",
+  "accounting.read",
+  "accounting.post",
+  "accounting.reverse",
+  "payment.create",
+  "payment.reverse",
+  "documents.read",
+  "documents.upload",
+  "documents.archive",
+  "procurement.users.manage"
+]);
+const DEFAULT_FATURA_CAPABILITIES = Object.freeze([
+  "supplier.read",
+  "receipt.create",
+  "receipt.submit",
+  "documents.read",
+  "documents.upload"
+]);
 
 function migrateStore(input) {
   const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
@@ -69,6 +97,7 @@ function migrateStore(input) {
     workforceShiftSettings: normalizeWorkforceShiftSettings(source.workforceShiftSettings),
     workforceMigrationArchive: collectWorkforceMigrationArchive(source),
     deletedRecipeUsers: normalizeDeletedRecipeUsers(source.deletedRecipeUsers),
+    procurement: normalizeProcurement(source.procurement),
     adminDefaults: normalizeAdminDefaults(source.adminDefaults),
     admin: normalizeAdmin(source.admin)
   };
@@ -105,7 +134,8 @@ function normalizeStoreRevisions(value, legacyPricingRevision) {
     dataImportRecipes: Math.max(0, Math.trunc(finiteNumber(source.dataImportRecipes, 0))),
     dataImportStock: Math.max(0, Math.trunc(finiteNumber(source.dataImportStock, 0))),
     catalogMigration: Math.max(0, Math.trunc(finiteNumber(source.catalogMigration, 0))),
-    workforce: Math.max(0, Math.trunc(finiteNumber(source.workforce, 0)))
+    workforce: Math.max(0, Math.trunc(finiteNumber(source.workforce, 0))),
+    procurement: Math.max(0, Math.trunc(finiteNumber(source.procurement, 0)))
   };
 }
 
@@ -830,9 +860,18 @@ function normalizeContentMode(mode, recipeId, manualContent) {
 function normalizeRecipeUsers(value) {
   return normalizeArray(value).map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const requestedCapabilities = Array.isArray(item.faturaCapabilities)
+      ? item.faturaCapabilities
+      : DEFAULT_FATURA_CAPABILITIES;
     return {
       ...item,
-      ...normalizeAccountSecurity(item)
+      ...normalizeAccountSecurity(item),
+      faturaRole: FATURA_ROLES.has(String(item.faturaRole || ""))
+        ? String(item.faturaRole)
+        : "operasyon",
+      faturaCapabilities: [...new Set(requestedCapabilities
+        .map((capability) => String(capability || "").trim())
+        .filter((capability) => FATURA_CAPABILITIES.has(capability)))]
     };
   }).filter(Boolean);
 }
@@ -1120,6 +1159,234 @@ function collectWorkforceMigrationArchive(source) {
   return [...archived.values()].slice(-1000);
 }
 
+function normalizeProcurement(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    ...source,
+    version: Math.max(PROCUREMENT_SCHEMA_VERSION, Math.trunc(finiteNumber(source.version, 0))),
+    revision: Math.max(0, Math.trunc(finiteNumber(source.revision, 0))),
+    suppliers: normalizeProcurementEntities(source.suppliers, normalizeProcurementSupplier),
+    supplierProductLinks: normalizeProcurementEntities(source.supplierProductLinks, normalizeSupplierProductLink),
+    documents: normalizeProcurementEntities(source.documents, normalizeProcurementDocument),
+    ledgerEntries: normalizeProcurementEntities(source.ledgerEntries, normalizeLedgerEntry),
+    payments: normalizeProcurementEntities(source.payments, normalizeProcurementPayment),
+    auditEvents: normalizeProcurementEntities(source.auditEvents, normalizeProcurementAuditEvent).slice(-5000),
+    idempotencyRecords: normalizeProcurementEntities(source.idempotencyRecords, normalizeProcurementIdempotency).slice(-1000),
+    settings: normalizeProcurementSettings(source.settings)
+  };
+}
+
+function normalizeProcurementEntities(value, normalizer) {
+  const byId = new Map();
+  normalizeArray(value).forEach((item, index) => {
+    const normalized = normalizer(item, index);
+    if (normalized && normalized.id) byId.set(normalized.id, normalized);
+  });
+  return [...byId.values()];
+}
+
+function normalizeProcurementSupplier(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const id = procurementText(item.id, 180);
+  if (!id) return null;
+  return {
+    ...item,
+    id,
+    code: procurementText(item.code, 80),
+    name: procurementText(item.name, 180),
+    taxNumber: procurementText(item.taxNumber, 32),
+    phone: procurementText(item.phone, 40),
+    email: procurementText(item.email, 254).toLowerCase(),
+    address: procurementText(item.address, 1000),
+    paymentTermDays: Math.max(0, Math.min(3650, Math.trunc(finiteNumber(item.paymentTermDays, 0)))),
+    active: item.active !== false,
+    createdAt: item.createdAt || null,
+    updatedAt: item.updatedAt || item.createdAt || null,
+    createdBy: procurementText(item.createdBy, 180),
+    updatedBy: procurementText(item.updatedBy || item.createdBy, 180)
+  };
+}
+
+function normalizeSupplierProductLink(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const id = procurementText(item.id, 180);
+  const supplierId = procurementText(item.supplierId, 180);
+  const stockProductId = procurementText(item.stockProductId || item.productId, 180);
+  const stockProductCode = normalizeProductCode(item.stockProductCode || item.productCode);
+  if (!id || !supplierId || (!stockProductId && !stockProductCode)) return null;
+  const conversionFactor = finiteNumber(item.conversionFactor, 1);
+  return {
+    ...item,
+    id,
+    supplierId,
+    stockProductId,
+    stockProductCode,
+    supplierProductName: procurementText(item.supplierProductName, 180),
+    supplierProductCode: procurementText(item.supplierProductCode, 100),
+    purchaseUnit: procurementText(item.purchaseUnit, 40),
+    conversionFactor: conversionFactor > 0 ? conversionFactor : 1,
+    defaultPurchasePriceKurus: Math.max(0, normalizeKurus(item.defaultPurchasePriceKurus, 0)),
+    lastPurchasePriceKurus: Math.max(0, normalizeKurus(item.lastPurchasePriceKurus, 0)),
+    active: item.active !== false,
+    createdAt: item.createdAt || null,
+    updatedAt: item.updatedAt || item.createdAt || null
+  };
+}
+
+function normalizeProcurementDocument(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const id = procurementText(item.id, 180);
+  if (!id) return null;
+  const documentType = ["fatura", "irsaliye", "fiş", "makbuz", "diğer"].includes(String(item.documentType || ""))
+    ? String(item.documentType)
+    : "diğer";
+  return {
+    ...item,
+    id,
+    supplierId: procurementText(item.supplierId, 180),
+    shipmentIds: normalizeProcurementStringArray(item.shipmentIds || (item.shipmentId ? [item.shipmentId] : []), 180),
+    shipmentItemIds: normalizeProcurementStringArray(item.shipmentItemIds || item.lineIds, 180),
+    documentType,
+    documentNumber: procurementText(item.documentNumber, 120),
+    documentDate: procurementText(item.documentDate, 10),
+    originalName: procurementText(item.originalName, 255),
+    mimeType: procurementText(item.mimeType, 100),
+    sizeBytes: Math.max(0, Math.trunc(finiteNumber(item.sizeBytes, 0))),
+    sha256: procurementText(item.sha256, 128),
+    physicalName: procurementText(item.physicalName, 255),
+    thumbnailPhysicalName: procurementText(item.thumbnailPhysicalName, 255),
+    archivedAt: item.archivedAt || null,
+    archivedBy: procurementText(item.archivedBy, 180),
+    createdAt: item.createdAt || null,
+    createdBy: procurementText(item.createdBy, 180)
+  };
+}
+
+function normalizeLedgerEntry(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const id = procurementText(item.id, 180);
+  const supplierId = procurementText(item.supplierId, 180);
+  const type = ["invoice", "payment", "credit_note", "reversal", "opening_balance", "adjustment"].includes(String(item.type || ""))
+    ? String(item.type)
+    : "adjustment";
+  if (!id || !supplierId) return null;
+  return {
+    ...item,
+    id,
+    supplierId,
+    shipmentId: procurementText(item.shipmentId, 180),
+    documentId: procurementText(item.documentId, 180),
+    type,
+    amountKurus: normalizeKurus(item.amountKurus, 0),
+    balanceAfterKurus: item.balanceAfterKurus === undefined ? undefined : normalizeKurus(item.balanceAfterKurus, 0),
+    dueDate: procurementText(item.dueDate, 10),
+    note: procurementText(item.note, 1000),
+    sourceType: procurementText(item.sourceType, 100),
+    sourceId: procurementText(item.sourceId, 180),
+    reversalOf: procurementText(item.reversalOf, 180),
+    createdBy: procurementText(item.createdBy, 180),
+    createdAt: item.createdAt || null,
+    idempotencyKey: procurementText(item.idempotencyKey, 160)
+  };
+}
+
+function normalizeProcurementPayment(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const id = procurementText(item.id, 180);
+  const supplierId = procurementText(item.supplierId, 180);
+  if (!id || !supplierId) return null;
+  return {
+    ...item,
+    id,
+    supplierId,
+    documentId: procurementText(item.documentId, 180),
+    ledgerEntryId: procurementText(item.ledgerEntryId, 180),
+    amountKurus: Math.abs(normalizeKurus(item.amountKurus, 0)),
+    paymentDate: procurementText(item.paymentDate, 10),
+    method: procurementText(item.method, 80),
+    reference: procurementText(item.reference, 180),
+    note: procurementText(item.note, 1000),
+    status: item.status === "reversed" ? "reversed" : "recorded",
+    reversalLedgerEntryId: procurementText(item.reversalLedgerEntryId, 180),
+    reversedAt: item.reversedAt || null,
+    reversedBy: procurementText(item.reversedBy, 180),
+    createdAt: item.createdAt || null,
+    createdBy: procurementText(item.createdBy, 180)
+  };
+}
+
+function normalizeProcurementAuditEvent(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const id = procurementText(item.id, 180);
+  if (!id) return null;
+  return {
+    ...item,
+    id,
+    action: procurementText(item.action, 120),
+    entityType: procurementText(item.entityType, 100),
+    entityId: procurementText(item.entityId, 180),
+    actorType: item.actorType === "admin" ? "admin" : "personel",
+    actorId: procurementText(item.actorId, 180),
+    actorName: procurementText(item.actorName, 180),
+    revision: Math.max(0, Math.trunc(finiteNumber(item.revision, 0))),
+    requestId: procurementText(item.requestId, 160),
+    metadata: item.metadata && typeof item.metadata === "object" && !Array.isArray(item.metadata) ? item.metadata : {},
+    createdAt: item.createdAt || null
+  };
+}
+
+function normalizeProcurementIdempotency(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const id = procurementText(item.id, 320);
+  const key = procurementText(item.key || item.requestId, 160);
+  if (!id || !key) return null;
+  return {
+    ...item,
+    id,
+    key,
+    operation: procurementText(item.operation, 120),
+    actorId: procurementText(item.actorId, 180),
+    resourceId: procurementText(item.resourceId, 180),
+    revision: Math.max(0, Math.trunc(finiteNumber(item.revision, 0))),
+    response: item.response && typeof item.response === "object" && !Array.isArray(item.response) ? item.response : {},
+    createdAt: item.createdAt || null
+  };
+}
+
+function normalizeProcurementSettings(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const units = normalizeProcurementStringArray(source.units, 40);
+  const accountingDocumentTypes = normalizeProcurementStringArray(source.accountingDocumentTypes, 40)
+    .filter((type) => ["fatura", "fiş", "makbuz"].includes(type));
+  return {
+    ...source,
+    defaultBranchId: procurementText(source.defaultBranchId, 80) || "main",
+    currency: "TRY",
+    dueSoonDays: Math.max(1, Math.min(90, Math.trunc(finiteNumber(source.dueSoonDays, 7)))),
+    units: units.length ? units : ["koli", "paket", "adet", "kg", "gr", "litre", "ml", "şişe"],
+    accountingDocumentTypes: accountingDocumentTypes.length ? accountingDocumentTypes : ["fatura", "fiş", "makbuz"],
+    updatedAt: source.updatedAt || null,
+    updatedBy: procurementText(source.updatedBy, 180)
+  };
+}
+
+function normalizeProcurementStringArray(value, maxLength) {
+  return [...new Set(normalizeArray(value)
+    .map((item) => procurementText(item, maxLength))
+    .filter(Boolean))];
+}
+
+function normalizeKurus(value, fallback) {
+  const number = Number(value);
+  if (Number.isSafeInteger(number)) return number;
+  const fallbackNumber = Number(fallback);
+  return Number.isSafeInteger(fallbackNumber) ? fallbackNumber : 0;
+}
+
+function procurementText(value, maxLength) {
+  return String(value || "").trim().slice(0, maxLength);
+}
+
 function markWorkforcePersonnelState(data) {
   const users = new Map(normalizeArray(data.recipeUsers).map((user) => [String(user && user.id || ""), user]));
   const deleted = new Map(normalizeArray(data.deletedRecipeUsers).map((user) => [String(user && (user.id || user.userId) || ""), user]));
@@ -1162,6 +1429,8 @@ function normalizeWorkforceShipments(value, stockState, productCodeRegistry) {
   return normalizeArray(value).map((shipment) => {
     if (!shipment || typeof shipment !== "object" || Array.isArray(shipment)) return null;
     const status = normalizeShipmentStatus(shipment.status);
+    const evidenceDocumentIds = normalizeProcurementStringArray(shipment.evidenceDocumentIds, 180);
+    const accountingEntryIds = normalizeProcurementStringArray(shipment.accountingEntryIds, 180);
     const stockMovementRefs = [...new Set([
       ...normalizeArray(shipment.stockMovementRefs || (shipment.stockMovementRef ? [shipment.stockMovementRef] : [])),
       ...(movementsByShipment.get(String(shipment.id || "")) || [])
@@ -1170,7 +1439,29 @@ function normalizeWorkforceShipments(value, stockState, productCodeRegistry) {
       ...shipment,
       status,
       revision: Math.max(0, Math.trunc(finiteNumber(shipment.revision, 0))),
+      expectedRevision: Math.max(0, Math.trunc(finiteNumber(shipment.expectedRevision, shipment.revision || 0))),
       requestId: String(shipment.requestId || ""),
+      supplierId: procurementText(shipment.supplierId, 180),
+      branchId: procurementText(shipment.branchId, 80) || "main",
+      evidenceDocumentIds,
+      documentType: procurementText(shipment.documentType, 40),
+      documentNumber: procurementText(shipment.documentNumber, 120),
+      documentDate: procurementText(shipment.documentDate, 10),
+      accountingStatus: shipment.accountingStatus === "reversed"
+        ? "reversed"
+        : accountingEntryIds.length || shipment.accountingPostedAt
+          ? "posted"
+          : "not_posted",
+      accountingEntryIds,
+      accountingPostedAt: shipment.accountingPostedAt || null,
+      accountingPostedBy: procurementText(shipment.accountingPostedBy, 180),
+      evidenceStatus: shipment.evidenceStatus === "archived"
+        ? "archived"
+        : evidenceDocumentIds.length
+          ? "available"
+          : "missing",
+      operationalStatus: procurementText(shipment.operationalStatus, 80) || status,
+      updatedAt: shipment.updatedAt || shipment.createdAt || null,
       stockAppliedAt: shipment.stockAppliedAt || (status === "onaylandı" ? shipment.approvedAt || shipment.updatedAt || shipment.createdAt || null : null),
       stockMovementRef: String(shipment.stockMovementRef || stockMovementRefs[0] || "") || null,
       stockMovementRefs,
@@ -1403,6 +1694,7 @@ function normalizeAssignmentStatus(status, completedCount, itemCount) {
 
 function normalizeShipmentStatus(status) {
   const value = String(status || "");
+  if (["taslak", "draft"].includes(value)) return "taslak";
   if (["onaylandı", "onaylandi", "approved"].includes(value)) return "onaylandı";
   if (["reddedildi", "rejected"].includes(value)) return "reddedildi";
   return "onay_bekliyor";
@@ -1444,11 +1736,16 @@ function finiteNumber(value, fallback) {
 }
 
 module.exports = {
+  DEFAULT_FATURA_CAPABILITIES,
+  FATURA_CAPABILITIES,
+  FATURA_ROLES,
+  PROCUREMENT_SCHEMA_VERSION,
   STORE_SCHEMA_VERSION,
   chooseRecipeSize,
   migrateMenuRecipeLinks,
   migrateStore,
   normalizeMenuState,
+  normalizeProcurement,
   normalizeRecipeItem,
   normalizeRecipeState,
   normalizeStockState,

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="tr" data-pwa-app="fatura" data-pwa-worker="/fatura/sw.js" data-pwa-scope="/fatura/">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#5a2f1d">
+  <meta name="description" content="Tahmisçi Fatura Merkezi; tedarik, mal kabul, belge ve cari hesap yönetimi.">
+  <title>Tahmisçi Fatura Merkezi</title>
+  <link rel="icon" href="/assets/brand/favicon.png" type="image/png">
+  <link rel="manifest" href="/fatura/manifest.webmanifest">
+  <link rel="stylesheet" href="/shared/styles/panel-foundation.css">
+  <link rel="stylesheet" href="/fatura/styles/fatura.css">
+</head>
+<body class="fatura-page">
+  <div class="fatura-app" id="faturaApp" data-status="loading">
+    <section class="fatura-auth" id="authView" hidden aria-labelledby="authTitle">
+      <div class="auth-card">
+        <img src="/assets/brand/logo-primary.png" alt="Tahmisçi" class="auth-logo">
+        <p class="eyebrow">TAHMİSÇİ</p>
+        <h1 id="authTitle">Fatura Merkezi</h1>
+        <p class="auth-copy">Yönetici veya yetkili personel hesabınızla devam edin.</p>
+        <div class="auth-tabs" role="tablist" aria-label="Hesap türü">
+          <button class="is-active" type="button" data-auth-tab="admin" role="tab" aria-selected="true">Yönetici</button>
+          <button type="button" data-auth-tab="personel" role="tab" aria-selected="false">Personel</button>
+        </div>
+        <form id="adminLoginForm" class="auth-form" data-auth-form="admin">
+          <label>Yönetici şifresi<input name="password" type="password" maxlength="72" autocomplete="current-password" required></label>
+          <button class="ui-button ui-button--primary ui-button--block" type="submit">Yönetici olarak giriş yap</button>
+        </form>
+        <form id="personelLoginForm" class="auth-form" data-auth-form="personel" hidden>
+          <label>Kullanıcı adı<input name="username" autocomplete="username" maxlength="80" required></label>
+          <label>Şifre<input name="password" type="password" maxlength="72" autocomplete="current-password" required></label>
+          <button class="ui-button ui-button--primary ui-button--block" type="submit">Personel olarak giriş yap</button>
+        </form>
+        <p class="form-message" id="authMessage" role="alert"></p>
+      </div>
+    </section>
+
+    <div class="fatura-shell" id="shell" hidden>
+      <aside class="fatura-sidebar" id="faturaSidebar">
+        <button class="brand-button" id="sidebarToggle" type="button" aria-controls="faturaSidebar" aria-expanded="true" title="Kenar çubuğunu kapat">
+          <img src="/assets/brand/logo-compact.png" alt="">
+          <span><small>TAHMİSÇİ</small><strong>Fatura Merkezi</strong></span>
+        </button>
+        <nav id="faturaNav" aria-label="Fatura Merkezi bölümleri"></nav>
+        <div class="sidebar-footer">
+          <div class="actor-card"><span class="actor-avatar" id="actorAvatar">T</span><span><strong id="actorName">Tahmisçi</strong><small id="actorRole">Oturum</small></span></div>
+          <button class="ui-button ui-button--ghost ui-button--sm" id="logoutButton" type="button">Çıkış yap</button>
+        </div>
+      </aside>
+      <button class="sidebar-scrim" id="sidebarScrim" type="button" aria-label="Menüyü kapat" tabindex="-1"></button>
+
+      <main class="fatura-main">
+        <header class="fatura-header">
+          <button class="mobile-menu" id="mobileMenu" type="button" aria-label="Menüyü aç" aria-controls="faturaSidebar" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          </button>
+          <div class="page-heading"><p class="eyebrow" id="pageKicker">FATURA MERKEZİ</p><h1 id="pageTitle">Genel Bakış</h1><p id="pageDescription">Tedarik ve cari süreçlerin güncel özeti.</p></div>
+          <div class="header-actions"><span class="live-state" id="liveState"><i></i> Güncel</span><button class="ui-button ui-button--secondary ui-button--icon" id="refreshButton" type="button" aria-label="Verileri yenile" title="Verileri yenile"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button></div>
+        </header>
+        <div class="global-message" id="globalMessage" role="status" aria-live="polite" hidden></div>
+        <section class="content-view" id="contentView" aria-live="polite"><div class="loading-state"><span class="spinner"></span><p>Fatura Merkezi yükleniyor…</p></div></section>
+      </main>
+    </div>
+  </div>
+
+  <dialog class="fatura-dialog" id="entityDialog">
+    <form id="entityForm">
+      <header><div><p class="eyebrow" id="dialogKicker">YENİ KAYIT</p><h2 id="dialogTitle">Kayıt</h2><p id="dialogDescription"></p></div><button type="button" class="dialog-close" aria-label="Pencereyi kapat">×</button></header>
+      <div class="dialog-body" id="dialogBody"></div>
+      <p class="form-message" id="dialogMessage" role="alert"></p>
+      <footer><button type="button" class="ui-button ui-button--secondary dialog-close">Vazgeç</button><button class="ui-button ui-button--primary" id="dialogSubmit" type="submit">Kaydet</button></footer>
+    </form>
+  </dialog>
+
+  <dialog class="fatura-dialog fatura-dialog--wide" id="detailDialog">
+    <div class="detail-dialog-shell"><header><div><p class="eyebrow" id="detailKicker">DETAY</p><h2 id="detailTitle">Kayıt detayı</h2><p id="detailDescription"></p></div><button type="button" class="detail-close" aria-label="Pencereyi kapat">×</button></header><div class="dialog-body" id="detailBody"></div></div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  <script type="module" src="/fatura/scripts/app.js"></script>
+  <script src="/shared/scripts/pwa-client.js" defer></script>
+</body>
+</html>

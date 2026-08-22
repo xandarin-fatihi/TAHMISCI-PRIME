@@ -2620,6 +2620,22 @@
     if (rawLink) {
       try {
         const target = new URL(rawLink, window.location.href);
+        if (target.origin === window.location.origin && (target.pathname === "/fatura" || target.pathname.startsWith("/fatura/"))) {
+          const procurementEvent = String(notification.eventType || notification.type || details.eventType || "").toLowerCase();
+          const procurementView = /accounting|payment/.test(procurementEvent) || category === "accounting"
+            ? "ledger"
+            : /document/.test(procurementEvent) || category === "document" ? "documents" : "shipments";
+          try {
+            window.sessionStorage.setItem("tahmisci:fatura:intent", JSON.stringify({
+              view: procurementView,
+              entityType: String(notification.entityType || details.entityType || category || ""),
+              entityId
+            }));
+          } catch (_storageError) {}
+          closeAdminNotificationDrawer();
+          window.location.assign("/fatura/");
+          return;
+        }
         if (target.origin === window.location.origin && (target.pathname === "/yonetici" || target.pathname.startsWith("/yonetici/"))) {
           section = normalizeAdminNotificationSection(target.searchParams.get("section")) || section;
           workforceTarget = String(target.searchParams.get("workforce") || target.searchParams.get("panel") || workforceTarget).toLowerCase();

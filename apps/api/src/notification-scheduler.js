@@ -51,6 +51,7 @@ function createNotificationScheduler(options) {
         createShiftReminders(data, now, created, diagnostics);
         const stockStateChanged = createCriticalStockNotifications(data, now, created);
         createManagerPendingReminders(data, now, created);
+        createProcurementPaymentReminders(data, now, created);
         if (created.length === beforeCount && !stockStateChanged) return noChange(store, data);
         data.notificationSchedulerState = {
           ...(data.notificationSchedulerState || {}),
@@ -304,6 +305,47 @@ function createManagerPendingReminders(data, now, created) {
   }, now);
 }
 
+function createProcurementPaymentReminders(data, now, created) {
+  const procurement = data.procurement && typeof data.procurement === "object" ? data.procurement : {};
+  const entries = Array.isArray(procurement.ledgerEntries) ? procurement.ledgerEntries : [];
+  const reversals = new Set(entries.filter((entry) => entry && entry.reversalOf).map((entry) => String(entry.reversalOf)));
+  const balances = new Map();
+  for (const entry of entries) {
+    if (!entry || !entry.supplierId) continue;
+    const supplierId = String(entry.supplierId);
+    balances.set(supplierId, (balances.get(supplierId) || 0) + Number(entry.amountKurus || 0));
+  }
+  const suppliers = new Map((Array.isArray(procurement.suppliers) ? procurement.suppliers : [])
+    .map((supplier) => [String(supplier.id || ""), supplier]));
+  const dueSoonDays = Math.max(1, Math.min(90, Number(procurement.settings && procurement.settings.dueSoonDays || 7)));
+  const today = dateKeyInIstanbul(now);
+  const todayStart = validDate(`${today}T00:00:00+03:00`);
+  for (const entry of entries) {
+    if (!entry || entry.type !== "invoice" || !entry.id || reversals.has(String(entry.id)) || !entry.dueDate) continue;
+    if ((balances.get(String(entry.supplierId)) || 0) >= 0) continue;
+    const due = validDate(`${entry.dueDate}T00:00:00+03:00`);
+    if (!due || !todayStart) continue;
+    const remainingDays = Math.floor((due.getTime() - todayStart.getTime()) / (24 * HOUR_MS));
+    if (remainingDays > dueSoonDays) continue;
+    const overdue = remainingDays < 0;
+    const supplier = suppliers.get(String(entry.supplierId));
+    addNotification(data, created, {
+      recipientRole: "manager",
+      recipientId: "manager",
+      category: "accounting",
+      eventType: overdue ? "payment_overdue" : "payment_due_soon",
+      title: overdue ? "Tedarikçi ödemesi gecikti" : "Tedarikçi ödeme vadesi yaklaşıyor",
+      body: `${String(supplier && supplier.name || "Tedarikçi")} · Vade: ${String(entry.dueDate)}`,
+      severity: overdue ? "critical" : "warning",
+      entityType: "ledger_entry",
+      entityId: String(entry.id),
+      deepLink: "/fatura/",
+      dedupeKey: `procurement-${overdue ? "overdue" : "due-soon"}:${entry.id}:${entry.dueDate}`,
+      metadata: { supplierId: String(entry.supplierId), dueDate: String(entry.dueDate), amountKurus: Number(entry.amountKurus || 0) }
+    }, now);
+  }
+}
+
 function addNotification(data, created, input, now) {
   const notification = createNotificationInStore(data, input, { now });
   if (notification) created.push(notification);
@@ -391,6 +433,7 @@ function previewSchedulerChanges(data, now) {
   createShiftReminders(preview, now, created, {});
   const stockStateChanged = createCriticalStockNotifications(preview, now, created);
   createManagerPendingReminders(preview, now, created);
+  createProcurementPaymentReminders(preview, now, created);
   return created.length > 0 || stockStateChanged;
 }
 
@@ -405,6 +448,7 @@ function safeSchedulerError(error) {
 module.exports = {
   createCriticalStockNotifications,
   createNotificationScheduler,
+  createProcurementPaymentReminders,
   createShiftReminders,
   createTaskReminders,
   dateKeyInIstanbul

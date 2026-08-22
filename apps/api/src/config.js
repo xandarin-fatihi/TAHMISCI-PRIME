@@ -24,6 +24,17 @@ const config = {
   mediaDir: process.env.MEDIA_DIR
     ? path.resolve(process.env.MEDIA_DIR)
     : path.join(projectRoot, "storage", "media"),
+  procurementDocumentsDir: process.env.PROCUREMENT_DOCUMENTS_DIR
+    ? path.resolve(process.env.PROCUREMENT_DOCUMENTS_DIR)
+    : process.env.DATA_FILE
+      ? path.join(path.dirname(path.resolve(process.env.DATA_FILE)), "procurement-documents")
+      : path.join(projectRoot, "storage", "local", "procurement-documents"),
+  procurementMaxUploadBytes: clampInt(
+    process.env.PROCUREMENT_MAX_UPLOAD_BYTES,
+    10 * 1024 * 1024,
+    256 * 1024,
+    25 * 1024 * 1024
+  ),
   mainDomain: clean(process.env.MAIN_DOMAIN),
   adminDomain: clean(process.env.ADMIN_DOMAIN),
   publicSiteUrl: clean(process.env.PUBLIC_SITE_URL),
@@ -121,8 +132,24 @@ function validateConfig() {
     errors.push("Production ortaminda kalici DATA_FILE ve MEDIA_DIR yollari acikca tanimlanmali.");
   }
 
+  if (config.isProduction && !clean(process.env.PROCUREMENT_DOCUMENTS_DIR)) {
+    errors.push("Production ortaminda kalici PROCUREMENT_DOCUMENTS_DIR yolu acikca tanimlanmali.");
+  }
+
+  if (config.isProduction && clean(process.env.PROCUREMENT_DOCUMENTS_DIR) && !path.isAbsolute(clean(process.env.PROCUREMENT_DOCUMENTS_DIR))) {
+    errors.push("Production ortaminda PROCUREMENT_DOCUMENTS_DIR mutlak bir yol olmali.");
+  }
+
   if (config.isProduction && [config.dataFile, config.mediaDir].some(isTemporaryProjectPath)) {
     errors.push("Production ortaminda repository icindeki gecici/local veri yollari kullanilamaz.");
+  }
+
+  if (config.isProduction && isPathInside(projectRoot, config.procurementDocumentsDir)) {
+    errors.push("Production ortaminda PROCUREMENT_DOCUMENTS_DIR repository disinda kalici bir dizin olmali.");
+  }
+
+  if (pathsOverlap(config.procurementDocumentsDir, config.mediaDir)) {
+    errors.push("PROCUREMENT_DOCUMENTS_DIR public MEDIA_DIR ile ayni veya ic ice olamaz.");
   }
 
   if (config.isProduction && [config.defaultPanelPassword, config.defaultRecipePassword, config.jwtSecret, config.managerKey].some(isKnownLocalCredential)) {
@@ -292,6 +319,15 @@ function isTemporaryProjectPath(value) {
     || relative.includes("local-smoke")
     || relative.startsWith("tmp/")
     || relative.startsWith("temp/");
+}
+
+function isPathInside(parent, candidate) {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+function pathsOverlap(first, second) {
+  return isPathInside(first, second) || isPathInside(second, first);
 }
 
 module.exports = {

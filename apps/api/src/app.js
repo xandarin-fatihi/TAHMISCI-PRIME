@@ -21,6 +21,9 @@ const { seedStoreIfEmpty } = require("./store/seed-defaults");
 const { normalizeStockState, reconcileRecipeCatalog } = require("./store/migrations");
 const { normalizeProductCode } = require("./store/product-code-registry");
 const { registerWorkforceRoutes } = require("./workforce-routes");
+const { registerProcurementRoutes } = require("./procurement-routes");
+const { createProcurementDocumentService } = require("./procurement-documents");
+const { createProcurementImageProcessor } = require("./procurement-image-processor");
 const { registerPublishRoutes } = require("./publish-routes");
 const { registerPricingRoutes } = require("./pricing-routes");
 const { registerDataImportRoutes } = require("./data-import-routes");
@@ -66,6 +69,13 @@ const mailService = createMailService(config);
 const pushService = createPushService(config);
 const notificationDeliveryWorker = createNotificationDeliveryWorker({ store, config, mailService, pushService, logError: logRuntimeError });
 const notificationScheduler = createNotificationScheduler({ store, intervalMs: config.notificationReminderIntervalMs, logError: logRuntimeError });
+const procurementImageProcessor = createProcurementImageProcessor();
+const procurementDocumentService = createProcurementDocumentService({
+  documentsDir: config.procurementDocumentsDir,
+  maxUploadBytes: config.procurementMaxUploadBytes,
+  imageProcessor: procurementImageProcessor,
+  strictImageProcessing: true
+});
 const sseClients = new Set();
 const recipeSseClients = new Set();
 const siteSseClients = new Set();
@@ -86,6 +96,7 @@ const recipeRoot = path.join(projectRoot, "apps", "recipe");
 const qrMenuRoot = path.join(projectRoot, "apps", "qr-menu");
 const mudavimRoot = path.join(siteRoot, "mudavim");
 const personelRoot = path.join(projectRoot, "apps", "personel");
+const faturaRoot = path.join(projectRoot, "apps", "fatura");
 const authRoot = path.join(projectRoot, "apps", "auth");
 const assetsRoot = path.join(projectRoot, "public", "assets");
 const sharedRoot = path.join(projectRoot, "shared");
@@ -171,7 +182,11 @@ app.use(express.urlencoded({
 app.use(cors({
   origin: corsOrigin,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-Request-ID", "X-Manager-Key", "X-File-Name", "X-Media-Kind"],
+  allowedHeaders: [
+    "Content-Type", "Authorization", "Idempotency-Key", "X-Request-ID", "X-Manager-Key",
+    "X-File-Name", "X-Media-Kind", "X-Document-Type", "X-Supplier-Id", "X-Shipment-Ids",
+    "X-Shipment-Item-Ids", "X-Document-Number", "X-Document-Date", "X-Expected-Revision"
+  ],
   credentials: true
 }));
 app.use((req, res, next) => {
@@ -183,7 +198,8 @@ app.use((req, res, next) => {
     });
   }
   setDocumentResponseHeaders(req, res);
-  res.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+  const cameraPolicy = String(req.path || "").startsWith("/fatura") ? "camera=(self)" : "camera=()";
+  res.set("Permissions-Policy", `${cameraPolicy}, microphone=(), geolocation=(), payment=(), usb=()`);
   next();
 });
 
@@ -1873,11 +1889,23 @@ app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireRe
   }
 });
 
-registerWorkforceRoutes({
+const workforceRuntime = registerWorkforceRoutes({
   app, store, auth, crypto, normalizeStockState,
   requireAdminRequestOrigin, requireAdminOrMainRequestOrigin,
   broadcastStockUpdate,
   notificationService
+});
+
+registerProcurementRoutes({
+  app,
+  store,
+  auth,
+  config,
+  notificationService,
+  documentService: procurementDocumentService,
+  approveWorkforceShipment: workforceRuntime.approveWorkforceShipment,
+  requireRequestOrigin: requireAdminOrMainRequestOrigin,
+  riskOperationLimiter: importOperationLimiter
 });
 
 registerNotificationRoutes({
@@ -2119,6 +2147,12 @@ app.use("/personel", requireMainHost, express.static(personelRoot, {
   index: "index.html"
 }));
 
+app.get(/^\/fatura$/, requireKnownHost, (_req, res) => res.redirect(301, "/fatura/"));
+app.use("/fatura", requireKnownHost, express.static(faturaRoot, {
+  ...staticOptions,
+  index: "index.html"
+}));
+
 app.get("/stok", requireMainHost, (_req, res) => res.redirect(302, "/personel/"));
 app.get("/stok/", requireMainHost, (_req, res) => res.redirect(302, "/personel/"));
 
@@ -2180,9 +2214,14 @@ async function prepareRuntime() {
   await Promise.all([
     store.ensure(),
     fs.mkdir(config.mediaDir, { recursive: true }),
+    procurementDocumentService.init(),
     dataImportRuntime.ready()
   ]);
   await seedStoreIfEmpty(store, projectRoot);
+  const currentStore = await store.read();
+  await procurementDocumentService.cleanupOrphans({
+    documents: currentStore.procurement && currentStore.procurement.documents
+  });
   if (config.notificationWorkersEnabled) {
     notificationDeliveryWorker.start();
     notificationScheduler.start();
@@ -2532,7 +2571,8 @@ function setStaticResponseHeaders(res, filePath) {
   const workerScopes = new Map([
     ["/qr-menu/sw.js", "/"],
     ["/personel/sw.js", "/personel/"],
-    ["/yonetici/sw.js", "/yonetici/"]
+    ["/yonetici/sw.js", "/yonetici/"],
+    ["/fatura/sw.js", "/fatura/"]
   ]);
   if (workerScopes.has(requestPath)) {
     res.setHeader("Service-Worker-Allowed", workerScopes.get(requestPath));
@@ -2555,7 +2595,7 @@ function setDocumentResponseHeaders(req, res) {
 function isSensitiveApiRequest(req) {
   if (!String(req.path || "").startsWith("/api/")) return false;
   if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) return true;
-  return /^\/api\/(?:account(?:\/|$)|admin|notifications(?:\/|$)|workforce|recipe(?:\/|$)|recipes(?:\/|$)|stock(?:\/|$)|media(?:\/|$)|feedback(?:\/|$))/i.test(req.path);
+  return /^\/api\/(?:account(?:\/|$)|admin|notifications(?:\/|$)|workforce|procurement(?:\/|$)|recipe(?:\/|$)|recipes(?:\/|$)|stock(?:\/|$)|media(?:\/|$)|feedback(?:\/|$))/i.test(req.path);
 }
 
 function sanitizeLogLine(value) {

@@ -1,7 +1,7 @@
 /* Tahmisçi Dijital Menü PWA — scope: / */
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "menu",
-  version: "2026.08.21.1",
+  version: "2026.08.22.1",
   scopePath: "/",
   offlineUrl: "/qr-menu/offline.html",
   offlineAssets: [
@@ -20,8 +20,8 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
     "/assets/brand/logo-primary.png"
   ],
   staticPrefixes: ["/qr-menu/", "/shared/", "/assets/"],
-  neverCachePrefixes: ["/api/", "/yonetici/", "/panel/", "/personel/"],
-  excludedNavigationPrefixes: ["/yonetici/", "/panel/", "/personel/", "/api/", "/recipe/"],
-  excludedClientPrefixes: ["/yonetici/", "/panel/", "/personel/", "/recipe/"]
+  neverCachePrefixes: ["/api/", "/yonetici/", "/panel/", "/personel/", "/fatura/"],
+  excludedNavigationPrefixes: ["/yonetici/", "/panel/", "/personel/", "/fatura/", "/api/", "/recipe/"],
+  excludedClientPrefixes: ["/yonetici/", "/panel/", "/personel/", "/fatura/", "/recipe/"]
 });
 importScripts("/shared/scripts/pwa-sw-runtime.js");

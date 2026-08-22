@@ -102,6 +102,38 @@ function registerWorkforceRoutes(deps) {
     }).slice(-WORKFORCE_IDEMPOTENCY_LIMIT);
   }
 
+  function recordProcurementShipmentAudit(data, req, shipment, requestId, stockMovementRef, timestamp) {
+    const actor = req.procurementActor;
+    if (!actor || !actor.id) return 0;
+    const procurement = data.procurement && typeof data.procurement === "object" && !Array.isArray(data.procurement)
+      ? data.procurement
+      : (data.procurement = {});
+    const current = Math.max(0, Math.trunc(Number(procurement.revision || 0)));
+    const expectedRaw = req.body && req.body.procurementExpectedRevision;
+    const expected = Number(expectedRaw);
+    if (!Number.isInteger(expected) || expected < 0) throw fail("Geçerli procurement expectedRevision gerekli.", 400);
+    if (expected !== current) throw fail("Fatura Merkezi verisi başka bir işlemle güncellendi. Yenileyip tekrar deneyin.", 409);
+    const revision = current + 1;
+    procurement.version = Math.max(1, Math.trunc(Number(procurement.version || 0)));
+    procurement.revision = revision;
+    procurement.auditEvents = (Array.isArray(procurement.auditEvents) ? procurement.auditEvents : []).concat({
+      id: createId("procurement-audit"),
+      action: "shipment.stock-approve",
+      entityType: "shipment",
+      entityId: shipment.id,
+      actorType: actor.type === "admin" ? "admin" : "personel",
+      actorId: String(actor.id),
+      actorName: String(actor.name || actor.id),
+      revision,
+      requestId,
+      metadata: { stockMovementRef },
+      createdAt: timestamp
+    }).slice(-5000);
+    data.revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
+    data.revisions.procurement = revision;
+    return revision;
+  }
+
   function touchWorkforceRevision(data) {
     if (!data.revisions || typeof data.revisions !== "object" || Array.isArray(data.revisions)) data.revisions = {};
     data.revisions.workforce = workforceRevision(data) + 1;
@@ -995,11 +1027,7 @@ function registerWorkforceRoutes(deps) {
     }
   );
 
-  app.post(
-    "/api/admin/workforce/shipments/:id/:decision",
-    requireAdminRequestOrigin,
-    auth.requireAdmin,
-    async (req, res, next) => {
+  async function handleShipmentDecision(req, res, next) {
       try {
         const decision = String(req.params.decision || "");
         if (!["approve", "reject"].includes(decision)) {
@@ -1010,6 +1038,9 @@ function registerWorkforceRoutes(deps) {
         let idempotent = false;
         let updatedAt = null;
         const body = req.body || {};
+        const decisionActor = req.procurementActor && req.procurementActor.id
+          ? req.procurementActor
+          : { id: "admin", name: "Yönetici", role: "admin" };
         const requestId = operationRequestId(req);
         const rejectionReason = String(body.rejectionReason || body.reason || body.note || "").trim().slice(0, 250);
         if (decision === "reject" && !rejectionReason) {
@@ -1055,11 +1086,11 @@ function registerWorkforceRoutes(deps) {
           shipment.revision = Math.max(0, Number(shipment.revision || 0)) + 1;
           if (decision === "reject") {
             shipment.status = "reddedildi";
-            shipment.rejectedBy = "admin";
+            shipment.rejectedBy = String(decisionActor.id);
             shipment.rejectedAt = timestamp;
             shipment.rejectionReason = rejectionReason;
             if (!shipment.adminNote) shipment.adminNote = rejectionReason;
-            activity(data, "shipment_rejected", { id: "admin", name: "Yönetici" }, {
+            activity(data, "shipment_rejected", decisionActor, {
               assignmentTitle: shipment.id,
               workforceShipmentId: shipment.id
             });
@@ -1125,17 +1156,17 @@ function registerWorkforceRoutes(deps) {
               previousStock,
               resultingStock,
               personnelId: shipment.userId,
-              approvedBy: "admin",
+              approvedBy: String(decisionActor.id),
               requestId,
               reason: "Onaylı sevkiyat",
               note: shipment.adminNote || `Sevkiyat: ${shipment.id}`,
-              actor: "admin",
+              actor: String(decisionActor.id),
               createdAt: timestamp
             });
           }
           stockState.movements = stockState.movements.slice(0, 1000);
           shipment.status = "onaylandı";
-          shipment.approvedBy = "admin";
+          shipment.approvedBy = String(decisionActor.id);
           shipment.approvedAt = timestamp;
           shipment.stockAppliedAt = timestamp;
           shipment.stockMovementRef = stockMovementRef;
@@ -1147,11 +1178,12 @@ function registerWorkforceRoutes(deps) {
           incrementPublishRevision(data);
           updatedAt = timestamp;
           updatedStockState = stockState;
-          activity(data, "shipment_approved", { id: "admin", name: "Yönetici" }, {
+          activity(data, "shipment_approved", decisionActor, {
             assignmentTitle: shipment.id,
             workforceShipmentId: shipment.id,
             stockMovementRef
           });
+          const procurementRevision = recordProcurementShipmentAudit(data, req, shipment, requestId, stockMovementRef, timestamp);
           queueNotification(data, pendingNotifications, personnelNotification(shipment.userId, {
             category: "shipment",
             eventType: "shipment_approved",
@@ -1173,6 +1205,7 @@ function registerWorkforceRoutes(deps) {
             shipment: publicShipment(shipment, stockState),
             stockState,
             publishRevision: data.revisions && data.revisions.publish || 0,
+            procurementRevision,
             updatedAt
           };
           recordIdempotent(data, "shipment_approve", requestId, shipment.id, revision, { response });
@@ -1200,7 +1233,13 @@ function registerWorkforceRoutes(deps) {
       } catch (error) {
         next(error);
       }
-    }
+  }
+
+  app.post(
+    "/api/admin/workforce/shipments/:id/:decision",
+    requireAdminRequestOrigin,
+    auth.requireAdmin,
+    handleShipmentDecision
   );
 
   app.post(
@@ -1738,6 +1777,61 @@ function registerWorkforceRoutes(deps) {
       }
     }
   );
+
+  async function decideWorkforceShipment(input = {}) {
+    const sourceRequest = input.req && typeof input.req === "object" ? input.req : {};
+    const requestId = String(input.requestId || "").trim();
+    const proxyRequest = Object.create(sourceRequest);
+    proxyRequest.params = {
+      ...(sourceRequest.params || {}),
+      id: String(input.shipmentId || ""),
+      decision: String(input.decision || "approve")
+    };
+    proxyRequest.body = {
+      ...(sourceRequest.body || {}),
+      requestId,
+      expectedRevision: input.expectedRevision,
+      procurementExpectedRevision: input.procurementExpectedRevision,
+      note: String(input.note || ""),
+      rejectionReason: String(input.rejectionReason || "")
+    };
+    proxyRequest.procurementActor = input.actor || null;
+    if (typeof proxyRequest.get !== "function") {
+      proxyRequest.get = (name) => {
+        const key = String(name || "").toLowerCase();
+        if (key === "idempotency-key" || key === "x-request-id") return requestId;
+        return "";
+      };
+    }
+
+    return new Promise((resolve, reject) => {
+      let statusCode = 200;
+      const response = {
+        status(code) {
+          statusCode = Number(code) || 500;
+          return this;
+        },
+        json(payload) {
+          if (statusCode >= 400) {
+            const error = fail(payload && payload.message || "Sevkiyat işlemi tamamlanamadı.", statusCode);
+            error.payload = payload;
+            reject(error);
+          } else {
+            resolve(payload);
+          }
+          return this;
+        }
+      };
+      handleShipmentDecision(proxyRequest, response, reject);
+    });
+  }
+
+  return {
+    approveWorkforceShipment(input = {}) {
+      return decideWorkforceShipment({ ...input, decision: "approve" });
+    },
+    decideWorkforceShipment
+  };
 }
 
 function normalizeTaskItems(items) {

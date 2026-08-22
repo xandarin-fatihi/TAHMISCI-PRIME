@@ -1,0 +1,17 @@
+import { CAPABILITIES, escapeHtml, has, state, trDate } from "./state.js";
+
+export function renderDocuments() {
+  const query = String(state.filters.documents || "").toLocaleLowerCase("tr-TR");
+  const documents = state.documents.filter((doc) => !query || `${doc.originalName} ${doc.documentNumber} ${doc.documentType}`.toLocaleLowerCase("tr-TR").includes(query));
+  return `<div class="section-toolbar"><div class="filters"><input class="toolbar-control" id="document-search" type="search" value="${escapeHtml(state.filters.documents || "")}" placeholder="Belge no, tür veya dosya ara"></div><div class="toolbar-actions">${has(CAPABILITIES.documentsUpload) ? '<button class="ui-button ui-button--primary" data-action="upload-document">Belge yükle</button>' : ""}</div></div><p class="result-meta">${documents.length} özel belge kaydı. Fiziksel dosya yolu hiçbir yanıtta paylaşılmaz.</p>${documents.length ? `<div class="document-grid">${documents.map(documentCard).join("")}</div>` : empty("Belge arşivi boş", "Kamera veya galeriden JPEG, PNG ya da WebP yükleyebilirsiniz.")}`;
+}
+
+export function documentFormBody(defaultShipmentId = "") {
+  return `<div class="form-grid"><label class="span-2">Belge görseli<input name="file" type="file" accept="image/jpeg,image/png,image/webp" required></label><label>Belge türü<select name="documentType" required><option value="fatura">Fatura</option><option value="irsaliye">İrsaliye</option><option value="fiş">Fiş</option><option value="makbuz">Makbuz</option><option value="diğer">Diğer</option></select></label><label>Tedarikçi<select name="supplierId"><option value="">Seçilmedi</option>${state.suppliers.filter((item) => item.active !== false).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}</select></label><label>Belge no<input name="documentNumber" maxlength="120"></label><label>Belge tarihi<input name="documentDate" type="date"></label><label class="span-2">Sevkiyat<select name="shipmentId"><option value="">Bağımsız belge</option>${state.shipments.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === defaultShipmentId ? "selected" : ""}>${escapeHtml(item.supplier && item.supplier.name || item.userName || item.id)} · ${trDate(item.createdAt)}</option>`).join("")}</select></label></div><p class="result-meta" style="margin-top:12px">Kamera veya galeriden seçim yapabilirsiniz. Belge yüklemek stok onayı veya cari kayıt oluşturmaz.</p>`;
+}
+
+function documentCard(doc) {
+  const supplier = state.suppliers.find((item) => item.id === doc.supplierId);
+  return `<article class="document-card"><button class="document-preview" type="button" data-open-document="${escapeHtml(doc.id)}" aria-label="Belgeyi aç"><img src="${escapeHtml(doc.thumbnailUrl)}" alt="${escapeHtml(doc.originalName || doc.documentNumber || "Belge")}" loading="lazy"></button><div class="document-body"><h3>${escapeHtml(doc.documentNumber || doc.originalName || "Belge")}</h3><p>${escapeHtml(doc.documentType)} · ${trDate(doc.documentDate || doc.createdAt)}<br>${escapeHtml(supplier && supplier.name || "Tedarikçi belirtilmedi")}</p><div class="entity-footer"><span class="badge ${doc.archivedAt ? "is-muted" : "is-success"}">${doc.archivedAt ? "Arşivlendi" : "Aktif"}</span><button class="row-button" data-open-document="${escapeHtml(doc.id)}">Görüntüle</button></div></div></article>`;
+}
+function empty(title, copy) { return `<div class="empty-state"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(copy)}</p></div></div>`; }

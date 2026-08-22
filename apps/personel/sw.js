@@ -1,7 +1,7 @@
 /* Tahmisçi Personel PWA — scope: /personel/ */
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "personel",
-  version: "2026.08.16.4",
+  version: "2026.08.22.1",
   scopePath: "/personel/",
   offlineUrl: "/personel/offline.html",
   offlineAssets: [
@@ -58,8 +58,9 @@ self.addEventListener("notificationclick", (event) => {
   const target = safePersonelDeepLink(event.notification.data && event.notification.data.deepLink);
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const targetPrefix = target.startsWith("/fatura") ? "/fatura" : "/personel";
     const existing = windows.find((client) => {
-      try { return new URL(client.url).pathname.startsWith("/personel"); } catch (_error) { return false; }
+      try { return new URL(client.url).pathname.startsWith(targetPrefix); } catch (_error) { return false; }
     });
     if (existing) {
       if ("navigate" in existing) await existing.navigate(target).catch(() => null);
@@ -72,7 +73,8 @@ self.addEventListener("notificationclick", (event) => {
 function safePersonelDeepLink(value) {
   try {
     const url = new URL(String(value || "/personel/"), self.location.origin);
-    if (url.origin !== self.location.origin || !(url.pathname === "/personel" || url.pathname.startsWith("/personel/"))) return "/personel/";
+    const allowed = url.pathname === "/personel" || url.pathname.startsWith("/personel/") || url.pathname === "/fatura" || url.pathname.startsWith("/fatura/");
+    if (url.origin !== self.location.origin || !allowed) return "/personel/";
     return `${url.pathname}${url.search}${url.hash}`;
   } catch (_error) {
     return "/personel/";

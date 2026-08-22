@@ -1260,6 +1260,26 @@
   }
 
   function navigateToNotification(notification) {
+    if (notification.deepLink) {
+      try {
+        const target = new URL(notification.deepLink, window.location.origin);
+        if (target.origin === window.location.origin && (target.pathname === "/fatura" || target.pathname.startsWith("/fatura/"))) {
+          const procurementEvent = String(notification.eventType || notification.type || "").toLowerCase();
+          const procurementView = /accounting|payment/.test(procurementEvent) || notification.category === "accounting"
+            ? "ledger"
+            : /document/.test(procurementEvent) || notification.category === "document" ? "documents" : "shipments";
+          try {
+            window.sessionStorage.setItem("tahmisci:fatura:intent", JSON.stringify({
+              view: procurementView,
+              entityType: notification.entityType || notification.category || "",
+              entityId: notification.entityId || ""
+            }));
+          } catch (_storageError) {}
+          window.location.assign("/fatura/");
+          return;
+        }
+      } catch (_error) {}
+    }
     const destination = resolveDestination(notification);
     const button = document.querySelector(`.personel-nav [data-section="${destination.section}"]`);
     if (!button) {
