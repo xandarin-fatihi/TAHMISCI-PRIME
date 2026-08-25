@@ -6,6 +6,7 @@ const {
   getNotificationPreferences,
   publishNotificationEvent
 } = require("./notification-service");
+const { normalizeStockState } = require("./store/migrations");
 
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_INTERVAL_MS = 60 * 1000;
@@ -242,40 +243,74 @@ function createCriticalStockNotifications(data, now, created) {
     : {};
   const nextStates = {};
   let stateChanged = false;
-  const products = data.stockState && Array.isArray(data.stockState.products) ? data.stockState.products : [];
-  for (const product of products) {
-    if (!product || !product.id || product.active === false) continue;
-    const quantity = finiteNumber(product.stockQuantity ?? product.quantity ?? product.stock);
-    const explicitThreshold = finiteNumber(product.criticalThreshold);
-    const threshold = explicitThreshold > 0 ? explicitThreshold : finiteNumber(product.orderThreshold ?? product.warningThreshold);
-    if (!Number.isFinite(quantity) || !(threshold > 0)) continue;
-    const id = String(product.id);
-    const previous = previousStates[id] && typeof previousStates[id] === "object" ? previousStates[id] : {};
-    const isCritical = quantity <= threshold;
-    const revision = Math.max(0, Number(previous.revision || 0)) + (isCritical && previous.isCritical !== true ? 1 : 0);
-    const same = previous.isCritical === isCritical
-      && Number(previous.revision || 0) === revision
-      && Number(previous.quantity) === quantity
-      && Number(previous.threshold) === threshold;
-    nextStates[id] = same
-      ? previous
-      : { isCritical, revision, quantity, threshold, updatedAt: now.toISOString() };
-    if (!same) stateChanged = true;
-    if (!isCritical || previous.isCritical === true) continue;
-    addNotification(data, created, {
-      recipientRole: "manager",
-      recipientId: "manager",
-      category: "stock",
-      eventType: "stock_critical",
-      title: "Kritik stok uyarısı",
-      body: `${String(product.name || product.productName || "Stok ürünü")} kritik stok seviyesine düştü.`,
-      severity: "critical",
-      entityType: "stock_product",
-      entityId: id,
-      deepLink: `/yonetici/?section=stock&productId=${encodeURIComponent(id)}`,
-      dedupeKey: `stock-critical:${id}:${revision}`,
-      metadata: { productName: String(product.name || product.productName || ""), quantity, threshold, unit: String(product.unit || "") }
-    }, now);
+  // Balanslar lokasyon bazlı otoritedir. Eski toplam stockQuantity yalnızca
+  // uyumluluk projeksiyonu olduğundan kritik durum burada hiç kullanılmaz.
+  const stockState = normalizeStockState(data.stockState);
+  const locations = (stockState.locations || []).filter((location) => location.active !== false);
+  const balancesByKey = new Map((stockState.balances || []).map((balance) => [
+    `${String(balance.locationId)}\u0000${String(balance.productId)}`, balance
+  ]));
+  const general = locations.find((location) => location.code === "GENEL" || location.type === "central") || null;
+
+  for (const location of locations) {
+    for (const product of stockState.products || []) {
+      if (!product || !product.id || product.active === false) continue;
+      const balance = balancesByKey.get(`${location.id}\u0000${product.id}`) || {};
+      const quantity = finiteNumber(balance.quantity);
+      const criticalThreshold = finiteNumber(balance.criticalThreshold);
+      const orderThreshold = finiteNumber(balance.orderThreshold);
+      const generalBalance = general
+        ? balancesByKey.get(`${general.id}\u0000${product.id}`) || {}
+        : {};
+      const generalQuantity = finiteNumber(generalBalance.quantity);
+      let kind = "ok";
+      let threshold = 0;
+      if (criticalThreshold > 0 && quantity <= criticalThreshold) {
+        kind = location.type === "central" ? "procurement" : "critical";
+        threshold = criticalThreshold;
+      } else if (orderThreshold > 0 && quantity <= orderThreshold) {
+        kind = location.type === "cafe" && generalQuantity > 0 ? "transfer" : "procurement";
+        threshold = orderThreshold;
+      }
+
+      const id = `${location.id}:${product.id}`;
+      const previous = previousStates[id] && typeof previousStates[id] === "object" ? previousStates[id] : {};
+      const revision = Math.max(0, Number(previous.revision || 0)) + (kind !== "ok" && previous.kind !== kind ? 1 : 0);
+      const same = previous.kind === kind
+        && Number(previous.revision || 0) === revision
+        && Number(previous.quantity) === quantity
+        && Number(previous.threshold) === threshold
+        && Number(previous.generalQuantity) === generalQuantity;
+      nextStates[id] = same
+        ? previous
+        : { kind, revision, quantity, threshold, generalQuantity, updatedAt: now.toISOString() };
+      if (!same) stateChanged = true;
+      if (kind === "ok" || previous.kind === kind) continue;
+
+      const title = kind === "transfer"
+        ? "Kafe deposu için transfer önerisi"
+        : kind === "procurement" ? "Genel depoda tedarik ihtiyacı" : "Kafe deposunda kritik stok";
+      const body = kind === "transfer"
+        ? `${String(product.name || product.productName || "Stok ürünü")} ${String(location.name || "Kafe Deposu")} için eşik altına düştü; Genel Depoda ${generalQuantity} ${String(product.unit || "adet")} bulunuyor.`
+        : `${String(product.name || product.productName || "Stok ürünü")} ${String(location.name || "Stok noktası")} için ${quantity} ${String(product.unit || "adet")} seviyesine düştü.`;
+      addNotification(data, created, {
+        recipientRole: "manager",
+        recipientId: "manager",
+        category: "stock",
+        eventType: `stock_${kind}`,
+        title,
+        body,
+        severity: kind === "critical" ? "critical" : "warning",
+        entityType: "stock_balance",
+        entityId: id,
+        deepLink: `/yonetici/?section=stock&locationId=${encodeURIComponent(location.id)}&productId=${encodeURIComponent(product.id)}`,
+        dedupeKey: `stock-${kind}:${location.id}:${product.id}:${revision}`,
+        metadata: {
+          productName: String(product.name || product.productName || ""), locationId: location.id,
+          locationName: String(location.name || ""), quantity, threshold, generalQuantity, unit: String(product.unit || "")
+        }
+      }, now);
+    }
   }
   if (Object.keys(previousStates).some((id) => !Object.prototype.hasOwnProperty.call(nextStates, id))) stateChanged = true;
   if (stateChanged) state.criticalStockState = nextStates;

@@ -77,7 +77,7 @@ function createProcurementService(options = {}) {
   async function context(actor) {
     const { data, procurement } = await readSnapshot();
     const stockState = normalizeStockState(data.stockState);
-    const canReadProducts = ["procurement.read", "receipt.create", "supplierProduct.manage"]
+    const canReadProducts = ["procurement.read", "receipt.create", "receipt.approve", "receipt.reject", "supplierProduct.manage"]
       .some((capability) => hasCapability(actor, capability));
     const publicActorValue = publicActor(actor);
     return {
@@ -95,7 +95,11 @@ function createProcurementService(options = {}) {
       },
       stockProducts: (canReadProducts ? stockState.products : [])
         .filter(isActiveStockProduct)
-        .map(publicStockProduct)
+        .map(publicStockProduct),
+      stockLocations: (canReadProducts ? stockState.locations : [])
+        .filter((location) => location && location.active !== false)
+        .sort((first, second) => Number(first.sortOrder || 0) - Number(second.sortOrder || 0))
+        .map(publicStockLocation)
     };
   }
 
@@ -314,6 +318,8 @@ function createProcurementService(options = {}) {
       const supplierId = text(input && input.supplierId, 180);
       const supplier = supplierId ? findSupplier(procurement, supplierId, { active: true }) : null;
       const items = validateShipmentItems(data.stockState, input && input.items, createId);
+      const stockState = normalizeStockState(data.stockState);
+      const destinationLocation = resolveOptionalStockLocation(stockState, input && input.destinationLocationId);
       const evidenceDocumentIds = validateDocumentIds(procurement, input && input.evidenceDocumentIds, actor);
       const timestamp = isoNow(now);
       const shipment = {
@@ -322,6 +328,8 @@ function createProcurementService(options = {}) {
         userName: actor.name,
         supplierId: supplier ? supplier.id : "",
         branchId: actor.branchId || procurement.settings.defaultBranchId || "main",
+        destinationLocationId: destinationLocation ? destinationLocation.id : null,
+        destinationLocationName: destinationLocation ? destinationLocation.name : null,
         items,
         note: text(input && input.note, 1000),
         status: "taslak",
@@ -383,6 +391,14 @@ function createProcurementService(options = {}) {
       if (Object.prototype.hasOwnProperty.call(input || {}, "documentType")) shipment.documentType = normalizeDocumentType(input.documentType, "");
       if (Object.prototype.hasOwnProperty.call(input || {}, "documentNumber")) shipment.documentNumber = text(input.documentNumber, 120);
       if (Object.prototype.hasOwnProperty.call(input || {}, "documentDate")) shipment.documentDate = validateOptionalDate(input.documentDate, "Belge tarihi");
+      if (Object.prototype.hasOwnProperty.call(input || {}, "destinationLocationId")) {
+        if (shipment.stockAppliedAt || shipment.stockMovementRef) {
+          throw fail("Stok etkisi uygulanmış sevkiyatın hedef deposu değiştirilemez.", 409, "SHIPMENT_DESTINATION_LOCKED");
+        }
+        const destinationLocation = resolveOptionalStockLocation(normalizeStockState(data.stockState), input.destinationLocationId);
+        shipment.destinationLocationId = destinationLocation ? destinationLocation.id : null;
+        shipment.destinationLocationName = destinationLocation ? destinationLocation.name : null;
+      }
       shipment.evidenceStatus = (shipment.evidenceDocumentIds || []).length ? "available" : "missing";
       shipment.updatedAt = isoNow(now);
       shipment.revision = positiveRevision(shipment.revision) + 1;
@@ -1485,10 +1501,34 @@ function publicStockProduct(product) {
     name: String(product.name || ""),
     categoryId: String(product.categoryId || ""),
     category: String(product.category || ""),
-    unit: String(product.unit || ""),
+    unit: String(product.unit || product.baseUnit || ""),
+    baseUnit: String(product.baseUnit || product.unit || ""),
+    bulkUnit: String(product.bulkUnit || product.caseUnit || "koli"),
+    unitsPerBulkUnit: Number(product.unitsPerBulkUnit || product.unitsPerCase || 0),
+    allowDecimal: product.allowDecimal === true,
+    defaultMovementUnit: String(product.defaultMovementUnit || product.unit || ""),
     stockQuantity: Number(product.stockQuantity || 0),
     active: isActiveStockProduct(product)
   };
+}
+
+function publicStockLocation(location) {
+  return {
+    id: String(location.id || ""),
+    code: String(location.code || ""),
+    name: String(location.name || ""),
+    type: String(location.type || "other"),
+    isDefault: location.isDefault === true,
+    active: location.active !== false
+  };
+}
+
+function resolveOptionalStockLocation(stockState, value) {
+  const id = text(value, 180);
+  if (!id) return null;
+  const location = (stockState.locations || []).find((item) => String(item.id) === id || String(item.code) === id.toLocaleUpperCase("tr-TR"));
+  if (!location || location.active === false) throw fail("Hedef depo aktif stok lokasyonlarında bulunamadı.", 409, "STOCK_LOCATION_NOT_FOUND");
+  return location;
 }
 
 function safeDocumentMetadata(document) {

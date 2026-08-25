@@ -1233,3 +1233,65 @@ body.is-personel-authenticated {
     transition: none;
   }
 }
+
+/* Depo bazlı personel stok görünümü: yalnız atanmış Kafe Deposu görünür. */
+.personel-dashboard .stock-location-summary {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(0, 1.25fr);
+  gap: 12px;
+  align-items: center;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--panel-card-radius);
+  background: var(--panel-surface);
+}
+
+.stock-location-summary__identity,
+.stock-location-summary__metrics,
+.stock-card-location-meta,
+.stock-transfer-requests__head,
+.stock-transfer-request {
+  min-width: 0;
+}
+
+.stock-location-summary__identity { display: flex; gap: 10px; align-items: center; }
+.stock-location-summary__mark { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border-radius: 12px; background: var(--panel-surface-soft); color: var(--panel-coffee); }
+.stock-location-summary__mark svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+.stock-location-summary__identity small,
+.stock-location-summary__metrics small { display: block; color: var(--panel-muted); font: 600 10px/1.25 var(--panel-font-ui); }
+.stock-location-summary__identity strong { display: block; margin-top: 2px; color: var(--panel-ink); font: 750 14px/1.2 var(--panel-font-ui); }
+.stock-location-summary__identity em { display: inline-block; margin-top: 3px; color: var(--panel-coffee); font: 700 9px/1 var(--panel-font-ui); font-style: normal; letter-spacing: .08em; }
+.stock-location-summary__metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stock-location-summary__metrics > span { min-width: 0; padding: 7px 8px; border-radius: 9px; background: rgba(90, 47, 29, .05); }
+.stock-location-summary__metrics strong { display: block; margin-top: 3px; overflow: hidden; color: var(--panel-ink); font: 750 12px/1.2 var(--panel-font-ui); text-overflow: ellipsis; white-space: nowrap; }
+.stock-location-summary__empty { display: grid; gap: 4px; grid-column: 1 / -1; color: var(--panel-muted); font: 500 12px/1.45 var(--panel-font-ui); }
+.stock-location-summary__empty strong { color: var(--panel-ink); font-weight: 750; }
+
+.personel-dashboard .stock-card-location-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.stock-card-location-meta span { display: grid; min-width: 0; gap: 2px; padding: 7px 8px; border-radius: 9px; background: rgba(90, 47, 29, .05); }
+.stock-card-location-meta small { color: var(--panel-muted); font: 600 9px/1.2 var(--panel-font-ui); }
+.stock-card-location-meta b { overflow: hidden; color: var(--panel-ink); font: 700 11px/1.25 var(--panel-font-ui); text-overflow: ellipsis; white-space: nowrap; }
+
+.personel-dashboard .stock-transfer-requests { display: grid; gap: 8px; margin-top: 14px; padding: 12px; border: 1px solid var(--panel-line); border-radius: var(--panel-card-radius); background: var(--panel-surface); }
+.stock-transfer-requests__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.stock-transfer-requests__head small { display: block; color: var(--panel-muted); font: 600 10px/1.2 var(--panel-font-ui); }
+.stock-transfer-requests__head h2 { margin: 2px 0 0; color: var(--panel-ink); font: 700 16px/1.25 var(--panel-font-display); }
+.stock-transfer-requests__head > span { flex: 0 0 auto; padding: 5px 8px; border-radius: 999px; background: var(--panel-surface-soft); color: var(--panel-coffee); font: 700 10px/1 var(--panel-font-ui); }
+.stock-transfer-requests__list { display: grid; gap: 7px; }
+.stock-transfer-request { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 9px; border: 1px solid rgba(90, 47, 29, .11); border-radius: 10px; background: rgba(255, 250, 243, .75); }
+.stock-transfer-request__status { padding: 5px 7px; border-radius: 999px; background: #fff0cc; color: #81511d; font: 700 9px/1 var(--panel-font-ui); white-space: nowrap; }
+.stock-transfer-request__status.approved { background: #e5efd7; color: #4b642f; }
+.stock-transfer-request__status.rejected { background: #fbe2dd; color: #a8362d; }
+.stock-transfer-request strong { display: block; color: var(--panel-ink); font: 750 12px/1.25 var(--panel-font-ui); }
+.stock-transfer-request small,
+.stock-transfer-request p { display: block; margin: 3px 0 0; color: var(--panel-muted); font: 550 10px/1.35 var(--panel-font-ui); }
+.stock-transfer-request p.is-rejected { color: #a8362d; }
+.stock-transfer-request em { color: var(--panel-coffee); font: 700 10px/1.2 var(--panel-font-ui); font-style: normal; white-space: nowrap; }
+
+@media (max-width: 700px) {
+  .personel-dashboard .stock-location-summary { grid-template-columns: 1fr; padding: 11px; }
+  .stock-location-summary__metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stock-transfer-request { grid-template-columns: auto minmax(0, 1fr); }
+  .stock-transfer-request em { grid-column: 2; }
+}

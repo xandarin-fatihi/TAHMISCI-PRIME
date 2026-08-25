@@ -863,6 +863,22 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
       if (existingInvalid) seen.add(existingInvalid.id);
       continue;
     }
+    const baseUnitRaw = String(cell(source.row, ["temel birim", "stok birimi", "base unit"]) || "").trim().toLocaleLowerCase("tr-TR");
+    const bulkUnit = String(cell(source.row, ["toplu birim", "koli birimi", "satın alma birimi", "bulk unit", "case unit"]) || "").trim().toLocaleLowerCase("tr-TR");
+    const unitsPerBulkRaw = String(cell(source.row, ["koli içi adet", "koli ici adet", "toplu birim miktarı", "toplu birim miktari", "units per case", "units per bulk unit"]) || "").trim();
+    const unitsPerBulkUnit = unitsPerBulkRaw ? numericPrefix(unitsPerBulkRaw) : 0;
+    const allowDecimalRaw = String(cell(source.row, ["ondalıklı miktar", "ondalikli miktar", "ondalıklı", "ondalikli", "allow decimal"]) || "").trim().toLocaleLowerCase("tr-TR");
+    const defaultMovementUnitRaw = String(cell(source.row, ["varsayılan hareket birimi", "varsayilan hareket birimi", "default movement unit"]) || "").trim().toLocaleLowerCase("tr-TR");
+    const sourceWarehouseName = String(cell(source.row, ["depo", "depo adı", "depo adi", "warehouse", "location"]) || "").trim();
+    if (bulkUnit && !(unitsPerBulkUnit > 0)) {
+      addIssue(ctx, "stock", source, "invalid_unit_conversion", "Toplu birim girildiğinde koli içi/temel birim miktarı sıfırdan büyük olmalıdır.");
+      continue;
+    }
+    const requestedBaseUnit = baseUnitRaw || (!bulkUnit ? quantity.unit : "adet");
+    const allowDecimal = allowDecimalRaw
+      ? ["1", "true", "evet", "var", "izin ver"].includes(allowDecimalRaw)
+      : ["kg", "gr", "litre", "ml"].includes(requestedBaseUnit);
+    const requestedDefaultMovementUnit = defaultMovementUnitRaw || (bulkUnit && unitsPerBulkUnit > 0 ? bulkUnit : requestedBaseUnit);
     const thresholdRaw = String(cell(source.row, ["sipariş eşiği", "siparis esigi", "eşik", "esik", "order threshold"]) || "").trim();
     const thresholdUnspecified = !thresholdRaw || /^[-–—]$/.test(thresholdRaw);
     const parsedThreshold = thresholdUnspecified ? null : numericPrefix(thresholdRaw);
@@ -904,26 +920,60 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
       });
     }
     if (product === AMBIGUOUS) continue;
-    const threshold = thresholdUnspecified ? Number(product && product.orderThreshold || 0) : parsedThreshold;
+    // The ordinary stock workbook is a catalog workbook. Its amount and
+    // threshold columns are retained as import metadata/defaults, never as a
+    // command to overwrite daily location balances.
+    const threshold = thresholdUnspecified
+      ? Number(product && (product.catalogOrderThreshold ?? product.orderThreshold) || 0)
+      : parsedThreshold;
     if (!product) {
       product = {
         id: generatedId("stock-product"), categoryId: category.id, category: category.name, productName: name, name,
-        unit: quantity.unit, stockQuantity: quantity.value, stockQuantityText: quantityText, orderThreshold: threshold,
-        orderThresholdText: thresholdRaw, criticalThreshold: 0, active: true, order: state.products.length, updatedAt: ctx.now,
+        unit: requestedBaseUnit,
+        baseUnit: requestedBaseUnit,
+        bulkUnit,
+        unitsPerBulkUnit,
+        allowDecimal,
+        defaultMovementUnit: requestedDefaultMovementUnit,
+        sourceWarehouseName,
+        stockQuantity: 0,
+        stockQuantityText: `0 ${quantity.unit}`,
+        catalogQuantityText: quantityText,
+        catalogOrderThreshold: threshold,
+        catalogOrderThresholdText: thresholdRaw,
+        // Used only when a later explicit opening-balance import creates a
+        // balance. Existing per-location thresholds are never replaced here.
+        orderThreshold: threshold,
+        orderThresholdText: thresholdRaw,
+        criticalThreshold: 0, active: true, order: state.products.length, updatedAt: ctx.now,
         ...(externalId ? { externalId } : {}),
         ...(productCode ? { productCode } : {}),
         ...sourceMetadata("stock", source.sheet, name, ctx.now, ctx.analysisId, "excel_new")
       };
       state.products.push(product); ctx.report.newStockProducts += 1;
-      addChange(ctx, "stock", category.name, name, "ürün", null, `${quantity.value} ${quantity.unit}`, "create", "active", "excel", productCode);
+      addChange(ctx, "stock", category.name, name, "ürün", null, `${name} (${requestedBaseUnit}${bulkUnit ? ` · 1 ${bulkUnit} = ${unitsPerBulkUnit}` : ""})`, "create", "active", "excel", productCode);
     } else {
-      const oldQuantity = Number(product.stockQuantity || 0);
-      const oldThreshold = Number(product.orderThreshold || 0);
+      const oldUnit = String(product.baseUnit || product.unit || "");
+      const oldBulkUnit = String(product.bulkUnit || "");
+      const oldUnitsPerBulkUnit = Number(product.unitsPerBulkUnit || 0);
+      const oldThreshold = Number((product.catalogOrderThreshold ?? product.orderThreshold) || 0);
+      const oldQuantityText = String(product.catalogQuantityText || "");
       const returned = product.sourcePresent === false;
+      const hasQuantityOrHistory = (state.balances || []).some((balance) => String(balance.productId) === String(product.id) && Number(balance.quantity || 0) !== 0)
+        || (state.movements || []).some((movement) => String(movement.productId || movement.stockProductId) === String(product.id));
+      const safeBaseUnit = oldUnit && oldUnit !== requestedBaseUnit && hasQuantityOrHistory ? oldUnit : requestedBaseUnit;
+      if (safeBaseUnit !== requestedBaseUnit) {
+        addIssue(ctx, "stock", source, "base_unit_history_preserved", `“${name}” hareket geçmişine sahip olduğu için temel birimi “${oldUnit}” olarak korundu.`, "warning");
+      }
       Object.assign(product, {
-        categoryId: category.id, category: category.name, productName: name, name, unit: quantity.unit,
-        stockQuantity: quantity.value, stockQuantityText: quantityText, orderThreshold: threshold,
-        orderThresholdText: thresholdRaw, sourcePresent: true, updatedAt: ctx.now,
+        categoryId: category.id, category: category.name, productName: name, name, unit: safeBaseUnit, baseUnit: safeBaseUnit,
+        bulkUnit, unitsPerBulkUnit, allowDecimal,
+        defaultMovementUnit: [safeBaseUnit, bulkUnit].includes(requestedDefaultMovementUnit) ? requestedDefaultMovementUnit : safeBaseUnit,
+        sourceWarehouseName,
+        catalogQuantityText: quantityText,
+        catalogOrderThreshold: threshold,
+        catalogOrderThresholdText: thresholdRaw,
+        sourcePresent: true, updatedAt: ctx.now,
         ...(productCode ? { productCode, externalId: productCode } : {})
       }, sourceMetadata("stock", source.sheet, name, ctx.now, ctx.analysisId, product.statusSource || "excel_existing"));
       if (product.statusSource === "manual") {
@@ -933,13 +983,12 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
         if (!product.active) ctx.report.manualInactivePreserved += 1;
       }
       if (returned && product.statusSource === "excel_removed") { product.active = true; product.statusSource = "excel_returned"; ctx.report.autoReactivated += 1; }
-      if (oldQuantity !== quantity.value) {
+      if (oldUnit !== safeBaseUnit || oldQuantityText !== quantityText || oldBulkUnit !== bulkUnit || oldUnitsPerBulkUnit !== Number(unitsPerBulkUnit || 0)) {
         ctx.report.updatedStockProducts += 1;
-        addChange(ctx, "stock", category.name, name, "stok", oldQuantity, quantity.value, "update", "unchanged", "excel", productCode);
-        state.movements.unshift({ id: generatedId("stock-import"), productId: product.id, productName: name, type: "import", quantity: Math.abs(quantity.value - oldQuantity), unit: quantity.unit, reason: "Excel katalog aktarımı", note: `${oldQuantity} → ${quantity.value}`, actor: "Yönetici", createdAt: ctx.now });
+        addChange(ctx, "stock", category.name, name, "katalog miktarı/birim", `${oldQuantityText || "—"} ${oldUnit}`.trim(), `${quantityText} ${safeBaseUnit}${bulkUnit ? ` · 1 ${bulkUnit} = ${unitsPerBulkUnit} ${safeBaseUnit}` : ""}`.trim(), "update", "balance-preserved", "excel", productCode);
       }
-      if (oldThreshold !== threshold) addChange(ctx, "stock", category.name, name, "sipariş eşiği", oldThreshold, threshold, "update", "unchanged", "excel", productCode);
-      if (oldQuantity === quantity.value && oldThreshold === threshold) ctx.report.unchanged += 1;
+      if (oldThreshold !== threshold) addChange(ctx, "stock", category.name, name, "varsayılan sipariş eşiği", oldThreshold, threshold, "update", "location-thresholds-preserved", "excel", productCode);
+      if (oldUnit === safeBaseUnit && oldQuantityText === quantityText && oldThreshold === threshold && oldBulkUnit === bulkUnit && oldUnitsPerBulkUnit === Number(unitsPerBulkUnit || 0)) ctx.report.unchanged += 1;
       if (returned) ctx.report.rediscovered += 1;
     }
     if (productCode) {
@@ -949,28 +998,10 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
     seen.add(product.id);
     upsertMapping(staged.mappings.stock, "stock-product", product.id, source.sheet, name, ctx.now, ctx.analysisId, productCode);
   }
-  for (const product of state.products) {
-    if (seen.has(product.id) || product.sourceType === "manual") continue;
-    if (product.sourceWorkbook !== "stock" && product.sourceType !== "legacy") continue;
-    const manuallyOwned = product.statusSource === "manual";
-    if (manuallyOwned && product.sourcePresent !== false) product.manualActive = product.active !== false;
-    product.sourcePresent = false; product.active = manuallyOwned ? product.manualActive !== false : false; product.statusSource = manuallyOwned ? "manual" : "excel_removed";
-    product.lastImportedAt = ctx.now; product.lastImportOperationId = ctx.analysisId;
-    ctx.report.removed += 1; ctx.report.archived += 1;
-    addChange(ctx, "stock", product.category, product.productName, "sourcePresent", true, false, "archive", manuallyOwned ? "manager-status-preserved" : "deactivate", manuallyOwned ? "manager" : "excel", product.productCode);
-  }
-  for (const category of state.categories) {
-    if (seenCategories.has(category.id) || category.sourceType === "manual") continue;
-    if (category.sourceWorkbook !== "stock" && category.sourceType !== "legacy") continue;
-    const manuallyOwned = category.statusSource === "manual";
-    if (manuallyOwned && category.sourcePresent !== false) category.manualActive = category.active !== false;
-    category.sourcePresent = false;
-    category.active = manuallyOwned ? category.manualActive !== false : false;
-    category.statusSource = manuallyOwned ? "manual" : "excel_removed";
-    category.lastImportedAt = ctx.now;
-    category.lastImportOperationId = ctx.analysisId;
-  }
-  state.movements = state.movements.slice(0, 1000);
+  // A catalog workbook is not an inventory count. Missing rows must not
+  // deactivate products/categories or alter any depot balance/history.
+  void seen;
+  void seenCategories;
   staged.stockState = normalizeStockState(state);
 }
 

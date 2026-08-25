@@ -970,3 +970,19 @@ Son doğrulama:
 - `npm audit`: bilinen güvenlik açığı bulunmadı.
 
 Bilinen kod engeli yoktur. Gerçek SMTP/VAPID teslimi için production ortamına geçerli secret ve alan adı değerlerinin girilmesi gerekir; yapılandırma yokken uygulama içi bildirim çalışır ve dış kanal ana işlemi başarısız yapmaz.
+
+## Çok Depolu Stok Revizyonu
+
+- Store şeması `18` ile geriye uyumlu biçimde lokasyon, bakiye, hareket, transfer ve idempotency kayıtlarını içerir. İlk migration mevcut `stockQuantity` değerini yalnız `Genel Depo` bakiyesine bir kez taşır; `Kafe Deposu` sıfırdan başlar, ürün toplamı yalnız uyumluluk projeksiyonudur.
+- `apps/api/src/stock-service.js` tek stok otoritesidir: personel kafe bazlı çıkış/sarf, yönetici girişi-çıkışı, depolar arası transfer, onay, ret ve ters kayıt aynı atomik store işlemi ve request ID korumasıyla yürür.
+- Yönetici için lokasyon, envanter, hareket, transfer ve personel-atama API'leri; personel için yalnız atanmış Kafe Deposunun stok ve transfer talebi API'leri eklendi. Personelce gönderilen sevkiyat onaylanana kadar stok etkilemez; onay seçilmiş hedef depoya bir kez `inbound_shipment` hareketi yazar.
+- Normal Stok Excel'i katalog bilgisi taşır; günlük lokasyon bakiyelerini sıfırlamaz, hareket geçmişini değiştirmez ve eksik satır nedeniyle ürünü arşivlemez. Yeni katalog ürünü tüm aktif depolarda sıfır bakiye ile oluşur.
+- Yönetici Stok & Sevkiyat alanında depo seçimi, toplam görünümü, bakiye/eşik, doğrudan transfer, manuel hareket, transfer talebi, ters kayıt ve depo/personel ataması; Personel Stok ekranında yalnız kendi depo bakiyesi, Genel Depo karşılığı ve transfer talebi görünür.
+- Kritik stok, transfer önerisi ve genel depo tedarik ihtiyacı bildirimleri lokasyon bazında ayrıştırıldı. Eski toplam stok uyarısı doğru depo durumunu maskelemez.
+- Manuel hareket, doğrudan/onarım transferi, transfer kararı, ters kayıt ve sevkiyat onayı eşik geçişi bildirimini aynı kalıcı işlemde üretir; yinelenen request ID ikinci revision, hareket veya bildirim oluşturmaz.
+
+Hedefli doğrulama:
+
+- `apps/api/tests/multi-location-stock.test.js`: legacy taşıma, transfer toplam koruması, idempotent tekrar, personel lokasyon yetkisi ve negatif bakiye koruması başarılı.
+- Lokasyonlu bildirim geçişleri, sevkiyat exactly-once akışı ve stok Excel'inin bakiye koruması mevcut regresyon testlerine işlendi; hedefli 62 test başarılıdır.
+- Değiştirilen JS dosyaları `node --check` ile doğrulandı; `npm run check` ve `npm run check:duplicates` başarılıdır. Kritik kontrol listesine yeni stok route/service ve Yönetici stok istemcisi eklendi.

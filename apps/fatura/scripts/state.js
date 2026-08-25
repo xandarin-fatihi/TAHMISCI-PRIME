@@ -71,6 +71,13 @@ export function integerKurus(valueText) {
   return Math.round(amount * 100);
 }
 
+export function comboField({ name, label, items = [], selectedId = "", placeholder = "Arayın…", required = false, className = "" }) {
+  const listId = `combo-${name}-${Math.random().toString(36).slice(2, 9)}`;
+  const normalized = items.map((item) => ({ id: String(item.id || item.value || ""), label: String(item.label || item.name || item.id || "") }));
+  const selected = normalized.find((item) => item.id === String(selectedId || ""));
+  return `<label class="fatura-combobox ${escapeHtml(className)}">${escapeHtml(label)}<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(selected && selected.id || "")}"><input type="search" list="${listId}" data-combo-input="${escapeHtml(name)}" value="${escapeHtml(selected && selected.label || "")}" placeholder="${escapeHtml(placeholder)}" autocomplete="off" ${required ? "required" : ""} role="combobox" aria-autocomplete="list"><datalist id="${listId}">${normalized.map((item) => `<option value="${escapeHtml(item.label)}" data-id="${escapeHtml(item.id)}"></option>`).join("")}</datalist></label>`;
+}
+
 export function icon(name) {
   const paths = {
     dashboard: '<path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/>',

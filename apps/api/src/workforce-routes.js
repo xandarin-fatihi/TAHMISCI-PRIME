@@ -1,6 +1,7 @@
 "use strict";
 
 const { normalizeProductCode } = require("./store/product-code-registry");
+const stockService = require("./stock-service");
 
 const SHIPMENT_UNITS = new Set(["koli", "paket", "adet", "kg", "gr", "litre", "ml", "şişe"]);
 const SHIFT_TYPES = new Set(["morning", "evening", "leave", "custom", "unassigned"]);
@@ -21,6 +22,7 @@ function registerWorkforceRoutes(deps) {
     requireAdminRequestOrigin,
     requireAdminOrMainRequestOrigin,
     broadcastStockUpdate,
+    queueStockThresholdNotifications,
     notificationService,
     notifyProcurementChange
   } = deps;
@@ -192,9 +194,13 @@ function registerWorkforceRoutes(deps) {
   async function updateStore(mutator) {
     let beforeRevision = 0;
     let afterRevision = 0;
-    const saved = await store.update((data) => {
+    const saved = await store.update((data, context) => {
       beforeRevision = workforceRevision(data);
-      const result = mutator(data);
+      const result = mutator(data, context);
+      if (result === context.noChange) {
+        afterRevision = beforeRevision;
+        return context.noChange;
+      }
       const next = result === undefined ? data : result;
       afterRevision = workforceRevision(next);
       return next;
@@ -374,12 +380,25 @@ function registerWorkforceRoutes(deps) {
     const productsByCode = new Map((stockState.products || [])
       .map((product) => [normalizeProductCode(product.productCode), product])
       .filter(([code]) => code));
+    const destinationLocation = (stockState.locations || []).find((location) =>
+      String(location.id) === String(shipment && shipment.destinationLocationId || "")
+    ) || null;
     return {
       ...shipment,
+      destinationLocationId: shipment && shipment.destinationLocationId || null,
+      destinationLocationName: destinationLocation
+        ? destinationLocation.name
+        : shipment && shipment.destinationLocationName || null,
       items: (shipment.items || []).map((line) => {
         const lineCode = normalizeProductCode(line.stockProductCode || line.productCode);
         const product = productsByCode.get(lineCode) || products.get(line.stockProductId || line.productId);
-        const currentStock = Number(product && product.stockQuantity || 0);
+        const locationBalance = destinationLocation && product
+          ? stockService.getProductBalance(stockState, destinationLocation.id, product.id)
+          : null;
+        // Shipments are received into one location. Legacy records without a
+        // selected target retain the total projection until a manager chooses
+        // the target during approval.
+        const currentStock = Number(locationBalance ? locationBalance.quantity : product && product.stockQuantity || 0);
         const baseQuantity = Number(line.baseQuantity ?? line.quantity);
         return {
           ...line,
@@ -387,7 +406,9 @@ function registerWorkforceRoutes(deps) {
           stockProductCode: product && product.productCode || lineCode || "",
           currentStock,
           currentStockUnit: product ? product.unit : line.baseUnit,
-          expectedStock: shipment.stockAppliedAt ? currentStock : currentStock + baseQuantity
+          expectedStock: shipment.stockAppliedAt ? currentStock : currentStock + baseQuantity,
+          destinationLocationId: destinationLocation && destinationLocation.id || shipment && shipment.destinationLocationId || null,
+          destinationLocationName: destinationLocation && destinationLocation.name || shipment && shipment.destinationLocationName || null
         };
       })
     };
@@ -978,15 +999,26 @@ function registerWorkforceRoutes(deps) {
         let response;
         let replayed = false;
         const pendingNotifications = [];
-        await updateStore((data) => {
+        await updateStore((data, context) => {
           const previous = findIdempotent(data, "shipment_create", requestId);
           if (previous) {
             response = replayResponse(previous);
             replayed = true;
-            return data;
+            return context.noChange;
           }
           assertExpectedRevision(data, body);
           const stockState = normalizeStockState(data.stockState);
+          const reporter = currentStaff(req);
+          const assignedLocationId = stockService.actorLocationId(stockState, {
+            type: "personel",
+            id: reporter && reporter.id || req.recipe && req.recipe.userId || "",
+            stockLocationId: reporter && reporter.stockLocationId || ""
+          });
+          const requestedDestinationId = String(body.destinationLocationId || body.destinationLocationCode || "").trim();
+          const destinationLocation = stockService.getLocation(stockState, requestedDestinationId || assignedLocationId);
+          if (destinationLocation.type !== "cafe" || destinationLocation.id !== assignedLocationId) {
+            throw fail("Sevkiyat yalnızca atanmış aktif Kafe Deposuna bildirilebilir.", 403);
+          }
           const products = new Map(stockState.products.map((product) => [product.id, product]));
           const productsByCode = new Map(stockState.products
             .map((product) => [normalizeProductCode(product.productCode), product])
@@ -1012,6 +1044,8 @@ function registerWorkforceRoutes(deps) {
             }
             seenProducts.add(identity);
             const conversion = convertToBaseUnit(quantity, unit, product);
+            const destinationBalance = stockService.getProductBalance(stockState, destinationLocation.id, product.id);
+            const currentStock = roundNumber(Number(destinationBalance.quantity || 0));
             return {
               id: createId("shipment-item"),
               productId: product.id,
@@ -1027,17 +1061,20 @@ function registerWorkforceRoutes(deps) {
               baseUnit: product.unit,
               conversionFactor: conversion.factor,
               packageInfo: conversion.packageInfo || null,
-              currentStockSnapshot: roundNumber(Number(product.stockQuantity || 0)),
-              stockAfterApprovalSnapshot: roundNumber(Number(product.stockQuantity || 0) + conversion.quantity)
+              currentStockSnapshot: currentStock,
+              stockAfterApprovalSnapshot: roundNumber(currentStock + conversion.quantity),
+              destinationLocationId: destinationLocation.id,
+              destinationLocationName: destinationLocation.name
             };
           });
           const timestamp = isoNow();
-          const reporter = currentStaff(req);
           shipment = {
             id: createId("shipment"),
             userId: req.recipe.userId,
             userName: reporter.name || reporter.username,
             branchId: String(reporter.branchId || "main"),
+            destinationLocationId: destinationLocation.id,
+            destinationLocationName: destinationLocation.name,
             items: lines,
             note: String(body.note || "").trim().slice(0, 250),
             status: "onay_bekliyor",
@@ -1113,12 +1150,12 @@ function registerWorkforceRoutes(deps) {
         let response;
         const pendingNotifications = [];
 
-        const saved = await updateStore((data) => {
+        const saved = await updateStore((data, context) => {
           const previous = findIdempotent(data, `shipment_${decision}`, requestId);
           if (previous) {
             idempotent = true;
             response = replayResponse(previous);
-            return data;
+            return context.noChange;
           }
           assertExpectedRevision(data, body);
           shipment = (data.workforceShipments || []).find((item) => item.id === req.params.id);
@@ -1142,7 +1179,7 @@ function registerWorkforceRoutes(deps) {
               publishRevision: data.revisions && data.revisions.publish || 0,
               updatedAt
             };
-            return data;
+            return context.noChange;
           }
           if (shipment.status !== "onay_bekliyor") {
             throw fail("Bu sevkiyat daha önce işleme alınmış.", 409);
@@ -1183,66 +1220,62 @@ function registerWorkforceRoutes(deps) {
           if (shipment.stockAppliedAt || shipment.stockMovementRef) {
             throw fail("Bu sevkiyatın stok etkisi daha önce uygulanmış.", 409);
           }
-          const stockState = normalizeStockState(data.stockState);
-          const products = new Map(stockState.products.map((product) => [product.id, product]));
-          const productsByCode = new Map(stockState.products
-            .map((product) => [normalizeProductCode(product.productCode), product])
-            .filter(([code]) => code));
-          for (const line of shipment.items || []) {
-            const product = productsByCode.get(normalizeProductCode(line.stockProductCode || line.productCode))
-              || products.get(line.stockProductId || line.productId);
-            if (!product || product.active === false || product.sourcePresent === false || product.archivedAt) {
-              throw fail(`Aktif stok ürünü bulunamadı: ${line.name || line.productId}`, 409);
-            }
-            convertToBaseUnit(Number(line.quantity), normalizeUnit(line.unit), product);
-          }
-
+          const previousStockState = normalizeStockState(data.stockState);
+          let stockState = previousStockState;
+          // A destination is deliberately required at the last authoritative
+          // point. Older pending shipments have no target; their approval UI
+          // must choose one instead of silently adding it to the old pool.
+          const destinationId = String(body.destinationLocationId || shipment.destinationLocationId || "").trim();
+          if (!destinationId) throw fail("Sevkiyat onayı için hedef depo seçimi zorunludur.", 400);
+          const destination = stockService.getLocation(stockState, destinationId);
+          shipment.destinationLocationId = destination.id;
+          shipment.destinationLocationName = destination.name;
           const stockMovementRef = createId("shipment-stock-transaction");
-          for (const line of shipment.items || []) {
-            const product = productsByCode.get(normalizeProductCode(line.stockProductCode || line.productCode))
-              || products.get(line.stockProductId || line.productId);
-            const conversion = convertToBaseUnit(Number(line.quantity), normalizeUnit(line.unit), product);
-            const baseQuantity = roundNumber(conversion.quantity);
-            const previousStock = roundNumber(Number(product.stockQuantity || 0));
-            const resultingStock = roundNumber(previousStock + baseQuantity);
-            product.stockQuantity = resultingStock;
-            product.stockQuantityText = `${product.stockQuantity} ${product.unit}`;
-            product.updatedAt = timestamp;
-            stockState.movements.unshift({
-              id: createId("stock-movement"),
-              transactionRef: stockMovementRef,
-              shipmentId: shipment.id,
-              productId: product.id,
-              stockProductId: product.id,
-              productCode: normalizeProductCode(product.productCode),
-              stockProductCode: normalizeProductCode(product.productCode),
-              productName: product.name,
+          const stockMovementRefs = [];
+          const movementActor = {
+            type: "admin",
+            id: String(decisionActor.id || "admin"),
+            name: String(decisionActor.name || decisionActor.username || "Yönetici")
+          };
+          for (let index = 0; index < (shipment.items || []).length; index += 1) {
+            const line = shipment.items[index];
+            const lineRequestId = requestId ? `${requestId}:shipment:${index}` : "";
+            const applied = stockService.applyStockMovement(stockState, {
               type: "inbound_shipment",
-              quantity: baseQuantity,
-              unit: product.unit,
-              baseUnit: product.unit,
-              previousStock,
-              resultingStock,
+              productId: line.stockProductId || line.productId,
+              productCode: line.stockProductCode || line.productCode,
+              quantity: line.quantity,
+              unit: line.unit || line.baseUnit,
+              locationId: destination.id,
+              referenceType: "shipment",
+              referenceId: shipment.id,
+              shipmentId: shipment.id,
+              requestId: lineRequestId,
+              transactionRef: stockMovementRef,
+              approvedBy: movementActor.id,
               personnelId: shipment.userId,
-              approvedBy: String(decisionActor.id),
-              requestId,
-              reason: "Onaylı sevkiyat",
               note: shipment.adminNote || `Sevkiyat: ${shipment.id}`,
-              actor: String(decisionActor.id),
-              createdAt: timestamp
-            });
+              reason: "Onaylı sevkiyat"
+            }, movementActor, { now: timestamp, requestId: lineRequestId });
+            stockState = applied.stockState;
+            if (applied.movement) stockMovementRefs.push(applied.movement.id);
           }
-          stockState.movements = stockState.movements.slice(0, 1000);
           shipment.status = "onaylandı";
           shipment.approvedBy = String(decisionActor.id);
           shipment.approvedAt = timestamp;
           shipment.stockAppliedAt = timestamp;
           shipment.stockMovementRef = stockMovementRef;
-          shipment.stockMovementRefs = stockState.movements
-            .filter((movement) => movement.transactionRef === stockMovementRef)
-            .map((movement) => movement.id);
+          shipment.stockMovementRefs = stockMovementRefs;
           data.stockState = stockState;
+          if (typeof queueStockThresholdNotifications === "function") {
+            queueStockThresholdNotifications(data, pendingNotifications, previousStockState, stockState, {
+              operationId: stockMovementRef,
+              updatedAt: timestamp
+            });
+          }
           data.stockUpdatedAt = timestamp;
+          data.revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
+          data.revisions.stock = Math.max(0, Number(data.revisions.stock || 0)) + 1;
           incrementPublishRevision(data);
           updatedAt = timestamp;
           updatedStockState = stockState;
@@ -1870,7 +1903,8 @@ function registerWorkforceRoutes(deps) {
       expectedRevision: input.expectedRevision,
       procurementExpectedRevision: input.procurementExpectedRevision,
       note: String(input.note || ""),
-      rejectionReason: String(input.rejectionReason || "")
+      rejectionReason: String(input.rejectionReason || ""),
+      destinationLocationId: String(input.destinationLocationId || "")
     };
     proxyRequest.procurementActor = input.actor || null;
     if (typeof proxyRequest.get !== "function") {

@@ -102,8 +102,10 @@ test("dört dosyalı analiz yeni ürünü fiyatı, reçetesi ve stok kataloğuyl
   assert.equal(product.pricing.values.standard.price, 95);
   assert.equal(analysis.plan.recipeState.Sıcaklar["Yeni Kahve"].Standart.content, "Espresso, süt");
   assert.equal(Object.keys(analysis.plan.recipeState.Sıcaklar["Yeni Kahve"]).length, 1, "Tümü sayfası ikinci reçete oluşturmamalı");
-  assert.equal(analysis.plan.stockState.products.find((item) => item.productName === "Süt").stockQuantity, 10);
-  assert.equal(analysis.plan.stockState.products.find((item) => item.productName === "Süt").unit, "koli");
+  const stockProduct = analysis.plan.stockState.products.find((item) => item.productName === "Süt");
+  assert.equal(stockProduct.stockQuantity, 0, "stok Excel'i gerçek depo bakiyesini doğrudan değiştirmemeli");
+  assert.equal(stockProduct.catalogQuantityText, "10 koli");
+  assert.equal(stockProduct.unit, "koli");
   assert.equal(analysis.plan.stockState.products.some((item) => item.productName === "Karma Paket"), false);
   assert.ok(analysis.issues.some((issue) => issue.code === "manual_unit_review" && issue.severity === "warning"));
   assert.ok(analysis.issues.some((issue) => issue.code === "ignored_non_catalog_sheet" && issue.severity === "warning"));

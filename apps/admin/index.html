@@ -21,6 +21,7 @@
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
   <script src="/shared/scripts/menu-design-schema.js?v=20260802-prephase4-design-chain"></script>
   <script src="scripts/app.js?v=20260822-fatura-center" defer></script>
+  <script src="scripts/stock-locations.js?v=20260825-multi-location-stock" defer></script>
   <script src="scripts/live-preview.js?v=20260802-preview-settings" defer></script>
   <script src="/shared/scripts/account-security.js?v=20260816-account-security" defer></script>
   <script src="/shared/scripts/pwa-client.js?v=20260816-install-prompt" defer></script>
@@ -376,13 +377,110 @@
       <section class="section-panel stock-admin-panel" id="stockCard" data-section-panel="stock" aria-labelledby="stockPageTitle">
         <div class="staff-page-head stock-page-head">
           <div>
-            <p class="eyebrow">Stok &amp; Sevkiyat Yönetimi</p>
-            <h3 id="stockPageTitle">Stok &amp; Sevkiyat</h3>
-            <p>Stok kayıtlarını yönetin ve personelden gelen sevkiyatları inceleyin.</p>
+            <p class="eyebrow">Stok &amp; Sevkiyat</p>
+            <h3 id="stockPageTitle">Stok Yönetimi</h3>
+            <p>Depo bakiyelerini, sayımları, hareketleri ve sevkiyatları tek merkezden yönetin.</p>
+          </div>
+          <div class="stock-page-actions">
+            <button class="ui-button ui-button--secondary" id="stockLocationNewProductButton" type="button">+ Yeni Ürün</button>
+            <button class="ui-button ui-button--primary" id="stockCountStartButton" type="button">Sayım Başlat</button>
           </div>
         </div>
 
         <div class="stock-domain-stack stock-main-col">
+        <section class="stock-location-workspace" id="stockLocationWorkspace" aria-label="Depo bazlı stok yönetimi" aria-busy="true">
+          <div class="stock-location-workspace__head">
+            <div>
+              <p class="eyebrow">Depo Bazlı Stok</p>
+              <h4 id="stockActiveLocationTitle">Kafe Deposu</h4>
+              <p id="stockLocationFreshness">Veri güncelliği denetleniyor…</p>
+            </div>
+            <button class="ui-button ui-button--secondary ui-button--sm" id="stockLocationRefreshButton" type="button">Yenile</button>
+          </div>
+          <div class="stock-location-selector" id="stockLocationSelector" role="tablist" aria-label="Stok lokasyonu seçimi">
+            <span class="stock-location-loading">Depolar yükleniyor...</span>
+          </div>
+          <div class="stock-location-message" id="stockLocationMessage" role="status" aria-live="polite" hidden></div>
+          <div class="stock-location-summary" id="stockLocationSummary" aria-live="polite"></div>
+          <div class="stock-location-grid">
+            <section class="panel-card stock-location-inventory-card">
+              <div class="stock-section-heading">
+                <div><p class="eyebrow">Seçili Lokasyon</p><h4>Depo Envanteri</h4><p id="stockLocationInventoryMeta">Depo seçildiğinde güncel bakiyeler görünür.</p></div>
+              </div>
+              <div class="stock-location-toolbar">
+                <label><span>Ürün ara</span><input id="stockLocationSearch" type="search" placeholder="Ürün ara... (ör. espresso, süt, çikolata)"></label>
+                <label><span>Durum</span><select id="stockLocationStatusFilter"><option value="all">Tüm durumlar</option><option value="critical">Kritik</option><option value="transfer">Transfer öneriliyor</option><option value="sufficient">Yeterli</option></select></label>
+                <div class="stock-location-view-switch" role="group" aria-label="Stok görünümü"><button class="is-active" type="button" data-stock-view="grid" aria-pressed="true" title="Kart görünümü">▦</button><button type="button" data-stock-view="list" aria-pressed="false" title="Liste görünümü">☷</button></div>
+              </div>
+              <div class="stock-location-category-filter" id="stockLocationCategoryFilter" aria-label="Kategori filtresi"></div>
+              <div class="stock-location-inventory" id="stockLocationInventory" aria-live="polite"></div>
+            </section>
+            <aside class="stock-location-side">
+              <section class="panel-card stock-transfer-card">
+                <div class="stock-section-heading"><div><p class="eyebrow">Atomik İşlem</p><h4>Depolar Arası Aktar</h4><p>Kaynak ve hedef bakiye aynı işlemde güncellenir.</p></div></div>
+                <form id="stockTransferForm" class="stock-location-form" novalidate>
+                  <label><span>Kaynak depo</span><select id="stockTransferFrom" required></select></label>
+                  <label><span>Hedef depo</span><select id="stockTransferTo" required></select></label>
+                  <label><span>Ürün</span><select id="stockTransferProduct" required></select></label>
+                  <div class="stock-location-form__row">
+                    <label><span>Miktar</span><input id="stockTransferQuantity" type="number" min="0.01" step="0.01" inputmode="decimal" required></label>
+                    <label><span>Birim</span><select id="stockTransferUnit" required></select></label>
+                  </div>
+                  <label><span>Not</span><textarea id="stockTransferNote" rows="2" maxlength="250" placeholder="İsteğe bağlı açıklama"></textarea></label>
+                  <div class="stock-transfer-preview" id="stockTransferPreview">Ürün ve miktar seçildiğinde önizleme görünür.</div>
+                  <button class="ui-button ui-button--primary ui-button--block" id="stockTransferSubmit" type="submit" data-operation-class="immediate-operation">Onayla ve Aktar</button>
+                </form>
+              </section>
+            </aside>
+          </div>
+          <section class="stock-location-operation-dock" id="stockLocationOperationDock" hidden aria-label="Stok hareketi">
+            <form id="stockLocationMovementForm" novalidate>
+              <div class="stock-operation-product"><span class="eyebrow" id="stockLocationMovementModeLabel">Stok Hareketi</span><strong id="stockLocationMovementProductName">Ürün seçin</strong><small id="stockLocationMovementCurrent">Mevcut miktar: —</small><select id="stockLocationMovementProduct" required hidden></select><select id="stockLocationMovementType" hidden><option value="manual_in">Stok girişi</option><option value="manual_out">Stok çıkışı</option><option value="waste">Fire / sarf</option></select></div>
+              <label><span>Miktar</span><div class="stock-operation-stepper"><button type="button" data-stock-quantity-step="-1" aria-label="Miktarı azalt">−</button><input id="stockLocationMovementQuantity" type="number" min="0.01" step="1" inputmode="decimal" required><button type="button" data-stock-quantity-step="1" aria-label="Miktarı artır">+</button></div></label>
+              <label><span>Birim</span><select id="stockLocationMovementUnit" required></select></label>
+              <label class="stock-operation-note"><span>Not</span><input id="stockLocationMovementNote" type="text" maxlength="250" placeholder="İsteğe bağlı"></label>
+              <div class="stock-operation-preview"><span>İşlem sonrası stok</span><strong id="stockLocationMovementPreview">—</strong></div>
+              <button class="ui-button ui-button--primary" id="stockLocationMovementSubmit" type="submit" data-operation-class="immediate-operation">İşlemi Kaydet</button>
+              <button class="ui-button ui-button--icon ui-button--secondary" id="stockLocationMovementClose" type="button" aria-label="İşlem panelini kapat">×</button>
+            </form>
+          </section>
+          <div class="stock-location-grid stock-location-grid--lower">
+            <section class="panel-card stock-transfer-requests-card">
+              <div class="stock-section-heading"><div><p class="eyebrow">Personel Talepleri</p><h4>Bekleyen Transfer Talepleri</h4><p>Onay anındaki bakiye tekrar doğrulanır.</p></div><span class="stock-location-count" id="stockTransferPendingCount">0</span></div>
+              <div id="stockTransferRequests" class="stock-transfer-requests"></div>
+            </section>
+            <section class="panel-card stock-location-history-card">
+              <div class="stock-section-heading"><div><p class="eyebrow">Denetim Kaydı</p><h4>Hareket Geçmişi</h4><p>Her bakiye değişimi kaynak ve referansıyla saklanır.</p></div></div>
+              <div class="stock-location-history-filters">
+                <label><span>Tür</span><select id="stockMovementTypeFilter"><option value="all">Tüm hareketler</option><option value="transfer">Transfer</option><option value="manual_in">Stok girişi</option><option value="manual_out">Stok çıkışı</option><option value="waste">Fire / sarf</option><option value="inbound_shipment">Sevkiyat girişi</option><option value="adjustment">Düzeltme</option></select></label>
+                <label><span>Ürün</span><select id="stockMovementProductFilter"><option value="all">Tüm ürünler</option></select></label>
+              </div>
+              <div id="stockLocationMovementHistory" class="stock-location-history"></div>
+            </section>
+          </div>
+          <details class="stock-location-management" id="stockLocationManagement">
+            <summary><span class="stock-step">Y</span><span><strong>Depo Yönetimi</strong><small>Lokasyon ekleyin, düzenleyin, atama ve varsayılan tercihlerini yönetin.</small></span><i aria-hidden="true"></i></summary>
+            <div class="stock-location-management__body">
+              <form id="stockLocationCreateForm" class="stock-location-create-form" novalidate>
+                <label><span>Depo adı</span><input id="stockLocationName" type="text" maxlength="80" required></label>
+                <label><span>Kod</span><input id="stockLocationCode" type="text" maxlength="30" required></label>
+                <label><span>Tür</span><select id="stockLocationType"><option value="cafe">Kafe</option><option value="central">Genel depo</option><option value="other">Diğer</option></select></label>
+                <label><span>Açıklama</span><input id="stockLocationDescription" type="text" maxlength="500"></label>
+                <label class="stock-location-toggle"><input id="stockLocationDefault" type="checkbox"><span>Varsayılan depo yap</span></label>
+                <button class="ui-button ui-button--secondary" type="submit" data-operation-class="immediate-operation">Depo Ekle</button>
+              </form>
+              <div id="stockLocationManagementList" class="stock-location-management-list"></div>
+            </div>
+          </details>
+          <dialog class="stock-count-dialog" id="stockCountDialog" aria-labelledby="stockCountDialogTitle">
+            <form method="dialog" class="stock-count-dialog__shell" id="stockCountForm">
+              <header><div><p class="eyebrow">Fiziksel Sayım</p><h4 id="stockCountDialogTitle">Depo Sayımı</h4><span id="stockCountDialogMeta"></span></div><button class="ui-button ui-button--icon ui-button--secondary" value="cancel" type="submit" aria-label="Sayımı kapat">×</button></header>
+              <div class="stock-count-dialog__message" id="stockCountMessage" role="status" aria-live="polite"></div>
+              <div class="stock-count-items" id="stockCountItems"></div>
+              <footer><button class="ui-button ui-button--secondary" id="stockCountCancelButton" type="button">Sayımı İptal Et</button><button class="ui-button ui-button--secondary" id="stockCountSaveButton" type="button">Taslağı Kaydet</button><button class="ui-button ui-button--primary" id="stockCountApproveButton" type="button">Onayla ve Farkları Uygula</button></footer>
+            </form>
+          </dialog>
+        </section>
         <details class="stock-accordion stock-domain-accordion" id="stockManagementAccordion" open>
           <summary>
             <span class="stock-step">1</span>

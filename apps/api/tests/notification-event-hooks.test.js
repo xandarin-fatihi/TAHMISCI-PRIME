@@ -6,6 +6,8 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
+const { normalizeStockState } = require("../src/store/migrations");
+
 const runRoot = path.join(os.tmpdir(), `tahmisci-notification-hooks-${process.pid}-${Date.now()}`);
 process.env.NODE_ENV = "test";
 process.env.DATA_FILE = path.join(runRoot, "store.json");
@@ -125,30 +127,26 @@ test("pasif eğitim modülünün reçete atama, kaldırma, tamamlama ve tekrar o
 test("stok yalnız eşik durum geçişinde yönetici bildirimi üretir ve aynı durumu çoğaltmaz", async () => {
   const adminToken = await loginAdmin();
   await store.update((data) => {
-    data.stockState = stockState(10);
-    data.notifications = (data.notifications || []).filter((item) => item.entityId !== "notification-stock-product");
+    data.stockState = cafeStockState(10);
+    data.notifications = (data.notifications || []).filter((item) => item.entityId !== "stock-location-cafe:notification-stock-product");
     return data;
   });
 
-  assert.equal((await saveStock(adminToken, 4)).response.status, 200);
-  assert.equal((await saveStock(adminToken, 4)).response.status, 200);
+  assert.equal((await stockMovement(adminToken, "stock_out", 6, "stock-critical-transition-0001")).response.status, 201);
+  assert.equal((await stockMovement(adminToken, "stock_out", 6, "stock-critical-transition-0001")).response.status, 200);
   let snapshot = await store.read();
-  assert.equal(countNotifications(snapshot, "stock_critical", "notification-stock-product"), 1);
+  assert.equal(countNotifications(snapshot, "stock_critical", "stock-location-cafe:notification-stock-product"), 1);
 
-  assert.equal((await saveStock(adminToken, 8)).response.status, 200);
-  assert.equal((await saveStock(adminToken, 8)).response.status, 200);
+  assert.equal((await stockMovement(adminToken, "stock_in", 4, "stock-recovered-transition-0001")).response.status, 201);
+  assert.equal((await stockMovement(adminToken, "stock_in", 4, "stock-recovered-transition-0001")).response.status, 200);
   snapshot = await store.read();
-  assert.equal(countNotifications(snapshot, "stock_recovered", "notification-stock-product"), 1);
+  assert.equal(countNotifications(snapshot, "stock_recovered", "stock-location-cafe:notification-stock-product"), 1);
 
-  const movement = await json("/api/stock/movements", {
-    method: "POST",
-    headers: adminHeaders(adminToken),
-    body: JSON.stringify({ productId: "notification-stock-product", type: "stock_out", quantity: 4, reason: "Eşik testi" })
-  });
+  const movement = await stockMovement(adminToken, "stock_out", 4, "stock-critical-transition-0002");
   assert.equal(movement.response.status, 201);
   snapshot = await store.read();
-  assert.equal(countNotifications(snapshot, "stock_critical", "notification-stock-product"), 2, "güvenli seviyeden sonraki yeni kritik geçiş bildirilmelidir");
-  assert.ok(snapshot.notifications.filter((item) => item.entityId === "notification-stock-product").every((item) => item.recipientRole === "manager"));
+  assert.equal(countNotifications(snapshot, "stock_critical", "stock-location-cafe:notification-stock-product"), 2, "güvenli seviyeden sonraki yeni kritik geçiş bildirilmelidir");
+  assert.ok(snapshot.notifications.filter((item) => item.entityId === "stock-location-cafe:notification-stock-product").every((item) => item.recipientRole === "manager"));
 });
 
 test("personel pasifleştirme ve kalıcı silme push abonelikleriyle bekleyen teslimleri durdurur", async () => {
@@ -241,7 +239,10 @@ test("sevkiyat bildirimleri ve stok etkisi create, approve ve reject tekrarları
   const adminToken = await loginAdmin();
   const user = await createPersonnel(adminToken, `sevkiyat-${suffix}`);
   const personnelCookie = await loginPersonnel(user.username, "Personel123456");
-  assert.equal((await saveStock(adminToken, 10)).response.status, 200);
+  await store.update((data) => {
+    data.stockState = normalizeStockState(stockState(10));
+    return data;
+  });
 
   const createKey = `notify-shipment-create-${suffix}`;
   const createBody = {
@@ -439,11 +440,31 @@ function stockState(quantity) {
   };
 }
 
-function saveStock(adminToken, quantity) {
-  return json("/api/admin/stock", {
-    method: "PUT",
-    headers: adminHeaders(adminToken),
-    body: JSON.stringify({ stockState: stockState(quantity) })
+function cafeStockState(quantity) {
+  const state = normalizeStockState(stockState(0));
+  const balance = state.balances.find((item) => (
+    item.locationId === "stock-location-cafe" && item.productId === "notification-stock-product"
+  ));
+  assert.ok(balance, "Kafe Deposu bakiyesi oluşturulmuş olmalı");
+  balance.quantity = quantity;
+  balance.orderThreshold = 7;
+  balance.criticalThreshold = 5;
+  return normalizeStockState(state);
+}
+
+function stockMovement(adminToken, type, quantity, requestId) {
+  return json("/api/admin/stock/movements", {
+    method: "POST",
+    headers: { ...adminHeaders(adminToken), "Idempotency-Key": requestId },
+    body: JSON.stringify({
+      productId: "notification-stock-product",
+      locationId: "stock-location-cafe",
+      type,
+      quantity,
+      unit: "şişe",
+      reason: "Eşik testi",
+      requestId
+    })
   });
 }
 

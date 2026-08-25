@@ -5,7 +5,7 @@ const http = require("node:http");
 const test = require("node:test");
 const express = require("express");
 
-const { migrateStore, STORE_SCHEMA_VERSION } = require("../src/store/migrations");
+const { migrateStore, normalizeStockState, STORE_SCHEMA_VERSION } = require("../src/store/migrations");
 const {
   createNotificationInStore,
   createNotificationsInStore,
@@ -328,7 +328,10 @@ test("kritik stok yalnız eşik geçişinde bildirilir ve güvenli seviyeden son
   await setStockQuantity(store, 3);
   assert.equal((await scheduler.tick("2026-08-09T10:04:00Z")).created, 1);
   const notifications = (await store.read()).notifications;
-  assert.deepEqual(notifications.map((item) => item.dedupeKey), ["stock-critical:stock-1:1", "stock-critical:stock-1:2"]);
+  assert.deepEqual(notifications.map((item) => item.dedupeKey), [
+    "stock-procurement:stock-location-general:stock-1:1",
+    "stock-procurement:stock-location-general:stock-1:2"
+  ]);
   assert.equal(notifications.every((item) => item.recipientRole === "manager"), true);
 });
 
@@ -951,7 +954,15 @@ function memoryStore(initial) {
 
 async function setStockQuantity(store, quantity) {
   await store.update((data) => {
-    data.stockState.products[0].stockQuantity = quantity;
+    // Ürün toplamı yalnızca geriye uyumluluk projeksiyonudur. Scheduler'ın
+    // otoriter kaynağı olan Genel Depo bakiyesini değiştiriyoruz.
+    const stockState = normalizeStockState(data.stockState);
+    const balance = stockState.balances.find((item) => (
+      item.locationId === "stock-location-general" && item.productId === "stock-1"
+    ));
+    assert.ok(balance, "Genel Depo bakiyesi oluşturulmuş olmalı");
+    balance.quantity = quantity;
+    data.stockState = normalizeStockState(stockState);
     return data;
   });
 }

@@ -13,7 +13,7 @@ const {
   registryCodeForEntity
 } = require("./product-code-registry");
 
-const STORE_SCHEMA_VERSION = 17;
+const STORE_SCHEMA_VERSION = 19;
 const PROCUREMENT_SCHEMA_VERSION = 1;
 const FATURA_ROLES = new Set(["operasyon", "mal_kabul", "muhasebe", "satın_alma", "yönetici", "özel"]);
 const FATURA_CAPABILITIES = new Set([
@@ -878,7 +878,10 @@ function normalizeRecipeUsers(value) {
         ? String(item.faturaRole)
         : "operasyon",
       faturaTemplate: procurementText(item.faturaTemplate, 40) || "ozel",
-      faturaCapabilities: accessEnabled ? capabilities : []
+      faturaCapabilities: accessEnabled ? capabilities : [],
+      // Stok lokasyonu yalnızca sunucu tarafındaki oturumdan çözülür. Eski
+      // personel kayıtları güvenli başlangıç olarak Kafe Deposuna bağlanır.
+      stockLocationId: String(item.stockLocationId || item.locationId || "stock-location-cafe").trim() || "stock-location-cafe"
     };
   }).filter(Boolean);
 }
@@ -998,18 +1001,252 @@ function normalizeStockState(stockState) {
   const products = Array.isArray(source.products)
     ? source.products.map((product, index) => normalizeStockProduct(product, index, categoryNames)).filter(Boolean)
     : defaultStockState().products;
+  const locations = normalizeStockLocations(source.locations);
+  const generalLocation = locations.find((location) => location.code === "GENEL") || locations[0];
+  const cafeLocation = locations.find((location) => location.code === "CAFE" || location.type === "cafe") || locations[0];
+  const legacyMigrationRequired = !Array.isArray(source.balances) || Number(source.locationMigrationVersion || 0) < 1;
+  const balances = normalizeStockBalances(source.balances, products, locations, legacyMigrationRequired, cafeLocation && cafeLocation.id);
   const productsById = new Map(products.map((product) => [String(product.id), product]));
-  const movements = normalizeArray(source.movements).map((movement) => normalizeStockMovement(movement, productsById)).filter(Boolean).slice(0, 1000);
-  return {
+  const movements = normalizeArray(source.movements)
+    .map((movement) => normalizeStockMovement(movement, productsById, cafeLocation && cafeLocation.id))
+    .filter(Boolean).slice(0, 5000);
+  const next = {
     ...source,
-    schemaVersion: 1,
+    schemaVersion: 3,
+    locationMigrationVersion: 1,
+    unitMetadataMigrationVersion: 1,
     categories,
     products,
+    locations,
+    balances,
     movements,
+    transfers: normalizeStockTransfers(source.transfers, productsById, locations),
+    counts: normalizeStockCounts(source.counts || source.stockCounts, productsById, locations),
+    operationKeys: normalizeStockOperationKeys(source.operationKeys),
     notificationSettings: source.notificationSettings && typeof source.notificationSettings === "object" && !Array.isArray(source.notificationSettings)
       ? source.notificationSettings
       : {}
   };
+  // `stockQuantity` remains a calculated legacy projection so current public
+  // API consumers keep working, but every persistent balance is location-bound.
+  const totals = new Map();
+  balances.forEach((balance) => totals.set(String(balance.productId), (totals.get(String(balance.productId)) || 0) + Number(balance.quantity || 0)));
+  next.products = next.products.map((product) => {
+    const stockQuantity = Math.max(0, finiteNumber(totals.get(String(product.id)), 0));
+    return {
+      ...product,
+      stockQuantity,
+      stockQuantityText: `${stockQuantity} ${product.unit || "adet"}`
+    };
+  });
+  return next;
+}
+
+function normalizeStockLocations(value) {
+  const required = [
+    { id: "stock-location-cafe", code: "CAFE", name: "Kafe Deposu", type: "cafe", active: true, sortOrder: 10, isDefault: false },
+    { id: "stock-location-general", code: "GENEL", name: "Genel Depo", type: "central", active: true, sortOrder: 20, isDefault: true }
+  ];
+  const source = normalizeArray(value);
+  const seenIds = new Set();
+  const seenCodes = new Set();
+  const result = [];
+  for (const item of source) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const code = String(item.code || "").trim().toLocaleUpperCase("tr-TR").replace(/[^A-Z0-9_-]/g, "").slice(0, 48);
+    const id = String(item.id || "").trim().slice(0, 180);
+    if (!id || !code || seenIds.has(id) || seenCodes.has(code)) continue;
+    seenIds.add(id);
+    seenCodes.add(code);
+    result.push({
+      ...item,
+      id,
+      code,
+      name: String(item.name || code).trim().slice(0, 120) || code,
+      description: String(item.description || "").trim().slice(0, 500),
+      type: ["cafe", "central", "other"].includes(item.type) ? item.type : "other",
+      active: item.active !== false,
+      sortOrder: Math.max(0, Math.trunc(finiteNumber(item.sortOrder, result.length * 10))),
+      isDefault: item.isDefault === true,
+      assignedPersonnelIds: normalizeArray(item.assignedPersonnelIds).map((idValue) => String(idValue || "").trim()).filter(Boolean).slice(0, 1000),
+      createdAt: item.createdAt || null,
+      updatedAt: item.updatedAt || null,
+      deactivatedAt: item.active === false ? item.deactivatedAt || item.updatedAt || null : null
+    });
+  }
+  for (const location of required) {
+    const existing = result.find((item) => item.code === location.code || item.id === location.id);
+    if (existing) {
+      if (!existing.id) existing.id = location.id;
+      if (location.code === "GENEL" && !result.some((item) => item.isDefault)) existing.isDefault = true;
+      continue;
+    }
+    result.push({ ...location, description: "", assignedPersonnelIds: [], createdAt: null, updatedAt: null, deactivatedAt: null });
+  }
+  if (!result.some((item) => item.isDefault)) {
+    const general = result.find((item) => item.code === "GENEL");
+    if (general) general.isDefault = true;
+  }
+  const defaultLocation = result.find((item) => item.isDefault)
+    || result.find((item) => item.code === "GENEL")
+    || result[0];
+  for (const location of result) location.isDefault = Boolean(defaultLocation && location.id === defaultLocation.id);
+  return result.sort((first, second) => Number(first.sortOrder || 0) - Number(second.sortOrder || 0) || String(first.name).localeCompare(String(second.name), "tr"));
+}
+
+function normalizeStockBalances(value, products, locations, legacyMigrationRequired, legacyLocationId) {
+  const validProducts = new Set(products.map((product) => String(product.id)));
+  const validLocations = new Set(locations.map((location) => String(location.id)));
+  const seen = new Set();
+  const balances = [];
+  if (!legacyMigrationRequired) {
+    for (const item of normalizeArray(value)) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const locationId = String(item.locationId || "").trim();
+      const productId = String(item.productId || item.stockProductId || "").trim();
+      const key = `${locationId}\u0000${productId}`;
+      if (!validLocations.has(locationId) || !validProducts.has(productId) || seen.has(key)) continue;
+      seen.add(key);
+      balances.push({
+        ...item,
+        id: String(item.id || stableStockId("stock-balance", key)),
+        locationId,
+        productId,
+        quantity: Math.max(0, finiteNumber(item.quantity ?? item.stockQuantity, 0)),
+        criticalThreshold: Math.max(0, finiteNumber(item.criticalThreshold, 0)),
+        orderThreshold: Math.max(0, finiteNumber(item.orderThreshold ?? item.warningThreshold, 0)),
+        targetLevel: Math.max(0, finiteNumber(item.targetLevel, 0)),
+        updatedAt: item.updatedAt || null
+      });
+    }
+  }
+  for (const product of products) {
+    for (const location of locations) {
+      const key = `${location.id}\u0000${product.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const quantity = legacyMigrationRequired && location.id === legacyLocationId
+        ? Math.max(0, finiteNumber(product.stockQuantity ?? product.quantity ?? product.stock, 0))
+        : 0;
+      // İlk lokasyon migration'ında eski tekil stok Kafe Deposuna bağlanır.
+      // Daha önce lokasyon migration'ı tamamlanmış store'lar bu kola girmez;
+      // dolayısıyla mevcut Genel/Kafe dağılımı yeniden taşınmaz.
+      const inheritLegacyThresholds = location.id === legacyLocationId;
+      balances.push({
+        id: stableStockId("stock-balance", key),
+        locationId: location.id,
+        productId: product.id,
+        quantity,
+        criticalThreshold: inheritLegacyThresholds ? Math.max(0, finiteNumber(product.criticalThreshold, 0)) : 0,
+        orderThreshold: inheritLegacyThresholds ? Math.max(0, finiteNumber(product.orderThreshold ?? product.warningThreshold, 0)) : 0,
+        targetLevel: inheritLegacyThresholds ? Math.max(0, finiteNumber(product.targetLevel, 0)) : 0,
+        updatedAt: product.updatedAt || null
+      });
+    }
+  }
+  return balances;
+}
+
+function normalizeStockTransfers(value, productsById, locations) {
+  const locationIds = new Set(locations.map((location) => String(location.id)));
+  const seen = new Set();
+  return normalizeArray(value).map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const id = String(item.id || "").trim();
+    const productId = String(item.productId || item.stockProductId || "").trim();
+    const fromLocationId = String(item.fromLocationId || "").trim();
+    const toLocationId = String(item.toLocationId || "").trim();
+    if (!id || seen.has(id) || !productsById.has(productId) || !locationIds.has(fromLocationId) || !locationIds.has(toLocationId) || fromLocationId === toLocationId) return null;
+    seen.add(id);
+    return {
+      ...item,
+      id,
+      status: ["draft", "pending", "approved", "rejected", "cancelled"].includes(item.status) ? item.status : "pending",
+      productId,
+      fromLocationId,
+      toLocationId,
+      quantity: Math.max(0, finiteNumber(item.quantity, 0)),
+      baseUnit: String(item.baseUnit || productsById.get(productId).unit || "adet"),
+      sourceQuantity: Math.max(0, finiteNumber(item.sourceQuantity ?? item.quantity, 0)),
+      sourceUnit: String(item.sourceUnit || item.baseUnit || productsById.get(productId).unit || "adet"),
+      conversionFactor: finiteNumber(item.conversionFactor, 1),
+      requestedBy: String(item.requestedBy || ""),
+      requestedByName: String(item.requestedByName || ""),
+      requestId: String(item.requestId || ""),
+      transactionRef: String(item.transactionRef || "") || null,
+      movementIds: normalizeArray(item.movementIds).map((movementId) => String(movementId || "").trim()).filter(Boolean),
+      createdAt: item.createdAt || null,
+      updatedAt: item.updatedAt || item.createdAt || null
+    };
+  }).filter(Boolean).slice(0, 2000);
+}
+
+function normalizeStockCounts(value, productsById, locations) {
+  const locationIds = new Set(locations.map((location) => String(location.id)));
+  const seen = new Set();
+  return normalizeArray(value).map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const id = String(item.id || "").trim();
+    const locationId = String(item.locationId || "").trim();
+    if (!id || seen.has(id) || !locationIds.has(locationId)) return null;
+    seen.add(id);
+    const items = normalizeArray(item.items).map((entry, index) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+      const productId = String(entry.productId || entry.stockProductId || "").trim();
+      const product = productsById.get(productId);
+      if (!product) return null;
+      const systemQuantity = Math.max(0, finiteNumber(entry.systemQuantity ?? entry.expectedQuantity, 0));
+      const countedValue = entry.countedQuantity ?? entry.physicalQuantity;
+      const countedQuantity = countedValue === null || countedValue === undefined || countedValue === ""
+        ? null
+        : Math.max(0, finiteNumber(countedValue, 0));
+      return {
+        ...entry,
+        id: String(entry.id || stableStockId("stock-count-item", `${id}\u0000${productId}\u0000${index}`)),
+        productId,
+        systemQuantity,
+        countedQuantity,
+        inputQuantity: countedQuantity === null ? null : Math.max(0, finiteNumber(entry.inputQuantity ?? countedQuantity, countedQuantity)),
+        inputUnit: normalizeStockUnit(entry.inputUnit || entry.unit || product.baseUnit || product.unit),
+        conversionFactor: Math.max(0, finiteNumber(entry.conversionFactor, 1)),
+        difference: countedQuantity === null ? null : finiteNumber(entry.difference, countedQuantity - systemQuantity),
+        note: String(entry.note || "").trim().slice(0, 500),
+        movementId: entry.movementId ? String(entry.movementId) : null,
+        updatedAt: entry.updatedAt || null
+      };
+    }).filter(Boolean);
+    return {
+      ...item,
+      id,
+      locationId,
+      status: ["active", "completed", "cancelled"].includes(item.status) ? item.status : "active",
+      items,
+      startedBy: String(item.startedBy || item.createdBy || ""),
+      startedByName: String(item.startedByName || item.createdByName || ""),
+      completedBy: item.completedBy ? String(item.completedBy) : null,
+      cancelledBy: item.cancelledBy ? String(item.cancelledBy) : null,
+      requestId: String(item.requestId || ""),
+      movementIds: normalizeArray(item.movementIds).map((movementId) => String(movementId || "").trim()).filter(Boolean),
+      note: String(item.note || "").trim().slice(0, 500),
+      createdAt: item.createdAt || item.startedAt || null,
+      startedAt: item.startedAt || item.createdAt || null,
+      updatedAt: item.updatedAt || item.startedAt || item.createdAt || null,
+      completedAt: item.completedAt || null,
+      cancelledAt: item.cancelledAt || null,
+      appliedAt: item.appliedAt || null
+    };
+  }).filter(Boolean).slice(0, 1000);
+}
+
+function normalizeStockOperationKeys(value) {
+  const seen = new Set();
+  return normalizeArray(value).map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const key = String(item.key || "").trim().slice(0, 260);
+    if (!key || seen.has(key)) return null;
+    seen.add(key);
+    return { ...item, key, type: String(item.type || ""), requestId: String(item.requestId || ""), value: item.value && typeof item.value === "object" ? item.value : {}, createdAt: item.createdAt || null };
+  }).filter(Boolean).slice(-1000);
 }
 
 function normalizeStockCategory(category, index) {
@@ -1028,6 +1265,21 @@ function normalizeStockCategory(category, index) {
 function normalizeStockProduct(product, index, categoryNames) {
   if (!product || typeof product !== "object" || Array.isArray(product)) return null;
   const categoryId = String(product.categoryId || stableStockId("stock-category", product.category || "Genel")).trim();
+  const baseUnit = normalizeStockUnit(product.baseUnit || product.unit || "adet") || "adet";
+  const bulkUnit = normalizeStockUnit(product.bulkUnit || product.caseUnit || product.purchaseUnit || "");
+  const packageMetadata = product.packageInfo && typeof product.packageInfo === "object" ? product.packageInfo : {};
+  const unitsPerBulkUnit = Math.max(0, finiteNumber(
+    product.unitsPerBulkUnit ?? product.unitsPerCase ?? product.packageSize ?? product.packSize
+      ?? product.piecesPerBox ?? product.koliIci ?? packageMetadata.unitsPerCase ?? packageMetadata.quantity,
+    0
+  ));
+  const allowDecimal = typeof product.allowDecimal === "boolean"
+    ? product.allowDecimal
+    : ["kg", "gr", "litre", "ml"].includes(baseUnit);
+  const requestedDefaultUnit = normalizeStockUnit(product.defaultMovementUnit || baseUnit);
+  const defaultMovementUnit = requestedDefaultUnit === bulkUnit && bulkUnit && unitsPerBulkUnit > 0
+    ? bulkUnit
+    : baseUnit;
   return {
     ...product,
     id: String(product.id || stableStockId("stock-product", `${categoryId}\u0000${product.productName || product.name || index}`)),
@@ -1035,12 +1287,20 @@ function normalizeStockProduct(product, index, categoryNames) {
     category: String(product.category || categoryNames.get(categoryId) || "Genel"),
     productName: String(product.productName || product.name || `Stok Ürünü ${index + 1}`),
     name: String(product.name || product.productName || `Stok Ürünü ${index + 1}`),
-    unit: String(product.unit || "adet"),
+    unit: baseUnit,
+    baseUnit,
+    bulkUnit,
+    caseUnit: bulkUnit,
+    unitsPerBulkUnit,
+    unitsPerCase: unitsPerBulkUnit,
+    allowDecimal,
+    defaultMovementUnit,
     stockQuantity: Math.max(0, finiteNumber(product.stockQuantity ?? product.quantity ?? product.stock, 0)),
     stockQuantityText: String(product.stockQuantityText ?? product.quantityText ?? product.stockQuantity ?? product.quantity ?? product.stock ?? ""),
     orderThreshold: Math.max(0, finiteNumber(product.orderThreshold ?? product.warningThreshold, 0)),
     orderThresholdText: String(product.orderThresholdText ?? product.warningThresholdText ?? product.orderThreshold ?? product.warningThreshold ?? ""),
     criticalThreshold: Math.max(0, finiteNumber(product.criticalThreshold, 0)),
+    targetLevel: Math.max(0, finiteNumber(product.targetLevel, 0)),
     brand: String(product.brand || product.supplier || ""),
     supplier: String(product.supplier || product.brand || ""),
     note: String(product.note || ""),
@@ -1051,39 +1311,94 @@ function normalizeStockProduct(product, index, categoryNames) {
   };
 }
 
-function normalizeStockMovement(movement, productsById = new Map()) {
+function normalizeStockUnit(value) {
+  const unit = String(value || "").trim().toLocaleLowerCase("tr-TR");
+  const ascii = unit.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return {
+    l: "litre", lt: "litre", liter: "litre", litre: "litre",
+    kilogram: "kg", kilo: "kg", gram: "gr",
+    tane: "adet", adet: "adet", sise: "şişe", "şişe": "şişe",
+    kutu: "kutu", paket: "paket", koli: "koli", kasa: "kasa", cuval: "çuval", "çuval": "çuval"
+  }[ascii] || unit;
+}
+
+function normalizeStockMovement(movement, productsById = new Map(), legacyGeneralLocationId = "stock-location-general") {
   if (!movement || typeof movement !== "object" || Array.isArray(movement)) return null;
   const productId = String(movement.stockProductId || movement.productId || "");
   const product = productsById.get(productId);
+  const baseUnit = normalizeStockUnit(movement.baseUnit || product && (product.baseUnit || product.unit) || movement.unit || "adet") || "adet";
+  const sourceQuantity = Math.max(0, finiteNumber(movement.inputQuantity ?? movement.sourceQuantity ?? movement.quantity, 0));
+  const sourceUnit = normalizeStockUnit(movement.inputUnit || movement.sourceUnit || movement.unit || baseUnit) || baseUnit;
+  const previousBalance = Math.max(0, finiteNumber(movement.previousBalance ?? movement.previousStock, 0));
+  const resultingBalance = Math.max(0, finiteNumber(movement.resultingBalance ?? movement.resultingStock, 0));
+  const inferredDelta = resultingBalance - previousBalance;
+  const baseQuantityDelta = finiteNumber(movement.baseQuantityDelta, inferredDelta);
+  const conversionSnapshot = movement.conversionSnapshot && typeof movement.conversionSnapshot === "object" && !Array.isArray(movement.conversionSnapshot)
+    ? movement.conversionSnapshot
+    : {
+        baseUnit,
+        bulkUnit: normalizeStockUnit(product && (product.bulkUnit || product.caseUnit) || ""),
+        unitsPerBulkUnit: Math.max(0, finiteNumber(product && (product.unitsPerBulkUnit ?? product.unitsPerCase), 0)),
+        inputUnit: sourceUnit,
+        factor: finiteNumber(movement.conversionFactor, 1)
+      };
   return {
     ...movement,
     id: String(movement.id || stableStockId("stock-movement", `${movement.productId || ""}\u0000${movement.createdAt || Date.now()}`)),
     productId: String(movement.productId || movement.stockProductId || ""),
     stockProductCode: normalizeProductCode(movement.stockProductCode || product && product.productCode),
     productName: String(movement.productName || ""),
-    type: ["stock_in", "stock_out", "inbound_shipment", "waste", "order_suggestion", "import"].includes(movement.type) ? movement.type : "stock_out",
+    type: ["opening_balance", "manual_in", "manual_out", "waste", "inbound_shipment", "transfer", "adjustment", "reversal", "stock_in", "stock_out", "order_suggestion", "import"].includes(movement.type) ? movement.type : "stock_out",
     quantity: Math.max(0, finiteNumber(movement.quantity, 0)),
-    unit: String(movement.unit || "adet"),
-    baseUnit: String(movement.baseUnit || movement.unit || "adet"),
-    previousStock: Math.max(0, finiteNumber(movement.previousStock, 0)),
-    resultingStock: Math.max(0, finiteNumber(movement.resultingStock, 0)),
+    unit: baseUnit,
+    baseUnit,
+    sourceQuantity,
+    sourceUnit,
+    inputQuantity: sourceQuantity,
+    inputUnit: sourceUnit,
+    baseQuantityDelta,
+    conversionSnapshot,
+    conversionFactor: finiteNumber(movement.conversionFactor, 1),
+    locationId: String(movement.locationId || movement.toLocationId || movement.fromLocationId || legacyGeneralLocationId || ""),
+    fromLocationId: movement.fromLocationId ? String(movement.fromLocationId) : null,
+    toLocationId: movement.toLocationId ? String(movement.toLocationId) : null,
+    transactionRef: String(movement.transactionRef || ""),
+    referenceType: String(movement.referenceType || ""),
+    referenceId: String(movement.referenceId || ""),
+    previousBalance,
+    resultingBalance,
+    previousStock: previousBalance,
+    resultingStock: resultingBalance,
     shipmentId: String(movement.shipmentId || ""),
     personnelId: String(movement.personnelId || movement.userId || ""),
     approvedBy: String(movement.approvedBy || ""),
+    actorId: String(movement.actorId || movement.personnelId || movement.userId || ""),
     requestId: String(movement.requestId || ""),
     reason: String(movement.reason || ""),
     note: String(movement.note || ""),
     actor: String(movement.actor || "system"),
-    createdAt: movement.createdAt || new Date(0).toISOString()
+    createdAt: movement.createdAt || new Date(0).toISOString(),
+    approvedAt: movement.approvedAt || movement.createdAt || new Date(0).toISOString(),
+    reversedMovementId: movement.reversedMovementId || null
   };
 }
 
 function defaultStockState() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 3,
+    locationMigrationVersion: 1,
+    unitMetadataMigrationVersion: 1,
     categories: [],
     products: [],
+    locations: [
+      { id: "stock-location-cafe", code: "CAFE", name: "Kafe Deposu", type: "cafe", active: true, sortOrder: 10, isDefault: false, assignedPersonnelIds: [] },
+      { id: "stock-location-general", code: "GENEL", name: "Genel Depo", type: "central", active: true, sortOrder: 20, isDefault: true, assignedPersonnelIds: [] }
+    ],
+    balances: [],
     movements: [],
+    transfers: [],
+    counts: [],
+    operationKeys: [],
     notificationSettings: {}
   };
 }
@@ -1459,6 +1774,7 @@ function markWorkforcePersonnelState(data) {
 
 function normalizeWorkforceShipments(value, stockState, productCodeRegistry) {
   const products = new Map((stockState && stockState.products || []).map((product) => [String(product.id), product]));
+  const locations = new Map((stockState && stockState.locations || []).map((location) => [String(location.id), location]));
   const movementsByShipment = new Map();
   for (const movement of stockState && stockState.movements || []) {
     const shipmentId = String(movement && movement.shipmentId || "");
@@ -1476,6 +1792,11 @@ function normalizeWorkforceShipments(value, stockState, productCodeRegistry) {
       ...normalizeArray(shipment.stockMovementRefs || (shipment.stockMovementRef ? [shipment.stockMovementRef] : [])),
       ...(movementsByShipment.get(String(shipment.id || "")) || [])
     ])].map((item) => String(item || "").trim()).filter(Boolean);
+    const shipmentMovement = (stockState && stockState.movements || []).find((movement) =>
+      String(movement && movement.shipmentId || "") === String(shipment.id || "") && movement.locationId
+    );
+    const requestedDestinationId = String(shipment.destinationLocationId || shipmentMovement && shipmentMovement.locationId || "").trim();
+    const destination = locations.get(requestedDestinationId) || null;
     return {
       ...shipment,
       status,
@@ -1506,6 +1827,8 @@ function normalizeWorkforceShipments(value, stockState, productCodeRegistry) {
       stockAppliedAt: shipment.stockAppliedAt || (status === "onaylandı" ? shipment.approvedAt || shipment.updatedAt || shipment.createdAt || null : null),
       stockMovementRef: String(shipment.stockMovementRef || stockMovementRefs[0] || "") || null,
       stockMovementRefs,
+      destinationLocationId: destination ? destination.id : null,
+      destinationLocationName: destination ? destination.name : String(shipment.destinationLocationName || "") || null,
       items: normalizeArray(shipment.items).map((item) => {
         if (!item || typeof item !== "object" || Array.isArray(item)) return null;
         const productId = String(item.stockProductId || item.productId || "");

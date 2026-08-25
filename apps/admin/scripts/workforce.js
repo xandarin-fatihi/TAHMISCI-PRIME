@@ -53,6 +53,11 @@
     clientId: requestId("admin-workforce-events"),
     taskFormDirty: false,
     busy: false,
+    stockLocations: [],
+    stockLocationsPromise: null,
+    shipmentDestinations: Object.create(null),
+    shipmentInventory: new Map(),
+    shipmentInventoryPromises: new Map(),
     templates: {
       morning: { startTime: "08:00", endTime: "16:00" },
       evening: { startTime: "16:00", endTime: "00:00" },
@@ -638,15 +643,69 @@
     return (state.stock.products || []).find((item) => String(item.id) === String(productId)) || {};
   }
 
+  async function ensureStockLocations() {
+    const stockLocations = window.TahmisciStockLocations;
+    if (stockLocations && typeof stockLocations.locations === "function") {
+      const cached = stockLocations.locations();
+      if (cached.length) {
+        state.stockLocations = cached;
+        return cached;
+      }
+    }
+    if (state.stockLocationsPromise) return state.stockLocationsPromise;
+    state.stockLocationsPromise = (async () => {
+      if (stockLocations && typeof stockLocations.ensureLoaded === "function") {
+        state.stockLocations = await stockLocations.ensureLoaded();
+      } else {
+        const result = await api("/api/admin/stock/locations");
+        state.stockLocations = Array.isArray(result.locations) ? result.locations : [];
+      }
+      return state.stockLocations;
+    })().finally(() => { state.stockLocationsPromise = null; });
+    return state.stockLocationsPromise;
+  }
+
+  function shipmentDestinationId(shipment) {
+    return String(state.shipmentDestinations[shipment.id] || shipment.destinationLocationId || "");
+  }
+
+  function shipmentDestinationName(shipment) {
+    if (shipment.destinationLocation && shipment.destinationLocation.name) return shipment.destinationLocation.name;
+    const id = shipmentDestinationId(shipment);
+    return (state.stockLocations.find((location) => String(location.id) === id) || {}).name || "Hedef depo seçilmedi";
+  }
+
+  async function ensureShipmentInventory(locationId, force = false) {
+    const id = String(locationId || "");
+    if (!id) return null;
+    if (!force && state.shipmentInventory.has(id)) return state.shipmentInventory.get(id);
+    if (state.shipmentInventoryPromises.has(id)) return state.shipmentInventoryPromises.get(id);
+    const promise = api(`/api/admin/stock/inventory?locationId=${encodeURIComponent(id)}`)
+      .then((result) => {
+        const map = new Map();
+        (Array.isArray(result.balances) ? result.balances : []).forEach((balance) => {
+          const product = balance.product || {};
+          const productId = String(balance.productId || product.id || "");
+          if (productId) map.set(productId, balance);
+        });
+        state.shipmentInventory.set(id, map);
+        return map;
+      })
+      .finally(() => state.shipmentInventoryPromises.delete(id));
+    state.shipmentInventoryPromises.set(id, promise);
+    return promise;
+  }
+
   function operationHost(kind) {
     return kind === "shipments"
       ? $("#workforceShipmentsPanel")
       : $("#workforceShiftsPanel");
   }
 
-  function shipmentLineValues(line) {
+  function shipmentLineValues(line, destinationId = "") {
     const product = stockProduct(line.productId);
-    const current = Number(line.currentStock ?? line.currentQuantity ?? product.stockQuantity ?? product.quantity ?? 0);
+    const destinationBalance = destinationId && state.shipmentInventory.get(String(destinationId))?.get(String(line.productId));
+    const current = Number(destinationBalance?.quantity ?? line.currentStock ?? line.currentQuantity ?? product.stockQuantity ?? product.quantity ?? 0);
     const conversion = Number(line.conversionFactor || 1);
     const increment = Number(line.baseQuantity ?? line.baseAmount ?? Number(line.quantity || 0) * conversion);
     const expected = Number(line.expectedStock ?? current + increment);
@@ -685,7 +744,7 @@
               const summary = (shipment.items || []).slice(0, 2).map((item) => `${item.name}: ${item.quantity} ${item.unit}`).join(" · ");
               return `<button class="workforce-shipment-card ${String(shipment.id) === String(state.selectedShipmentId) ? "is-selected" : ""}" type="button" data-shipment="${esc(shipment.id)}">
                 <span class="workforce-avatar">${esc(initials(shipment.userName))}</span>
-                <span><strong>${esc(shipment.userName || "Personel")}</strong><small>${esc(dateTime(shipment.createdAt))}</small><b>${(shipment.items || []).length} ürün</b><em>${esc(summary || "Ürün bilgisi yok")}</em></span>
+                <span><strong>${esc(shipment.userName || "Personel")}</strong><small>${esc(dateTime(shipment.createdAt))}</small><b>${(shipment.items || []).length} ürün · ${esc(shipmentDestinationName(shipment))}</b><em>${esc(summary || "Ürün bilgisi yok")}</em></span>
                 <i class="workforce-status is-${esc(shipment.status)}">${esc(statusLabel(shipment.status))}</i>
               </button>`;
             }).join("") : `<div class="workforce-empty">${icon("package")}<h4>Sevkiyat bildirimi yok</h4><p>Personel bildirimleri burada görünecek.</p></div>`}
@@ -711,15 +770,29 @@
     const host = $("#workforceShipmentDetail");
     if (!host) return;
     const pending = shipment.status === "onay_bekliyor";
+    const destinationId = shipmentDestinationId(shipment);
+    const activeLocations = state.stockLocations.filter((location) => location.active !== false);
+    if (destinationId && !state.shipmentInventory.has(destinationId) && !state.shipmentInventoryPromises.has(destinationId)) {
+      ensureShipmentInventory(destinationId).then(() => {
+        if (String(state.selectedShipmentId) === String(shipment.id)) renderShipmentDetail(shipment);
+      }).catch((error) => showMessage(error.message, "error"));
+    }
     host.innerHTML = `
       <div class="workforce-detail-head">
         <div><p class="eyebrow">Sevkiyat Detayı</p><h3>${esc(shipment.userName || "Personel")}</h3><span>${esc(dateTime(shipment.createdAt))}</span></div>
         <em class="workforce-status is-${esc(shipment.status)}">${esc(statusLabel(shipment.status))}</em>
       </div>
+      <label class="workforce-field workforce-shipment-destination"><span>Stoğun ekleneceği depo <small>(zorunlu)</small></span>
+        <select id="workforceShipmentDestination" ${pending ? "" : "disabled"}>
+          <option value="">Hedef depo seçin</option>
+          ${activeLocations.map((location) => `<option value="${esc(location.id)}"${String(location.id) === destinationId ? " selected" : ""}>${esc(location.name)} (${esc(location.code || location.type)})</option>`).join("")}
+        </select>
+        <small>Onay, yalnız seçilen deponun bakiyesini atomik olarak artırır.</small>
+      </label>
       <div class="workforce-shipment-table">
         <div class="workforce-shipment-table-head"><span>Ürün</span><span>Mevcut Stok</span><span>Bildirilen</span><span>Onay Sonrası</span></div>
         ${(shipment.items || []).map((line) => {
-          const values = shipmentLineValues(line);
+          const values = shipmentLineValues(line, destinationId);
           const baseUnit = line.currentStockUnit || line.baseUnit || values.product.unit || line.unit || "";
           return `<div class="workforce-shipment-table-row">
             <span><strong>${esc(line.name || values.product.name || "Ürün")}</strong><small>${esc(line.category || values.product.category || "Kategori yok")}</small></span>
@@ -729,7 +802,7 @@
           </div>`;
         }).join("")}
       </div>
-      ${pending ? `<div class="workforce-stock-warning">${icon("info")} Stok henüz güncellenmedi. Bu sevkiyat onaylanana kadar stoklara yansımaz.</div>` : ""}
+      ${pending ? `<div class="workforce-stock-warning">${icon("info")} Stok henüz güncellenmedi. ${destinationId ? `${esc(shipmentDestinationName(shipment))} seçildi; onay anında bakiye yeniden doğrulanacak.` : "Onaydan önce hedef depo seçilmelidir."}</div>` : ""}
       <label class="workforce-field"><span>Yönetici notu <small>(reddetmede zorunlu)</small></span><textarea id="workforceShipmentNote" maxlength="250" rows="4" ${pending ? "" : "disabled"} placeholder="Kararınıza ilişkin kısa bir not ekleyin...">${esc(shipment.adminNote || shipment.rejectionReason || "")}</textarea></label>
       ${pending ? `<div class="workforce-stock-warning">${icon("info")} Bu sevkiyat bütün kalemleriyle tek atomik işlem olarak onaylanır; kısmi onay uygulanmaz.</div>` : ""}
       ${pending ? `<div class="workforce-decision-actions">
@@ -737,6 +810,19 @@
         <button class="workforce-primary-button ui-button ui-button--primary" type="button" data-shipment-decision="approve" data-workforce-action data-operation-class="immediate-operation">${icon("check")} Onayla ve Stoğa Ekle</button>
       </div>` : `<div class="workforce-decision-summary">${icon("check")} Bu sevkiyat ${esc(statusLabel(shipment.status).toLocaleLowerCase("tr-TR"))}. ${shipment.approvedAt ? esc(dateTime(shipment.approvedAt)) : shipment.rejectedAt ? esc(dateTime(shipment.rejectedAt)) : ""}</div>`}
     `;
+    $("#workforceShipmentDestination", host)?.addEventListener("change", (event) => {
+      const nextId = event.currentTarget.value;
+      state.shipmentDestinations[shipment.id] = nextId;
+      if (!nextId) {
+        renderShipmentDetail(shipment);
+        return;
+      }
+      event.currentTarget.disabled = true;
+      ensureShipmentInventory(nextId).then(() => renderShipmentDetail(shipment)).catch((error) => {
+        showMessage(error.message, "error");
+        renderShipmentDetail(shipment);
+      });
+    });
     $$("[data-shipment-decision]", host).forEach((button) => button.addEventListener("click", () => decideShipment(shipment.id, button.dataset.shipmentDecision)));
   }
 
@@ -747,6 +833,13 @@
 
   async function executeShipmentDecision(id, decision) {
     const note = $("#workforceShipmentNote")?.value.trim() || "";
+    const shipment = (state.data.shipments || []).find((item) => String(item.id) === String(id));
+    const destinationLocationId = shipment ? shipmentDestinationId(shipment) : "";
+    if (decision === "approve" && !destinationLocationId) {
+      showMessage("Sevkiyatı onaylamadan önce stoğun ekleneceği depoyu seçin.", "error");
+      $("#workforceShipmentDestination")?.focus();
+      return operationSkipped("validation");
+    }
     if (decision === "reject" && !note) {
       showMessage("Sevkiyatı reddetmek için neden yazın.", "error");
       $("#workforceShipmentNote")?.focus();
@@ -756,8 +849,13 @@
       setBusy(true);
       acceptMutationResult(await api(`/api/admin/workforce/shipments/${encodeURIComponent(id)}/${decision}`, mutationOptions("POST", {
         note,
-        rejectionReason: decision === "reject" ? note : ""
+        rejectionReason: decision === "reject" ? note : "",
+        destinationLocationId: decision === "approve" ? destinationLocationId : undefined
       }, `shipment-${decision}-${id}`)));
+      if (decision === "approve") {
+        state.shipmentInventory.delete(destinationLocationId);
+        document.dispatchEvent(new CustomEvent("tahmisci:stock-updated", { detail: { source: "shipment-approval", shipmentId: id } }));
+      }
       await refresh("shipments");
       showMessage(decision === "approve" ? "Sevkiyat onaylandı ve stok güncellendi." : "Sevkiyat reddedildi.");
     } catch (error) {

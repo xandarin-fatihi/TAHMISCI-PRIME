@@ -20,6 +20,8 @@ const { createFileStore } = require("./store/file-store");
 const { seedStoreIfEmpty } = require("./store/seed-defaults");
 const { normalizeStockState, reconcileRecipeCatalog } = require("./store/migrations");
 const { normalizeProductCode } = require("./store/product-code-registry");
+const stockService = require("./stock-service");
+const { registerStockLocationRoutes } = require("./stock-location-routes");
 const { registerWorkforceRoutes } = require("./workforce-routes");
 const { registerProcurementRoutes } = require("./procurement-routes");
 const { createProcurementDocumentService } = require("./procurement-documents");
@@ -1786,9 +1788,12 @@ app.get("/api/feedback/events", requireAdminRequestOrigin, auth.requireAdmin, as
 app.get("/api/stock", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (req, res, next) => {
   try {
     const data = req.storeSnapshot || await store.read();
+    const fullState = normalizeStockState(data.stockState);
+    const actor = stockActorFromRequest(req);
+    const stockState = actor.type === "admin" ? fullState : stockStateForPersonnel(fullState, actor);
     res.json({
       ok: true,
-      stockState: normalizeStockState(data.stockState),
+      stockState,
       revision: resolveScopeRevision(data, "stock"),
       publishRevision: data.revisions && data.revisions.publish || 0,
       updatedAt: data.stockUpdatedAt || null
@@ -1811,20 +1816,35 @@ app.put("/api/admin/stock", requireAdminRequestOrigin, auth.requireAdmin, async 
   try {
     const rawStockState = req.body && req.body.stockState;
     const productCodeError = validateStockProductCodes(rawStockState);
-    const stockState = normalizeStockState(rawStockState);
-    const error = productCodeError || validateStockStateForApi(stockState);
+    const submittedState = normalizeStockState(rawStockState);
+    const error = productCodeError || validateStockStateForApi(submittedState);
     if (error) return res.status(400).json({ ok: false, message: error });
 
     const updatedAt = new Date().toISOString();
     const pendingNotifications = [];
     const nextStore = await store.update((data) => {
       const previousStockState = normalizeStockState(data.stockState);
+      // Katalog kaydı depo bakiyelerinin sahibi değildir. Eski Stok Düzenleme
+      // ekranı `stockQuantity` gönderse bile miktar, hareket ve transfer defteri
+      // yalnız stok servisi üzerinden değişir.
+      const stockState = normalizeStockState({
+        ...submittedState,
+        locations: previousStockState.locations,
+        balances: previousStockState.balances,
+        movements: previousStockState.movements,
+        transfers: previousStockState.transfers,
+        counts: previousStockState.counts,
+        operationKeys: previousStockState.operationKeys,
+        locationMigrationVersion: 1
+      });
       markManualStockStatusChanges(previousStockState, stockState);
       data.stockState = stockState;
       queueStockThresholdNotifications(data, pendingNotifications, previousStockState, stockState, {
         operationId: `stock-save:${updatedAt}`,
         updatedAt
       });
+      data.revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
+      data.revisions.stock = Number(data.revisions.stock || 0) + 1;
       incrementPublishRevision(data);
       data.stockUpdatedAt = updatedAt;
       return data;
@@ -1858,29 +1878,35 @@ app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireRe
     const updatedAt = new Date().toISOString();
     let stockState = null;
     let movement = null;
+    let idempotent = false;
     const pendingNotifications = [];
 
-    const nextStore = await store.update((data) => {
+    const nextStore = await store.update((data, context) => {
       const previousStockState = normalizeStockState(data.stockState);
-      const result = applyStockMovement(previousStockState, movementInput, actor);
+      const result = stockService.applyStockMovement(previousStockState, movementInput, actor, { requestId: movementInput.requestId });
       stockState = result.stockState;
       movement = result.movement;
+      idempotent = result.idempotent === true;
+      if (idempotent) return context.noChange;
       data.stockState = stockState;
       queueStockThresholdNotifications(data, pendingNotifications, previousStockState, stockState, {
-        operationId: movement.id,
+        operationId: movement && movement.id || movementInput.requestId,
         updatedAt
       });
+      data.revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
+      data.revisions.stock = Number(data.revisions.stock || 0) + 1;
       incrementPublishRevision(data);
       data.stockUpdatedAt = updatedAt;
       return data;
     });
 
-    broadcastStockUpdate(stockState || nextStore.stockState, updatedAt);
+    if (!idempotent) broadcastStockUpdate(stockState || nextStore.stockState, updatedAt);
     publishAppNotifications(pendingNotifications);
-    res.status(201).json({
+    res.status(idempotent ? 200 : 201).json({
       ok: true,
       stockState: stockState || normalizeStockState(nextStore.stockState),
       movement,
+      idempotent,
       publishRevision: nextStore.revisions.publish,
       updatedAt
     });
@@ -1889,11 +1915,24 @@ app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireRe
   }
 });
 
+registerStockLocationRoutes({
+  app,
+  store,
+  auth,
+  requireAdminRequestOrigin,
+  requireAdminOrMainRequestOrigin,
+  broadcastStockUpdate,
+  incrementPublishRevision,
+  notificationService,
+  queueStockThresholdNotifications
+});
+
 let procurementRuntime = null;
 const workforceRuntime = registerWorkforceRoutes({
   app, store, auth, crypto, normalizeStockState,
   requireAdminRequestOrigin, requireAdminOrMainRequestOrigin,
   broadcastStockUpdate,
+  queueStockThresholdNotifications,
   notificationService,
   notifyProcurementChange(event) {
     if (procurementRuntime && procurementRuntime.service) procurementRuntime.service.publishExternalEvent(event);
@@ -3171,51 +3210,6 @@ function applyStockImportField(product, field, value, changes) {
   changes.push(stockFieldLabel(field));
 }
 
-function applyStockMovement(stockState, input, actor) {
-  const nextState = normalizeStockState(stockState || {});
-  const productId = String(input && input.productId || "").trim();
-  const requestedProductCode = normalizeProductCode(input && (input.stockProductCode || input.productCode));
-  const type = String(input && input.type || "").trim();
-  const quantity = stockNumber(input && input.quantity);
-  const product = nextState.products.find((item) => (
-    requestedProductCode && normalizeProductCode(item.productCode) === requestedProductCode
-  ) || item.id === productId);
-  if (!product) throw Object.assign(new Error("Stok ürünü bulunamadı."), { status: 404 });
-  if (requestedProductCode && normalizeProductCode(product.productCode) !== requestedProductCode) {
-    throw Object.assign(new Error("Stok ürün kodu güncel katalogla eşleşmiyor."), { status: 409 });
-  }
-  if (!["stock_in", "stock_out", "waste"].includes(type)) throw Object.assign(new Error("Geçersiz stok işlemi."), { status: 400 });
-  if (!Number.isFinite(quantity) || quantity <= 0) throw Object.assign(new Error("Geçerli bir miktar girin."), { status: 400 });
-
-  const current = stockNumber(product.stockQuantity);
-  const nextQuantity = type === "stock_in" ? current + quantity : current - quantity;
-  if (nextQuantity < 0) throw Object.assign(new Error("Stok miktarı eksiye düşemez."), { status: 400 });
-
-  const now = new Date().toISOString();
-  product.stockQuantity = roundStockNumber(nextQuantity);
-  product.stockQuantityText = `${product.stockQuantity} ${product.unit || "adet"}`;
-  product.updatedAt = now;
-  const movement = {
-    id: `stock-movement-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
-    productId: product.id,
-    stockProductId: product.id,
-    productCode: normalizeProductCode(product.productCode),
-    stockProductCode: normalizeProductCode(product.productCode),
-    productName: product.name,
-    categoryId: product.categoryId,
-    type,
-    quantity: roundStockNumber(quantity),
-    unit: product.unit || "adet",
-    reason: String(input && input.reason || stockMovementTypeLabel(type)).trim(),
-    note: String(input && input.note || "").trim(),
-    actor: actor || { type: "personel", name: "Personel" },
-    createdAt: now
-  };
-  nextState.movements = [movement, ...(nextState.movements || [])].slice(0, 1000);
-  nextState.updatedAt = now;
-  return { stockState: normalizeStockState(nextState), movement };
-}
-
 function validateStockStateForApi(stockState) {
   if (!stockState || typeof stockState !== "object" || Array.isArray(stockState)) return "Geçersiz stok verisi.";
   if (!Array.isArray(stockState.categories) || !Array.isArray(stockState.products)) return "Stok kategorileri ve ürünleri zorunludur.";
@@ -3239,7 +3233,9 @@ function stockActorFromRequest(req) {
     return {
       type: req.recipeUser.role === "admin" ? "admin" : "personel",
       id: req.recipeUser.id || req.recipeUser.username || "",
-      name: req.recipeUser.name || req.recipeUser.displayName || req.recipeUser.username || "Personel"
+      name: req.recipeUser.name || req.recipeUser.displayName || req.recipeUser.username || "Personel",
+      branchId: req.recipeUser.branchId || "main",
+      stockLocationId: req.recipeUser.stockLocationId || ""
     };
   }
   if (req.adminUser || req.user) {
@@ -3247,6 +3243,31 @@ function stockActorFromRequest(req) {
     return { type: "admin", id: user.id || "", name: user.name || user.username || "Yönetici" };
   }
   return { type: "personel", name: "Personel" };
+}
+
+function stockStateForPersonnel(stockState, actor) {
+  const state = normalizeStockState(stockState || {});
+  const locationId = stockService.actorLocationId(state, actor);
+  const inventory = stockService.getLocationInventory(state, locationId);
+  const quantities = new Map(inventory.balances.map((balance) => [String(balance.productId), Number(balance.quantity || 0)]));
+  return {
+    ...state,
+    locations: inventory.location ? [inventory.location] : [],
+    balances: state.balances.filter((balance) => String(balance.locationId) === String(locationId)),
+    products: state.products.map((product) => {
+      const stockQuantity = quantities.get(String(product.id)) || 0;
+      return { ...product, stockQuantity, stockQuantityText: `${stockQuantity} ${product.unit || "adet"}` };
+    }),
+    movements: state.movements.filter((movement) =>
+      String(movement.locationId || "") === String(locationId)
+      || String(movement.fromLocationId || "") === String(locationId)
+      || String(movement.toLocationId || "") === String(locationId)
+    ),
+    transfers: state.transfers.filter((transfer) =>
+      String(transfer.requestedBy || "") === String(actor && actor.id || "")
+      && (String(transfer.fromLocationId || "") === String(locationId) || String(transfer.toLocationId || "") === String(locationId))
+    )
+  };
 }
 
 function stableStockImportId(prefix, value) {
@@ -3283,14 +3304,6 @@ function stockFieldLabel(field) {
     supplier: "Tedarikçi",
     note: "Not"
   }[field] || field;
-}
-
-function stockMovementTypeLabel(type) {
-  return {
-    stock_in: "Stok eklendi",
-    stock_out: "Stok eksiltildi",
-    waste: "Sarf işlendi"
-  }[type] || "Stok hareketi";
 }
 
 const RECIPE_IMPORT_FIELDS = [
@@ -3768,51 +3781,69 @@ function publishAppNotifications(pending) {
 }
 
 function queueStockThresholdNotifications(data, pending, previousState, nextState, context = {}) {
-  const previousProducts = new Map((previousState && previousState.products || []).map((product) => [String(product.id), product]));
   const operationId = String(context.operationId || context.updatedAt || Date.now()).slice(0, 160);
-  for (const product of nextState && nextState.products || []) {
-    if (!product || product.active === false) continue;
-    const previous = previousProducts.get(String(product.id));
-    const wasCritical = previous ? stockProductIsCritical(previous) : false;
-    const isCritical = stockProductIsCritical(product);
-    if (wasCritical === isCritical) continue;
+  const before = normalizeStockState(previousState || {});
+  const after = normalizeStockState(nextState || {});
+  const beforeBalances = new Map((before.balances || []).map((balance) => [`${balance.locationId}\u0000${balance.productId}`, balance]));
+  const afterBalances = new Map((after.balances || []).map((balance) => [`${balance.locationId}\u0000${balance.productId}`, balance]));
+  const general = (after.locations || []).find((location) => location.code === "GENEL" || location.type === "central") || null;
 
-    const quantity = roundStockNumber(product.stockQuantity);
-    const threshold = roundStockNumber(product.criticalThreshold);
-    const unit = String(product.unit || "adet");
-    const transition = isCritical ? "critical" : "resolved";
-    queueAppNotification(data, pending, {
-      recipientRole: "manager",
-      recipientId: "manager",
-      category: "stock",
-      eventType: isCritical ? "stock_critical" : "stock_recovered",
-      title: isCritical ? "Kritik stok seviyesi" : "Stok tekrar yeterli seviyede",
-      body: isCritical
-        ? `${product.name} kritik stok seviyesine düştü: ${quantity} ${unit}.`
-        : `${product.name} güvenli stok seviyesine çıktı: ${quantity} ${unit}.`,
-      severity: isCritical ? "critical" : "success",
-      entityType: "stock_product",
-      entityId: product.id,
-      deepLink: `/yonetici/?section=stock&stockProductId=${encodeURIComponent(product.id)}`,
-      dedupeKey: `stock-${transition}:${product.id}:${operationId}`,
-      metadata: {
-        productName: product.name,
-        productCode: normalizeProductCode(product.productCode),
-        quantity,
-        threshold,
-        unit,
-        transition
-      },
-      createdAt: context.updatedAt
-    });
+  for (const location of after.locations || []) {
+    if (location.active === false) continue;
+    for (const product of after.products || []) {
+      if (!product || product.active === false) continue;
+      const key = `${location.id}\u0000${product.id}`;
+      const previousBalance = beforeBalances.get(key) || {};
+      const balance = afterBalances.get(key) || {};
+      const previousKind = stockBalanceAlertKind(previousBalance, location, beforeBalances.get(`${general && general.id}\u0000${product.id}`));
+      const kind = stockBalanceAlertKind(balance, location, afterBalances.get(`${general && general.id}\u0000${product.id}`));
+      if (kind === previousKind) continue;
+
+      const quantity = roundStockNumber(balance.quantity);
+      const unit = String(product.unit || "adet");
+      const threshold = roundStockNumber(kind === "critical" ? balance.criticalThreshold : balance.orderThreshold);
+      const generalQuantity = general ? roundStockNumber((afterBalances.get(`${general.id}\u0000${product.id}`) || {}).quantity) : 0;
+      const transition = kind === "ok" ? "recovered" : kind;
+      const title = kind === "transfer"
+        ? "Kafe deposu için transfer önerisi"
+        : kind === "procurement" ? "Genel depoda tedarik ihtiyacı"
+          : kind === "critical" ? "Kafe deposunda kritik stok" : "Stok tekrar yeterli seviyede";
+      const body = kind === "transfer"
+        ? `${product.name} ${location.name} için eşik altına düştü; Genel Depoda ${generalQuantity} ${unit} bulunuyor.`
+        : kind === "ok"
+          ? `${product.name} ${location.name} için güvenli stok seviyesine çıktı: ${quantity} ${unit}.`
+          : `${product.name} ${location.name} için ${quantity} ${unit} seviyesine düştü.`;
+      queueAppNotification(data, pending, {
+        recipientRole: "manager",
+        recipientId: "manager",
+        category: "stock",
+        eventType: `stock_${transition}`,
+        title,
+        body,
+        severity: kind === "critical" ? "critical" : kind === "ok" ? "success" : "warning",
+        entityType: "stock_balance",
+        entityId: `${location.id}:${product.id}`,
+        deepLink: `/yonetici/?section=stock&locationId=${encodeURIComponent(location.id)}&stockProductId=${encodeURIComponent(product.id)}`,
+        dedupeKey: `stock-${transition}:${location.id}:${product.id}:${operationId}`,
+        metadata: {
+          productName: product.name,
+          productCode: normalizeProductCode(product.productCode), locationId: location.id,
+          locationName: location.name, quantity, threshold, generalQuantity, unit, transition
+        },
+        createdAt: context.updatedAt
+      });
+    }
   }
 }
 
-function stockProductIsCritical(product) {
-  if (!product || product.active === false) return false;
-  const quantity = Number(product.stockQuantity || 0);
-  const threshold = Number(product.criticalThreshold || 0);
-  return Number.isFinite(quantity) && Number.isFinite(threshold) && quantity <= threshold;
+function stockBalanceAlertKind(balance, location, generalBalance) {
+  const quantity = Number(balance && balance.quantity || 0);
+  const critical = Number(balance && balance.criticalThreshold || 0);
+  const order = Number(balance && balance.orderThreshold || 0);
+  const generalQuantity = Number(generalBalance && generalBalance.quantity || 0);
+  if (critical > 0 && quantity <= critical) return location && location.type === "central" ? "procurement" : "critical";
+  if (order > 0 && quantity <= order) return location && location.type === "cafe" && generalQuantity > 0 ? "transfer" : "procurement";
+  return "ok";
 }
 
 function suspendPersonnelNotificationDelivery(data, userId, updatedAt) {

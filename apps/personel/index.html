@@ -98,6 +98,7 @@
           <div class="stock-catalog-shell">
             <header class="stock-catalog-toolbar">
               <div class="stock-message" id="stockMessage" hidden></div>
+              <div class="stock-location-summary" id="stockLocationSummary" aria-live="polite"></div>
               <label class="stock-catalog-search">
                 <span aria-hidden="true">⌕</span>
                 <input id="stockSearchInput" type="search" placeholder="stokta ara...">
@@ -106,6 +107,7 @@
             </header>
             <div class="stock-catalog-content">
               <div class="stock-grid" id="stockGrid"></div>
+              <section class="stock-transfer-requests" id="stockTransferRequests" aria-label="Transfer taleplerim"></section>
             </div>
           </div>
           <div class="stock-stats" id="stockStats" hidden></div>
@@ -264,6 +266,8 @@
       <h2 id="stockModalTitle">Stok işlemi</h2>
       <p id="stockModalProduct">Ürün seçilmedi.</p>
       <label><span>Miktar</span><input id="stockQuantity" type="number" min="0.01" step="0.01" required></label>
+      <label id="stockUnitField" hidden><span>Birim</span><select id="stockUnit"></select></label>
+      <label id="stockUrgencyField" hidden><span>Aciliyet</span><select id="stockUrgency"><option value="normal">Normal</option><option value="high">Yüksek</option><option value="urgent">Acil</option></select></label>
       <label><span>Not</span><textarea id="stockNote" rows="3" maxlength="240" placeholder="İsteğe bağlı"></textarea></label>
       <div class="stock-dialog-actions">
         <button class="ghost ui-button ui-button--secondary" type="button" data-close>Vazgeç</button>
@@ -289,6 +293,7 @@
       </div>
       <p class="stock-detail-note" id="stockDetailNote" hidden></p>
       <div class="stock-detail-actions">
+        <button type="button" data-detail-action="transfer_request">Transfer Talep Et</button>
         <button type="button" data-detail-action="stock_out">Eksilt</button>
         <button type="button" data-detail-action="waste">Sarf İşle</button>
       </div>

@@ -112,6 +112,7 @@ function registerProcurementRoutes(deps = {}) {
       expectedRevision: body.workforceExpectedRevision !== undefined ? body.workforceExpectedRevision : body.expectedRevision,
       procurementExpectedRevision: mutation.expectedRevision,
       note: String(body.note || "").trim().slice(0, 500),
+      destinationLocationId: String(body.destinationLocationId || "").trim(),
       actor: req.procurementActor,
       req
     });
