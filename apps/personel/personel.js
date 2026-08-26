@@ -55,6 +55,13 @@
     query: "",
     category: "all",
     detailProductId: null,
+    detailTrigger: null,
+    stockAction: null,
+    stockActionTrigger: null,
+    stockActionSubmitting: false,
+    stockHistoryLoadPromise: null,
+    stockHistoryLoadProductId: "",
+    stockReversePendingId: "",
     pendingProfileAvatar: "",
     mobileSidebar: false,
     sessionActive: false,
@@ -74,8 +81,12 @@
       "recipeFrame", "stockMessage", "stockSearchInput", "stockCategoryPills", "stockGrid",
       "profileForm", "profileName", "profilePhone", "profileAvatarUrl", "profilePhotoInput", "profileBio",
       "profileMessage", "profileAvatar",
-      "stockDetailModal", "stockDetailCategory", "stockDetailTitle", "stockDetailStatus",
-      "stockDetailQuantity", "stockDetailUnit", "stockDetailThreshold", "stockDetailCritical", "stockDetailSupplier", "stockDetailNote"
+      "stockDetailModal", "stockDetailClose", "stockDetailCategory", "stockDetailTitle", "stockDetailStatus",
+      "stockDetailLocation", "stockDetailQuantity", "stockDetailUnit", "stockDetailConversion", "stockDetailThreshold", "stockDetailCritical", "stockDetailSupplier", "stockDetailNote",
+      "stockDetailActions", "stockDetailHistory", "stockDetailHistoryCount", "stockDetailHistoryList", "stockDetailMessage",
+      "stockActionModal", "stockActionForm", "stockActionClose", "stockActionKicker", "stockActionTitle", "stockActionProduct",
+      "stockActionLocation", "stockActionCurrent", "stockActionConversion", "stockActionQuantity", "stockActionUnit", "stockQuickAmounts",
+      "stockActionConverted", "stockActionAfter", "stockActionNote", "stockActionMessage", "stockActionCancel", "stockActionSubmit"
     ].forEach((id) => { els[id] = document.getElementById(id); });
 
     setView("booting");
@@ -160,10 +171,54 @@
       openStockDetail(card.dataset.stockProductId);
     });
 
-    if (els.stockDetailModal) els.stockDetailModal.addEventListener("click", (event) => {
-      if (event.target === els.stockDetailModal || event.target.closest("[data-detail-close]")) {
+    if (els.stockDetailClose) {
+      els.stockDetailClose.addEventListener("pointerdown", (event) => event.stopPropagation());
+      els.stockDetailClose.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
         closeStockDetail();
+      });
+    }
+    if (els.stockDetailModal) els.stockDetailModal.addEventListener("click", (event) => {
+      if (event.target === els.stockDetailModal) closeStockDetail();
+    });
+    if (els.stockDetailActions) els.stockDetailActions.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-stock-detail-action]");
+      if (!button || button.disabled) return;
+      const action = button.dataset.stockDetailAction;
+      if (action === "history") {
+        toggleStockHistory(button);
+        return;
       }
+      openStockAction(action, button);
+    });
+    if (els.stockDetailHistoryList) els.stockDetailHistoryList.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-stock-reverse-movement]");
+      if (!button || button.disabled) return;
+      reversePersonnelStockMovement(button.dataset.stockReverseMovement, button).catch(() => {});
+    });
+    if (els.stockActionClose) {
+      els.stockActionClose.addEventListener("pointerdown", (event) => event.stopPropagation());
+      els.stockActionClose.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        closeStockAction();
+      });
+    }
+    if (els.stockActionCancel) els.stockActionCancel.addEventListener("click", closeStockAction);
+    if (els.stockActionModal) els.stockActionModal.addEventListener("click", (event) => {
+      if (event.target === els.stockActionModal && !state.stockActionSubmitting) closeStockAction();
+    });
+    if (els.stockActionForm) els.stockActionForm.addEventListener("submit", submitStockAction);
+    if (els.stockActionQuantity) els.stockActionQuantity.addEventListener("input", renderStockActionPreview);
+    if (els.stockActionUnit) els.stockActionUnit.addEventListener("change", renderStockActionPreview);
+    if (els.stockQuickAmounts) els.stockQuickAmounts.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-quick-quantity]");
+      if (!button || state.stockActionSubmitting) return;
+      if (els.stockActionQuantity) els.stockActionQuantity.value = button.dataset.quickQuantity || "1";
+      if (els.stockActionUnit && button.dataset.quickUnit) els.stockActionUnit.value = button.dataset.quickUnit;
+      renderStockActionPreview();
+      els.stockActionQuantity && els.stockActionQuantity.focus();
     });
 
     if (els.profileForm) els.profileForm.addEventListener("submit", saveProfile);
@@ -174,8 +229,17 @@
     });
 
     document.addEventListener("keydown", (event) => {
+      if (event.key === "Tab" && trapStockModalFocus(event)) return;
       if (event.key === "Tab" && trapPersonelDrawerFocus(event)) return;
       if (event.key === "Escape") {
+        if (state.stockAction) {
+          if (!state.stockActionSubmitting) closeStockAction();
+          return;
+        }
+        if (els.stockDetailModal && !els.stockDetailModal.hidden) {
+          closeStockDetail();
+          return;
+        }
         closeStockDetail();
         closeProfilePopover({ restoreFocus: true });
         if (isMobileSidebar() && !isSidebarCollapsed()) {
@@ -530,6 +594,9 @@
 
   function setSection(section, options) {
     const next = sectionMeta[section] ? section : "recipe";
+    if (next !== "stock" && els.stockDetailModal && !els.stockDetailModal.hidden) {
+      closeStockDetail({ restoreFocus: false });
+    }
     state.section = next;
     if (!options || options.persist !== false) {
       localStorage.setItem(LAST_SECTION_KEY, next);
@@ -715,8 +782,11 @@
     if (!product || !els.stockDetailModal) return;
     const category = stockCategories().find((item) => item.id === product.categoryId);
     const status = stockStatus(product);
-    const display = stockDisplay(product);
     const thresholdUnit = productBaseUnit(product);
+    const location = state.stock.location || {};
+    if (els.stockDetailModal.hidden) {
+      state.detailTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
     state.detailProductId = productId;
     if (els.stockDetailCategory) els.stockDetailCategory.textContent = (category && category.name) || "Stok";
     if (els.stockDetailTitle) els.stockDetailTitle.textContent = product.name || "Ürün detayı";
@@ -724,8 +794,15 @@
       els.stockDetailStatus.className = `badge ${status.key}`;
       els.stockDetailStatus.textContent = status.label;
     }
-    if (els.stockDetailQuantity) els.stockDetailQuantity.textContent = formatNumber(display.value);
-    if (els.stockDetailUnit) els.stockDetailUnit.textContent = display.unit;
+    if (els.stockDetailLocation) els.stockDetailLocation.textContent = safeText(location.name, "Kafe Deposu");
+    if (els.stockDetailQuantity) els.stockDetailQuantity.textContent = currentStockLabel(product);
+    if (els.stockDetailUnit) els.stockDetailUnit.textContent = thresholdUnit;
+    if (els.stockDetailConversion) {
+      const unitsPerBulk = productUnitsPerBulk(product);
+      els.stockDetailConversion.textContent = unitsPerBulk > 0
+        ? `1 ${productBulkUnit(product)} = ${formatNumber(unitsPerBulk)} ${thresholdUnit}`
+        : "Toplu birim tanımlı değil";
+    }
     if (els.stockDetailThreshold) els.stockDetailThreshold.textContent = `${formatNumber(product.orderThreshold)} ${thresholdUnit}`;
     if (els.stockDetailCritical) els.stockDetailCritical.textContent = `${formatNumber(product.criticalThreshold)} ${thresholdUnit}`;
     if (els.stockDetailSupplier) els.stockDetailSupplier.textContent = safeText(product.supplier, "Belirtilmedi");
@@ -734,19 +811,430 @@
       els.stockDetailNote.textContent = note;
       els.stockDetailNote.hidden = !note;
     }
+    if (els.stockDetailMessage) {
+      els.stockDetailMessage.textContent = "";
+      els.stockDetailMessage.hidden = true;
+    }
+    if (els.stockDetailHistory) els.stockDetailHistory.hidden = true;
+    const historyButton = els.stockDetailActions && els.stockDetailActions.querySelector('[data-stock-detail-action="history"]');
+    if (historyButton) historyButton.setAttribute("aria-expanded", "false");
+    renderStockDetailHistory(product);
+    updateStockDetailActionAvailability();
     els.stockDetailModal.hidden = false;
     syncPanelModalLock();
+    window.setTimeout(() => els.stockDetailClose && els.stockDetailClose.focus(), 0);
   }
 
-  function closeStockDetail() {
+  function closeStockDetail(options = {}) {
+    if (state.stockActionSubmitting && options.force !== true) return;
+    if (state.stockAction) closeStockAction({ restoreFocus: false, force: true });
+    const restoreTarget = state.detailTrigger;
     state.detailProductId = null;
+    state.detailTrigger = null;
     if (els.stockDetailModal) els.stockDetailModal.hidden = true;
+    if (els.stockDetailHistory) els.stockDetailHistory.hidden = true;
     syncPanelModalLock();
+    if (options.restoreFocus !== false && restoreTarget && restoreTarget.isConnected) {
+      window.setTimeout(() => restoreTarget.focus(), 0);
+    }
   }
 
   function syncPanelModalLock() {
-    const hasOpenModal = Boolean(els.stockDetailModal && !els.stockDetailModal.hidden);
+    const hasOpenModal = Boolean(
+      els.stockDetailModal && !els.stockDetailModal.hidden
+      || els.stockActionModal && !els.stockActionModal.hidden
+    );
     document.documentElement.classList.toggle("is-panel-modal-open", hasOpenModal);
+    document.body.classList.toggle("is-panel-modal-open", hasOpenModal);
+  }
+
+  function updateStockDetailActionAvailability() {
+    if (!els.stockDetailActions) return;
+    const canMutate = canUsePersonnelStockActions();
+    els.stockDetailActions.querySelectorAll('[data-stock-detail-action="waste"], [data-stock-detail-action="manual_out"]').forEach((button) => {
+      button.hidden = !canMutate;
+      button.disabled = !canMutate;
+    });
+  }
+
+  function canUsePersonnelStockActions() {
+    if (PREVIEW_TOKEN || !state.sessionActive) return false;
+    const location = state.stock.location;
+    if (!location || location.active === false) return false;
+    return String(location.type || "cafe") === "cafe";
+  }
+
+  async function toggleStockHistory(button) {
+    if (!els.stockDetailHistory) return;
+    const open = els.stockDetailHistory.hidden;
+    els.stockDetailHistory.hidden = !open;
+    if (button) button.setAttribute("aria-expanded", String(open));
+    if (open) {
+      const heading = document.getElementById("stockDetailHistoryTitle");
+      heading && heading.focus && heading.focus();
+      await loadStockDetailHistory().catch(() => {});
+    }
+  }
+
+  async function loadStockDetailHistory(options = {}) {
+    const productId = String(state.detailProductId || "");
+    if (!productId || !els.stockDetailHistoryList) return [];
+    if (state.stockHistoryLoadPromise && state.stockHistoryLoadProductId === productId && options.force !== true) return state.stockHistoryLoadPromise;
+    if (!stockMovements().some((movement) => String(movement.productId || movement.stockProductId || "") === productId) || options.force === true) {
+      els.stockDetailHistoryList.innerHTML = '<p class="stock-history-empty">Hareketler yükleniyor…</p>';
+    }
+    const locationId = String(state.stock.location && state.stock.location.id || "");
+    const query = new URLSearchParams({ productId, limit: "30" });
+    if (locationId) query.set("locationId", locationId);
+    const loadPromise = api(`/api/workforce/stock/movements?${query.toString()}`)
+      .then((result) => {
+        const merged = new Map(stockMovements().map((movement) => [String(movement.id || ""), movement]));
+        (Array.isArray(result.movements) ? result.movements : []).forEach((movement) => {
+          if (movement && movement.id) merged.set(String(movement.id), movement);
+        });
+        state.stock.movements = Array.from(merged.values());
+        state.stockRevision = responseRevision(result, state.stockRevision);
+        const product = stockProducts().find((item) => String(item.id) === productId);
+        if (product && String(state.detailProductId || "") === productId) renderStockDetailHistory(product);
+        return result.movements || [];
+      })
+      .catch((error) => {
+        if (String(state.detailProductId || "") === productId) {
+          els.stockDetailHistoryList.innerHTML = `<p class="stock-history-empty is-error">${escapeHTML(error.message || "Hareket geçmişi alınamadı.")}</p>`;
+        }
+        throw error;
+      })
+      .finally(() => {
+        if (state.stockHistoryLoadPromise === loadPromise) {
+          state.stockHistoryLoadPromise = null;
+          state.stockHistoryLoadProductId = "";
+        }
+      });
+    state.stockHistoryLoadProductId = productId;
+    state.stockHistoryLoadPromise = loadPromise;
+    return loadPromise;
+  }
+
+  function renderStockDetailHistory(product) {
+    if (!els.stockDetailHistoryList || !product) return;
+    const locationId = String(state.stock.location && state.stock.location.id || "");
+    const movements = stockMovements().filter((movement) => {
+      const productId = String(movement.productId || movement.stockProductId || "");
+      const movementLocationId = String(movement.locationId || movement.fromLocationId || movement.toLocationId || "");
+      return productId === String(product.id) && (!locationId || !movementLocationId || movementLocationId === locationId);
+    }).slice(0, 8);
+    if (els.stockDetailHistoryCount) els.stockDetailHistoryCount.textContent = `${movements.length} kayıt`;
+    els.stockDetailHistoryList.innerHTML = movements.length ? movements.map((movement) => `
+      <article class="stock-history-item">
+        <span class="stock-history-item__icon" aria-hidden="true">${movementDirectionIcon(movement)}</span>
+        <div>
+          <strong>${escapeHTML(stockMovementLabel(movement.type))}</strong>
+          <small>${escapeHTML(formatDateTimeShort(movement.createdAt))} · ${escapeHTML(safeText(movement.actor || movement.actorName || movement.personName, "Personel"))}</small>
+        </div>
+        <div class="stock-history-item__actions">
+          <b>${escapeHTML(formatMovementQuantity(movement))}</b>
+          ${canReversePersonnelMovement(movement) ? `<button type="button" data-stock-reverse-movement="${escapeAttribute(movement.id)}">Geri al</button>` : ""}
+        </div>
+      </article>
+    `).join("") : '<p class="stock-history-empty">Bu ürün için henüz hareket kaydı bulunmuyor.</p>';
+  }
+
+  function canReversePersonnelMovement(movement) {
+    if (!canUsePersonnelStockActions() || !movement || !movement.id) return false;
+    if (movement.type === "reversal" || movement.reversedMovementId || movement.reversedAt || movement.status === "reversed") return false;
+    if (!["waste", "manual_out", "stock_out"].includes(String(movement.type || ""))) return false;
+    const actorId = String(movement.personnelId || movement.actorId || "");
+    return Boolean(actorId && actorId === String(state.user && state.user.id || ""));
+  }
+
+  async function reversePersonnelStockMovement(movementId, button) {
+    const id = String(movementId || "");
+    if (!id || state.stockReversePendingId) return;
+    const movement = stockMovements().find((item) => String(item.id) === id);
+    if (!canReversePersonnelMovement(movement)) return;
+    if (!window.confirm("Bu işlem silinmeden güvenli bir ters stok hareketi oluşturulacak. Devam edilsin mi?")) return;
+    const requestId = newStockRequestId("personel-stock-reversal");
+    state.stockReversePendingId = id;
+    const oldText = button && button.textContent;
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Geri alınıyor…";
+    }
+    try {
+      const result = await api(`/api/workforce/stock/movements/${encodeURIComponent(id)}/reverse`, {
+        method: "POST",
+        headers: stockMutationHeaders(requestId),
+        body: JSON.stringify({ requestId, expectedRevision: state.stockRevision, note: "Personel arayüzünden ters kayıt" })
+      });
+      state.stockRevision = responseRevision(result, state.stockRevision + (result.idempotent ? 0 : 1));
+      state.stockLoaded = false;
+      await loadStock({ force: true });
+      await loadStockDetailHistory({ force: true });
+      const refreshed = stockProducts().find((item) => String(item.id) === String(state.detailProductId));
+      if (refreshed) openStockDetail(refreshed.id);
+      showStockDetailMessage("Ters kayıt oluşturuldu; geçmiş hareket silinmedi.", false);
+    } catch (error) {
+      showStockDetailMessage(error.message || "Ters kayıt oluşturulamadı.", true);
+      throw error;
+    } finally {
+      state.stockReversePendingId = "";
+      if (button && button.isConnected) {
+        button.disabled = false;
+        button.textContent = oldText || "Geri al";
+      }
+    }
+  }
+
+  function showStockDetailMessage(message, isError = false) {
+    if (!els.stockDetailMessage) return;
+    els.stockDetailMessage.textContent = String(message || "");
+    els.stockDetailMessage.hidden = !message;
+    els.stockDetailMessage.classList.toggle("is-success", Boolean(message) && !isError);
+  }
+
+  function movementDirectionIcon(movement) {
+    return ["manual_in", "stock_in", "receipt_in", "shipment_in", "inbound_shipment", "transfer_in"].includes(String(movement && movement.type || "")) ? "+" : "−";
+  }
+
+  function stockMovementLabel(type) {
+    const labels = {
+      waste: "Sarf",
+      consumption: "Sarf",
+      manual_out: "Eksiltme",
+      adjustment_out: "Eksiltme",
+      stock_out: "Stok çıkışı",
+      manual_in: "Stok ekleme",
+      stock_in: "Stok ekleme",
+      receipt_in: "Stok ekleme",
+      transfer_in: "Transfer girişi",
+      transfer_out: "Transfer çıkışı",
+      reversal: "Ters hareket"
+    };
+    return labels[String(type || "")] || "Stok hareketi";
+  }
+
+  function formatMovementQuantity(movement) {
+    const quantity = numberValue(movement && (movement.inputQuantity ?? movement.sourceQuantity ?? movement.quantity));
+    const unit = safeText(movement && (movement.inputUnit || movement.sourceUnit || movement.baseUnit || movement.unit), "adet");
+    return `${movementDirectionIcon(movement)}${formatNumber(quantity)} ${unit}`;
+  }
+
+  function openStockAction(type, trigger) {
+    const product = stockProducts().find((item) => String(item.id) === String(state.detailProductId));
+    if (!product || !els.stockActionModal || !canUsePersonnelStockActions()) return;
+    const isWaste = type === "waste";
+    const requestId = newStockRequestId(isWaste ? "personel-stock-waste" : "personel-stock-out");
+    state.stockActionTrigger = trigger || document.activeElement;
+    state.stockActionSubmitting = false;
+    state.stockAction = { type: isWaste ? "waste" : "manual_out", productId: product.id, requestId };
+    const title = isWaste ? "Sarf İşle" : "Eksilt";
+    const submitLabel = isWaste ? "Sarf İşlemini Uygula" : "Eksiltmeyi Uygula";
+    const supportedUnits = stockSupportedUnits(product);
+    const defaultUnit = supportedUnits.includes(safeText(product.defaultMovementUnit, "").toLocaleLowerCase("tr-TR"))
+      ? safeText(product.defaultMovementUnit).toLocaleLowerCase("tr-TR")
+      : supportedUnits[0] || productBaseUnit(product);
+    if (els.stockActionKicker) els.stockActionKicker.textContent = isWaste ? "Normal kullanım / tüketim" : "Kontrollü stok düzeltmesi";
+    if (els.stockActionTitle) els.stockActionTitle.textContent = title;
+    if (els.stockActionProduct) els.stockActionProduct.textContent = product.name || "Stok ürünü";
+    if (els.stockActionLocation) els.stockActionLocation.textContent = safeText(state.stock.location && state.stock.location.name, "Kafe Deposu");
+    if (els.stockActionCurrent) els.stockActionCurrent.textContent = currentStockLabel(product);
+    if (els.stockActionConversion) {
+      const factor = productUnitsPerBulk(product);
+      els.stockActionConversion.textContent = factor > 0
+        ? `1 ${productBulkUnit(product)} = ${formatNumber(factor)} ${productBaseUnit(product)}`
+        : `Temel birim: ${productBaseUnit(product)}`;
+    }
+    if (els.stockActionQuantity) {
+      els.stockActionQuantity.value = "1";
+      els.stockActionQuantity.step = productAllowsDecimal(product) ? "0.001" : "1";
+      els.stockActionQuantity.min = productAllowsDecimal(product) ? "0.001" : "1";
+      els.stockActionQuantity.disabled = false;
+    }
+    if (els.stockActionUnit) {
+      els.stockActionUnit.innerHTML = supportedUnits.map((unit) => `<option value="${escapeAttribute(unit)}">${escapeHTML(unit)}</option>`).join("");
+      els.stockActionUnit.value = defaultUnit;
+      els.stockActionUnit.disabled = false;
+    }
+    if (els.stockActionNote) {
+      els.stockActionNote.value = "";
+      els.stockActionNote.disabled = false;
+    }
+    if (els.stockActionSubmit) {
+      els.stockActionSubmit.textContent = submitLabel;
+      els.stockActionSubmit.dataset.defaultLabel = submitLabel;
+      els.stockActionSubmit.disabled = false;
+    }
+    if (els.stockActionCancel) els.stockActionCancel.disabled = false;
+    if (els.stockActionClose) els.stockActionClose.disabled = false;
+    if (els.stockActionMessage) {
+      els.stockActionMessage.textContent = "";
+      els.stockActionMessage.hidden = true;
+    }
+    renderStockQuickAmounts(product);
+    renderStockActionPreview();
+    els.stockActionModal.hidden = false;
+    syncPanelModalLock();
+    window.setTimeout(() => els.stockActionQuantity && els.stockActionQuantity.focus(), 0);
+  }
+
+  function closeStockAction(options = {}) {
+    if (state.stockActionSubmitting && options.force !== true) return;
+    const restoreTarget = state.stockActionTrigger;
+    state.stockAction = null;
+    state.stockActionTrigger = null;
+    state.stockActionSubmitting = false;
+    if (els.stockActionForm) els.stockActionForm.reset();
+    if (els.stockActionModal) els.stockActionModal.hidden = true;
+    if (els.stockActionMessage) {
+      els.stockActionMessage.textContent = "";
+      els.stockActionMessage.hidden = true;
+    }
+    syncPanelModalLock();
+    if (options.restoreFocus !== false && restoreTarget && restoreTarget.isConnected) {
+      window.setTimeout(() => restoreTarget.focus(), 0);
+    }
+  }
+
+  function renderStockQuickAmounts(product) {
+    if (!els.stockQuickAmounts) return;
+    const baseUnit = productBaseUnit(product);
+    const bulkUnit = productBulkUnit(product);
+    const values = [
+      { quantity: 1, unit: baseUnit, label: `1 ${baseUnit}` },
+      { quantity: 5, unit: baseUnit, label: `5 ${baseUnit}` }
+    ];
+    if (productUnitsPerBulk(product) > 0) values.splice(1, 0, { quantity: 1, unit: bulkUnit, label: `1 ${bulkUnit}` });
+    els.stockQuickAmounts.innerHTML = values.map((item) => `<button type="button" data-quick-quantity="${item.quantity}" data-quick-unit="${escapeAttribute(item.unit)}">${escapeHTML(item.label)}</button>`).join("");
+  }
+
+  function renderStockActionPreview() {
+    const product = stockProducts().find((item) => String(item.id) === String(state.stockAction && state.stockAction.productId));
+    if (!product || !els.stockActionQuantity || !els.stockActionUnit) return;
+    const quantity = Number(els.stockActionQuantity.value || 0);
+    const unit = els.stockActionUnit.value || productBaseUnit(product);
+    const converted = stockQuantityToBase(product, quantity, unit);
+    const current = numberValue(product.stockQuantity);
+    const validInput = productAllowsDecimal(product) || Number.isInteger(quantity);
+    const valid = validInput && Number.isFinite(converted) && converted > 0 && (productAllowsDecimal(product) || Number.isInteger(converted));
+    const after = valid ? current - converted : NaN;
+    if (els.stockActionConverted) {
+      els.stockActionConverted.textContent = valid
+        ? `${formatNumber(converted)} ${productBaseUnit(product)} stoktan düşülecek`
+        : "Geçerli miktar ve birim seçin";
+    }
+    if (els.stockActionAfter) {
+      els.stockActionAfter.textContent = valid && after >= 0
+        ? currentStockLabel({ ...product, stockQuantity: after, quantityDisplay: "" })
+        : valid ? "Yetersiz stok" : "—";
+      els.stockActionAfter.classList.toggle("is-error", valid && after < 0);
+    }
+    if (els.stockActionSubmit) els.stockActionSubmit.disabled = state.stockActionSubmitting || !valid || after < 0;
+  }
+
+  async function submitStockAction(event) {
+    event.preventDefault();
+    if (!state.stockAction || state.stockActionSubmitting) return;
+    const product = stockProducts().find((item) => String(item.id) === String(state.stockAction.productId));
+    if (!product || !canUsePersonnelStockActions()) return;
+    const quantity = Number(els.stockActionQuantity && els.stockActionQuantity.value || 0);
+    const unit = String(els.stockActionUnit && els.stockActionUnit.value || "");
+    const converted = stockQuantityToBase(product, quantity, unit);
+    if (!Number.isFinite(converted) || converted <= 0) {
+      setStockActionMessage("Geçerli bir miktar ve birim seçin.");
+      return;
+    }
+    if (!productAllowsDecimal(product) && !Number.isInteger(quantity)) {
+      setStockActionMessage(`${product.name} için kesirli miktar kullanılamaz.`);
+      return;
+    }
+    if (!productAllowsDecimal(product) && !Number.isInteger(converted)) {
+      setStockActionMessage(`${product.name} için kesirli ${productBaseUnit(product)} miktarı kullanılamaz.`);
+      return;
+    }
+    if (converted > numberValue(product.stockQuantity)) {
+      setStockActionMessage("Seçili depoda bu işlem için yeterli stok yok.");
+      return;
+    }
+    const action = { ...state.stockAction };
+    setStockActionPending(true);
+    try {
+      const movement = {
+        productId: product.id,
+        stockProductId: product.id,
+        productCode: String(product.productCode || ""),
+        stockProductCode: String(product.productCode || ""),
+        locationId: String(state.stock.location && state.stock.location.id || ""),
+        type: action.type,
+        quantity,
+        unit,
+        reason: action.type === "waste" ? "Personel sarf" : "Personel stok eksiltme",
+        note: String(els.stockActionNote && els.stockActionNote.value || "").trim(),
+        expectedRevision: state.stockRevision,
+        expectedBalanceRevision: Math.max(0, Number(product.balanceRevision || 0)),
+        requestId: action.requestId,
+        idempotencyKey: action.requestId
+      };
+      const result = await api("/api/stock/movements", {
+        method: "POST",
+        headers: stockMutationHeaders(action.requestId),
+        body: JSON.stringify({ movement, expectedRevision: state.stockRevision })
+      });
+      if (result && result.stockState) {
+        state.stock = normalizeStock(result.stockState);
+        state.stockRevision = responseRevision(result, state.stockRevision + (result.idempotent ? 0 : 1));
+      }
+      closeStockAction({ restoreFocus: false, force: true });
+      state.stockLoaded = false;
+      await loadStock({ force: true });
+      const refreshed = stockProducts().find((item) => String(item.id) === String(product.id));
+      if (refreshed && els.stockDetailModal && !els.stockDetailModal.hidden) openStockDetail(refreshed.id);
+      showStockMessage(action.type === "waste" ? "Sarf hareketi kaydedildi." : "Stok eksiltme hareketi kaydedildi.");
+    } catch (error) {
+      setStockActionMessage(error.message || "Stok işlemi kaydedilemedi.");
+      setStockActionPending(false);
+    }
+  }
+
+  function setStockActionPending(pending) {
+    state.stockActionSubmitting = pending;
+    [els.stockActionQuantity, els.stockActionUnit, els.stockActionNote, els.stockActionCancel, els.stockActionClose].forEach((element) => {
+      if (element) element.disabled = pending;
+    });
+    if (els.stockQuickAmounts) els.stockQuickAmounts.querySelectorAll("button").forEach((button) => { button.disabled = pending; });
+    if (els.stockActionSubmit) {
+      els.stockActionSubmit.disabled = pending;
+      els.stockActionSubmit.textContent = pending ? "Kaydediliyor…" : els.stockActionSubmit.dataset.defaultLabel || "İşlemi Uygula";
+    }
+    if (!pending) renderStockActionPreview();
+  }
+
+  function setStockActionMessage(message) {
+    if (!els.stockActionMessage) return;
+    els.stockActionMessage.textContent = String(message || "");
+    els.stockActionMessage.hidden = !message;
+  }
+
+  function trapStockModalFocus(event) {
+    const modal = els.stockActionModal && !els.stockActionModal.hidden
+      ? els.stockActionModal
+      : els.stockDetailModal && !els.stockDetailModal.hidden ? els.stockDetailModal : null;
+    if (!modal) return false;
+    const focusable = Array.from(modal.querySelectorAll('button:not([disabled]):not([hidden]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+      .filter((element) => !element.closest("[hidden]"));
+    if (!focusable.length) return false;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+      return true;
+    }
+    if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+      return true;
+    }
+    return false;
   }
 
   async function saveProfile(event) {
@@ -1223,13 +1711,18 @@
 
   function stockSupportedUnits(product) {
     const declared = Array.isArray(product && product.allowedUnits)
-      ? product.allowedUnits.map((unit) => String(unit || "").trim().toLocaleLowerCase("tr-TR")).filter(Boolean)
+      ? product.allowedUnits.map((unit) => safeText(unit, "").toLocaleLowerCase("tr-TR")).filter(Boolean)
       : [];
     const baseUnit = productBaseUnit(product);
     const bulkUnit = productBulkUnit(product);
     const units = declared.length ? declared : [baseUnit];
     if (productUnitsPerBulk(product) > 0) units.push(bulkUnit);
     return Array.from(new Set(units));
+  }
+
+  function productAllowsDecimal(product) {
+    if (typeof (product && product.allowDecimal) === "boolean") return product.allowDecimal;
+    return ["kg", "gr", "litre", "ml"].includes(productBaseUnit(product));
   }
 
   function productBaseUnit(product) {

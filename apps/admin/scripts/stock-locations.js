@@ -133,14 +133,26 @@
     const baseUnit = unitOf(balance);
     const bulkUnit = textValue(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR");
     const factor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
-    return [{ value: baseUnit, label: baseUnit }, ...(bulkUnit && factor > 0 ? [{ value: bulkUnit, label: `${bulkUnit} (1 = ${formatNumber(factor)} ${baseUnit})` }] : [])];
+    const declared = Array.isArray(product.allowedUnits)
+      ? product.allowedUnits.map((unit) => textValue(unit).toLocaleLowerCase("tr-TR")).filter(Boolean)
+      : [];
+    const values = Array.from(new Set([baseUnit, ...declared, ...(bulkUnit && factor > 0 ? [bulkUnit] : [])]));
+    return values.map((unit) => ({
+      value: unit,
+      label: unit === bulkUnit && factor > 0 ? `${unit} (1 = ${formatNumber(factor)} ${baseUnit})` : unit
+    }));
   }
 
   function toBaseQuantity(balance, quantity, unit) {
     const product = productOf(balance);
-    const factor = textValue(unit).toLocaleLowerCase("tr-TR") === textValue(product.bulkUnit || product.caseUnit).toLocaleLowerCase("tr-TR")
-      ? Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0)
-      : 1;
+    const sourceUnit = textValue(unit).toLocaleLowerCase("tr-TR");
+    const baseUnit = unitOf(balance);
+    const bulkUnit = textValue(product.bulkUnit || product.caseUnit).toLocaleLowerCase("tr-TR");
+    let factor = sourceUnit === bulkUnit ? Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0) : 1;
+    if (sourceUnit === "kg" && baseUnit === "gr") factor = 1000;
+    if (sourceUnit === "gr" && baseUnit === "kg") factor = 0.001;
+    if (["litre", "lt", "l"].includes(sourceUnit) && baseUnit === "ml") factor = 1000;
+    if (sourceUnit === "ml" && ["litre", "lt", "l"].includes(baseUnit)) factor = 0.001;
     return Number(quantity || 0) * (factor > 0 ? factor : 1);
   }
 
@@ -162,18 +174,20 @@
     if (["kritik", "critical"].includes(explicit)) return "critical";
     if (["tükendi", "tukendi", "empty"].includes(explicit)) return "empty";
     if (["yeterli", "sufficient"].includes(explicit)) return "sufficient";
-    if (explicit.includes("transfer")) return "transfer";
     const quantity = Number(balance.quantity || 0);
     const critical = Number(balance.criticalThreshold || 0);
-    const order = Number(balance.orderThreshold || 0);
+    if (quantity <= 0) return "empty";
     if (critical > 0 && quantity <= critical) return "critical";
-    if (order > 0 && quantity <= order) return "transfer";
     return "sufficient";
   }
 
   function statusLabel(status) {
     return {
-      critical: "Kritik", transfer: "Transfer gerekli", order: "Sipariş gerekli", sufficient: "Yeterli",
+      critical: "Kritik", transfer: "Transfer", transfer_in: "Transfer girişi", transfer_out: "Transfer çıkışı",
+      order: "Sipariş gerekli", sufficient: "Yeterli", manual_in: "Stok ekleme", manual_out: "Eksilt",
+      stock_in: "Stok ekleme", stock_out: "Eksilt", waste: "Sarf", consumption: "Sarf",
+      adjustment_out: "Eksilt", adjustment: "Düzeltme", correction: "Düzeltme", reversal: "Ters kayıt",
+      inbound_shipment: "Sevkiyat girişi", shipment_in: "Sevkiyat girişi", opening_balance: "Açılış bakiyesi",
       empty: "Tükendi", draft: "Taslak", active: "Devam ediyor", completed: "Tamamlandı",
       pending: "Onay bekliyor", onay_bekliyor: "Onay bekliyor", approved: "Onaylandı",
       onaylandı: "Onaylandı", rejected: "Reddedildi", reddedildi: "Reddedildi", cancelled: "İptal edildi"
@@ -188,7 +202,9 @@
 
   function updateRevision(result) {
     const revision = Number(result && result.revision);
-    if (Number.isInteger(revision) && revision >= 0) state.revision = Math.max(state.revision, revision);
+    if (Number.isInteger(revision) && revision >= 0) {
+      state.revision = Math.max(state.revision, revision);
+    }
     if (result && result.updatedAt) state.updatedAt = result.updatedAt;
   }
 
@@ -420,18 +436,20 @@
     state.drawerReturnFocus = trigger instanceof HTMLElement ? trigger : document.activeElement;
     const product = productOf(balance);
     const totalReadOnly = state.selectedLocationId === "total";
+    const selectedLocation = state.locations.find((location) => String(location.id) === String(state.selectedLocationId));
+    const cafeQuantity = balance.cafeQuantity ?? (selectedLocation && selectedLocation.type === "cafe" ? balance.quantity : 0);
     $("#stockProductDrawerTitle").textContent = productName(balance);
     $("#stockProductDrawerSubtitle").textContent = `${product.productCode || "Kod yok"} · ${product.category || "Kategori yok"}`;
     $("#stockProductDrawerMessage").textContent = totalReadOnly ? "Tüm Depolar görünümü salt okunurdur. İşlem için Kafe veya Genel Depoyu seçin." : "";
     const body = $("#stockProductDrawerBody");
     body.innerHTML = `<section class="stock-drawer-overview">
-      <article><span>Seçili görünüm</span><strong>${esc(quantityDisplay(balance))}</strong><small>${esc(locationName(state.selectedLocationId))}</small></article>
+      <article><span>Kafe Deposu</span><strong>${esc(quantityDisplay(balance, cafeQuantity))}</strong><small>Operasyon bakiyesi</small></article>
       <article><span>Genel Depo</span><strong>${esc(quantityDisplay(balance, balance.generalQuantity ?? 0))}</strong><small>Merkez bakiyesi</small></article>
       <article><span>Tüm Depolar</span><strong>${esc(quantityDisplay(balance, balance.totalQuantity ?? balance.quantity ?? 0))}</strong><small>Toplam bakiye</small></article>
     </section>
     <dl class="stock-drawer-details"><div><dt>Kritik eşik</dt><dd>${esc(formatNumber(balance.criticalThreshold))} ${esc(unitOf(balance))}</dd></div><div><dt>Sipariş eşiği</dt><dd>${esc(formatNumber(balance.orderThreshold))} ${esc(unitOf(balance))}</dd></div><div><dt>Hedef stok</dt><dd>${esc(formatNumber(balance.targetLevel))} ${esc(unitOf(balance))}</dd></div><div><dt>Dönüşüm</dt><dd>${esc(unitsOf(balance).map((unit) => unit.label).join(" · "))}</dd></div></dl>
     <div class="stock-drawer-actions" aria-label="${esc(productName(balance))} stok işlemleri">
-      ${totalReadOnly ? "" : `<button class="ui-button ui-button--primary" type="button" data-stock-drawer-action="manual_in">Stok Ekle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="waste">Sarf İşle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="transfer">Transfer Oluştur</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="settings">Eşik ve Birim Ayarları</button>`}
+      ${totalReadOnly ? "" : `<button class="ui-button ui-button--primary" type="button" data-stock-drawer-action="manual_in">Stok Ekle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="waste">Sarf İşle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="manual_out">Eksilt</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="transfer">Transfer Oluştur</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="settings">Eşik ve Birim Ayarları</button>`}
       <button class="ui-button ui-button--ghost" type="button" data-stock-drawer-action="history">Hareket Geçmişi</button>
     </div>`;
     layer.hidden = false;
@@ -513,9 +531,24 @@
     const unit = $("#stockLocationMovementUnit")?.value || unitOf(balance);
     const delta = toBaseQuantity(balance, quantity, unit) * (["manual_out", "waste"].includes($("#stockLocationMovementType")?.value) ? -1 : 1);
     const next = Number(balance.quantity || 0) + delta;
+    const conversion = $("#stockLocationMovementConversion");
     if (current) current.textContent = `Mevcut miktar: ${quantityDisplay(balance)}`;
+    if (conversion) conversion.textContent = quantity > 0
+      ? `${formatNumber(Math.abs(delta))} ${unitOf(balance)} ${delta < 0 ? "stoktan düşülecek" : "stoğa eklenecek"}.`
+      : "Miktar seçildiğinde temel birim karşılığı gösterilir.";
     preview.textContent = quantity > 0 ? quantityDisplay(balance, Math.max(0, next)) : quantityDisplay(balance);
     preview.dataset.kind = next < 0 ? "error" : "info";
+  }
+
+  function renderMovementQuickAmounts(balance) {
+    const host = $("#stockMovementQuickAmounts");
+    if (!host || !balance) return;
+    const units = unitsOf(balance);
+    const baseUnit = unitOf(balance);
+    const bulk = units.find((unit) => unit.value !== baseUnit);
+    const choices = [{ quantity: 1, unit: baseUnit }, { quantity: 5, unit: baseUnit }];
+    if (bulk) choices.splice(1, 0, { quantity: 1, unit: bulk.value });
+    host.innerHTML = choices.map((choice) => `<button type="button" data-stock-movement-quick="${choice.quantity}" data-stock-movement-unit="${esc(choice.unit)}">${choice.quantity} ${esc(choice.unit)}</button>`).join("");
   }
 
   function openMovementDock(productIdValue, type) {
@@ -527,13 +560,16 @@
     const dialog = $("#stockMovementDialog");
     if (!balance || !dialog) return;
     $("#stockLocationMovementProduct").value = productId(balance);
-    $("#stockLocationMovementType").value = type === "manual_in" ? "manual_in" : "waste";
+    const movementType = ["manual_in", "manual_out", "waste"].includes(type) ? type : "waste";
+    $("#stockLocationMovementType").value = movementType;
     $("#stockLocationMovementQuantity").value = "1";
+    $("#stockLocationMovementQuantity").step = productOf(balance).allowDecimal ? "0.001" : "1";
     $("#stockLocationMovementProductName").textContent = productName(balance);
-    $("#stockLocationMovementModeLabel").textContent = type === "manual_in" ? "Stok Ekle" : "Sarf İşle";
-    if ($("#stockLocationMovementReason")) $("#stockLocationMovementReason").value = type === "manual_in" ? "Kullanım" : type === "waste" ? "Sarf" : "Kullanım";
+    $("#stockLocationMovementModeLabel").textContent = movementType === "manual_in" ? "Stok Ekle" : movementType === "manual_out" ? "Eksilt" : "Sarf İşle";
+    if ($("#stockLocationMovementReason")) $("#stockLocationMovementReason").value = movementType === "waste" ? "Sarf" : movementType === "manual_out" ? "Eksiltme" : "Kullanım";
     $("#stockMovementDialogMessage").textContent = "";
     updateProductUnits();
+    renderMovementQuickAmounts(balance);
     if (!dialog.open) dialog.showModal();
     $("#stockLocationMovementQuantity")?.focus();
   }
@@ -635,7 +671,7 @@
     const host = $("#stockLocationMovementHistory");
     if (!host) return;
     host.innerHTML = state.movements.length ? state.movements.map((movement) => {
-      const reversible = movement.status !== "reversed" && !movement.reversedAt && movement.type !== "reversal";
+      const reversible = movement.status !== "reversed" && !movement.reversedAt && !movement.reversedMovementId && movement.type !== "reversal";
       return `<article class="stock-location-movement">
         <div><strong>${esc(movement.productName || "Stok ürünü")}</strong><span>${esc(movementText(movement))}</span></div>
         <p>${esc(statusLabel(movement.type))} · ${esc(formatDate(movement.createdAt))}</p>
@@ -1007,7 +1043,7 @@
       const drawerAction = event.target.closest("[data-stock-drawer-action]");
       if (drawerAction) {
         const action = drawerAction.dataset.stockDrawerAction;
-        if (action === "manual_in" || action === "waste") openMovementDock(state.selectedProductId, action);
+        if (action === "manual_in" || action === "manual_out" || action === "waste") openMovementDock(state.selectedProductId, action);
         else if (action === "transfer") openTransferDialog(state.selectedProductId);
         else if (action === "settings") openThresholdDialog(state.selectedProductId);
         else if (action === "history") {
@@ -1028,6 +1064,16 @@
         const next = Math.max(Number(input.min || 0.01), Number(input.value || 0) + Number(stepper.dataset.stockQuantityStep || 0));
         input.value = String(next);
         updateMovementPreview();
+        return;
+      }
+      const quickMovement = event.target.closest("[data-stock-movement-quick]");
+      if (quickMovement) {
+        const input = $("#stockLocationMovementQuantity");
+        const unit = $("#stockLocationMovementUnit");
+        if (input) input.value = quickMovement.dataset.stockMovementQuick || "1";
+        if (unit) unit.value = quickMovement.dataset.stockMovementUnit || unit.value;
+        updateMovementPreview();
+        input?.focus();
         return;
       }
       const decision = event.target.closest("[data-transfer-decision]");

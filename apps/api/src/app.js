@@ -1865,19 +1865,13 @@ app.put("/api/admin/stock", requireAdminRequestOrigin, auth.requireAdmin, async 
 
 app.post("/api/admin/stock/import-excel", requireAdminRequestOrigin, auth.requireAdmin, retiredExcelImportHandler);
 
-app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (req, res, next) => {
+app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
   try {
     const actor = stockActorFromRequest(req);
     const submitted = req.body && req.body.movement || req.body || {};
     const operationId = String(req.get("Idempotency-Key") || req.get("X-Request-ID") || submitted.requestId || "").trim().slice(0, 160);
     if (!operationId) return res.status(400).json({ ok: false, message: "Stok işlemi için requestId zorunludur." });
     const movementInput = { ...submitted, requestId: operationId, idempotencyKey: operationId };
-    if (actor.type !== "admin") {
-      return res.status(403).json({
-        ok: false,
-        message: "Personel hesabı stok bakiyesini doğrudan değiştiremez."
-      });
-    }
     const updatedAt = new Date().toISOString();
     let stockState = null;
     let movement = null;

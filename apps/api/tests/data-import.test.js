@@ -494,6 +494,16 @@ test("scope fingerprint'i normalize(normalize(store)) sonrasında idempotent kal
   }
 });
 
+test("stok katalog fingerprint'i analiz sonrası canlı stok revision değişikliğini yakalar", () => {
+  const data = emptyData();
+  data.revisions = { ...(data.revisions || {}), stock: 7 };
+  const analyzedFingerprint = catalogFingerprint(data, ["stock"]);
+  const moved = structuredClone(data);
+  moved.revisions.stock = 8;
+  assert.notEqual(catalogFingerprint(moved, ["stock"]), analyzedFingerprint);
+  assert.equal(catalogFingerprint(data, ["menu"]), catalogFingerprint(moved, ["menu"]), "stok revision'ı ilgisiz menü analizini bayatlatmamalı");
+});
+
 test("fiyat aktarımı para birimini, Yönetici özel seçeneğini ve boşalan Excel fiyatının arşivini korur", () => {
   const base = emptyData();
   base.pricing.types = [{

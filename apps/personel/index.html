@@ -9,14 +9,14 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/app-icons/personel/favicon-32.png">
   <link rel="icon" type="image/png" sizes="48x48" href="/assets/app-icons/personel/favicon-48.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/app-icons/personel/apple-touch-icon-180.png">
-  <link rel="stylesheet" href="/personel/personel.css?v=20260801-phase2">
+  <link rel="stylesheet" href="/personel/personel.css?v=20260826-personel-stock-actions">
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20260801-phase2">
   <link rel="stylesheet" href="/personel/personel-compact.css?v=20260826-stock-location">
   <link rel="stylesheet" href="/personel/notifications.css?v=20260816-push-status">
   <link rel="stylesheet" href="/shared/styles/account-security.css?v=20260816-account-security">
   <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260816-account-notifications">
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
-  <script src="/personel/personel.js?v=20260826-stock-location" defer></script>
+  <script src="/personel/personel.js?v=20260826-personel-stock-actions" defer></script>
   <script src="/personel/workforce.js?v=20260822-profile-shipment" defer></script>
   <script src="/personel/notifications.js?v=20260826-pwa-update" defer></script>
   <script src="/shared/scripts/live-preview-receiver.js?v=20260801-phase3" defer></script>
@@ -256,23 +256,70 @@
     </footer>
   </aside>
 
-  <div class="stock-modal" id="stockDetailModal" hidden>
-    <article class="stock-dialog stock-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="stockDetailTitle">
-      <button class="stock-close" type="button" data-detail-close aria-label="Kapat">×</button>
+  <div class="stock-modal stock-personel-modal" id="stockDetailModal" hidden>
+    <article class="stock-dialog stock-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="stockDetailTitle" aria-describedby="stockDetailNote" tabindex="-1">
+      <button class="stock-close" id="stockDetailClose" type="button" aria-label="Ürün detayını kapat" title="Kapat">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+      </button>
       <div class="stock-detail-heading">
         <p class="eyebrow" id="stockDetailCategory">Stok</p>
         <h2 id="stockDetailTitle">Ürün detayı</h2>
         <em class="badge" id="stockDetailStatus">Durum</em>
       </div>
       <div class="stock-detail-grid">
-        <div><span>Elde olan</span><strong id="stockDetailQuantity">—</strong></div>
-        <div><span>Birim</span><strong id="stockDetailUnit">—</strong></div>
+        <div><span>Seçili depo</span><strong id="stockDetailLocation">Kafe Deposu</strong></div>
+        <div class="stock-detail-grid__primary"><span>Mevcut stok</span><strong id="stockDetailQuantity">—</strong></div>
+        <div><span>Temel birim</span><strong id="stockDetailUnit">—</strong></div>
+        <div><span>Koli / paket dönüşümü</span><strong id="stockDetailConversion">—</strong></div>
         <div><span>Sipariş eşiği</span><strong id="stockDetailThreshold">—</strong></div>
         <div><span>Kritik eşik</span><strong id="stockDetailCritical">—</strong></div>
         <div><span>Tedarikçi</span><strong id="stockDetailSupplier">—</strong></div>
       </div>
       <p class="stock-detail-note" id="stockDetailNote" hidden></p>
+      <div class="stock-detail-actions" id="stockDetailActions">
+        <button class="ui-button ui-button--primary" type="button" data-stock-detail-action="waste">Sarf İşle</button>
+        <button class="ui-button stock-action-adjust" type="button" data-stock-detail-action="manual_out">Eksilt</button>
+        <button class="ui-button ui-button--secondary stock-history-toggle" type="button" data-stock-detail-action="history" aria-expanded="false" aria-controls="stockDetailHistory">Hareket Geçmişi</button>
+      </div>
+      <section class="stock-detail-history" id="stockDetailHistory" aria-labelledby="stockDetailHistoryTitle" hidden>
+        <header><h3 id="stockDetailHistoryTitle">Son hareketler</h3><span id="stockDetailHistoryCount">0 kayıt</span></header>
+        <div id="stockDetailHistoryList"></div>
+      </section>
+      <p class="stock-detail-message" id="stockDetailMessage" role="status" aria-live="polite" hidden></p>
     </article>
+  </div>
+
+  <div class="stock-modal stock-personel-modal stock-action-modal" id="stockActionModal" hidden>
+    <form class="stock-dialog stock-action-dialog" id="stockActionForm" role="dialog" aria-modal="true" aria-labelledby="stockActionTitle" aria-describedby="stockActionSummary" novalidate>
+      <button class="stock-close" id="stockActionClose" type="button" aria-label="Stok işlemini kapat" title="Kapat">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+      </button>
+      <header class="stock-action-heading">
+        <p class="eyebrow" id="stockActionKicker">Stok işlemi</p>
+        <h2 id="stockActionTitle">Sarf İşle</h2>
+        <p id="stockActionProduct">Ürün</p>
+      </header>
+      <div class="stock-action-current">
+        <span><small>Depo</small><strong id="stockActionLocation">Kafe Deposu</strong></span>
+        <span><small>Mevcut stok</small><strong id="stockActionCurrent">—</strong></span>
+        <span><small>Dönüşüm</small><strong id="stockActionConversion">—</strong></span>
+      </div>
+      <div class="stock-action-fields">
+        <label><span>Miktar</span><input id="stockActionQuantity" type="number" min="0" inputmode="decimal" autocomplete="off" required></label>
+        <label><span>Birim</span><select id="stockActionUnit" required></select></label>
+      </div>
+      <div class="stock-quick-amounts" id="stockQuickAmounts" aria-label="Hızlı miktar seçimi"></div>
+      <section class="stock-action-preview" id="stockActionSummary" aria-live="polite">
+        <span><small>Temel birim karşılığı</small><strong id="stockActionConverted">—</strong></span>
+        <span><small>İşlem sonrası stok</small><strong id="stockActionAfter">—</strong></span>
+      </section>
+      <label class="stock-action-note"><span>Açıklama <small>(isteğe bağlı)</small></span><textarea id="stockActionNote" rows="3" maxlength="500" placeholder="İşlemle ilgili kısa bir not ekleyin"></textarea></label>
+      <p class="stock-action-message" id="stockActionMessage" role="alert" aria-live="assertive" hidden></p>
+      <footer class="stock-action-footer">
+        <button class="ui-button ui-button--secondary" id="stockActionCancel" type="button">İptal</button>
+        <button class="ui-button ui-button--primary" id="stockActionSubmit" type="submit">Sarf İşlemini Uygula</button>
+      </footer>
+    </form>
   </div>
 </body>
 </html>

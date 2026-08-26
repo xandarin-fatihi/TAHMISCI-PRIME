@@ -187,6 +187,7 @@ function registerDataImportRoutes(options) {
         const revisionBefore = importRevision(data);
         const publishRevisionBefore = Number(data.revisions && data.revisions.publish || 0);
         const pricingRevisionBefore = Number(data.revisions && data.revisions.pricing || 0);
+        const stockRevisionBefore = Number(data.revisions && data.revisions.stock || 0);
         const beforeFingerprint = catalogFingerprint(data, appliedScopes);
         const beforeProductCodeFingerprint = productCodeFingerprint(data, appliedScopes);
         applyPlan(data, draft.plan, appliedScopes);
@@ -198,6 +199,7 @@ function registerDataImportRoutes(options) {
         bumpDomainRevisions(data, selectedDomains);
         data.revisions.publish = Number(data.revisions.publish || 0) + 1;
         if (appliedScopes.includes("pricing")) data.revisions.pricing = Number(data.revisions.pricing || 0) + 1;
+        if (appliedScopes.includes("stock")) data.revisions.stock = stockRevisionBefore + 1;
         if (appliedScopes.includes("menu") || appliedScopes.includes("pricing")) data.menuUpdatedAt = now;
         if (appliedScopes.includes("pricing")) data.pricingUpdatedAt = now;
         if (appliedScopes.includes("recipes")) data.recipeUpdatedAt = now;
@@ -208,9 +210,10 @@ function registerDataImportRoutes(options) {
           scopes: appliedScopes, domains: selectedDomains, report: selectedDomainReport(draft, selectedDomains), changeCount: selectedDomainChanges(draft, selectedDomains).length,
           importScope: appliedScopes, fingerprintVersion: 3,
           revisionBefore, revisionAfter: data.revisions.dataImport,
-          publishRevisionBefore, pricingRevisionBefore,
+          publishRevisionBefore, pricingRevisionBefore, stockRevisionBefore,
           publishRevisionAfter: data.revisions.publish,
           pricingRevisionAfter: data.revisions.pricing,
+          stockRevisionAfter: Number(data.revisions.stock || 0),
           domainRevisionsBefore: draft.expectedDomainRevisions || {},
           domainRevisionsAfter: domainRevisionSnapshot(data, selectedDomains),
           expectedReadbackFingerprint,
@@ -229,6 +232,7 @@ function registerDataImportRoutes(options) {
         response = {
           ok: true, operationId, analysisId, revision: data.revisions.dataImport,
           publishRevision: data.revisions.publish, pricingRevision: data.revisions.pricing,
+          stockRevision: Number(data.revisions.stock || 0),
           changedScopes: appliedScopes, changedDomains: selectedDomains, report: selectedDomainReport(draft, selectedDomains), changedCount: selectedDomainChanges(draft, selectedDomains).length,
           canUndo: true, validationStatus: "pending", updatedAt: now
         };
@@ -271,6 +275,7 @@ function registerDataImportRoutes(options) {
             data.revisions.dataImport = Number(committedHistory.revisionBefore || 0);
             data.revisions.publish = Number(committedHistory.publishRevisionBefore || 0);
             data.revisions.pricing = Number(committedHistory.pricingRevisionBefore || 0);
+            if ((response.changedScopes || []).includes("stock")) data.revisions.stock = Number(committedHistory.stockRevisionBefore || 0);
             restoreDomainRevisionSnapshot(data, committedHistory.domainRevisionsBefore, response.changedDomains);
             let failed = findImportHistory(data, response.operationId);
             if (!failed) {
@@ -382,6 +387,7 @@ function registerDataImportRoutes(options) {
         bumpDomainRevisions(data, sourceDomains);
         data.revisions.publish = Number(data.revisions.publish || 0) + 1;
         if (source.scopes.includes("pricing")) data.revisions.pricing = Number(data.revisions.pricing || 0) + 1;
+        if (source.scopes.includes("stock")) data.revisions.stock = Number(data.revisions.stock || 0) + 1;
         if (source.scopes.includes("menu") || source.scopes.includes("pricing")) data.menuUpdatedAt = now;
         if (source.scopes.includes("pricing")) data.pricingUpdatedAt = now;
         if (source.scopes.includes("recipes")) data.recipeUpdatedAt = now;

@@ -3371,3 +3371,510 @@ textarea {
     display: none;
   }
 }
+
+/* Personel stok v43: ortak Poppins dili, erişilebilir detay ve gerçek hareket akışı. */
+.personel-dashboard[data-active-section="stock"] :where(
+  .stock-catalog-shell,
+  .stock-catalog-shell button,
+  .stock-catalog-shell input,
+  .stock-catalog-shell select,
+  .stock-catalog-shell textarea,
+  .stock-card h2,
+  .stock-card-quantity strong
+),
+.stock-personel-modal,
+.stock-personel-modal :where(button, input, select, textarea) {
+  font-family: var(--panel-font-ui, "Tahmisci Poppins", Poppins, Inter, system-ui, sans-serif);
+}
+
+html.is-panel-modal-open,
+body.is-panel-modal-open {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.stock-personel-modal {
+  z-index: 1800;
+  align-items: center;
+  justify-items: center;
+  overflow: hidden;
+  padding: clamp(12px, 3vw, 28px);
+  background: rgba(35, 18, 9, 0.54);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  touch-action: manipulation;
+}
+
+.stock-personel-modal.stock-action-modal {
+  z-index: 1820;
+  background: rgba(35, 18, 9, 0.64);
+}
+
+.stock-personel-modal .stock-dialog {
+  width: min(680px, 100%);
+  max-width: 100%;
+  max-height: min(88dvh, 780px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(20px, 3vw, 30px);
+  border: 1px solid rgba(90, 47, 29, 0.2);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 90% 0, rgba(255, 255, 244, 0.9), transparent 30%),
+    linear-gradient(145deg, #fffaf2, #f2e5d6);
+  box-shadow: 0 32px 80px rgba(31, 13, 6, 0.34);
+  color: #2c1609;
+}
+
+.stock-personel-modal .stock-close {
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid rgba(90, 47, 29, 0.18);
+  border-radius: 12px;
+  background: #fffaf3;
+  color: #5a2f1d;
+  box-shadow: 0 7px 18px rgba(58, 26, 11, 0.08);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.stock-personel-modal .stock-close svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.stock-personel-modal .stock-close:hover,
+.stock-personel-modal .stock-close:focus-visible {
+  border-color: rgba(90, 47, 29, 0.42);
+  background: #f7ecdf;
+}
+
+.stock-personel-modal .stock-close:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.stock-personel-modal .stock-detail-heading,
+.stock-personel-modal .stock-action-heading {
+  padding-right: 54px;
+}
+
+.stock-personel-modal :where(.stock-detail-heading, .stock-action-heading) h2 {
+  margin: 4px 0 0;
+  font-family: var(--panel-font-ui, "Tahmisci Poppins", Poppins, Inter, system-ui, sans-serif);
+  font-size: clamp(23px, 3vw, 31px);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.12;
+}
+
+.stock-personel-modal .stock-detail-heading .eyebrow,
+.stock-personel-modal .stock-action-heading .eyebrow {
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.stock-personel-modal .stock-detail-heading .badge {
+  min-height: 28px;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.stock-personel-modal .stock-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stock-personel-modal .stock-detail-grid > div {
+  padding: 13px 14px;
+  border-radius: 13px;
+  background: rgba(255, 250, 243, 0.78);
+}
+
+.stock-personel-modal .stock-detail-grid__primary {
+  border-color: rgba(90, 47, 29, 0.28);
+  background: rgba(90, 47, 29, 0.08);
+}
+
+.stock-personel-modal .stock-detail-grid span {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.stock-personel-modal .stock-detail-grid strong {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.stock-personel-modal .stock-detail-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.stock-personel-modal .stock-detail-actions button {
+  min-height: 44px;
+  border: 1px solid #5a2f1d;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  touch-action: manipulation;
+}
+
+.stock-personel-modal .stock-detail-actions .stock-action-adjust {
+  border-color: #b76d24;
+  background: #fff3de;
+  color: #8a4c0f;
+}
+
+.stock-personel-modal .stock-detail-actions .stock-history-toggle {
+  grid-column: 1 / -1;
+  background: #fffaf3;
+  color: #5a2f1d;
+}
+
+.stock-detail-history {
+  display: grid;
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid rgba(90, 47, 29, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 250, 243, 0.72);
+}
+
+.stock-detail-history[hidden] {
+  display: none;
+}
+
+.stock-detail-history > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stock-detail-history h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.stock-detail-history > header span,
+.stock-history-item small {
+  color: #806b5b;
+  font-size: 10px;
+}
+
+.stock-detail-history > div {
+  display: grid;
+  gap: 7px;
+}
+
+.stock-history-item {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  padding: 9px;
+  border: 1px solid rgba(90, 47, 29, 0.1);
+  border-radius: 10px;
+  background: #fffaf3;
+}
+
+.stock-history-item__icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: #f3e6d8;
+  color: #5a2f1d;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.stock-history-item strong,
+.stock-history-item small {
+  display: block;
+  min-width: 0;
+}
+
+.stock-history-item strong,
+.stock-history-item b {
+  color: #2c1609;
+  font-size: 11px;
+}
+
+.stock-history-item b {
+  white-space: nowrap;
+}
+
+.stock-history-item__actions {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+}
+
+.stock-history-item__actions button {
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid rgba(90, 47, 29, 0.24);
+  border-radius: 8px;
+  background: #fffaf3;
+  color: #5a2f1d;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.stock-history-item__actions button:focus-visible {
+  outline: 3px solid rgba(185, 80, 45, 0.22);
+  outline-offset: 2px;
+}
+
+.stock-detail-message.is-success {
+  border-color: rgba(77, 117, 61, 0.28);
+  background: #edf5e9;
+  color: #3f6f35 !important;
+}
+
+.stock-history-empty {
+  margin: 0;
+  padding: 14px;
+  border-radius: 10px;
+  background: #f7ecdf;
+  text-align: center;
+  font-size: 11px;
+}
+
+.stock-detail-message,
+.stock-action-message {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(165, 59, 43, 0.24);
+  border-radius: 10px;
+  background: #fbe9e5;
+  color: #8e2f24 !important;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.stock-personel-modal .stock-action-dialog {
+  width: min(620px, 100%);
+}
+
+.stock-action-heading > p:last-child {
+  margin: 6px 0 0;
+  color: #806b5b;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.stock-action-current,
+.stock-action-preview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stock-action-current > span,
+.stock-action-preview > span {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(90, 47, 29, 0.13);
+  border-radius: 12px;
+  background: rgba(255, 250, 243, 0.78);
+}
+
+.stock-action-current small,
+.stock-action-preview small,
+.stock-action-current strong,
+.stock-action-preview strong {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.stock-action-current small,
+.stock-action-preview small {
+  margin-bottom: 4px;
+  color: #806b5b;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.stock-action-current strong,
+.stock-action-preview strong {
+  color: #2c1609;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stock-action-preview {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stock-action-preview > span:last-child {
+  border-color: rgba(90, 47, 29, 0.26);
+  background: rgba(90, 47, 29, 0.07);
+}
+
+.stock-action-preview strong.is-error {
+  color: #a53b2b;
+}
+
+.stock-action-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.stock-action-fields label,
+.stock-action-note {
+  min-width: 0;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.stock-personel-modal :where(input, select, textarea) {
+  width: 100%;
+  max-width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  border: 1px solid rgba(90, 47, 29, 0.2);
+  border-radius: 10px;
+  background: #fffaf3;
+  color: #2c1609;
+}
+
+.stock-personel-modal select {
+  padding: 0 12px;
+}
+
+.stock-personel-modal textarea {
+  min-height: 78px;
+  padding: 10px 12px;
+}
+
+.stock-quick-amounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.stock-quick-amounts button {
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 1px solid rgba(90, 47, 29, 0.2);
+  border-radius: 999px;
+  background: #f7ecdf;
+  color: #5a2f1d;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.stock-quick-amounts button:hover,
+.stock-quick-amounts button:focus-visible {
+  border-color: #5a2f1d;
+  background: #efe0cf;
+}
+
+.stock-action-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 9px;
+}
+
+.stock-action-footer button {
+  min-height: 46px;
+  touch-action: manipulation;
+}
+
+.stock-action-footer button:disabled,
+.stock-quick-amounts button:disabled,
+.stock-personel-modal :where(input, select, textarea):disabled {
+  cursor: wait;
+  opacity: 0.56;
+}
+
+@media (max-width: 620px) {
+  .stock-personel-modal {
+    align-items: end;
+    padding: 0;
+  }
+
+  .stock-personel-modal .stock-dialog {
+    width: 100%;
+    max-height: min(92dvh, 92svh);
+    padding: 20px 15px calc(18px + env(safe-area-inset-bottom));
+    border-width: 1px 0 0;
+    border-radius: 22px 22px 0 0;
+  }
+
+  .stock-personel-modal .stock-close {
+    top: 12px;
+    right: 12px;
+  }
+
+  .stock-personel-modal .stock-detail-grid,
+  .stock-action-current {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .stock-action-current > span:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .stock-action-fields,
+  .stock-action-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-history-item {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .stock-history-item b {
+    grid-column: 2;
+  }
+
+  .stock-history-item__actions {
+    grid-column: 2;
+    justify-items: start;
+  }
+}
+
+@media (max-width: 420px) {
+  .stock-personel-modal .stock-detail-grid,
+  .stock-action-current,
+  .stock-action-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-action-current > span:last-child {
+    grid-column: auto;
+  }
+
+  .stock-detail-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-personel-modal .stock-detail-actions .stock-history-toggle {
+    grid-column: auto;
+  }
+}

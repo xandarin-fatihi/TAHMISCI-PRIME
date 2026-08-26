@@ -21,6 +21,26 @@ test("personel sidebar tek ve erişilebilir logo düğmesiyle yönetiliyor", () 
   assert.match(script, /region\.inert = Boolean\(mobile && collapsed\)/);
 });
 
+test("personel ve Yönetici stok detayları gerçek Sarf, Eksilt ve güvenli kapatma akışını korur", () => {
+  const personelHtml = source("apps/personel/index.html");
+  const personelScript = source("apps/personel/personel.js");
+  const personelCss = source("apps/personel/personel.css");
+  const adminScript = source("apps/admin/scripts/stock-locations.js");
+
+  assert.match(personelHtml, /id="stockDetailClose"[^>]*type="button"[^>]*aria-label="Ürün detayını kapat"/);
+  assert.match(personelHtml, /data-stock-detail-action="waste">Sarf İşle</);
+  assert.match(personelHtml, /data-stock-detail-action="manual_out">Eksilt</);
+  assert.match(personelScript, /event\.target === els\.stockDetailModal\) closeStockDetail\(\)/);
+  assert.match(personelScript, /event\.key === "Escape"[\s\S]*?closeStockDetail\(\)/);
+  assert.match(personelScript, /if \(state\.stockAction\) \{[\s\S]*?if \(!state\.stockActionSubmitting\) closeStockAction\(\);[\s\S]*?return;/);
+  assert.match(personelScript, /\/api\/stock\/movements/);
+  assert.match(personelScript, /\/api\/workforce\/stock\/movements\/\$\{encodeURIComponent\(id\)\}\/reverse/);
+  assert.match(personelScript, /stockQuantityToBase\(product, quantity, unit\)/);
+  assert.match(personelCss, /stock-personel-modal[\s\S]*?font-family:\s*var\(--panel-font-ui/);
+  assert.match(adminScript, /data-stock-drawer-action="manual_out">Eksilt</);
+  assert.match(adminScript, /<span>Kafe Deposu<\/span>[\s\S]*?<span>Genel Depo<\/span>[\s\S]*?<span>Tüm Depolar<\/span>/);
+});
+
 test("Yönetici sidebar tek logo düğmesiyle açılır ve mobil kapalı durumda yeniden erişilebilir kalır", () => {
   const html = source("apps/admin/index.html");
   const script = source("apps/admin/scripts/app.js");

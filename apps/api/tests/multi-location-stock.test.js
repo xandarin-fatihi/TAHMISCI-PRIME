@@ -63,22 +63,103 @@ test("depo transferi atomik, idempotent ve toplam stoğu koruyan bir işlemdir",
   assert.equal(stockService.getProductBalance(approved.stockState, stockService.GENERAL_LOCATION_ID, "milk-1").quantity, 75);
   assert.equal(stockService.getProductBalance(approved.stockState, stockService.CAFE_LOCATION_ID, "milk-1").quantity, 25);
   assert.equal(stockService.calculateTotalStock(approved.stockState, "milk-1"), 100);
+  const generalProjection = stockService.getLocationInventory(approved.stockState, stockService.GENERAL_LOCATION_ID)
+    .balances.find((balance) => balance.productId === "milk-1");
+  assert.equal(generalProjection.cafeQuantity, 25);
+  assert.equal(generalProjection.generalQuantity, 75);
+  assert.equal(generalProjection.totalQuantity, 100);
   assert.equal(replay.idempotent, true);
   assert.equal(stockService.getProductBalance(replay.stockState, stockService.CAFE_LOCATION_ID, "milk-1").quantity, 25);
 });
 
-test("personel stok bakiyesini ve depolar arası transferi doğrudan değiştiremez", () => {
-  const state = stateWithCafeQuantity(20);
+test("personel yalnız atanmış Kafe Deposunda Sarf ve Eksilt hareketi oluşturabilir", () => {
+  const state = stateWithCafeQuantity(36);
   const personel = { type: "personel", id: "person-1", stockLocationId: stockService.CAFE_LOCATION_ID };
-  assert.throws(() => stockService.applyStockMovement(state, {
+  const consumed = stockService.applyStockMovement(state, {
+    type: "waste", productId: "milk-1", locationId: stockService.CAFE_LOCATION_ID,
+    quantity: 1, unit: "koli", requestId: "personel-consumption-0001"
+  }, personel);
+  assert.equal(consumed.movement.type, "waste");
+  assert.equal(consumed.movement.baseQuantityDelta, -12);
+  assert.equal(consumed.movement.personnelId, "person-1");
+  assert.equal(consumed.movement.actorRole, "personel");
+  assert.equal(stockService.getProductBalance(consumed.stockState, stockService.CAFE_LOCATION_ID, "milk-1").quantity, 24);
+
+  const adjusted = stockService.applyStockMovement(consumed.stockState, {
     type: "stock_out", productId: "milk-1", locationId: stockService.CAFE_LOCATION_ID,
-    quantity: 4, unit: "adet", requestId: "personel-out-0001"
-  }, personel), /doğrudan değiştiremez/);
+    quantity: 4, unit: "adet", requestId: "personel-adjustment-out-0001"
+  }, personel);
+  assert.equal(adjusted.movement.type, "manual_out");
+  assert.equal(stockService.getProductBalance(adjusted.stockState, stockService.CAFE_LOCATION_ID, "milk-1").quantity, 20);
+
+  const replay = stockService.applyStockMovement(adjusted.stockState, {
+    type: "stock_out", productId: "milk-1", locationId: stockService.CAFE_LOCATION_ID,
+    quantity: 4, unit: "adet", requestId: "personel-adjustment-out-0001"
+  }, personel);
+  assert.equal(replay.idempotent, true);
+  assert.equal(stockService.getProductBalance(replay.stockState, stockService.CAFE_LOCATION_ID, "milk-1").quantity, 20);
+
+  assert.throws(() => stockService.applyStockMovement(adjusted.stockState, {
+    type: "stock_in", productId: "milk-1", locationId: stockService.CAFE_LOCATION_ID,
+    quantity: 1, unit: "adet", requestId: "personel-in-forbidden-0001"
+  }, personel), /yalnızca Sarf İşle veya Eksilt/);
+  assert.throws(() => stockService.applyStockMovement(adjusted.stockState, {
+    type: "consumption", productId: "milk-1", locationId: stockService.GENERAL_LOCATION_ID,
+    quantity: 1, unit: "adet", requestId: "personel-general-forbidden-0001"
+  }, personel), /işlem yetkiniz yok/);
   assert.throws(() => stockService.createTransferRequest(state, {
     productId: "milk-1", quantity: 1, unit: "adet", requestId: "personel-transfer-0001",
     fromLocationId: stockService.GENERAL_LOCATION_ID, toLocationId: stockService.CAFE_LOCATION_ID
   }, personel), /Yönetici yetkisi/);
-  assert.equal(stockService.getProductBalance(state, stockService.CAFE_LOCATION_ID, "milk-1").quantity, 20);
+});
+
+test("personel başka depo atamasıyla Kafe stokuna erişemez", () => {
+  const state = stateWithCafeQuantity(20);
+  const personel = { type: "personel", id: "person-1", stockLocationId: stockService.GENERAL_LOCATION_ID };
+  assert.throws(() => stockService.applyStockMovement(state, {
+    type: "consumption", productId: "milk-1", locationId: stockService.CAFE_LOCATION_ID,
+    quantity: 1, unit: "adet", requestId: "personel-invalid-assignment-0001"
+  }, personel), /yalnızca atanmış Kafe Deposunda/);
+});
+
+test("personel kendi Sarf hareketini ters hareketle geri alabilir", () => {
+  const state = stateWithCafeQuantity(24);
+  const personel = { type: "personel", id: "person-1", stockLocationId: stockService.CAFE_LOCATION_ID };
+  const consumed = stockService.applyStockMovement(state, {
+    type: "consumption", productId: "milk-1", locationId: stockService.CAFE_LOCATION_ID,
+    quantity: 1, unit: "koli", requestId: "personel-reverse-source-0001"
+  }, personel);
+  const beforeRevision = stockService.getProductBalance(consumed.stockState, stockService.CAFE_LOCATION_ID, "milk-1").revision;
+  const reversed = stockService.reverseMovement(consumed.stockState, consumed.movement.id, {
+    requestId: "personel-reverse-0001"
+  }, personel);
+  const balance = stockService.getProductBalance(reversed.stockState, stockService.CAFE_LOCATION_ID, "milk-1");
+  assert.equal(balance.quantity, 24);
+  assert.equal(balance.revision, beforeRevision + 1);
+  assert.equal(reversed.movements[0].type, "reversal");
+  assert.equal(reversed.movements[0].conversionSnapshot.unitsPerBulkUnit, 12);
+  assert.equal(Boolean(reversed.stockState.movements.find((item) => item.id === consumed.movement.id).reversedAt), true);
+
+  assert.throws(() => stockService.reverseMovement(consumed.stockState, consumed.movement.id, {
+    requestId: "personel-reverse-other-0001"
+  }, { ...personel, id: "person-2" }), /geri alma yetkiniz yok/);
+});
+
+test("stok hareketi geçersiz birimde 422, yetersiz bakiyede 409 üretir", () => {
+  const state = stateWithCafeQuantity(5);
+  const personel = { type: "personel", id: "person-1", stockLocationId: stockService.CAFE_LOCATION_ID };
+  assert.throws(() => stockService.applyStockMovement(state, {
+    type: "consumption", productId: "milk-1", quantity: 1, unit: "litre",
+    requestId: "personel-invalid-unit-0001"
+  }, personel), (error) => error.status === 422);
+  assert.throws(() => stockService.applyStockMovement(state, {
+    type: "adjustment_out", productId: "milk-1", quantity: 1, unit: "koli",
+    requestId: "personel-insufficient-0001"
+  }, personel), (error) => error.status === 409);
+  assert.throws(() => stockService.applyStockMovement(stateWithCafeQuantity(24), {
+    type: "consumption", productId: "milk-1", quantity: 0.5, unit: "koli",
+    requestId: "personel-fractional-package-0001"
+  }, personel), (error) => error.status === 422);
 });
 
 test("nesne biçimli eski birim değeri güvenli scalar birime normalize edilir", () => {

@@ -10,18 +10,18 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/app-icons/yonetici/favicon-32.png">
   <link rel="icon" type="image/png" sizes="48x48" href="/assets/app-icons/yonetici/favicon-48.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/app-icons/yonetici/apple-touch-icon-180.png">
-  <link rel="stylesheet" href="styles/admin.css?v=20260821-product-select-tap-fix">
+  <link rel="stylesheet" href="styles/admin.css?v=20260826-stock-actions">
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20260801-phase2">
   <link rel="stylesheet" href="styles/admin-compact.css?v=20260809-prephase6-shift-layout">
-  <link rel="stylesheet" href="styles/admin-components.css?v=20260826-stock-location">
+  <link rel="stylesheet" href="styles/admin-components.css?v=20260826-stock-actions">
   <link rel="stylesheet" href="styles/notifications.css?v=20260816-notification-cleanup">
   <link rel="stylesheet" href="/shared/styles/account-security.css?v=20260816-account-security">
   <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260816-account-notifications">
   <script src="/shared/scripts/category-icons.js?v=20260714"></script>
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
   <script src="/shared/scripts/menu-design-schema.js?v=20260802-prephase4-design-chain"></script>
-  <script src="scripts/app.js?v=20260826-stock-location" defer></script>
-  <script src="scripts/stock-locations.js?v=20260826-stock-integrity" defer></script>
+  <script src="scripts/app.js?v=20260826-stock-actions" defer></script>
+  <script src="scripts/stock-locations.js?v=20260826-stock-actions" defer></script>
   <script src="scripts/live-preview.js?v=20260802-preview-settings" defer></script>
   <script src="/shared/scripts/account-security.js?v=20260816-account-security" defer></script>
   <script src="/shared/scripts/pwa-client.js?v=20260826-update-ready" defer></script>
@@ -420,8 +420,8 @@
           </div>
 
           <div class="stock-product-drawer-layer" id="stockProductDrawerLayer" hidden>
-            <button class="stock-product-drawer-backdrop" type="button" data-stock-drawer-close aria-label="Ürün detayını kapat"></button>
-            <aside class="stock-product-drawer" id="stockProductDrawer" role="dialog" aria-modal="true" aria-labelledby="stockProductDrawerTitle" tabindex="-1">
+            <button class="stock-product-drawer-backdrop" type="button" data-stock-drawer-close tabindex="-1" aria-label="Ürün detayını kapat"></button>
+            <aside class="stock-product-drawer" id="stockProductDrawer" role="dialog" aria-modal="true" aria-labelledby="stockProductDrawerTitle" aria-describedby="stockProductDrawerSubtitle" tabindex="-1">
               <header><div><p class="eyebrow">Stok Ürünü</p><h4 id="stockProductDrawerTitle">Ürün detayı</h4><span id="stockProductDrawerSubtitle"></span></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-drawer-close aria-label="Ürün detayını kapat">×</button></header>
               <div class="stock-product-drawer__message" id="stockProductDrawerMessage" role="status" aria-live="polite"></div>
               <div class="stock-product-drawer__body" id="stockProductDrawerBody"></div>
@@ -435,8 +435,10 @@
                 <select id="stockLocationMovementProduct" required hidden></select><select id="stockLocationMovementType" hidden><option value="manual_in">Stok girişi</option><option value="manual_out">Stok çıkışı</option><option value="waste">Fire / sarf</option></select>
                 <label><span>Miktar</span><div class="stock-operation-stepper"><button type="button" data-stock-quantity-step="-1" aria-label="Miktarı azalt">−</button><input id="stockLocationMovementQuantity" type="number" min="0.01" step="1" inputmode="decimal" required><button type="button" data-stock-quantity-step="1" aria-label="Miktarı artır">+</button></div></label>
                 <label><span>Birim</span><select id="stockLocationMovementUnit" required></select></label>
-                <label><span>Neden</span><select id="stockLocationMovementReason"><option value="Kullanım">Kullanım</option><option value="Sarf">Sarf</option><option value="Fire">Fire</option><option value="Sayım düzeltmesi">Sayım düzeltmesi</option><option value="Hasarlı ürün">Hasarlı ürün</option><option value="Son kullanma tarihi">Son kullanma tarihi</option><option value="Diğer">Diğer</option></select></label>
+                <div class="stock-operation-quick" id="stockMovementQuickAmounts" aria-label="Hızlı miktar seçenekleri"></div>
+                <label><span>Neden</span><select id="stockLocationMovementReason"><option value="Kullanım">Kullanım</option><option value="Sarf">Sarf</option><option value="Eksiltme">Eksiltme</option><option value="Fire">Fire</option><option value="Sayım düzeltmesi">Sayım düzeltmesi</option><option value="Hasarlı ürün">Hasarlı ürün</option><option value="Son kullanma tarihi">Son kullanma tarihi</option><option value="Diğer">Diğer</option></select></label>
                 <label><span>Açıklama</span><input id="stockLocationMovementNote" type="text" maxlength="250" placeholder="İsteğe bağlı"></label>
+                <div class="stock-operation-conversion" id="stockLocationMovementConversion">Miktar seçildiğinde temel birim karşılığı gösterilir.</div>
                 <div class="stock-operation-preview"><span>İşlem sonrası stok</span><strong id="stockLocationMovementPreview">—</strong></div>
                 <p class="stock-admin-dialog__message" id="stockMovementDialogMessage" role="alert"></p>
               </div>
@@ -533,6 +535,10 @@
                     <button class="secondary-action ui-button ui-button--secondary" id="stockAddCategoryButton" type="button">+ Kategori</button>
                     <button class="secondary-action ui-button ui-button--secondary" id="stockAddProductButton" type="button">+ Ürün</button>
                     <button class="secondary-action ui-button ui-button--secondary" id="stockAddSupplierButton" type="button">+ Tedarikçi</button>
+                  </div>
+                  <div class="stock-editor-action-group stock-editor-action-group--danger" role="group" aria-label="Tehlikeli işlemler">
+                    <button class="danger-action ui-button ui-button--danger" id="stockDeleteProductButton" type="button">Ürünü Sil</button>
+                    <button class="danger-action ui-button ui-button--danger" id="stockDeleteCategoryButton" type="button">Kategoriyi Sil</button>
                   </div>
                 </div>
                 <div class="form-grid three stock-editor-fields">

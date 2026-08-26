@@ -143,6 +143,7 @@ function registerStockLocationRoutes(deps) {
     const source = balance && typeof balance === "object" ? balance : {};
     const {
       generalQuantity: _generalQuantity,
+      cafeQuantity: _cafeQuantity,
       otherLocationQuantity: _otherLocationQuantity,
       totalQuantity: _totalQuantity,
       totalQuantityDisplay: _totalQuantityDisplay,
@@ -413,8 +414,7 @@ function registerStockLocationRoutes(deps) {
           if (!Number.isFinite(value) || value < 0) throw fail("Eşik değerleri negatif olamaz.");
           balance[field] = Math.round(value * 1000) / 1000;
         }
-        if (body.criticalThreshold !== undefined && body.orderThreshold !== undefined
-          && Number(balance.criticalThreshold || 0) > Number(balance.orderThreshold || 0)) {
+        if (Number(balance.criticalThreshold || 0) > Number(balance.orderThreshold || 0)) {
           throw fail("Kritik eşik sipariş eşiğinden büyük olamaz.");
         }
         const currentBaseUnit = String(product.baseUnit || product.unit || "adet");
@@ -670,6 +670,74 @@ function registerStockLocationRoutes(deps) {
       const locationId = stockService.actorLocationId(state, actor);
       const payload = locationPayload(data, locationId, actor);
       res.json(payload);
+    } catch (error) { next(error); }
+  });
+
+  app.get("/api/workforce/stock/movements", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
+    try {
+      const data = req.storeSnapshot || await store.read();
+      const actor = personnelActor(req);
+      const state = normalizeStockState(data.stockState);
+      const locationId = stockService.actorLocationId(state, actor);
+      const requestedLocationId = String(req.query.locationId || "").trim();
+      if (requestedLocationId && requestedLocationId !== locationId) {
+        throw fail("Bu stok lokasyonunun hareket geçmişini görme yetkiniz yok.", 403);
+      }
+      const productId = String(req.query.productId || "").trim();
+      if (productId && !(state.products || []).some((product) => String(product.id) === productId)) {
+        throw fail("Stok ürünü bulunamadı.", 404);
+      }
+      const requestedLimit = Number(req.query.limit || 50);
+      const limit = Number.isFinite(requestedLimit) ? Math.min(200, Math.max(1, Math.trunc(requestedLimit))) : 50;
+      const movements = stockService.serializeMovements(state, { locationId, productId })
+        .slice(0, limit);
+      res.json({
+        ok: true,
+        location: stockService.getLocation(state, locationId),
+        movements,
+        revision: stockRevision(data),
+        updatedAt: data.stockUpdatedAt || state.updatedAt || null
+      });
+    } catch (error) { next(error); }
+  });
+
+  app.post("/api/workforce/stock/movements/:id/reverse", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
+    try {
+      const body = req.body || {};
+      const operationId = requestId(req, true);
+      const timestamp = nowIso();
+      const actor = personnelActor(req);
+      const pendingNotifications = [];
+      let result;
+      let locationId;
+      const saved = await store.update((data, context) => {
+        assertExpectedStockRevision(data, body, "movement_reverse", operationId);
+        const previousStockState = normalizeStockState(data.stockState);
+        locationId = stockService.actorLocationId(previousStockState, actor);
+        result = stockService.reverseMovement(previousStockState, req.params.id, { ...body, requestId: operationId }, actor, { now: timestamp });
+        if (result.idempotent) return context.noChange;
+        persistStockMutation(data, result.stockState, timestamp);
+        if (typeof queueStockThresholdNotifications === "function") {
+          queueStockThresholdNotifications(data, pendingNotifications, previousStockState, result.stockState, { operationId, updatedAt: timestamp });
+        }
+        appendStockAudit(data, actor, "stock.movement.reverse", req.params.id, operationId, null, { movementIds: result.movements.map((item) => item.id) }, timestamp);
+        return data;
+      });
+      if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp);
+      publishNotifications(pendingNotifications);
+      const inventory = stockService.getLocationInventory(saved.stockState, locationId);
+      res.json({
+        ok: true,
+        movements: result.movements,
+        inventory: {
+          location: inventory.location,
+          balances: inventory.balances.map(personnelInventoryBalance),
+          summary: inventory.summary
+        },
+        idempotent: result.idempotent,
+        revision: stockRevision(saved),
+        updatedAt: saved.stockUpdatedAt || timestamp
+      });
     } catch (error) { next(error); }
   });
 

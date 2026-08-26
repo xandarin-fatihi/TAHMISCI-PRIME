@@ -823,6 +823,20 @@ test("admin ve personel cookie oturumları birbirinden ayrılır", async () => {
   assert.equal(bothWorkforce.response.status, 200);
   assert.equal(bothWorkforce.body.user.id, expectedUserId);
 
+  const adminOnlyStockMutation = await json("/api/stock/movements", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl, Cookie: adminCookie, "X-Request-ID": `admin-stock-denied-${Date.now()}` },
+    body: JSON.stringify({ type: "stock_in", productId: "not-used", quantity: 1, unit: "adet", expectedRevision: 0 })
+  });
+  assert.equal(adminOnlyStockMutation.response.status, 401, "personel stok mutasyonu admin cookie ile açılamamalı");
+
+  const bothCookieStockMutation = await json("/api/stock/movements", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl, Cookie: bothCookies, "X-Request-ID": `personel-stock-capability-${Date.now()}` },
+    body: JSON.stringify({ type: "stock_in", productId: "not-used", quantity: 1, unit: "adet", expectedRevision: 0 })
+  });
+  assert.equal(bothCookieStockMutation.response.status, 403, "iki cookie varken stok mutasyonu doğru personel yetkisini kullanmalı");
+
   const adminStillActive = await json("/api/admin/me", {
     headers: { Origin: baseUrl, Cookie: bothCookies }
   });

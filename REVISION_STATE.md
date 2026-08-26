@@ -986,3 +986,14 @@ Hedefli doğrulama:
 - `apps/api/tests/multi-location-stock.test.js`: legacy Genel Depo taşıması, transfer toplam koruması, idempotent tekrar, personel lokasyon yetkisi, negatif bakiye, koli dönüşümü ve sayım koruması başarılı.
 - Lokasyonlu bildirim geçişleri, sevkiyat exactly-once akışı ve stok Excel'inin bakiye koruması mevcut regresyon testlerine işlendi; hedefli 62 test başarılıdır.
 - Değiştirilen JS dosyaları `node --check` ile doğrulandı; hedefli stok/PWA/bildirim/Excel testleri, `npm run check` ve `npm run check:duplicates` başarılıdır. Kritik kontrol listesine yeni stok route/service ve Yönetici stok istemcisi eklendi. PWA waiting-worker akışı “Yeni sürüm hazır.” / “Şimdi Güncelle” ile tek kontrollü yenileme üretir.
+
+## Personel Stok İşlemleri ve Ortak Detay Kapanışı
+
+- Personel Stok detayında gerçek `Sarf İşle` ve `Eksilt` akışları açıldı. Miktar/birim, hızlı seçim, koli-temel birim önizlemesi, işlem sonrası bakiye, not, loading kilidi ve idempotency anahtarı aynı backend stok hareket servisine bağlandı.
+- Detay ve işlem pencereleri gerçek buton, dış alan, Escape ve odak geri dönüşüyle kapanır; işlem sürerken ikinci gönderim ve kapatma engellenir. Yerel Poppins ailesi ortak panel foundation üzerinden kullanılır.
+- Personel hareket geçmişi yalnız atanmış Kafe Deposundan okunur. Personel yalnız kendi Sarf/Eksilt hareketini silmeden ters kayıtla geri alabilir; audit, conversion snapshot ve ürün-depo revision bilgisi korunur.
+- `/api/stock/movements` yalnız aktif Personel oturumunu kabul eder. Aynı tarayıcıda Yönetici ve Personel cookie'leri birlikte bulunsa da Yönetici cookie'si bu mutasyon yolunda Personel yetkisini aşamaz.
+- Yönetici stok detayında Kafe Deposu, Genel Depo ve tüm depolar toplamı ayrı gösterilir; Stok Ekle, Sarf, Eksilt, Transfer, eşik/birim ayarı ve hareket geçmişi aynı gerçek stok otoritesini kullanır.
+- Stok Excel taslağı oluşturulduktan sonra canlı stok revision'ı değişirse eski taslak uygulamaya alınmaz; böylece Excel katalog apply işlemi güncel hareket/bakiyeyi ezmez. Kritik eşik–sipariş eşiği ilişkisi kısmi güncellemede de doğrulanır.
+
+Son doğrulama: hedefli 51 stok/Excel/UI testi ve oturum ayrımı entegrasyon testi başarılı; `npm run check` ve `npm run check:duplicates` başarılıdır. Veri migration gerekmemiştir; mevcut şema ve stok geçmişi korunmuştur.

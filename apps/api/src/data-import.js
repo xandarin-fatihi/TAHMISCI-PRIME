@@ -2046,6 +2046,10 @@ function recipeFingerprintProjection(data) {
 function stockFingerprintProjection(data) {
   const stock = data && data.stockState && typeof data.stockState === "object" ? data.stockState : {};
   return {
+    // Katalog planı bütün stockState snapshot'ından üretildiği için analizden
+    // sonraki herhangi bir gerçek stok hareketi/eşik değişikliği apply öncesi
+    // yakalanmalıdır. Böylece eski plan canlı depo defterini ezemez.
+    revision: finiteFingerprintNumber(data && data.revisions && data.revisions.stock, 0),
     schemaVersion: finiteFingerprintNumber(stock.schemaVersion, 1),
     categories: stableSort((stock.categories || []).map((category) =>
       withoutTransientFingerprintFields(category)

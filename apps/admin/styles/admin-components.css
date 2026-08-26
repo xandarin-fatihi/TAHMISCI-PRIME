@@ -2234,6 +2234,10 @@ html.is-pricing-modal-open body {
 .stock-drawer-details dd { margin: 4px 0 0; color: var(--panel-ink); font: 700 12px/1.35 var(--panel-font-ui); }
 .stock-drawer-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .stock-drawer-actions .ui-button:last-child { grid-column: 1 / -1; }
+.stock-operation-quick { display: flex; flex-wrap: wrap; gap: 7px; grid-column: 1 / -1; }
+.stock-operation-quick button { min-height: 34px; padding: 6px 10px; border: 1px solid var(--panel-line); border-radius: 999px; background: var(--panel-surface-soft); color: var(--panel-coffee); font: 700 11px/1 var(--panel-font-ui); cursor: pointer; }
+.stock-operation-quick button:hover, .stock-operation-quick button:focus-visible { border-color: var(--panel-coffee); outline: none; }
+.stock-operation-conversion { grid-column: 1 / -1; padding: 9px 11px; border: 1px solid var(--panel-line); border-radius: 9px; background: var(--panel-surface-soft); color: var(--panel-muted); font: 650 11px/1.4 var(--panel-font-ui); }
 .is-stock-drawer-open { overflow: hidden; }
 
 .stock-admin-dialog { width: min(560px, calc(100vw - 28px)); max-height: calc(100dvh - 28px); padding: 0; overflow: hidden; border: 1px solid var(--panel-line); border-radius: 15px; background: var(--panel-surface); color: var(--panel-ink); box-shadow: 0 24px 60px rgba(44, 22, 9, .24); }

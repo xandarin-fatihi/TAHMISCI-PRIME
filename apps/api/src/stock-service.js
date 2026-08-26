@@ -11,12 +11,16 @@ const { normalizeProductCode } = require("./store/product-code-registry");
 const CAFE_LOCATION_ID = "stock-location-cafe";
 const GENERAL_LOCATION_ID = "stock-location-general";
 const LOCATION_TYPES = new Set(["cafe", "central", "other"]);
-const CONTROLLED_UNITS = new Set(["adet", "paket", "şişe", "kutu", "koli", "kasa", "çuval", "kg", "gr", "litre", "ml"]);
+const CONTROLLED_UNITS = new Set([
+  "adet", "paket", "şişe", "kutu", "koli", "kasa", "çuval",
+  "kg", "gr", "litre", "ml", "porsiyon", "bardak", "rulo", "set", "çift", "metre"
+]);
 const MOVEMENT_TYPES = new Set([
   "opening_balance", "manual_in", "manual_out", "waste", "inbound_shipment",
   "shipment_in", "transfer", "transfer_out", "transfer_in", "adjustment",
   "correction", "reversal", "stock_in", "stock_out", "import"
 ]);
+const PERSONNEL_OUT_MOVEMENT_TYPES = new Set(["waste", "manual_out"]);
 const TRANSFER_STATUSES = new Set(["draft", "pending", "approved", "rejected", "cancelled"]);
 const OPERATION_LIMIT = 1000;
 const MOVEMENT_LIMIT = 5000;
@@ -126,13 +130,13 @@ function actorLocationId(stockState, actor) {
   if (actor && actor.type === "admin") return null;
   const requested = String(actor && (actor.stockLocationId || actor.locationId) || "").trim();
   if (requested) {
-    try {
-      const location = getLocation(state, requested);
-      if (location.type === "cafe") return location.id;
-    } catch (_error) {}
+    const location = getLocation(state, requested);
+    if (location.type !== "cafe") throw stockError("Personel stok işlemleri yalnızca atanmış Kafe Deposunda yapılabilir.", 403);
+    return location.id;
   }
   const cafe = defaultCafeLocation(state);
-  return cafe && cafe.id || CAFE_LOCATION_ID;
+  if (!cafe || cafe.active === false) throw stockError("Personel için aktif Kafe Deposu bulunamadı.", 404);
+  return cafe.id;
 }
 
 function getProduct(stockState, productId, productCode) {
@@ -217,9 +221,12 @@ function convertToBaseUnit(quantity, requestedUnit, product) {
   const baseUnit = metadata.baseUnit;
   const inputUnit = normalizeUnit(requestedUnit || baseUnit);
   const sourceQuantity = finitePositive(quantity);
-  if (!sourceQuantity) throw stockError("Geçerli bir miktar girin.");
+  if (!sourceQuantity) throw stockError("Geçerli bir miktar girin.", 422);
+  if (!metadata.allowDecimal && !Number.isInteger(sourceQuantity)) {
+    throw stockError(`${productName(product)} için kesirli miktar kullanılamaz.`, 422);
+  }
   if (!allowedProductUnits(product).includes(inputUnit)) {
-    throw stockError(`“${inputUnit}” birimi bu ürün için kullanılamaz.`);
+    throw stockError(`“${inputUnit}” birimi bu ürün için kullanılamaz.`, 422);
   }
   let result;
   if (!baseUnit || inputUnit === baseUnit) result = { quantity: round(sourceQuantity), factor: 1, baseUnit };
@@ -241,9 +248,9 @@ function convertToBaseUnit(quantity, requestedUnit, product) {
       packageInfo: `1 ${metadata.bulkUnit} = ${metadata.unitsPerBulkUnit} ${baseUnit}`
     };
   }
-  if (!result) throw stockError(`“${inputUnit}” birimi bu ürünün stok birimi “${baseUnit}” ile uyumlu değil.`);
+  if (!result) throw stockError(`“${inputUnit}” birimi bu ürünün stok birimi “${baseUnit}” ile uyumlu değil.`, 422);
   if (!metadata.allowDecimal && !Number.isInteger(result.quantity)) {
-    throw stockError(`${productName(product)} için kesirli ${baseUnit} miktarı kullanılamaz.`);
+    throw stockError(`${productName(product)} için kesirli ${baseUnit} miktarı kullanılamaz.`, 422);
   }
   return {
     ...result,
@@ -349,6 +356,7 @@ function addMovement(state, input) {
       : Math.max(0, Math.trunc(Number(input.expectedRevision) || 0)),
     transactionRef: String(input.transactionRef || ""),
     actorId: String(input.actor && input.actor.id || input.actorId || ""),
+    actorRole: String(input.actor && input.actor.type || input.actorRole || "system"),
     actor: input.actor && (input.actor.name || input.actor.id) || String(input.actorName || "system"),
     personnelId: String(input.personnelId || input.actor && input.actor.type === "personel" && input.actor.id || ""),
     approvedBy: String(input.approvedBy || input.actor && input.actor.type === "admin" && input.actor.id || ""),
@@ -365,10 +373,16 @@ function addMovement(state, input) {
 function applyStockMovement(stockState, input = {}, actor = {}, options = {}) {
   const state = normalizeState(stockState);
   const requestId = String(input.requestId || input.idempotencyKey || options.requestId || "").trim();
-  const type = String(input.type || "").trim();
-  if (!MOVEMENT_TYPES.has(type)) throw stockError("Geçersiz stok hareket türü.");
-  if (actor && actor.type !== "admin") {
-    throw stockError("Personel hesabı stok bakiyesini doğrudan değiştiremez.", 403);
+  const requestedType = String(input.type || "").trim();
+  const type = actor && actor.type === "personel"
+    ? ({ consumption: "waste", adjustment_out: "manual_out", stock_out: "manual_out" }[requestedType] || requestedType)
+    : requestedType;
+  if (!MOVEMENT_TYPES.has(type)) throw stockError("Geçersiz stok hareket türü.", 422);
+  if (!actor || !["admin", "personel"].includes(actor.type)) {
+    throw stockError("Stok işlemi için yetkili kullanıcı gerekli.", 403);
+  }
+  if (actor.type === "personel" && !PERSONNEL_OUT_MOVEMENT_TYPES.has(type)) {
+    throw stockError("Personel yalnızca Sarf İşle veya Eksilt hareketi oluşturabilir.", 403);
   }
   const duplicate = idempotentRecord(state, "movement", requestId);
   if (duplicate) {
@@ -382,14 +396,14 @@ function applyStockMovement(stockState, input = {}, actor = {}, options = {}) {
     throw stockError("Bu stok lokasyonunda işlem yetkiniz yok.", 403);
   }
   const sourceQuantity = finitePositive(input.quantity);
-  if (!sourceQuantity) throw stockError("Geçerli bir miktar girin.");
+  if (!sourceQuantity) throw stockError("Geçerli bir miktar girin.", 422);
   const conversion = convertToBaseUnit(sourceQuantity, input.unit || product.unit, product);
   const delta = movementDirection(type, input) * conversion.quantity;
   if (!delta) throw stockError("Bu hareket türü için geçerli miktar değişimi gerekli.");
   const balance = findBalance(state, location.id, product.id, true);
   if (input.expectedBalanceRevision !== undefined && input.expectedBalanceRevision !== null && input.expectedBalanceRevision !== "") {
     const expectedBalanceRevision = Number(input.expectedBalanceRevision);
-    if (!Number.isInteger(expectedBalanceRevision) || expectedBalanceRevision < 0) throw stockError("Beklenen ürün-depo revision geçersiz.");
+    if (!Number.isInteger(expectedBalanceRevision) || expectedBalanceRevision < 0) throw stockError("Beklenen ürün-depo revision geçersiz.", 422);
     if (expectedBalanceRevision !== Math.max(0, Number(balance.revision || 0))) {
       throw stockError("Ürün-depo bakiyesi başka bir işlemle güncellendi. Yenileyip tekrar deneyin.", 409);
     }
@@ -860,6 +874,18 @@ function reverseMovement(stockState, movementId, input = {}, actor = {}, options
   if (duplicate) return { stockState: state, movements: [], idempotent: true };
   const original = (state.movements || []).find((item) => String(item.id) === String(movementId));
   if (!original) throw stockError("Stok hareketi bulunamadı.", 404);
+  if (actor && actor.type === "personel") {
+    const ownLocationId = actorLocationId(state, actor);
+    const ownsMovement = String(original.personnelId || original.actorId || "") === String(actor.id || "");
+    if (!ownsMovement || String(original.locationId || "") !== String(ownLocationId)) {
+      throw stockError("Bu stok hareketini geri alma yetkiniz yok.", 403);
+    }
+    if (!["waste", "manual_out", "stock_out"].includes(String(original.type || ""))) {
+      throw stockError("Personel yalnızca kendi Sarf veya Eksilt hareketini geri alabilir.", 403);
+    }
+  } else if (!actor || actor.type !== "admin") {
+    throw stockError("Stok hareketini geri almak için yetkili kullanıcı gerekli.", 403);
+  }
   if (original.reversedMovementId || original.type === "reversal") throw stockError("Bu hareket daha önce terslenmiş.", 409);
   const related = original.transactionRef && original.type === "transfer"
     ? (state.movements || []).filter((item) => item.type === "transfer" && item.transactionRef === original.transactionRef)
@@ -877,17 +903,25 @@ function reverseMovement(stockState, movementId, input = {}, actor = {}, options
     const next = round(prior + (isIncoming ? -Number(item.quantity || 0) : Number(item.quantity || 0)));
     if (next < 0) throw stockError("Ters hareket mevcut stok nedeniyle eksiye düşer.", 409);
     balance.quantity = next;
+    balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
     balance.updatedAt = timestamp;
     const reversal = addMovement(state, {
       type: "reversal", productId: product.id, stockProductCode: product.productCode, productName: productName(product),
       locationId, fromLocationId: item.toLocationId, toLocationId: item.fromLocationId,
       quantity: Number(item.quantity || 0), baseUnit: item.baseUnit || product.unit,
       sourceQuantity: Number(item.sourceQuantity || item.quantity || 0), sourceUnit: item.sourceUnit || product.unit,
-      conversionFactor: item.conversionFactor || 1, previousBalance: prior, resultingBalance: next,
+      inputQuantity: Number(item.inputQuantity ?? item.sourceQuantity ?? item.quantity ?? 0),
+      inputUnit: item.inputUnit || item.sourceUnit || product.unit,
+      baseQuantityDelta: -Number(item.baseQuantityDelta || (Number(item.resultingBalance || 0) - Number(item.previousBalance || 0))),
+      conversionFactor: item.conversionFactor || 1,
+      conversionSnapshot: item.conversionSnapshot && typeof item.conversionSnapshot === "object" ? { ...item.conversionSnapshot } : undefined,
+      previousBalance: prior, resultingBalance: next,
       referenceType: "movement_reversal", referenceId: item.id, requestId, idempotencyKey: requestId,
       transactionRef, actor, note: input.note || `Ters hareket: ${item.id}`, reason: "Ters hareket", createdAt: timestamp, approvedAt: timestamp
     });
     item.reversedMovementId = reversal.id;
+    item.reversedAt = timestamp;
+    item.reversedBy = String(actor && actor.id || "");
     reversals.push(reversal);
   }
   updateProductTotalProjection(state, product.id, timestamp);
@@ -917,12 +951,14 @@ function stockStatus(balance, generalQuantity = 0) {
 function getLocationInventory(stockState, locationId, options = {}) {
   const state = normalizeState(stockState);
   const location = locationId === "total" || locationId === "TOPLAM" ? null : getLocation(state, locationId);
+  const cafe = defaultCafeLocation(state);
   const general = defaultGeneralLocation(state);
   const balances = (state.products || []).filter((product) => options.includeInactive || product.active !== false).map((product) => {
     const selected = location
       ? getProductBalance(state, location.id, product.id)
       : { locationId: "total", productId: product.id, quantity: calculateTotalStock(state, product.id), criticalThreshold: 0, orderThreshold: 0, targetLevel: 0, updatedAt: product.updatedAt || null };
     const generalQuantity = general ? Number(getProductBalance(state, general.id, product.id).quantity || 0) : 0;
+    const cafeQuantity = cafe ? Number(getProductBalance(state, cafe.id, product.id).quantity || 0) : 0;
     const totalQuantity = calculateTotalStock(state, product.id);
     const otherLocationQuantity = location
       ? round(totalQuantity - Number(selected.quantity || 0))
@@ -938,6 +974,7 @@ function getLocationInventory(stockState, locationId, options = {}) {
       ...selected,
       product: { ...product, stockQuantity: totalQuantity, ...productUnitMetadata(product), allowedUnits: allowedProductUnits(product) },
       totalQuantity,
+      cafeQuantity,
       generalQuantity,
       otherLocationQuantity,
       status,
