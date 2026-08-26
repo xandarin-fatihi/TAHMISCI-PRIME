@@ -1,7 +1,7 @@
 /* Tahmisçi Yönetici PWA — scope: /yonetici/ */
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "yonetici",
-  version: "2026.08.26.2",
+  version: "2026.08.27.1",
   scopePath: "/yonetici/",
   offlineUrl: "/yonetici/offline.html",
   offlineAssets: [

@@ -23,6 +23,7 @@
     secondaryLocationId: "",
     selectedCategory: "all",
     selectedProductId: "",
+    viewMode: "overview",
     drawerReturnFocus: null,
     inventoryController: null,
     loadSequence: 0,
@@ -277,7 +278,7 @@
     const workspace = $("#stockLocationWorkspace");
     if (workspace) workspace.setAttribute("aria-busy", "true");
     const currentPromise = (async () => {
-      await loadLocations({ force: options.reloadLocations === true });
+      await loadLocations({ force: options.reloadLocations === true || options.force === true });
       const requestedLocationId = String(state.selectedLocationId || "total");
       // İlk görünüm yalnız envanter ve bekleyen transfer projection'ını bekler.
       // Ağır hareket/sayım geçmişi aşağıdaki ikincil alanlar görünür olduğunda
@@ -327,7 +328,10 @@
 
   function renderError(error) {
     const inventory = $("#stockLocationInventory");
-    if (inventory && !state.loaded) inventory.innerHTML = `<div class="stock-location-empty"><strong>Depo verileri yüklenemedi</strong><span>${esc(error.message)}</span></div>`;
+    const warehouses = $("#stockWarehouseCards");
+    const content = `<div class="stock-location-empty"><strong>Depo verileri yüklenemedi</strong><span>${esc(error.message)}</span><button class="ui-button ui-button--secondary ui-button--sm" type="button" data-stock-retry>Yeniden Dene</button></div>`;
+    if (inventory && !state.loaded) inventory.innerHTML = content;
+    if (warehouses && !state.loaded) warehouses.innerHTML = content;
   }
 
   function renderLocations() {
@@ -342,27 +346,65 @@
       </button>`).join("");
     const title = $("#stockActiveLocationTitle");
     const freshness = $("#stockLocationFreshness");
-    if (title) title.textContent = locationName(state.selectedLocationId);
+    if (title) title.textContent = state.viewMode === "overview" ? "Stok Genel Bakışı" : locationName(state.selectedLocationId);
     if (freshness) freshness.textContent = `Güncel · Son güncelleme ${state.updatedAt ? formatDate(state.updatedAt) : "bekleniyor"}`;
   }
 
   function renderSummary() {
     const host = $("#stockLocationSummary");
     if (!host) return;
-    const derivedCritical = state.balances.filter((balance) => balanceStatus(balance) === "critical").length;
-    const sufficient = state.balances.filter((balance) => balanceStatus(balance) === "sufficient").length;
-    const openSuggestions = state.balances.filter((balance) => {
-      const type = String(balance && balance.recommendation && balance.recommendation.type || "");
-      return type === "transfer" || type === "purchase";
-    }).length;
+    const activeLocations = state.locations.filter((location) => location.active !== false);
+    const overview = state.viewMode === "overview";
+    const derivedCritical = overview
+      ? activeLocations.reduce((sum, location) => sum + Number(location.inventorySummary?.criticalProducts || 0), 0)
+      : state.balances.filter((balance) => balanceStatus(balance) === "critical").length;
+    const sufficient = overview
+      ? activeLocations.reduce((sum, location) => sum + Number(location.inventorySummary?.sufficientProducts || 0), 0)
+      : state.balances.filter((balance) => balanceStatus(balance) === "sufficient").length;
+    const openSuggestions = overview
+      ? activeLocations.reduce((sum, location) => sum + Number(location.inventorySummary?.openSuggestions || 0), 0)
+      : state.balances.filter((balance) => {
+        const type = String(balance && balance.recommendation && balance.recommendation.type || "");
+        return type === "transfer" || type === "purchase";
+      }).length;
     const cards = [
-      ["Toplam Ürün", state.summary.productCount ?? state.summary.totalProducts ?? state.balances.length],
+      ["Toplam Ürün", overview ? Math.max(0, ...activeLocations.map((location) => Number(location.inventorySummary?.totalProducts || 0))) : state.summary.productCount ?? state.summary.totalProducts ?? state.balances.length],
       ["Kritik Ürün", state.summary.criticalCount ?? derivedCritical],
       ["Yeterli Ürün", sufficient],
       ["Bekleyen Transfer", state.transfers.length],
       ["Açık Öneri", state.summary.openSuggestionCount ?? openSuggestions]
     ];
     host.innerHTML = cards.map(([label, value]) => `<article><span>${esc(label)}</span><strong>${esc(value)}</strong></article>`).join("");
+  }
+
+  function renderWarehouseCards() {
+    const host = $("#stockWarehouseCards");
+    if (!host) return;
+    const activeLocations = state.locations.filter((location) => location.active !== false);
+    const totalProducts = Math.max(0, ...activeLocations.map((location) => Number(location.inventorySummary?.totalProducts || 0)));
+    const totalCritical = activeLocations.reduce((sum, location) => sum + Number(location.inventorySummary?.criticalProducts || 0), 0);
+    const cards = [{
+      id: "total", name: "Tüm Depolar", code: "TOPLAM", type: "overview",
+      description: "Bütün depo bakiyelerinin birleşik görünümü",
+      inventorySummary: { totalProducts, criticalProducts: totalCritical, sufficientProducts: Math.max(0, totalProducts - totalCritical), pendingTransfers: state.transfers.length, lastMovementAt: state.updatedAt }
+    }, ...activeLocations];
+    host.innerHTML = cards.length ? cards.map((location, index) => {
+      const summary = location.inventorySummary || {};
+      const type = location.id === "total" ? "GENEL BAKIŞ" : location.type === "cafe" ? "KAFE" : location.type === "central" ? "GENEL" : "DİĞER";
+      return `<article class="stock-warehouse-card">
+        <div class="stock-warehouse-card__index">${String(index + 1).padStart(2, "0")}</div>
+        <div class="stock-warehouse-card__identity"><span>${esc(type)}</span><h5>${esc(location.name)}</h5><p>${esc(location.description || "Depo bakiyeleri ve hareketleri")}</p></div>
+        <dl><div><dt>Aktif ürün</dt><dd>${esc(summary.totalProducts || 0)}</dd></div><div><dt>Kritik</dt><dd>${esc(summary.criticalProducts || 0)}</dd></div><div><dt>Yeterli</dt><dd>${esc(summary.sufficientProducts || 0)}</dd></div><div><dt>Son hareket</dt><dd>${esc(summary.lastMovementAt ? formatDate(summary.lastMovementAt) : "Henüz yok")}</dd></div></dl>
+        <button class="ui-button ui-button--primary ui-button--block" type="button" data-stock-warehouse-open="${esc(location.id)}">Depoyu Aç <span aria-hidden="true">→</span></button>
+      </article>`;
+    }).join("") : `<div class="stock-location-empty"><strong>Aktif depo bulunmuyor</strong><span>Depo ekleyerek stok yönetimine başlayın.</span></div>`;
+  }
+
+  function renderViewMode() {
+    const overview = $("#stockWarehouseOverview");
+    const inventory = $("#stockLocationInventoryView");
+    if (overview) overview.hidden = state.viewMode !== "overview";
+    if (inventory) inventory.hidden = state.viewMode !== "inventory";
   }
 
   function filteredBalances() {
@@ -415,8 +457,8 @@
         <div class="stock-location-product__top"><span class="stock-location-product__category">${esc(product.category || "Kategori yok")}</span>${selected ? `<span class="stock-location-product__selected" aria-label="Seçili">✓</span>` : ""}</div>
         <div class="stock-location-product__identity"><strong>${esc(productName(balance))}</strong><span>${esc(product.productCode || product.code || "Kod yok")}</span></div>
         <span class="stock-location-status is-${esc(status)}">${esc(statusLabel(status))}</span>
-        <div class="stock-location-product__quantity"><strong>${esc(factor > 0 ? formatNumber(bulk) : formatNumber(balance.quantity))}</strong><span>${esc(factor > 0 ? bulkUnit : unitOf(balance))}</span></div>
-        <p class="stock-location-product__conversion">${esc(formatNumber(balance.quantity))} ${esc(unitOf(balance))}${factor > 0 ? ` · 1 ${esc(bulkUnit)} = ${esc(formatNumber(factor))} ${esc(unitOf(balance))}` : ""}</p>
+        <div class="stock-location-product__quantity"><strong>${esc(quantityDisplay(balance))}</strong></div>
+        <p class="stock-location-product__conversion">${factor > 0 ? `1 ${esc(bulkUnit)} = ${esc(formatNumber(factor))} ${esc(unitOf(balance))}` : `Temel birim: ${esc(unitOf(balance))}`}</p>
         ${suggestion ? `<p class="stock-transfer-suggestion">${suggestion.type === "transfer" ? "Genel Depodan transfer önerisi" : "Satın alma önerisi"}: ${esc(formatNumber(suggestion.quantity))} ${esc(unitOf(balance))}</p>` : ""}
         <span class="stock-location-product__open">Ayrıntıları aç <b aria-hidden="true">›</b></span>
       </article>`;
@@ -442,12 +484,14 @@
     $("#stockProductDrawerSubtitle").textContent = `${product.productCode || "Kod yok"} · ${product.category || "Kategori yok"}`;
     $("#stockProductDrawerMessage").textContent = totalReadOnly ? "Tüm Depolar görünümü salt okunurdur. İşlem için Kafe veya Genel Depoyu seçin." : "";
     const body = $("#stockProductDrawerBody");
-    body.innerHTML = `<section class="stock-drawer-overview">
+    const recentMovements = state.movements.filter((movement) => String(movement.productId) === String(product.id)).slice(0, 4);
+    body.innerHTML = `<section class="stock-drawer-selected"><span>${esc(locationName(state.selectedLocationId))}</span><strong>${esc(quantityDisplay(balance))}</strong><small>Seçili depo bakiyesi</small></section><section class="stock-drawer-overview">
       <article><span>Kafe Deposu</span><strong>${esc(quantityDisplay(balance, cafeQuantity))}</strong><small>Operasyon bakiyesi</small></article>
       <article><span>Genel Depo</span><strong>${esc(quantityDisplay(balance, balance.generalQuantity ?? 0))}</strong><small>Merkez bakiyesi</small></article>
       <article><span>Tüm Depolar</span><strong>${esc(quantityDisplay(balance, balance.totalQuantity ?? balance.quantity ?? 0))}</strong><small>Toplam bakiye</small></article>
     </section>
-    <dl class="stock-drawer-details"><div><dt>Kritik eşik</dt><dd>${esc(formatNumber(balance.criticalThreshold))} ${esc(unitOf(balance))}</dd></div><div><dt>Sipariş eşiği</dt><dd>${esc(formatNumber(balance.orderThreshold))} ${esc(unitOf(balance))}</dd></div><div><dt>Hedef stok</dt><dd>${esc(formatNumber(balance.targetLevel))} ${esc(unitOf(balance))}</dd></div><div><dt>Dönüşüm</dt><dd>${esc(unitsOf(balance).map((unit) => unit.label).join(" · "))}</dd></div></dl>
+    <dl class="stock-drawer-details"><div><dt>Kategori</dt><dd>${esc(product.category || "Kategori yok")}</dd></div><div><dt>Ürün kodu</dt><dd>${esc(product.productCode || product.code || "Kod yok")}</dd></div><div><dt>Durum</dt><dd>${esc(statusLabel(balanceStatus(balance)))}</dd></div><div><dt>Tedarikçi</dt><dd>${esc(product.supplier || "Belirtilmedi")}</dd></div><div><dt>Kritik eşik</dt><dd>${esc(formatNumber(balance.criticalThreshold))} ${esc(unitOf(balance))}</dd></div><div><dt>Sipariş eşiği</dt><dd>${esc(formatNumber(balance.orderThreshold))} ${esc(unitOf(balance))}</dd></div><div><dt>Hedef stok</dt><dd>${esc(formatNumber(balance.targetLevel))} ${esc(unitOf(balance))}</dd></div><div><dt>Birim dönüşümü</dt><dd>${esc(unitsOf(balance).map((unit) => unit.label).join(" · "))}</dd></div></dl>
+    <section class="stock-drawer-recent"><header><strong>Son hareketler</strong><span>${recentMovements.length} kayıt</span></header>${recentMovements.length ? recentMovements.map((movement) => `<div><span>${esc(statusLabel(movement.type))}</span><strong>${esc(formatNumber(movement.inputQuantity ?? movement.sourceQuantity ?? movement.quantity))} ${esc(movement.inputUnit || movement.sourceUnit || movement.baseUnit || unitOf(balance))}</strong><small>${esc(formatDate(movement.createdAt))}</small></div>`).join("") : `<p>Bu ürün için hareket kaydı henüz yüklenmedi.</p>`}</section>
     <div class="stock-drawer-actions" aria-label="${esc(productName(balance))} stok işlemleri">
       ${totalReadOnly ? "" : `<button class="ui-button ui-button--primary" type="button" data-stock-drawer-action="manual_in">Stok Ekle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="waste">Sarf İşle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="manual_out">Eksilt</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="transfer">Transfer Oluştur</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="settings">Eşik ve Birim Ayarları</button>`}
       <button class="ui-button ui-button--ghost" type="button" data-stock-drawer-action="history">Hareket Geçmişi</button>
@@ -569,6 +613,15 @@
     if ($("#stockLocationMovementReason")) $("#stockLocationMovementReason").value = movementType === "waste" ? "Sarf" : movementType === "manual_out" ? "Eksiltme" : "Kullanım";
     $("#stockMovementDialogMessage").textContent = "";
     updateProductUnits();
+    const baseUnit = unitOf(balance);
+    const product = productOf(balance);
+    const bulkUnit = textValue(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR");
+    const factor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
+    const preferredUnit = movementType === "manual_out" && bulkUnit && factor > 0 ? bulkUnit : baseUnit;
+    if ($("#stockLocationMovementUnit") && Array.from($("#stockLocationMovementUnit").options).some((option) => option.value === preferredUnit)) {
+      $("#stockLocationMovementUnit").value = preferredUnit;
+    }
+    updateMovementPreview();
     renderMovementQuickAmounts(balance);
     if (!dialog.open) dialog.showModal();
     $("#stockLocationMovementQuantity")?.focus();
@@ -706,6 +759,8 @@
   function renderAll() {
     renderLocations();
     renderSummary();
+    renderWarehouseCards();
+    renderViewMode();
     renderCategories();
     renderInventory();
     renderFormOptions();
@@ -1021,6 +1076,16 @@
     if (!workspace) return;
     state.bound = true;
     workspace.addEventListener("click", (event) => {
+      const retry = event.target.closest("[data-stock-retry]");
+      if (retry) { loadAll({ force: true, reloadLocations: true }).catch(() => {}); return; }
+      const warehouseOpen = event.target.closest("[data-stock-warehouse-open]");
+      if (warehouseOpen) {
+        state.selectedLocationId = warehouseOpen.dataset.stockWarehouseOpen;
+        state.viewMode = "inventory";
+        try { localStorage.setItem(LOCATION_STORAGE_KEY, state.selectedLocationId); } catch (_error) {}
+        loadAll({ force: true }).catch(() => {});
+        return;
+      }
       const locationButton = event.target.closest("[data-stock-location-select]");
       if (locationButton) {
         state.selectedLocationId = locationButton.dataset.stockLocationSelect;
@@ -1130,6 +1195,8 @@
     $("#stockMovementTypeFilter")?.addEventListener("change", () => loadMovements().then(renderMovements).catch((error) => setMessage(error.message, "error")));
     $("#stockMovementProductFilter")?.addEventListener("change", () => loadMovements().then(renderMovements).catch((error) => setMessage(error.message, "error")));
     $("#stockLocationRefreshButton")?.addEventListener("click", (event) => runOperation("refresh", event.currentTarget, () => loadAll({ force: true })).catch(() => {}));
+    $("#stockWarehouseBackButton")?.addEventListener("click", () => { closeProductDrawer({ restoreFocus: false }); state.viewMode = "overview"; renderAll(); });
+    $("#stockLocationOverviewAddButton")?.addEventListener("click", () => { const dialog = $("#stockLocationManagementDialog"); if (dialog && !dialog.open) dialog.showModal(); });
     $("#stockLocationNewProductButton")?.addEventListener("click", () => {
       $("#stockManagementAccordion").open = true;
       document.dispatchEvent(new CustomEvent("tahmisci:stock-catalog-open", { detail: { action: "new-product" } }));
@@ -1182,7 +1249,14 @@
   });
 
   document.addEventListener("tahmisci:admin-section-change", (event) => {
-    if (event.detail && event.detail.section === "stock") mount();
+    if (event.detail && event.detail.section === "stock") {
+      state.viewMode = "overview";
+      const accordion = $("#stockLocationAccordion");
+      if (accordion) accordion.open = true;
+      closeProductDrawer({ restoreFocus: false });
+      renderViewMode();
+      mount();
+    }
   });
   document.addEventListener("tahmisci:admin-session-started", () => {
     state.stale = true;

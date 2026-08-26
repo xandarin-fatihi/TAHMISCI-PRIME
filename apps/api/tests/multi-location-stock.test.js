@@ -31,14 +31,22 @@ function stateWithCafeQuantity(quantity) {
   return seeded.stockState;
 }
 
-test("legacy stok bir kez Genel Depoya taşınır ve toplam iki kez yazılmaz", () => {
+function stateWithGeneralQuantity(quantity) {
+  const base = normalizeStockState(legacyStockState(0));
+  return stockService.applyStockMovement(base, {
+    type: "stock_in", productId: "milk-1", locationId: stockService.GENERAL_LOCATION_ID,
+    quantity, unit: "adet", requestId: `test-general-seed-${quantity}`
+  }, { type: "admin", id: "test-manager", name: "Test Yönetici" }).stockState;
+}
+
+test("legacy stok bir kez Kafe Deposuna taşınır ve toplam iki kez yazılmaz", () => {
   const once = normalizeStockState(legacyStockState(100));
   const twice = normalizeStockState(once);
   const cafe = stockService.getProductBalance(once, stockService.CAFE_LOCATION_ID, "milk-1");
   const general = stockService.getProductBalance(once, stockService.GENERAL_LOCATION_ID, "milk-1");
 
-  assert.equal(cafe.quantity, 0);
-  assert.equal(general.quantity, 100);
+  assert.equal(cafe.quantity, 100);
+  assert.equal(general.quantity, 0);
   assert.equal(stockService.calculateTotalStock(once, "milk-1"), 100);
   assert.deepEqual(twice.balances, once.balances);
   assert.equal(stockService.calculateTotalStock(twice, "milk-1"), 100);
@@ -46,7 +54,7 @@ test("legacy stok bir kez Genel Depoya taşınır ve toplam iki kez yazılmaz", 
 
 test("depo transferi atomik, idempotent ve toplam stoğu koruyan bir işlemdir", () => {
   const admin = { type: "admin", id: "manager-1", name: "Yönetici" };
-  const initial = normalizeStockState(legacyStockState(100));
+  const initial = stateWithGeneralQuantity(100);
   const created = stockService.createTransferRequest(initial, {
     productId: "milk-1", quantity: 25, unit: "adet", requestId: "transfer-create-0001",
     fromLocationId: stockService.GENERAL_LOCATION_ID, toLocationId: stockService.CAFE_LOCATION_ID

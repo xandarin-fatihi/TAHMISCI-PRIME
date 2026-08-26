@@ -3499,6 +3499,14 @@ body.is-panel-modal-open {
   gap: 10px;
 }
 
+.stock-personel-modal .stock-detail-dialog {
+  width: min(560px, 100%);
+}
+
+.stock-personel-modal .stock-detail-grid--simple {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .stock-personel-modal .stock-detail-grid > div {
   padding: 13px 14px;
   border-radius: 13px;
@@ -3508,6 +3516,21 @@ body.is-panel-modal-open {
 .stock-personel-modal .stock-detail-grid__primary {
   border-color: rgba(90, 47, 29, 0.28);
   background: rgba(90, 47, 29, 0.08);
+}
+
+.stock-personel-modal .stock-detail-grid--simple .stock-detail-grid__primary strong {
+  color: #2c1609;
+  font-size: clamp(24px, 5vw, 34px);
+  line-height: 1.15;
+}
+
+.stock-card-quantity .stock-card-quantity__combined {
+  display: block;
+  color: var(--panel-ink, #2c1609);
+  font-family: var(--panel-font-ui, "Tahmisci Poppins", Poppins, Inter, system-ui, sans-serif);
+  font-size: clamp(19px, 2vw, 24px);
+  font-weight: 700;
+  line-height: 1.2;
 }
 
 .stock-personel-modal .stock-detail-grid span {

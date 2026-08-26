@@ -1005,10 +1005,12 @@ function normalizeStockState(stockState) {
   const generalLocation = locations.find((location) => location.code === "GENEL" || location.type === "central") || locations[0];
   const cafeLocation = locations.find((location) => location.code === "CAFE" || location.type === "cafe") || locations[0];
   const legacyMigrationRequired = !Array.isArray(source.balances) || Number(source.locationMigrationVersion || 0) < 1;
-  const balances = normalizeStockBalances(source.balances, products, locations, legacyMigrationRequired, generalLocation && generalLocation.id);
+  // Yalnız henüz lokasyon migration'ı yapılmamış eski tekil stoklar operasyon
+  // kaynağı olan Kafe Deposuna bağlanır. Mevcut çok-depolu dağılım asla taşınmaz.
+  const balances = normalizeStockBalances(source.balances, products, locations, legacyMigrationRequired, cafeLocation && cafeLocation.id);
   const productsById = new Map(products.map((product) => [String(product.id), product]));
   const movements = normalizeArray(source.movements)
-    .map((movement) => normalizeStockMovement(movement, productsById, generalLocation && generalLocation.id))
+    .map((movement) => normalizeStockMovement(movement, productsById, legacyMigrationRequired ? cafeLocation && cafeLocation.id : generalLocation && generalLocation.id))
     .filter(Boolean).slice(0, 5000);
   const next = {
     ...source,
@@ -1026,7 +1028,7 @@ function normalizeStockState(stockState) {
     notificationSettings: source.notificationSettings && typeof source.notificationSettings === "object" && !Array.isArray(source.notificationSettings)
       ? source.notificationSettings
       : {},
-    migrationAudit: normalizeStockMigrationAudit(source.migrationAudit, legacyMigrationRequired, balances, generalLocation)
+    migrationAudit: normalizeStockMigrationAudit(source.migrationAudit, legacyMigrationRequired, balances, cafeLocation)
   };
   // `stockQuantity` remains a calculated legacy projection so current public
   // API consumers keep working, but every persistent balance is location-bound.
@@ -1045,8 +1047,8 @@ function normalizeStockState(stockState) {
 
 function normalizeStockLocations(value) {
   const required = [
-    { id: "stock-location-cafe", code: "CAFE", name: "Kafe Deposu", type: "cafe", active: true, sortOrder: 10, isDefault: false },
-    { id: "stock-location-general", code: "GENEL", name: "Genel Depo", type: "central", active: true, sortOrder: 20, isDefault: true }
+    { id: "stock-location-cafe", code: "CAFE", name: "Kafe Deposu", type: "cafe", active: true, sortOrder: 10, isDefault: true },
+    { id: "stock-location-general", code: "GENEL", name: "Genel Depo", type: "central", active: true, sortOrder: 20, isDefault: false }
   ];
   const source = normalizeArray(value);
   const seenIds = new Set();
@@ -1079,17 +1081,17 @@ function normalizeStockLocations(value) {
     const existing = result.find((item) => item.code === location.code || item.id === location.id);
     if (existing) {
       if (!existing.id) existing.id = location.id;
-      if (location.code === "GENEL" && !result.some((item) => item.isDefault)) existing.isDefault = true;
+      if (location.code === "CAFE" && !result.some((item) => item.isDefault)) existing.isDefault = true;
       continue;
     }
     result.push({ ...location, description: "", assignedPersonnelIds: [], createdAt: null, updatedAt: null, deactivatedAt: null });
   }
   if (!result.some((item) => item.isDefault)) {
-    const general = result.find((item) => item.code === "GENEL");
-    if (general) general.isDefault = true;
+    const cafe = result.find((item) => item.code === "CAFE");
+    if (cafe) cafe.isDefault = true;
   }
   const defaultLocation = result.find((item) => item.isDefault)
-    || result.find((item) => item.code === "GENEL")
+    || result.find((item) => item.code === "CAFE")
     || result[0];
   for (const location of result) location.isDefault = Boolean(defaultLocation && location.id === defaultLocation.id);
   return result.sort((first, second) => Number(first.sortOrder || 0) - Number(second.sortOrder || 0) || String(first.name).localeCompare(String(second.name), "tr"));
@@ -1130,9 +1132,8 @@ function normalizeStockBalances(value, products, locations, legacyMigrationRequi
       const quantity = legacyMigrationRequired && location.id === legacyLocationId
         ? Math.max(0, finiteNumber(product.stockQuantity ?? product.quantity ?? product.stock, 0))
         : 0;
-      // İlk lokasyon migration'ında eski tekil stok Genel Depoya bağlanır.
-      // Daha önce lokasyon migration'ı tamamlanmış store'lar bu kola girmez;
-      // dolayısıyla mevcut Genel/Kafe dağılımı yeniden taşınmaz.
+      // İlk lokasyon migration'ında eski tekil stok Kafe Deposuna bağlanır.
+      // Daha önce tamamlanmış store'lar bu kola girmez; mevcut dağılım korunur.
       const inheritLegacyThresholds = location.id === legacyLocationId;
       balances.push({
         id: stableStockId("stock-balance", key),
@@ -1150,16 +1151,16 @@ function normalizeStockBalances(value, products, locations, legacyMigrationRequi
   return balances;
 }
 
-function normalizeStockMigrationAudit(value, legacyMigrationRequired, balances, generalLocation) {
+function normalizeStockMigrationAudit(value, legacyMigrationRequired, balances, destinationLocation) {
   const source = normalizeArray(value).filter((item) => item && typeof item === "object" && !Array.isArray(item));
   if (!legacyMigrationRequired || source.some((item) => item.id === "stock-location-migration-v1")) return source.slice(-100);
-  const destinationLocationId = String(generalLocation && generalLocation.id || "stock-location-general");
+  const destinationLocationId = String(destinationLocation && destinationLocation.id || "stock-location-cafe");
   const migratedQuantity = balances
     .filter((balance) => String(balance.locationId) === destinationLocationId)
     .reduce((total, balance) => total + Number(balance.quantity || 0), 0);
   return source.concat({
     id: "stock-location-migration-v1",
-    type: "legacy_single_balance_to_general",
+    type: "legacy_single_balance_to_cafe",
     destinationLocationId,
     migratedProductCount: balances.filter((balance) => String(balance.locationId) === destinationLocationId && Number(balance.quantity || 0) > 0).length,
     migratedQuantity: Math.max(0, finiteNumber(migratedQuantity, 0)),
@@ -1373,9 +1374,7 @@ function normalizeStockUnit(value) {
     tane: "adet", adet: "adet", sise: "şişe", "şişe": "şişe",
     kutu: "kutu", paket: "paket", koli: "koli", kasa: "kasa", cuval: "çuval", "çuval": "çuval"
   }[ascii] || unit;
-  return new Set(["adet", "paket", "şişe", "kutu", "koli", "kasa", "çuval", "kg", "gr", "litre", "ml"]).has(normalized)
-    ? normalized
-    : "";
+  return normalized && normalized.length <= 30 && /^[\p{L}\p{N} _-]+$/u.test(normalized) ? normalized : "";
 }
 
 function normalizeStockMovement(movement, productsById = new Map(), legacyGeneralLocationId = "stock-location-general") {
@@ -1452,8 +1451,8 @@ function defaultStockState() {
     categories: [],
     products: [],
     locations: [
-      { id: "stock-location-cafe", code: "CAFE", name: "Kafe Deposu", type: "cafe", active: true, sortOrder: 10, isDefault: false, assignedPersonnelIds: [] },
-      { id: "stock-location-general", code: "GENEL", name: "Genel Depo", type: "central", active: true, sortOrder: 20, isDefault: true, assignedPersonnelIds: [] }
+      { id: "stock-location-cafe", code: "CAFE", name: "Kafe Deposu", type: "cafe", active: true, sortOrder: 10, isDefault: true, assignedPersonnelIds: [] },
+      { id: "stock-location-general", code: "GENEL", name: "Genel Depo", type: "central", active: true, sortOrder: 20, isDefault: false, assignedPersonnelIds: [] }
     ],
     balances: [],
     movements: [],

@@ -116,10 +116,25 @@ function registerStockLocationRoutes(deps) {
       if (!assignments.has(person.stockLocationId)) assignments.set(person.stockLocationId, []);
       assignments.get(person.stockLocationId).push(person.id);
     }
-    return stockService.getLocations(stockState, { includeInactive: true }).map((location) => ({
-      ...location,
-      assignedPersonnelIds: assignments.get(String(location.id)) || []
-    }));
+    return stockService.getLocations(stockState, { includeInactive: true }).map((location) => {
+      const inventory = location.active === false
+        ? { balances: [], summary: { totalProducts: 0, criticalProducts: 0, pendingTransfers: 0, lastUpdatedAt: location.updatedAt || null } }
+        : stockService.getLocationInventory(stockState, location.id, { includeInactive: false });
+      const sufficientProducts = inventory.balances.filter((balance) => balance.status === "Yeterli").length;
+      const openSuggestions = inventory.balances.filter((balance) => balance.recommendation).length;
+      const lastMovement = stockService.serializeMovements(stockState, { locationId: location.id })[0] || null;
+      return {
+        ...location,
+        assignedPersonnelIds: assignments.get(String(location.id)) || [],
+        inventorySummary: {
+          ...inventory.summary,
+          sufficientProducts,
+          openSuggestions,
+          stockedProducts: inventory.balances.filter((balance) => Number(balance.quantity || 0) > 0).length,
+          lastMovementAt: lastMovement && lastMovement.createdAt || inventory.summary.lastUpdatedAt || null
+        }
+      };
+    });
   }
 
   function locationPayload(data, locationId, actor) {
@@ -690,6 +705,7 @@ function registerStockLocationRoutes(deps) {
       const requestedLimit = Number(req.query.limit || 50);
       const limit = Number.isFinite(requestedLimit) ? Math.min(200, Math.max(1, Math.trunc(requestedLimit))) : 50;
       const movements = stockService.serializeMovements(state, { locationId, productId })
+        .filter((movement) => String(movement.actorId || movement.personnelId || "") === String(actor.id || ""))
         .slice(0, limit);
       res.json({
         ok: true,

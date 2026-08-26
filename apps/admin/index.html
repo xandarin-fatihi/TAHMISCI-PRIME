@@ -13,15 +13,15 @@
   <link rel="stylesheet" href="styles/admin.css?v=20260826-stock-actions">
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20260801-phase2">
   <link rel="stylesheet" href="styles/admin-compact.css?v=20260809-prephase6-shift-layout">
-  <link rel="stylesheet" href="styles/admin-components.css?v=20260826-stock-actions">
+  <link rel="stylesheet" href="styles/admin-components.css?v=20260827-stock-workspace">
   <link rel="stylesheet" href="styles/notifications.css?v=20260816-notification-cleanup">
   <link rel="stylesheet" href="/shared/styles/account-security.css?v=20260816-account-security">
   <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260816-account-notifications">
   <script src="/shared/scripts/category-icons.js?v=20260714"></script>
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
   <script src="/shared/scripts/menu-design-schema.js?v=20260802-prephase4-design-chain"></script>
-  <script src="scripts/app.js?v=20260826-stock-actions" defer></script>
-  <script src="scripts/stock-locations.js?v=20260826-stock-actions" defer></script>
+  <script src="scripts/app.js?v=20260827-stock-workspace" defer></script>
+  <script src="scripts/stock-locations.js?v=20260827-stock-workspace" defer></script>
   <script src="scripts/live-preview.js?v=20260802-preview-settings" defer></script>
   <script src="/shared/scripts/account-security.js?v=20260816-account-security" defer></script>
   <script src="/shared/scripts/pwa-client.js?v=20260826-update-ready" defer></script>
@@ -391,6 +391,13 @@
         </div>
 
         <div class="stock-domain-stack stock-main-col">
+        <details class="stock-accordion stock-domain-accordion stock-location-accordion" id="stockLocationAccordion" open>
+          <summary>
+            <span class="stock-step">1</span>
+            <span><small class="stock-accordion-kicker">DEPO YÖNETİMİ</small><strong>Depo Bazlı Stok</strong><small>Depoları, stok bakiyelerini, transferleri ve eşikleri yönetin.</small></span>
+            <i aria-hidden="true"></i>
+          </summary>
+          <div class="stock-accordion-body">
         <section class="stock-location-workspace" id="stockLocationWorkspace" aria-label="Depo bazlı stok yönetimi" aria-busy="true">
           <div class="stock-location-workspace__head">
             <div>
@@ -400,16 +407,21 @@
             </div>
             <button class="ui-button ui-button--secondary ui-button--sm" id="stockLocationRefreshButton" type="button">Yenile</button>
           </div>
-          <div class="stock-location-selector" id="stockLocationSelector" role="tablist" aria-label="Stok lokasyonu seçimi">
-            <span class="stock-location-loading">Depolar yükleniyor...</span>
-          </div>
           <div class="stock-location-message" id="stockLocationMessage" role="status" aria-live="polite" hidden></div>
           <div class="stock-location-summary" id="stockLocationSummary" aria-live="polite"></div>
-          <div class="stock-location-grid">
+          <section class="stock-warehouse-overview" id="stockWarehouseOverview" aria-labelledby="stockWarehouseOverviewTitle">
+            <header class="stock-warehouse-overview__head">
+              <div><p class="eyebrow">Tüm Depolar</p><h4 id="stockWarehouseOverviewTitle">Depo Genel Bakışı</h4><p>Kafe, genel ve diğer depo bakiyelerini tek merkezden yönetin.</p></div>
+              <button class="ui-button ui-button--secondary" id="stockLocationOverviewAddButton" type="button">+ Depo Ekle</button>
+            </header>
+            <div class="stock-warehouse-cards" id="stockWarehouseCards" aria-live="polite"><div class="stock-location-loading">Depolar yükleniyor...</div></div>
+          </section>
+          <div class="stock-location-grid" id="stockLocationInventoryView" hidden>
             <section class="panel-card stock-location-inventory-card">
               <div class="stock-section-heading">
-                <div><p class="eyebrow">Seçili Lokasyon</p><h4>Depo Envanteri</h4><p id="stockLocationInventoryMeta">Depo seçildiğinde güncel bakiyeler görünür.</p></div>
+                <div><button class="stock-warehouse-back" id="stockWarehouseBackButton" type="button">← Depolara Dön</button><p class="eyebrow">Seçili Lokasyon</p><h4>Depo Envanteri</h4><p id="stockLocationInventoryMeta">Depo seçildiğinde güncel bakiyeler görünür.</p></div>
               </div>
+              <div class="stock-location-selector" id="stockLocationSelector" role="tablist" aria-label="Stok lokasyonu seçimi"></div>
               <div class="stock-location-toolbar">
                 <label><span>Ürün ara</span><input id="stockLocationSearch" type="search" placeholder="Ürün ara... (ör. espresso, süt, çikolata)"></label>
                 <label><span>Durum</span><select id="stockLocationStatusFilter"><option value="all">Tüm durumlar</option><option value="critical">Kritik</option><option value="transfer">Transfer öneriliyor</option><option value="sufficient">Yeterli</option></select></label>
@@ -509,22 +521,16 @@
             </form>
           </dialog>
         </section>
+          </div>
+        </details>
         <details class="stock-accordion stock-domain-accordion stock-catalog-accordion" id="stockManagementAccordion">
           <summary>
-            <span class="stock-step">1</span>
-            <span><strong>Katalog Bilgileri</strong><small>Ürün metadatasını düzenleyin; depo bakiyeleri yukarıdaki kartlardan yönetilir.</small></span>
+            <span class="stock-step">2</span>
+            <span><strong>Stok Düzenleme</strong><small>Ürün, kategori, tedarikçi ve stok metadatasını yönetin.</small></span>
             <i aria-hidden="true"></i>
           </summary>
           <div class="stock-accordion-body">
-        <div class="stock-admin-layout">
-          <div class="stock-main-col">
-            <details class="recipe-panel-card recipe-management-card recipe-accordion-card stock-editor-card" open>
-              <summary class="recipe-card-head">
-                <span class="recipe-step">1</span>
-                <div><p class="eyebrow">Kanonik Katalog</p><h3>Ürün Bilgileri</h3></div>
-                <i aria-hidden="true"></i>
-              </summary>
-              <div class="recipe-card-body stock-editor-body">
+              <div class="stock-editor-body stock-editor-direct-body">
                 <p class="stock-catalog-note">Günlük miktarlar burada değiştirilmez. Stok Ekle, Sarf, transfer ve sayım işlemleri seçili depo üzerinden kalıcı hareket kaydı üretir.</p>
                 <div class="form-grid two stock-editor-selects">
                   <label><span>Stok kategorisi</span><select id="stockEditorCategorySelect"></select></label>
@@ -544,23 +550,21 @@
                 <div class="form-grid three stock-editor-fields">
                   <label><span>Ürün adı</span><input id="stockEditorProductName" type="text"></label>
                   <label><span>Kategori adı</span><input id="stockEditorCategoryName" type="text"></label>
-                  <label><span>Birim</span><input id="stockEditorUnit" type="text" placeholder="adet, koli, paket..."></label>
+                  <label><span>Temel birim</span><input id="stockEditorUnit" type="text" placeholder="adet, gr, ml..."></label>
+                  <label><span>Toplu birim</span><input id="stockEditorBulkUnit" type="text" placeholder="koli, kasa, paket..."></label>
+                  <label><span>Birim dönüşüm miktarı</span><input id="stockEditorUnitFactor" type="number" min="0" step="0.001" placeholder="Örn. 12"></label>
                   <label><span>Tedarikçi</span><input id="stockEditorSupplier" type="text"></label>
                   <label class="stock-editor-status-field"><span>Durum</span><output id="stockEditorStatus"></output></label>
                   <label class="stock-editor-active"><span>Aktif</span><input id="stockEditorActive" type="checkbox"></label>
                   <label class="stock-editor-note"><span>Stok notu (opsiyonel)</span><textarea id="stockEditorNote" rows="3"></textarea></label>
                 </div>
               </div>
-            </details>
-
-          </div>
-        </div>
           </div>
         </details>
 
         <details class="stock-accordion workforce-accordion" id="workforceShipmentsAccordion">
           <summary>
-            <span class="stock-step">2</span>
+            <span class="stock-step">3</span>
             <span><strong>Sevkiyat Onayları</strong><small>Personelden gelen sevkiyatları inceleyin, onaylayın veya reddedin.</small></span>
             <i aria-hidden="true"></i>
           </summary>

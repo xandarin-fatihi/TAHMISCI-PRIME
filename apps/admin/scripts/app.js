@@ -536,7 +536,7 @@
       "stockEditorCategorySelect", "stockEditorProductSelect", "stockAddCategoryButton", "stockAddProductButton", "stockAddSupplierButton",
       "stockEditorIncreaseButton", "stockEditorDecreaseButton",
       "stockDeleteProductButton", "stockDeleteCategoryButton", "stockEditorProductName", "stockEditorCategoryName", "stockEditorQuantity",
-      "stockEditorThreshold", "stockEditorCriticalThreshold", "stockEditorUnit", "stockEditorSupplier", "stockEditorStatus", "stockEditorActive", "stockEditorNote",
+      "stockEditorThreshold", "stockEditorCriticalThreshold", "stockEditorUnit", "stockEditorBulkUnit", "stockEditorUnitFactor", "stockEditorSupplier", "stockEditorStatus", "stockEditorActive", "stockEditorNote",
       "stockSuggestionCount", "stockSaveButton", "stockActionModal", "stockActionForm", "stockActionKicker", "stockActionTitle",
       "stockActionProduct", "stockActionQuantity", "stockActionReason", "stockActionNote", "stockActionMessage",
       "menuOutputCard", "menuOutputTemplateName", "menuOutputCanvaLink", "menuOutputOpenCanva", "menuOutputSaveTemplate",
@@ -4346,7 +4346,7 @@
     if (els.stockDeleteProductButton) els.stockDeleteProductButton.addEventListener("click", deleteStockEditorProduct);
     if (els.stockDeleteCategoryButton) els.stockDeleteCategoryButton.addEventListener("click", deleteStockEditorCategory);
     ["stockEditorProductName", "stockEditorCategoryName", "stockEditorQuantity", "stockEditorThreshold",
-      "stockEditorCriticalThreshold", "stockEditorUnit", "stockEditorSupplier", "stockEditorActive", "stockEditorNote"]
+      "stockEditorCriticalThreshold", "stockEditorUnit", "stockEditorBulkUnit", "stockEditorUnitFactor", "stockEditorSupplier", "stockEditorActive", "stockEditorNote"]
       .forEach((id) => {
         if (!els[id]) return;
         els[id].addEventListener("change", updateStockEditorFromFields);
@@ -4488,11 +4488,13 @@
     els.stockEditorCategoryName.value = category ? category.name : "";
     els.stockEditorProductName.value = product ? product.name : "";
     if (els.stockEditorUnit) els.stockEditorUnit.value = product ? stockUnitText(product.unit || product.baseUnit, "") : "";
+    if (els.stockEditorBulkUnit) els.stockEditorBulkUnit.value = product ? stockUnitText(product.bulkUnit || product.caseUnit, "") : "";
+    if (els.stockEditorUnitFactor) els.stockEditorUnitFactor.value = product ? String(Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0) || "") : "";
     if (els.stockEditorSupplier) els.stockEditorSupplier.value = product ? product.supplier || "" : "";
     if (els.stockEditorNote) els.stockEditorNote.value = product ? product.note || "" : "";
     if (els.stockEditorActive) els.stockEditorActive.checked = Boolean(product && product.active !== false);
 
-    const productFields = [els.stockEditorProductName, els.stockEditorUnit, els.stockEditorSupplier, els.stockEditorActive, els.stockEditorNote];
+    const productFields = [els.stockEditorProductName, els.stockEditorUnit, els.stockEditorBulkUnit, els.stockEditorUnitFactor, els.stockEditorSupplier, els.stockEditorActive, els.stockEditorNote];
     productFields.forEach((field) => { if (field) field.disabled = !product; });
     if (els.stockEditorCategoryName) els.stockEditorCategoryName.disabled = !category;
     if (els.stockAddProductButton) els.stockAddProductButton.disabled = !category;
@@ -4637,6 +4639,10 @@
     if (product) {
       product.name = els.stockEditorProductName.value.trim() || product.name;
       product.unit = els.stockEditorUnit ? els.stockEditorUnit.value.trim() || "adet" : product.unit;
+      product.baseUnit = product.unit;
+      product.bulkUnit = els.stockEditorBulkUnit ? els.stockEditorBulkUnit.value.trim() : product.bulkUnit;
+      product.unitsPerBulkUnit = els.stockEditorUnitFactor ? Math.max(0, Number(els.stockEditorUnitFactor.value || 0)) : product.unitsPerBulkUnit;
+      product.allowedUnits = Array.from(new Set([product.baseUnit, product.bulkUnit].filter(Boolean)));
       product.supplier = els.stockEditorSupplier ? els.stockEditorSupplier.value.trim() : product.supplier;
       product.note = els.stockEditorNote ? els.stockEditorNote.value.trim() : product.note;
       product.active = els.stockEditorActive ? els.stockEditorActive.checked : product.active;

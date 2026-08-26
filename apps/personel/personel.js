@@ -82,8 +82,7 @@
       "profileForm", "profileName", "profilePhone", "profileAvatarUrl", "profilePhotoInput", "profileBio",
       "profileMessage", "profileAvatar",
       "stockDetailModal", "stockDetailClose", "stockDetailCategory", "stockDetailTitle", "stockDetailStatus",
-      "stockDetailLocation", "stockDetailQuantity", "stockDetailUnit", "stockDetailConversion", "stockDetailThreshold", "stockDetailCritical", "stockDetailSupplier", "stockDetailNote",
-      "stockDetailActions", "stockDetailHistory", "stockDetailHistoryCount", "stockDetailHistoryList", "stockDetailMessage",
+      "stockDetailLocation", "stockDetailQuantity", "stockDetailActions", "stockDetailMessage",
       "stockActionModal", "stockActionForm", "stockActionClose", "stockActionKicker", "stockActionTitle", "stockActionProduct",
       "stockActionLocation", "stockActionCurrent", "stockActionConversion", "stockActionQuantity", "stockActionUnit", "stockQuickAmounts",
       "stockActionConverted", "stockActionAfter", "stockActionNote", "stockActionMessage", "stockActionCancel", "stockActionSubmit"
@@ -186,16 +185,7 @@
       const button = event.target.closest("[data-stock-detail-action]");
       if (!button || button.disabled) return;
       const action = button.dataset.stockDetailAction;
-      if (action === "history") {
-        toggleStockHistory(button);
-        return;
-      }
       openStockAction(action, button);
-    });
-    if (els.stockDetailHistoryList) els.stockDetailHistoryList.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-stock-reverse-movement]");
-      if (!button || button.disabled) return;
-      reversePersonnelStockMovement(button.dataset.stockReverseMovement, button).catch(() => {});
     });
     if (els.stockActionClose) {
       els.stockActionClose.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -768,8 +758,8 @@
             <em class="badge ${escapeAttribute(status.key)}">${escapeHTML(status.label)}</em>
           </div>
           <div class="stock-card-quantity">
-            <small>Mevcut miktar</small>
-            <strong><span>${escapeHTML(formatNumber(quantity.value))}</span><em>${escapeHTML(quantity.unit)}</em></strong>
+            <small>Genel mevcut stok</small>
+            <strong class="stock-card-quantity__combined">${escapeHTML(currentStockLabel(product))}</strong>
           </div>
           <div class="stock-card-open"><span>Ürün detayını görüntüle</span><b aria-hidden="true">›</b></div>
         </article>
@@ -782,7 +772,6 @@
     if (!product || !els.stockDetailModal) return;
     const category = stockCategories().find((item) => item.id === product.categoryId);
     const status = stockStatus(product);
-    const thresholdUnit = productBaseUnit(product);
     const location = state.stock.location || {};
     if (els.stockDetailModal.hidden) {
       state.detailTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -796,29 +785,10 @@
     }
     if (els.stockDetailLocation) els.stockDetailLocation.textContent = safeText(location.name, "Kafe Deposu");
     if (els.stockDetailQuantity) els.stockDetailQuantity.textContent = currentStockLabel(product);
-    if (els.stockDetailUnit) els.stockDetailUnit.textContent = thresholdUnit;
-    if (els.stockDetailConversion) {
-      const unitsPerBulk = productUnitsPerBulk(product);
-      els.stockDetailConversion.textContent = unitsPerBulk > 0
-        ? `1 ${productBulkUnit(product)} = ${formatNumber(unitsPerBulk)} ${thresholdUnit}`
-        : "Toplu birim tanımlı değil";
-    }
-    if (els.stockDetailThreshold) els.stockDetailThreshold.textContent = `${formatNumber(product.orderThreshold)} ${thresholdUnit}`;
-    if (els.stockDetailCritical) els.stockDetailCritical.textContent = `${formatNumber(product.criticalThreshold)} ${thresholdUnit}`;
-    if (els.stockDetailSupplier) els.stockDetailSupplier.textContent = safeText(product.supplier, "Belirtilmedi");
-    if (els.stockDetailNote) {
-      const note = safeText(product.note || product.description, "");
-      els.stockDetailNote.textContent = note;
-      els.stockDetailNote.hidden = !note;
-    }
     if (els.stockDetailMessage) {
       els.stockDetailMessage.textContent = "";
       els.stockDetailMessage.hidden = true;
     }
-    if (els.stockDetailHistory) els.stockDetailHistory.hidden = true;
-    const historyButton = els.stockDetailActions && els.stockDetailActions.querySelector('[data-stock-detail-action="history"]');
-    if (historyButton) historyButton.setAttribute("aria-expanded", "false");
-    renderStockDetailHistory(product);
     updateStockDetailActionAvailability();
     els.stockDetailModal.hidden = false;
     syncPanelModalLock();
@@ -832,7 +802,6 @@
     state.detailProductId = null;
     state.detailTrigger = null;
     if (els.stockDetailModal) els.stockDetailModal.hidden = true;
-    if (els.stockDetailHistory) els.stockDetailHistory.hidden = true;
     syncPanelModalLock();
     if (options.restoreFocus !== false && restoreTarget && restoreTarget.isConnected) {
       window.setTimeout(() => restoreTarget.focus(), 0);
@@ -1030,9 +999,10 @@
     const title = isWaste ? "Sarf İşle" : "Eksilt";
     const submitLabel = isWaste ? "Sarf İşlemini Uygula" : "Eksiltmeyi Uygula";
     const supportedUnits = stockSupportedUnits(product);
-    const defaultUnit = supportedUnits.includes(safeText(product.defaultMovementUnit, "").toLocaleLowerCase("tr-TR"))
-      ? safeText(product.defaultMovementUnit).toLocaleLowerCase("tr-TR")
-      : supportedUnits[0] || productBaseUnit(product);
+    const baseUnit = productBaseUnit(product);
+    const bulkUnit = productBulkUnit(product);
+    const preferredUnit = isWaste ? baseUnit : (productUnitsPerBulk(product) > 0 ? bulkUnit : baseUnit);
+    const defaultUnit = supportedUnits.includes(preferredUnit) ? preferredUnit : supportedUnits[0] || baseUnit;
     if (els.stockActionKicker) els.stockActionKicker.textContent = isWaste ? "Normal kullanım / tüketim" : "Kontrollü stok düzeltmesi";
     if (els.stockActionTitle) els.stockActionTitle.textContent = title;
     if (els.stockActionProduct) els.stockActionProduct.textContent = product.name || "Stok ürünü";

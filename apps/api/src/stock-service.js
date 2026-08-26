@@ -55,7 +55,8 @@ function normalizeUnit(value) {
 
 function controlledUnit(value, fallback = "") {
   const unit = normalizeUnit(value);
-  return CONTROLLED_UNITS.has(unit) ? unit : fallback;
+  if (CONTROLLED_UNITS.has(unit)) return unit;
+  return unit && unit.length <= 30 && /^[\p{L}\p{N} _-]+$/u.test(unit) ? unit : fallback;
 }
 
 function productUnitMetadata(product = {}) {
