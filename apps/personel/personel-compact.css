@@ -1272,6 +1272,33 @@ body.is-personel-authenticated {
 .stock-card-location-meta span { display: grid; min-width: 0; gap: 2px; padding: 7px 8px; border-radius: 9px; background: rgba(90, 47, 29, .05); }
 .stock-card-location-meta small { color: var(--panel-muted); font: 600 9px/1.2 var(--panel-font-ui); }
 .stock-card-location-meta b { overflow: hidden; color: var(--panel-ink); font: 700 11px/1.25 var(--panel-font-ui); text-overflow: ellipsis; white-space: nowrap; }
+.stock-card-location-meta .stock-transfer-availability.available { color: var(--panel-success, #58713a); }
+.stock-card-location-meta .stock-transfer-availability.purchase { color: var(--panel-warning, #98621f); }
+.stock-card-location-meta .stock-transfer-availability.unavailable { color: var(--panel-muted); }
+
+.personel-dashboard[data-active-section="stock"] .badge.empty {
+  background: #fbe2dd;
+  color: var(--panel-danger, #a8362d);
+}
+
+.personel-dashboard[data-active-section="stock"] :where(
+  .stock-categories button,
+  .stock-card,
+  .stock-card-actions button,
+  .stock-dialog button,
+  .stock-dialog input,
+  .stock-dialog select,
+  .stock-dialog textarea
+) {
+  touch-action: manipulation;
+}
+
+.personel-dashboard[data-active-section="stock"] .stock-card-actions button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+  transform: none;
+  box-shadow: none;
+}
 
 .personel-dashboard .stock-transfer-requests { display: grid; gap: 8px; margin-top: 14px; padding: 12px; border: 1px solid var(--panel-line); border-radius: var(--panel-card-radius); background: var(--panel-surface); }
 .stock-transfer-requests__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

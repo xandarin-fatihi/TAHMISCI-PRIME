@@ -335,7 +335,10 @@ async function handleClick(event) {
 }
 
 function handleFilterInput(event) {
-  if (event.target.matches("[data-combo-input]")) syncCombobox(event.target);
+  if (event.target.matches("[data-combo-input]")) {
+    syncCombobox(event.target);
+    if (event.target.dataset.comboInput === "stockProductId") updateShipmentLineUnit(event.target);
+  }
   const map = { "supplier-search": "suppliers", "link-search": "links", "shipment-search": "shipments", "document-search": "documents" };
   const key = map[event.target.id];
   if (!key) return;
@@ -370,6 +373,7 @@ function syncCombobox(input) {
   const options = Array.from(list.options);
   const exact = options.find((option) => normalizeComboText(option.value) === query);
   hidden.value = exact ? exact.dataset.id || "" : "";
+  input.setCustomValidity(input.required && !exact ? "Listeden geçerli bir kayıt seçin." : "");
   options.sort((first, second) => {
     const firstText = normalizeComboText(first.value);
     const secondText = normalizeComboText(second.value);
@@ -383,8 +387,16 @@ function updateShipmentLineUnit(input) {
   const line = input.closest(".shipment-line");
   const id = line && line.querySelector('input[type="hidden"][name="stockProductId"]')?.value;
   const product = (state.context && state.context.stockProducts || []).find((item) => String(item.id) === String(id));
-  const unit = line && line.querySelector('input[name="unit"]');
-  if (unit) unit.value = product && (product.defaultMovementUnit || product.bulkUnit || product.baseUnit || product.unit) || "";
+  const unit = line && line.querySelector('[name="unit"]');
+  if (!unit) return;
+  const allowed = product && Array.isArray(product.allowedUnits) && product.allowedUnits.length
+    ? product.allowedUnits
+    : product ? [product.baseUnit || product.unit, product.bulkUnit].filter(Boolean) : [];
+  const preferred = product && (product.defaultMovementUnit || product.baseUnit || product.unit) || "";
+  unit.innerHTML = allowed.length
+    ? allowed.map((valueText) => `<option value="${escapeHtml(valueText)}">${escapeHtml(valueText)}</option>`).join("")
+    : '<option value="">Önce ürün seçin</option>';
+  unit.value = allowed.includes(preferred) ? preferred : allowed[0] || "";
 }
 
 function applyAccessTemplate(select) {

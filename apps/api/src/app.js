@@ -1868,11 +1868,14 @@ app.post("/api/admin/stock/import-excel", requireAdminRequestOrigin, auth.requir
 app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (req, res, next) => {
   try {
     const actor = stockActorFromRequest(req);
-    const movementInput = req.body && req.body.movement || req.body || {};
-    if (String(movementInput.type || "") === "stock_in" && (!req.recipe || req.recipe.role !== "admin")) {
+    const submitted = req.body && req.body.movement || req.body || {};
+    const operationId = String(req.get("Idempotency-Key") || req.get("X-Request-ID") || submitted.requestId || "").trim().slice(0, 160);
+    if (!operationId) return res.status(400).json({ ok: false, message: "Stok işlemi için requestId zorunludur." });
+    const movementInput = { ...submitted, requestId: operationId, idempotencyKey: operationId };
+    if (actor.type !== "admin" && !["stock_out", "waste"].includes(String(movementInput.type || ""))) {
       return res.status(403).json({
         ok: false,
-        message: "Personel stok girişi yapamaz. Gelen ürünleri Sevkiyat ekranından yönetici onayına gönderin."
+        message: "Personel yalnızca atanmış Kafe Deposunda eksiltme veya sarf işlemi yapabilir."
       });
     }
     const updatedAt = new Date().toISOString();
@@ -1883,11 +1886,18 @@ app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireRe
 
     const nextStore = await store.update((data, context) => {
       const previousStockState = normalizeStockState(data.stockState);
-      const result = stockService.applyStockMovement(previousStockState, movementInput, actor, { requestId: movementInput.requestId });
+      const result = stockService.applyStockMovement(previousStockState, movementInput, actor, { requestId: operationId });
       stockState = result.stockState;
       movement = result.movement;
       idempotent = result.idempotent === true;
       if (idempotent) return context.noChange;
+      const expectedRevision = movementInput.expectedRevision ?? (req.body && req.body.expectedRevision);
+      const currentRevision = Math.max(0, Number(data.revisions && data.revisions.stock || 0));
+      if (!Number.isInteger(Number(expectedRevision)) || Number(expectedRevision) !== currentRevision) {
+        const error = new Error("Stok verisi değişti. Güncel bakiyeyi alıp işlemi yeniden deneyin.");
+        error.status = 409;
+        throw error;
+      }
       data.stockState = stockState;
       queueStockThresholdNotifications(data, pendingNotifications, previousStockState, stockState, {
         operationId: movement && movement.id || movementInput.requestId,
@@ -1895,6 +1905,13 @@ app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireRe
       });
       data.revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
       data.revisions.stock = Number(data.revisions.stock || 0) + 1;
+      data.recipeActivity = (Array.isArray(data.recipeActivity) ? data.recipeActivity : []).concat({
+        id: `stock-audit-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+        type: "stock.movement.create", action: "stock.movement.create",
+        actorId: String(actor.id || ""), actorRole: actor.type,
+        entityType: "stock_movement", entityId: String(movement && movement.id || ""),
+        requestId: operationId, createdAt: updatedAt
+      }).slice(-5000);
       incrementPublishRevision(data);
       data.stockUpdatedAt = updatedAt;
       return data;
@@ -1904,9 +1921,12 @@ app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireRe
     publishAppNotifications(pendingNotifications);
     res.status(idempotent ? 200 : 201).json({
       ok: true,
-      stockState: stockState || normalizeStockState(nextStore.stockState),
+      stockState: actor.type === "admin"
+        ? (stockState || normalizeStockState(nextStore.stockState))
+        : stockStateForPersonnel(stockState || normalizeStockState(nextStore.stockState), actor),
       movement,
       idempotent,
+      revision: resolveScopeRevision(nextStore, "stock"),
       publishRevision: nextStore.revisions.publish,
       updatedAt
     });
@@ -3255,8 +3275,19 @@ function stockStateForPersonnel(stockState, actor) {
     locations: inventory.location ? [inventory.location] : [],
     balances: state.balances.filter((balance) => String(balance.locationId) === String(locationId)),
     products: state.products.map((product) => {
+      const {
+        generalQuantity: _generalQuantity,
+        otherLocationQuantity: _otherLocationQuantity,
+        totalQuantity: _totalQuantity,
+        suggestedTransfer: _suggestedTransfer,
+        ...publicProduct
+      } = product;
       const stockQuantity = quantities.get(String(product.id)) || 0;
-      return { ...product, stockQuantity, stockQuantityText: `${stockQuantity} ${product.unit || "adet"}` };
+      return {
+        ...publicProduct,
+        stockQuantity,
+        stockQuantityText: `${stockQuantity} ${product.unit || "adet"}`
+      };
     }),
     movements: state.movements.filter((movement) =>
       String(movement.locationId || "") === String(locationId)

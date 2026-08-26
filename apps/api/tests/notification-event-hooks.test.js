@@ -452,7 +452,9 @@ function cafeStockState(quantity) {
   return normalizeStockState(state);
 }
 
-function stockMovement(adminToken, type, quantity, requestId) {
+async function stockMovement(adminToken, type, quantity, requestId) {
+  const snapshot = await store.read();
+  const expectedRevision = Math.max(0, Number(snapshot.revisions && snapshot.revisions.stock || 0));
   return json("/api/admin/stock/movements", {
     method: "POST",
     headers: { ...adminHeaders(adminToken), "Idempotency-Key": requestId },
@@ -463,7 +465,8 @@ function stockMovement(adminToken, type, quantity, requestId) {
       quantity,
       unit: "şişe",
       reason: "Eşik testi",
-      requestId
+      requestId,
+      expectedRevision
     })
   });
 }

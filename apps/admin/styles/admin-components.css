@@ -2074,6 +2074,8 @@ html.is-pricing-modal-open body {
   border: 1px solid rgba(90, 47, 29, .12);
   border-radius: 10px;
   background: var(--panel-surface, #fffaf3);
+  content-visibility: auto;
+  contain-intrinsic-size: 0 225px;
 }
 
 .stock-location-product.is-critical { border-color: rgba(168, 54, 45, .34); background: rgba(254, 237, 233, .58); }
@@ -2095,7 +2097,7 @@ html.is-pricing-modal-open body {
 .stock-location-product__quantity span { margin-left: 6px; color: var(--panel-muted, #806b5b); font-size: 16px; }
 .stock-location-product > .stock-location-status { grid-column: 2; grid-row: 3; align-self: start; }
 .stock-location-product__conversion { grid-column: 1 / -1; margin: 0; color: var(--panel-muted, #806b5b); font: 500 11px/1.4 var(--panel-font-ui, sans-serif); }
-.stock-location-product footer { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr 44px; align-self: end; margin: auto -14px 0; border-top: 1px solid var(--panel-line, rgba(90, 47, 29, .16)); }
+.stock-location-product footer { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr .8fr 44px; align-self: end; margin: auto -14px 0; border-top: 1px solid var(--panel-line, rgba(90, 47, 29, .16)); }
 .stock-location-product footer button { min-width: 0; min-height: 44px; border: 0; border-right: 1px solid var(--panel-line, rgba(90, 47, 29, .16)); background: transparent; color: var(--panel-coffee, #5a2f1d); font: 700 11px/1 var(--panel-font-ui, sans-serif); cursor: pointer; touch-action: manipulation; }
 .stock-location-product footer button:last-child { border-right: 0; }
 .stock-location-product footer button:hover { background: var(--panel-surface-soft, #f7ecdf); }
@@ -2198,8 +2200,12 @@ html.is-pricing-modal-open body {
 
 .stock-location-operation-dock { position: sticky; z-index: 14; bottom: 12px; padding: 13px; border: 1px solid var(--panel-coffee, #5a2f1d); border-radius: 14px; background: color-mix(in srgb, var(--panel-surface, #fffaf3) 96%, transparent); box-shadow: 0 14px 35px rgba(70, 38, 18, .18); backdrop-filter: blur(10px); }
 .stock-location-operation-dock[hidden] { display: none; }
-.stock-location-operation-dock form { display: grid; grid-template-columns: minmax(190px, 1.1fr) minmax(150px, .6fr) minmax(135px, .45fr) minmax(140px, .55fr) minmax(170px, .7fr) auto auto; gap: 12px; align-items: end; }
+.stock-location-operation-dock form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(140px, .55fr) minmax(120px, .42fr) minmax(130px, .5fr) minmax(150px, .62fr) minmax(160px, .68fr) auto auto; gap: 10px; align-items: end; }
 .stock-location-operation-dock label, .stock-operation-product, .stock-operation-preview { display: grid; min-width: 0; gap: 5px; }
+.stock-location-workspace button,
+.stock-location-workspace select,
+.stock-location-workspace input { touch-action: manipulation; }
+.stock-catalog-note { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--panel-line); border-radius: 10px; background: var(--panel-surface-soft); color: var(--panel-muted); font: 600 11px/1.45 var(--panel-font-ui); }
 .stock-operation-product strong, .stock-operation-product small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stock-operation-product small, .stock-operation-preview span { color: var(--panel-muted, #806b5b); font-size: 10px; }
 .stock-operation-stepper { display: grid; grid-template-columns: 40px minmax(58px, 1fr) 40px; overflow: hidden; border: 1px solid var(--panel-line, rgba(90, 47, 29, .16)); border-radius: 9px; }

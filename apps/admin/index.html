@@ -13,18 +13,18 @@
   <link rel="stylesheet" href="styles/admin.css?v=20260821-product-select-tap-fix">
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20260801-phase2">
   <link rel="stylesheet" href="styles/admin-compact.css?v=20260809-prephase6-shift-layout">
-  <link rel="stylesheet" href="styles/admin-components.css?v=20260809-excel-center-closure">
+  <link rel="stylesheet" href="styles/admin-components.css?v=20260826-stock-location">
   <link rel="stylesheet" href="styles/notifications.css?v=20260816-notification-cleanup">
   <link rel="stylesheet" href="/shared/styles/account-security.css?v=20260816-account-security">
   <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260816-account-notifications">
   <script src="/shared/scripts/category-icons.js?v=20260714"></script>
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
   <script src="/shared/scripts/menu-design-schema.js?v=20260802-prephase4-design-chain"></script>
-  <script src="scripts/app.js?v=20260822-fatura-center" defer></script>
-  <script src="scripts/stock-locations.js?v=20260825-multi-location-stock" defer></script>
+  <script src="scripts/app.js?v=20260826-stock-location" defer></script>
+  <script src="scripts/stock-locations.js?v=20260826-stock-integrity" defer></script>
   <script src="scripts/live-preview.js?v=20260802-preview-settings" defer></script>
   <script src="/shared/scripts/account-security.js?v=20260816-account-security" defer></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260816-install-prompt" defer></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260826-update-ready" defer></script>
 </head>
 <body>
   <section class="login-screen" id="loginScreen">
@@ -438,7 +438,8 @@
               <div class="stock-operation-product"><span class="eyebrow" id="stockLocationMovementModeLabel">Stok Hareketi</span><strong id="stockLocationMovementProductName">Ürün seçin</strong><small id="stockLocationMovementCurrent">Mevcut miktar: —</small><select id="stockLocationMovementProduct" required hidden></select><select id="stockLocationMovementType" hidden><option value="manual_in">Stok girişi</option><option value="manual_out">Stok çıkışı</option><option value="waste">Fire / sarf</option></select></div>
               <label><span>Miktar</span><div class="stock-operation-stepper"><button type="button" data-stock-quantity-step="-1" aria-label="Miktarı azalt">−</button><input id="stockLocationMovementQuantity" type="number" min="0.01" step="1" inputmode="decimal" required><button type="button" data-stock-quantity-step="1" aria-label="Miktarı artır">+</button></div></label>
               <label><span>Birim</span><select id="stockLocationMovementUnit" required></select></label>
-              <label class="stock-operation-note"><span>Not</span><input id="stockLocationMovementNote" type="text" maxlength="250" placeholder="İsteğe bağlı"></label>
+              <label><span>Neden</span><select id="stockLocationMovementReason"><option value="Kullanım">Kullanım</option><option value="Sarf">Sarf</option><option value="Fire">Fire</option><option value="Sayım düzeltmesi">Sayım düzeltmesi</option><option value="Hasarlı ürün">Hasarlı ürün</option><option value="Son kullanma tarihi">Son kullanma tarihi</option><option value="Diğer">Diğer</option></select></label>
+              <label class="stock-operation-note"><span>Açıklama</span><input id="stockLocationMovementNote" type="text" maxlength="250" placeholder="İsteğe bağlı"></label>
               <div class="stock-operation-preview"><span>İşlem sonrası stok</span><strong id="stockLocationMovementPreview">—</strong></div>
               <button class="ui-button ui-button--primary" id="stockLocationMovementSubmit" type="submit" data-operation-class="immediate-operation">İşlemi Kaydet</button>
               <button class="ui-button ui-button--icon ui-button--secondary" id="stockLocationMovementClose" type="button" aria-label="İşlem panelini kapat">×</button>
@@ -481,24 +482,23 @@
             </form>
           </dialog>
         </section>
-        <details class="stock-accordion stock-domain-accordion" id="stockManagementAccordion" open>
+        <details class="stock-accordion stock-domain-accordion stock-catalog-accordion" id="stockManagementAccordion">
           <summary>
             <span class="stock-step">1</span>
-            <span><strong>Stok Yönetimi</strong><small>Stok ürünlerini, hareketleri ve sipariş önerilerini yönetin.</small></span>
+            <span><strong>Katalog Bilgileri</strong><small>Ürün metadatasını düzenleyin; depo bakiyeleri yukarıdaki kartlardan yönetilir.</small></span>
             <i aria-hidden="true"></i>
           </summary>
           <div class="stock-accordion-body">
-        <div class="stock-summary-grid" id="stockSummaryGrid"></div>
-
         <div class="stock-admin-layout">
           <div class="stock-main-col">
             <details class="recipe-panel-card recipe-management-card recipe-accordion-card stock-editor-card" open>
               <summary class="recipe-card-head">
                 <span class="recipe-step">1</span>
-                <div><p class="eyebrow">Stok Yönetimi</p><h3>Stok Yönetimi</h3></div>
+                <div><p class="eyebrow">Kanonik Katalog</p><h3>Ürün Bilgileri</h3></div>
                 <i aria-hidden="true"></i>
               </summary>
               <div class="recipe-card-body stock-editor-body">
+                <p class="stock-catalog-note">Günlük miktarlar burada değiştirilmez. Stok Ekle, Sarf, transfer ve sayım işlemleri seçili depo üzerinden kalıcı hareket kaydı üretir.</p>
                 <div class="form-grid two stock-editor-selects">
                   <label><span>Stok kategorisi</span><select id="stockEditorCategorySelect"></select></label>
                   <label><span>Stok ürünü</span><select id="stockEditorProductSelect"></select></label>
@@ -509,21 +509,10 @@
                     <button class="secondary-action ui-button ui-button--secondary" id="stockAddProductButton" type="button">+ Ürün</button>
                     <button class="secondary-action ui-button ui-button--secondary" id="stockAddSupplierButton" type="button">+ Tedarikçi</button>
                   </div>
-                  <div class="stock-editor-action-group stock-editor-action-group--movement" role="group" aria-label="Stok hareketleri">
-                    <button class="secondary-action stock-action-in ui-button ui-button--primary" id="stockEditorIncreaseButton" type="button">+ Stok Ekle</button>
-                    <button class="secondary-action stock-action-out ui-button ui-button--secondary" id="stockEditorDecreaseButton" type="button">− Stok Eksilt</button>
-                  </div>
-                  <div class="stock-editor-action-group stock-editor-action-group--danger" role="group" aria-label="Tehlikeli işlemler">
-                    <button class="danger-action ui-button ui-button--danger" id="stockDeleteProductButton" type="button">Ürünü Sil</button>
-                    <button class="danger-action ui-button ui-button--danger" id="stockDeleteCategoryButton" type="button">Kategoriyi Sil</button>
-                  </div>
                 </div>
                 <div class="form-grid three stock-editor-fields">
                   <label><span>Ürün adı</span><input id="stockEditorProductName" type="text"></label>
                   <label><span>Kategori adı</span><input id="stockEditorCategoryName" type="text"></label>
-                  <label><span>Mevcut stok</span><input id="stockEditorQuantity" type="text" inputmode="decimal"></label>
-                  <label><span>Sipariş eşiği</span><input id="stockEditorThreshold" type="text" inputmode="decimal"></label>
-                  <label><span>Kritik eşik</span><input id="stockEditorCriticalThreshold" type="text" inputmode="decimal"></label>
                   <label><span>Birim</span><input id="stockEditorUnit" type="text" placeholder="adet, koli, paket..."></label>
                   <label><span>Tedarikçi</span><input id="stockEditorSupplier" type="text"></label>
                   <label class="stock-editor-status-field"><span>Durum</span><output id="stockEditorStatus"></output></label>
@@ -533,48 +522,7 @@
               </div>
             </details>
 
-            <section class="panel-card stock-list-card">
-              <div class="stock-section-heading stock-list-heading">
-                <div>
-                  <h4>Stok Yönetimi</h4>
-                  <p>Kategorileri ve stok ürünlerini düzenleyin; değişiklikler personel ekranına anında yansır.</p>
-                </div>
-              </div>
-              <div class="stock-list-controls">
-                <div class="stock-category-chips" id="stockCategoryChips" aria-label="Stok kategorileri"></div>
-                <div class="stock-toolbar">
-                  <label class="stock-category-select"><span>Kategori</span><select id="stockCategoryFilter"></select></label>
-                  <label class="stock-search-field"><span>Ürün ara</span><input id="stockSearch" type="search" placeholder="Ürün ara..."></label>
-                  <label class="stock-order-filter-button" title="Sipariş gerekenleri filtrele" aria-label="Sipariş gerekenleri filtrele">
-                    <input id="stockOnlyOrderNeeded" type="checkbox">
-                    <span aria-hidden="true"></span>
-                  </label>
-                </div>
-              </div>
-              <div class="stock-product-list" id="stockProductList"></div>
-            </section>
-
-            <details class="stock-accordion">
-              <summary>
-                <span class="stock-step">3</span>
-                <span><strong>Son Hareketler</strong><small>Stok ekleme, eksiltme ve sarf kayıtlarını takip edin.</small></span>
-                <i aria-hidden="true"></i>
-              </summary>
-              <div class="stock-accordion-body">
-                <div class="stock-movement-list" id="stockMovementList"></div>
-              </div>
-            </details>
           </div>
-
-          <aside class="stock-side-col">
-            <section class="panel-card stock-order-panel">
-              <div class="stock-box-head">
-                <h4>Sipariş Önerileri</h4>
-                <span id="stockSuggestionCount">0</span>
-              </div>
-              <div class="stock-order-list" id="stockOrderSuggestions"></div>
-            </section>
-          </aside>
         </div>
           </div>
         </details>

@@ -52,6 +52,9 @@
     stockTransferLoaded: false,
     stockMutationPending: false,
     stockTransferRequestId: "",
+    stockSearchTimer: null,
+    stockRefreshTimer: null,
+    stockRefreshPending: false,
     previewRecipeDraft: null,
     query: "",
     category: "all",
@@ -135,8 +138,11 @@
     });
 
     if (els.stockSearchInput) els.stockSearchInput.addEventListener("input", () => {
-      state.query = els.stockSearchInput.value.trim();
-      renderStock();
+      window.clearTimeout(state.stockSearchTimer);
+      state.stockSearchTimer = window.setTimeout(() => {
+        state.query = els.stockSearchInput.value.trim();
+        renderStock();
+      }, 200);
     });
 
     if (els.stockCategoryPills) els.stockCategoryPills.addEventListener("click", (event) => {
@@ -364,6 +370,11 @@
     state.stockTransferLoaded = false;
     state.stockMutationPending = false;
     state.stockTransferRequestId = "";
+    window.clearTimeout(state.stockSearchTimer);
+    window.clearTimeout(state.stockRefreshTimer);
+    state.stockSearchTimer = null;
+    state.stockRefreshTimer = null;
+    state.stockRefreshPending = false;
     state.stockRevision = 0;
   }
 
@@ -633,7 +644,13 @@
         showStockMessage(error.message || "Stok verisi alınamadı.", true);
         throw error;
       })
-      .finally(() => { state.stockLoadPromise = null; });
+      .finally(() => {
+        state.stockLoadPromise = null;
+        if (state.stockRefreshPending && state.section === "stock") {
+          state.stockRefreshPending = false;
+          scheduleStockRefresh();
+        }
+      });
     return state.stockLoadPromise;
   }
 
@@ -668,18 +685,28 @@
         const payload = JSON.parse(event.data || "{}");
         const revision = responseRevision(payload, state.stockRevision);
         if (revision <= state.stockRevision && !payload.requiresRefetch) return;
-        state.stockRevision = revision;
+        state.stockRevision = Math.max(state.stockRevision, revision);
         state.stockLoaded = false;
         state.stockTransferLoaded = false;
-        if (state.section === "stock") {
-          loadStock({ force: true }).catch(() => {});
-        }
+        if (state.section === "stock") scheduleStockRefresh();
       } catch (_error) {}
     };
     source.addEventListener("ready", handleStockEvent);
     source.addEventListener("stock", handleStockEvent);
     source.addEventListener("message", handleStockEvent);
     state.stockEventSource = source;
+  }
+
+  function scheduleStockRefresh() {
+    if (state.stockLoadPromise) {
+      state.stockRefreshPending = true;
+      return;
+    }
+    window.clearTimeout(state.stockRefreshTimer);
+    state.stockRefreshTimer = window.setTimeout(() => {
+      state.stockRefreshTimer = null;
+      loadStock({ force: true }).catch(() => {});
+    }, 120);
   }
 
   function responseRevision(value, fallback = 0) {
@@ -693,6 +720,9 @@
     if (!state.stockEventSource) return;
     state.stockEventSource.close();
     state.stockEventSource = null;
+    window.clearTimeout(state.stockRefreshTimer);
+    state.stockRefreshTimer = null;
+    state.stockRefreshPending = false;
   }
 
   function renderStock() {
@@ -772,7 +802,7 @@
       const category = categories.get(product.categoryId);
       const quantity = currentStockLabel(product);
       const status = stockStatus(product);
-      const suggested = numberValue(product.suggestedTransfer);
+      const recommendation = stockRecommendation(product);
       return `
         <article class="stock-card" data-stock-product-id="${escapeAttribute(product.id)}" role="button" tabindex="0" aria-label="${escapeAttribute(product.name)} detayını aç">
           <div class="stock-card-head">
@@ -784,13 +814,13 @@
             <strong>${escapeHTML(quantity)}</strong>
           </div>
           <div class="stock-card-location-meta">
-            <span><small>Kritik eşik</small><b>${escapeHTML(formatNumber(product.criticalThreshold))} ${escapeHTML(product.unit || "adet")}</b></span>
-            <span><small>Genel depoda</small><b>${escapeHTML(formatNumber(product.generalQuantity))} ${escapeHTML(product.unit || "adet")}</b></span>
+            <span><small>Kritik eşik</small><b>${escapeHTML(formatNumber(product.criticalThreshold))} ${escapeHTML(productBaseUnit(product))}</b></span>
+            <span><small>Tedarik önerisi</small><b class="stock-transfer-availability ${escapeAttribute(recommendation.key)}">${escapeHTML(recommendation.label)}</b></span>
           </div>
           <div class="stock-card-actions">
-            <button type="button" data-stock-action="transfer_request" data-product-id="${escapeAttribute(product.id)}">${suggested > 0 ? `Önerilen ${escapeHTML(formatNumber(suggested))} ${escapeHTML(product.unit || "adet")}` : "Transfer Talep Et"}</button>
+            <button type="button" data-stock-action="transfer_request" data-product-id="${escapeAttribute(product.id)}">Transfer Talep Et</button>
             <button type="button" data-stock-action="stock_out" data-product-id="${escapeAttribute(product.id)}">Eksilt</button>
-            <button type="button" data-stock-action="waste" data-product-id="${escapeAttribute(product.id)}">Sarf</button>
+            <button type="button" data-stock-action="waste" data-product-id="${escapeAttribute(product.id)}">Sarf İşle</button>
           </div>
         </article>
       `;
@@ -835,17 +865,20 @@
     if (els.stockModalTitle) els.stockModalTitle.textContent = label;
     if (els.stockModalProduct) {
       els.stockModalProduct.textContent = transferRequest
-        ? `${product.name} · Kafe: ${formatNumber(product.stockQuantity)} ${product.unit || "adet"} · Genel: ${formatNumber(product.generalQuantity)} ${product.unit || "adet"}`
-        : `${product.name} · Kafe stoğu: ${formatNumber(product.stockQuantity)} ${product.unit || "adet"}`;
+        ? `${product.name} · ${state.stock.location && state.stock.location.name || "Kafe Deposu"} için transfer talebi`
+        : `${product.name} · Kafe stoğu: ${currentStockLabel(product)}`;
     }
-    if (els.stockQuantity) els.stockQuantity.value = transferRequest && numberValue(product.suggestedTransfer) > 0
-      ? String(numberValue(product.suggestedTransfer))
-      : "";
-    if (els.stockUnitField) els.stockUnitField.hidden = !transferRequest;
+    if (els.stockQuantity) {
+      els.stockQuantity.value = "";
+      els.stockQuantity.step = product.allowDecimal === true ? "0.01" : "1";
+      els.stockQuantity.min = product.allowDecimal === true ? "0.01" : "1";
+    }
+    if (els.stockUnitField) els.stockUnitField.hidden = false;
     if (els.stockUnit) {
       const units = stockSupportedUnits(product);
       els.stockUnit.innerHTML = units.map((unit) => `<option value="${escapeAttribute(unit)}">${escapeHTML(unit)}</option>`).join("");
-      els.stockUnit.value = units[0] || product.unit || "adet";
+      const preferredUnit = String(product.defaultMovementUnit || product.baseUnit || product.unit || "adet").toLocaleLowerCase("tr-TR");
+      els.stockUnit.value = units.includes(preferredUnit) ? preferredUnit : units[0] || "adet";
     }
     if (els.stockUrgencyField) els.stockUrgencyField.hidden = !transferRequest;
     if (els.stockUrgency) els.stockUrgency.value = "normal";
@@ -865,7 +898,7 @@
     if (!product || !els.stockDetailModal) return;
     const category = stockCategories().find((item) => item.id === product.categoryId);
     const status = stockStatus(product);
-    const unit = product.unit || "adet";
+    const unit = productBaseUnit(product);
     state.detailProductId = productId;
     if (els.stockDetailCategory) els.stockDetailCategory.textContent = (category && category.name) || "Stok";
     if (els.stockDetailTitle) els.stockDetailTitle.textContent = product.name || "Ürün detayı";
@@ -921,7 +954,13 @@
       return;
     }
     const transferRequest = activeAction.type === "transfer_request";
-    if (!transferRequest && quantity > currentQuantity) {
+    const selectedUnit = els.stockUnit ? els.stockUnit.value : productBaseUnit(activeProduct);
+    const requestedBaseQuantity = stockQuantityToBase(activeProduct, quantity, selectedUnit);
+    if (!Number.isFinite(requestedBaseQuantity) || requestedBaseQuantity <= 0) {
+      if (els.stockFormMessage) els.stockFormMessage.textContent = "Seçilen miktar ve birim geçerli değil.";
+      return;
+    }
+    if (!transferRequest && requestedBaseQuantity > currentQuantity) {
       if (els.stockFormMessage) els.stockFormMessage.textContent = `En fazla ${currentStockLabel(activeProduct)} eksiltebilirsiniz.`;
       return;
     }
@@ -936,16 +975,18 @@
           body: JSON.stringify({
             productId: activeAction.productId,
             quantity,
-            unit: els.stockUnit ? els.stockUnit.value : activeProduct.unit || "adet",
+            unit: selectedUnit,
             urgency: els.stockUrgency ? els.stockUrgency.value : "normal",
             note: els.stockNote ? els.stockNote.value.trim() : "",
-            requestId
+            requestId,
+            expectedRevision: state.stockRevision
           })
         });
         if (result && result.transfer) upsertStockTransfer(result.transfer);
         state.stockTransferLoaded = true;
         state.stock.updatedAt = result && result.updatedAt || state.stock.updatedAt;
         state.stockRevision = responseRevision(result, state.stockRevision);
+        cancelScheduledStockRefresh();
         setStockFormPending(false);
         closeStockAction();
         showStockMessage("Transfer talebiniz Genel Depo onayına gönderildi.");
@@ -963,14 +1004,17 @@
           stockProductCode: activeAction.productCode || activeProduct.productCode || "",
           type: activeAction.type,
           quantity,
-          unit: activeProduct.unit || "adet",
+          unit: selectedUnit,
           reason: activeAction.type === "waste" ? "Personel sarf" : "Personel stok eksiltme",
           note: els.stockNote ? els.stockNote.value.trim() : "",
-          requestId
+          requestId,
+          expectedRevision: state.stockRevision,
+          expectedBalanceRevision: Math.max(0, Number(activeProduct.balanceRevision || 0))
         })
       });
       state.stockRevision = responseRevision(result, state.stockRevision);
       state.stockLoaded = false;
+      cancelScheduledStockRefresh();
       await loadStock({ force: true });
       setStockFormPending(false);
       closeStockAction();
@@ -992,6 +1036,12 @@
     if (!submit.dataset.defaultLabel) submit.dataset.defaultLabel = submit.textContent || "Kaydet";
     submit.textContent = state.stockMutationPending ? label : submit.dataset.defaultLabel;
     submit.toggleAttribute("aria-busy", state.stockMutationPending);
+  }
+
+  function cancelScheduledStockRefresh() {
+    window.clearTimeout(state.stockRefreshTimer);
+    state.stockRefreshTimer = null;
+    state.stockRefreshPending = false;
   }
 
   function upsertStockTransfer(transfer) {
@@ -1254,6 +1304,11 @@
     const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
     const legacyState = source.stockState && typeof source.stockState === "object" ? source.stockState : {};
     const balances = Array.isArray(source.balances) ? source.balances : Array.isArray(legacyState.balances) ? legacyState.balances : [];
+    const publicBalances = balances.map((balance) => {
+      if (!balance || typeof balance !== "object") return balance;
+      const { generalQuantity: _generalQuantity, otherLocationQuantity: _otherLocationQuantity, suggestedTransfer: _suggestedTransfer, ...publicBalance } = balance;
+      return publicBalance;
+    });
     const productSource = Array.isArray(source.products)
       ? source.products
       : balances.map((balance) => balance && balance.product).filter(Boolean).length
@@ -1266,6 +1321,9 @@
       if (!id || seenProducts.has(id)) return result;
       seenProducts.add(id);
       const balance = balanceMap.get(id) || {};
+      const recommendation = balance.recommendation && typeof balance.recommendation === "object"
+        ? balance.recommendation
+        : product.recommendation && typeof product.recommendation === "object" ? product.recommendation : null;
       result.push({
         ...product,
         stockQuantity: numberValue(balance.quantity ?? product.stockQuantity),
@@ -1273,9 +1331,11 @@
         orderThreshold: numberValue(balance.orderThreshold ?? product.orderThreshold),
         targetLevel: numberValue(balance.targetLevel ?? product.targetLevel),
         totalQuantity: numberValue(balance.totalQuantity ?? product.totalQuantity ?? product.stockQuantity),
-        generalQuantity: numberValue(balance.generalQuantity ?? product.generalQuantity),
-        otherLocationQuantity: numberValue(balance.otherLocationQuantity ?? product.otherLocationQuantity),
-        suggestedTransfer: numberValue(balance.suggestedTransfer ?? product.suggestedTransfer),
+        quantityDisplay: String(balance.quantityDisplay || product.quantityDisplay || ""),
+        recommendation,
+        transferAvailable: recommendation && recommendation.type === "transfer"
+          || numberValue(balance.suggestedTransfer ?? product.suggestedTransfer) > 0,
+        balanceRevision: Math.max(0, Number(balance.revision || 0)),
         locationStatus: String(balance.status || product.locationStatus || ""),
         balanceUpdatedAt: balance.updatedAt || product.updatedAt || null
       });
@@ -1291,8 +1351,10 @@
     }, new Map()).values());
     return {
       location: source.location && typeof source.location === "object" ? source.location : null,
-      locations: Array.isArray(source.locations) ? source.locations : [],
-      balances,
+      locations: Array.isArray(source.locations)
+        ? source.locations.filter((location) => !source.location || String(location && location.id) === String(source.location.id))
+        : [],
+      balances: publicBalances,
       categories,
       products,
       movements: Array.isArray(source.movements) ? source.movements : Array.isArray(legacyState.movements) ? legacyState.movements : [],
@@ -1305,11 +1367,28 @@
 
   function filteredProducts() {
     const query = normalizeText(state.query);
+    const categories = new Map(stockCategories().map((category) => [String(category.id), category.name]));
     return stockProducts().filter((product) => {
       if (state.category !== "all" && product.categoryId !== state.category) return false;
       if (!query) return true;
-      return normalizeText(`${product.name} ${product.supplier} ${product.unit}`).includes(query);
+      return normalizeText(`${product.name} ${product.productCode || ""} ${product.barcode || ""} ${product.supplier || ""} ${categories.get(String(product.categoryId)) || product.category || ""}`).includes(query);
+    }).sort((left, right) => {
+      if (!query) return Number(left.order || 0) - Number(right.order || 0);
+      const leftStarts = stockSearchFields(left, categories).some((field) => field.startsWith(query)) ? 0 : 1;
+      const rightStarts = stockSearchFields(right, categories).some((field) => field.startsWith(query)) ? 0 : 1;
+      return leftStarts - rightStarts
+        || normalizeText(left.name).localeCompare(normalizeText(right.name), "tr");
     });
+  }
+
+  function stockSearchFields(product, categories) {
+    return [
+      product && product.name,
+      product && product.productCode,
+      product && product.barcode,
+      product && product.supplier,
+      categories && categories.get(String(product && product.categoryId)) || product && product.category
+    ].map(normalizeText).filter(Boolean);
   }
 
   function stockCategories() {
@@ -1339,17 +1418,24 @@
 
   function stockStatus(product) {
     const source = normalizeText(product && product.locationStatus);
-    if (source.includes("satin alma")) return { key: "purchase", label: "Satın alma gerekli" };
-    if (source.includes("genel depoda yetersiz")) return { key: "insufficient", label: "Genel depoda yetersiz" };
+    if (source.includes("tukendi")) return { key: "empty", label: "Tükendi" };
     if (source.includes("kritik")) return { key: "critical", label: "Kritik" };
-    if (source.includes("transfer")) return { key: "warning", label: "Transfer öneriliyor" };
-    if (source.includes("talep bekliyor")) return { key: "pending", label: "Talep bekliyor" };
     const current = numberValue(product.stockQuantity);
     const critical = numberValue(product.criticalThreshold);
-    const order = numberValue(product.orderThreshold);
+    if (current <= 0) return { key: "empty", label: "Tükendi" };
     if (critical > 0 && current <= critical) return { key: "critical", label: "Kritik" };
-    if (order > 0 && current <= order) return { key: "warning", label: "Transfer öneriliyor" };
     return { key: "ok", label: "Yeterli" };
+  }
+
+  function stockRecommendation(product) {
+    const recommendation = product && product.recommendation;
+    if (recommendation && recommendation.type === "transfer" || product && product.transferAvailable) {
+      return { key: "available", label: "Transfer uygun" };
+    }
+    if (recommendation && recommendation.type === "purchase") {
+      return { key: "purchase", label: "Satın alma gerekli" };
+    }
+    return { key: "unavailable", label: "Transfer gerekmiyor" };
   }
 
   function numberValue(value) {
@@ -1362,7 +1448,20 @@
   }
 
   function currentStockLabel(product) {
-    return `${formatNumber(product && product.stockQuantity)} ${(product && product.unit) || "adet"}`;
+    const provided = String(product && product.quantityDisplay || "").trim();
+    if (provided) return provided;
+    const baseQuantity = numberValue(product && product.stockQuantity);
+    const baseUnit = productBaseUnit(product);
+    const bulkUnit = productBulkUnit(product);
+    const unitsPerBulk = productUnitsPerBulk(product);
+    if (unitsPerBulk > 0 && baseQuantity >= unitsPerBulk) {
+      const bulk = Math.floor(baseQuantity / unitsPerBulk);
+      const remainder = Number((baseQuantity - (bulk * unitsPerBulk)).toFixed(4));
+      return remainder > 0
+        ? `${formatNumber(bulk)} ${bulkUnit} + ${formatNumber(remainder)} ${baseUnit}`
+        : `${formatNumber(bulk)} ${bulkUnit}`;
+    }
+    return `${formatNumber(baseQuantity)} ${baseUnit}`;
   }
 
   function transferStatus(value) {
@@ -1398,15 +1497,42 @@
   }
 
   function stockSupportedUnits(product) {
-    const unit = String(product && product.unit || "adet").trim().toLocaleLowerCase("tr-TR");
-    if (["kg", "gr"].includes(unit)) return [unit, unit === "kg" ? "gr" : "kg"];
-    if (["litre", "lt", "l", "ml"].includes(unit)) {
-      const normalized = ["litre", "lt", "l"].includes(unit) ? "litre" : "ml";
-      return [normalized, normalized === "litre" ? "ml" : "litre"];
+    const declared = Array.isArray(product && product.allowedUnits)
+      ? product.allowedUnits.map((unit) => String(unit || "").trim().toLocaleLowerCase("tr-TR")).filter(Boolean)
+      : [];
+    const baseUnit = productBaseUnit(product);
+    const bulkUnit = productBulkUnit(product);
+    const units = declared.length ? declared : [baseUnit];
+    if (productUnitsPerBulk(product) > 0) units.push(bulkUnit);
+    return Array.from(new Set(units));
+  }
+
+  function productBaseUnit(product) {
+    return String(product && (product.baseUnit || product.unit) || "adet").trim().toLocaleLowerCase("tr-TR");
+  }
+
+  function productBulkUnit(product) {
+    return String(product && (product.bulkUnit || product.caseUnit) || "koli").trim().toLocaleLowerCase("tr-TR");
+  }
+
+  function productUnitsPerBulk(product) {
+    return numberValue(product && (product.unitsPerBulkUnit ?? product.unitsPerCase ?? product.packageSize ?? product.packSize ?? product.piecesPerBox ?? product.koliIci));
+  }
+
+  function stockQuantityToBase(product, quantity, unit) {
+    const normalizedUnit = String(unit || productBaseUnit(product)).trim().toLocaleLowerCase("tr-TR");
+    const amount = Number(quantity);
+    if (!Number.isFinite(amount) || amount <= 0) return NaN;
+    if (normalizedUnit === productBaseUnit(product)) return amount;
+    if (normalizedUnit === productBulkUnit(product)) {
+      const factor = productUnitsPerBulk(product);
+      return factor > 0 ? amount * factor : NaN;
     }
-    const packageSize = numberValue(product && (product.unitsPerCase ?? product.packageSize ?? product.packSize ?? product.piecesPerBox ?? product.koliIci));
-    if (packageSize > 0 && ["adet", "paket", "şişe"].includes(unit)) return [unit, "koli"];
-    return [unit || "adet"];
+    if (productBaseUnit(product) === "gr" && normalizedUnit === "kg") return amount * 1000;
+    if (productBaseUnit(product) === "kg" && normalizedUnit === "gr") return amount / 1000;
+    if (productBaseUnit(product) === "ml" && ["litre", "lt", "l"].includes(normalizedUnit)) return amount * 1000;
+    if (["litre", "lt", "l"].includes(productBaseUnit(product)) && normalizedUnit === "ml") return amount / 1000;
+    return NaN;
   }
 
   function newStockRequestId(prefix) {

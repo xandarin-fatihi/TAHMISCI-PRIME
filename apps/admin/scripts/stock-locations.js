@@ -17,6 +17,9 @@
     movements: [],
     counts: [],
     activeCount: null,
+    secondaryLoaded: false,
+    secondaryLoadPromise: null,
+    secondaryLocationId: "",
     selectedCategory: "all",
     view: "grid",
     revision: 0,
@@ -237,10 +240,14 @@
     if (workspace) workspace.setAttribute("aria-busy", "true");
     state.loadPromise = (async () => {
       await loadLocations();
-      await Promise.all([loadInventory(), loadTransfers(), loadMovements(), loadCounts()]);
+      // İlk görünüm yalnız envanter ve bekleyen transfer projection'ını bekler.
+      // Ağır hareket/sayım geçmişi aşağıdaki ikincil alanlar görünür olduğunda
+      // yüklenir; ham/boş ekran süresi ve duplicate GET zinciri azalır.
+      await Promise.all([loadInventory(), loadTransfers()]);
       state.loaded = true;
       state.stale = false;
       renderAll();
+      scheduleSecondaryLoad(options.force === true);
       setMessage("");
     })().catch((error) => {
       setMessage(error.message, "error");
@@ -251,6 +258,28 @@
       if (workspace) workspace.setAttribute("aria-busy", "false");
     });
     return state.loadPromise;
+  }
+
+  function scheduleSecondaryLoad(force = false) {
+    const requestedLocationId = String(state.selectedLocationId || "total");
+    if (state.secondaryLoadPromise || (state.secondaryLoaded && state.secondaryLocationId === requestedLocationId && !force)) return;
+    const run = () => {
+      if (state.secondaryLoadPromise) return state.secondaryLoadPromise;
+      state.secondaryLoadPromise = Promise.all([loadMovements(), loadCounts()])
+      .then(() => {
+        state.secondaryLoaded = true;
+        state.secondaryLocationId = requestedLocationId;
+        renderMovements();
+      })
+      .catch((error) => setMessage(error.message, "error"))
+      .finally(() => {
+        state.secondaryLoadPromise = null;
+        if (String(state.selectedLocationId || "total") !== requestedLocationId) scheduleSecondaryLoad(true);
+      });
+      return state.secondaryLoadPromise;
+    };
+    if ("requestIdleCallback" in window) window.requestIdleCallback(run, { timeout: 1400 });
+    else window.setTimeout(run, 120);
   }
 
   function renderError(error) {
@@ -278,12 +307,17 @@
     const host = $("#stockLocationSummary");
     if (!host) return;
     const derivedCritical = state.balances.filter((balance) => balanceStatus(balance) === "critical").length;
-    const derivedTransfer = state.balances.filter((balance) => balanceStatus(balance) === "transfer").length;
+    const sufficient = state.balances.filter((balance) => balanceStatus(balance) === "sufficient").length;
+    const openSuggestions = state.balances.filter((balance) => {
+      const type = String(balance && balance.recommendation && balance.recommendation.type || "");
+      return type === "transfer" || type === "purchase";
+    }).length;
     const cards = [
-      ["Depo", locationName(state.selectedLocationId)],
-      ["Ürün", state.summary.productCount ?? state.summary.totalProducts ?? state.balances.length],
-      ["Kritik", state.summary.criticalCount ?? derivedCritical],
-      ["Transfer / Sipariş", state.summary.transferSuggestedCount ?? state.summary.orderNeededCount ?? derivedTransfer]
+      ["Toplam Ürün", state.summary.productCount ?? state.summary.totalProducts ?? state.balances.length],
+      ["Kritik Ürün", state.summary.criticalCount ?? derivedCritical],
+      ["Yeterli Ürün", sufficient],
+      ["Bekleyen Transfer", state.transfers.length],
+      ["Açık Öneri", state.summary.openSuggestionCount ?? openSuggestions]
     ];
     host.innerHTML = cards.map(([label, value]) => `<article><span>${esc(label)}</span><strong>${esc(value)}</strong></article>`).join("");
   }
@@ -341,7 +375,7 @@
         <div class="stock-location-product__quantity"><strong>${esc(factor > 0 ? formatNumber(bulk) : formatNumber(balance.quantity))}</strong><span>${esc(factor > 0 ? bulkUnit : unitOf(balance))}</span></div>
         <p class="stock-location-product__conversion">${esc(formatNumber(balance.quantity))} ${esc(unitOf(balance))}${factor > 0 ? ` · 1 ${esc(bulkUnit)} = ${esc(formatNumber(factor))} ${esc(unitOf(balance))}` : ""}</p>
         ${suggestion ? `<p class="stock-transfer-suggestion">${suggestion.type === "transfer" ? "Genel Depodan transfer önerisi" : "Satın alma önerisi"}: ${esc(formatNumber(suggestion.quantity))} ${esc(unitOf(balance))}</p>` : ""}
-        ${state.selectedLocationId !== "total" ? `<footer><button type="button" data-stock-card-movement="waste" data-product-id="${esc(productId(balance))}">Sarf İşle</button><button type="button" data-stock-card-movement="manual_in" data-product-id="${esc(productId(balance))}">+ Stok Ekle</button><button type="button" data-edit-stock-thresholds="${esc(productId(balance))}" aria-label="${esc(productName(balance))} ayrıntıları">•••</button></footer>` : ""}
+        ${state.selectedLocationId !== "total" ? `<footer><button type="button" data-stock-card-movement="waste" data-product-id="${esc(productId(balance))}">Sarf İşle</button><button type="button" data-stock-card-movement="manual_in" data-product-id="${esc(productId(balance))}">+ Stok Ekle</button><button type="button" data-stock-transfer-product="${esc(productId(balance))}">Transfer</button><button type="button" data-edit-stock-thresholds="${esc(productId(balance))}" aria-label="${esc(productName(balance))} ayrıntıları">•••</button></footer>` : ""}
       </article>`;
     }).join("") : `<div class="stock-location-empty"><strong>Bu görünümde ürün yok</strong><span>Arama veya durum filtresini değiştirin.</span></div>`;
   }
@@ -425,6 +459,7 @@
     $("#stockLocationMovementQuantity").value = "1";
     $("#stockLocationMovementProductName").textContent = productName(balance);
     $("#stockLocationMovementModeLabel").textContent = type === "manual_in" ? "Stok Ekle" : "Sarf İşle";
+    if ($("#stockLocationMovementReason")) $("#stockLocationMovementReason").value = type === "manual_in" ? "Kullanım" : type === "waste" ? "Sarf" : "Kullanım";
     dock.hidden = false;
     updateProductUnits();
     renderInventory();
@@ -589,10 +624,15 @@
       const balance = selectedBalance("#stockLocationMovementProduct");
       const quantity = Number($("#stockLocationMovementQuantity")?.value || 0);
       if (!balance || !(quantity > 0)) throw new Error("Ürün ve geçerli miktar seçin.");
+      const reason = $("#stockLocationMovementReason")?.value || "Kullanım";
+      const note = $("#stockLocationMovementNote")?.value.trim() || "";
+      if (reason === "Diğer" && !note) throw new Error("Diğer nedeni için kısa bir açıklama yazın.");
       const result = await api("/api/admin/stock/movements", mutation("POST", {
         type: $("#stockLocationMovementType")?.value,
         productId: productId(balance), locationId: state.selectedLocationId, quantity,
-        unit: $("#stockLocationMovementUnit")?.value || unitOf(balance), note: $("#stockLocationMovementNote")?.value.trim() || ""
+        unit: $("#stockLocationMovementUnit")?.value || unitOf(balance),
+        reason, note,
+        expectedBalanceRevision: Math.max(0, Number(balance.revision || 0))
       }, "admin-stock-movement"));
       form.reset();
       closeMovementDock();
@@ -836,6 +876,15 @@
         openMovementDock(cardMovement.dataset.productId, cardMovement.dataset.stockCardMovement);
         return;
       }
+      const transferProduct = event.target.closest("[data-stock-transfer-product]");
+      if (transferProduct) {
+        const productSelect = $("#stockTransferProduct");
+        if (productSelect) productSelect.value = transferProduct.dataset.stockTransferProduct;
+        updateProductUnits();
+        updateTransferPreview();
+        $(".stock-transfer-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
       const stepper = event.target.closest("[data-stock-quantity-step]");
       if (stepper) {
         const input = $("#stockLocationMovementQuantity");
@@ -896,14 +945,18 @@
     $("#stockTransferUnit")?.addEventListener("change", updateTransferPreview);
     $("#stockLocationMovementProduct")?.addEventListener("change", updateProductUnits);
     $("#stockLocationMovementUnit")?.addEventListener("change", updateMovementPreview);
+    $("#stockLocationMovementReason")?.addEventListener("change", (event) => {
+      const note = $("#stockLocationMovementNote");
+      if (note) note.required = event.currentTarget.value === "Diğer";
+    });
     $("#stockLocationMovementQuantity")?.addEventListener("input", updateMovementPreview);
     $("#stockLocationMovementClose")?.addEventListener("click", closeMovementDock);
     $("#stockMovementTypeFilter")?.addEventListener("change", () => loadMovements().then(renderMovements).catch((error) => setMessage(error.message, "error")));
     $("#stockMovementProductFilter")?.addEventListener("change", () => loadMovements().then(renderMovements).catch((error) => setMessage(error.message, "error")));
     $("#stockLocationRefreshButton")?.addEventListener("click", (event) => runOperation("refresh", event.currentTarget, () => loadAll({ force: true })).catch(() => {}));
     $("#stockLocationNewProductButton")?.addEventListener("click", () => {
-      $("#stockAddProductButton")?.click();
       $("#stockManagementAccordion").open = true;
+      document.dispatchEvent(new CustomEvent("tahmisci:stock-catalog-open", { detail: { action: "new-product" } }));
       $("#stockManagementAccordion")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     $("#stockCountStartButton")?.addEventListener("click", (event) => openOrStartCount(event.currentTarget).catch((error) => setMessage(error.message, "error")));
@@ -940,7 +993,7 @@
     state.stale = true;
     mount();
   });
-  document.addEventListener("tahmisci:admin-session-ended", () => {
+    document.addEventListener("tahmisci:admin-session-ended", () => {
     state.locations = [];
     state.personnel = [];
     state.balances = [];
@@ -948,6 +1001,9 @@
     state.movements = [];
     state.counts = [];
     state.activeCount = null;
+    state.secondaryLoaded = false;
+    state.secondaryLoadPromise = null;
+    state.secondaryLocationId = "";
     state.loaded = false;
     state.stale = true;
   });

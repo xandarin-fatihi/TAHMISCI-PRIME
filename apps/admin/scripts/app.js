@@ -2051,14 +2051,11 @@
       if (state.activeSection === "recipe") renderActiveSection("recipe");
       return;
     }
-    if (scope === "stock" && payload.stockState) {
-      if (state.dirtyStock) return;
-      state.stock = normalizeStockStateForAdmin(payload.stockState);
-      state.stockUpdatedAt = payload.updatedAt || state.stockUpdatedAt;
+    if (scope === "stock") {
       state.scopeRevisions.stock = incomingRevision;
-      state.loadedScopes.add("stock");
-      safeLocalSet(STOCK_STORAGE_KEY, JSON.stringify(state.stock));
-      if (state.activeSection === "stock") renderStockPanel();
+      document.dispatchEvent(new CustomEvent("tahmisci:stock-updated", {
+        detail: { revision: incomingRevision, source: "stock-sse" }
+      }));
       return;
     }
     if (incomingRevision <= Number(state.scopeRevisions[scope] || 0) && !payload.requiresRefetch) return;
@@ -2106,7 +2103,10 @@
   function scopesForSection(section) {
     if (["overview", "menu", "banner", "category", "product", "bulkPrice", "settings", "menuOutput", "json"].includes(section)) return ["menu"];
     if (section === "recipe") return ["recipes"];
-    if (section === "stock") return ["stock"];
+    // Depo kartları kendi küçük projection endpointlerini kullanır. Tam katalog
+    // yalnız Katalog Bilgileri açıldığında yüklenir; böylece aynı ekranda ikinci
+    // stok bootstrap ve duplicate GET oluşmaz.
+    if (section === "stock") return [];
     if (section === "staffAccess") return ["staffAccess"];
     return [];
   }
@@ -3084,6 +3084,9 @@
   }
 
   async function ensureAdminServiceWorker() {
+    if (window.TahmisciPWA && typeof window.TahmisciPWA.ensureServiceWorker === "function") {
+      return window.TahmisciPWA.ensureServiceWorker();
+    }
     const existing = await navigator.serviceWorker.getRegistration("/yonetici/");
     if (existing) return existing;
     return navigator.serviceWorker.register("/yonetici/sw.js", { scope: "/yonetici/", updateViaCache: "none" });
@@ -4035,7 +4038,9 @@
     if (active === "recipe") ensureRecipeSelection();
     if (active === "overview") renderStats();
     else if (active === "bulkPrice") renderBulkPriceTools();
-    else if (active === "stock") renderStockPanel();
+    else if (active === "stock") {
+      // Gerçek depo görünümü stock-locations.js tarafından hedefli render edilir.
+    }
     else if (["menu", "banner", "category", "product"].includes(active)) {
       renderLists();
       renderForms();
@@ -4061,7 +4066,6 @@
     ensureRecipeSelection();
     renderStats();
     renderBulkPriceTools();
-    renderStockPanel();
     renderLists();
     renderForms();
     renderRecipeEditor();
@@ -4377,6 +4381,20 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && els.stockActionModal && !els.stockActionModal.hidden) closeStockActionModal();
     });
+    const catalogAccordion = document.getElementById("stockManagementAccordion");
+    if (catalogAccordion) {
+      catalogAccordion.addEventListener("toggle", () => {
+        if (!catalogAccordion.open || state.loadedScopes.has("stock")) return;
+        loadSectionScope("stock").then(renderStockPanel).catch((error) => updateSaveControls(error.message || "Stok kataloğu yüklenemedi"));
+      });
+    }
+    document.addEventListener("tahmisci:stock-catalog-open", (event) => {
+      if (catalogAccordion) catalogAccordion.open = true;
+      loadSectionScope("stock").then(() => {
+        renderStockPanel();
+        if (event.detail && event.detail.action === "new-product") addStockProduct();
+      }).catch((error) => updateSaveControls(error.message || "Stok kataloğu yüklenemedi"));
+    });
   }
 
   function loadStockData() {
@@ -4425,7 +4443,6 @@
   }
 
   function renderStockPanel() {
-    if (!els.stockProductList) return;
     state.stock = normalizeStockStateForAdmin(state.stock);
     renderStockEditor();
     renderStockSummary();
@@ -4470,16 +4487,12 @@
     const product = selectedStockEditorProduct();
     els.stockEditorCategoryName.value = category ? category.name : "";
     els.stockEditorProductName.value = product ? product.name : "";
-    els.stockEditorQuantity.value = product ? stockDisplayValue(product, "stockQuantity") : "";
-    els.stockEditorThreshold.value = product ? stockDisplayValue(product, "orderThreshold") : "";
-    els.stockEditorCriticalThreshold.value = product ? formatStockNumber(product.criticalThreshold || 0) : "";
-    els.stockEditorUnit.value = product ? product.unit || "" : "";
-    els.stockEditorSupplier.value = product ? product.supplier || "" : "";
-    els.stockEditorNote.value = product ? product.note || "" : "";
-    els.stockEditorActive.checked = Boolean(product && product.active !== false);
+    if (els.stockEditorUnit) els.stockEditorUnit.value = product ? product.unit || "" : "";
+    if (els.stockEditorSupplier) els.stockEditorSupplier.value = product ? product.supplier || "" : "";
+    if (els.stockEditorNote) els.stockEditorNote.value = product ? product.note || "" : "";
+    if (els.stockEditorActive) els.stockEditorActive.checked = Boolean(product && product.active !== false);
 
-    const productFields = [els.stockEditorProductName, els.stockEditorQuantity, els.stockEditorThreshold,
-      els.stockEditorCriticalThreshold, els.stockEditorUnit, els.stockEditorSupplier, els.stockEditorActive, els.stockEditorNote];
+    const productFields = [els.stockEditorProductName, els.stockEditorUnit, els.stockEditorSupplier, els.stockEditorActive, els.stockEditorNote];
     productFields.forEach((field) => { if (field) field.disabled = !product; });
     if (els.stockEditorCategoryName) els.stockEditorCategoryName.disabled = !category;
     if (els.stockAddProductButton) els.stockAddProductButton.disabled = !category;
@@ -4583,17 +4596,10 @@
     if (category && els.stockEditorCategoryName) category.name = els.stockEditorCategoryName.value.trim() || category.name;
     if (product) {
       product.name = els.stockEditorProductName.value.trim() || product.name;
-      product.stockQuantityText = els.stockEditorQuantity.value.trim();
-      product.orderThresholdText = els.stockEditorThreshold.value.trim();
-      const quantity = stockNumberOrNull(product.stockQuantityText);
-      const threshold = stockNumberOrNull(product.orderThresholdText);
-      if (quantity !== null) product.stockQuantity = quantity;
-      if (threshold !== null) product.orderThreshold = threshold;
-      product.criticalThreshold = stockNumber(els.stockEditorCriticalThreshold.value);
-      product.unit = els.stockEditorUnit.value.trim() || "adet";
-      product.supplier = els.stockEditorSupplier.value.trim();
-      product.note = els.stockEditorNote.value.trim();
-      product.active = els.stockEditorActive.checked;
+      product.unit = els.stockEditorUnit ? els.stockEditorUnit.value.trim() || "adet" : product.unit;
+      product.supplier = els.stockEditorSupplier ? els.stockEditorSupplier.value.trim() : product.supplier;
+      product.note = els.stockEditorNote ? els.stockEditorNote.value.trim() : product.note;
+      product.active = els.stockEditorActive ? els.stockEditorActive.checked : product.active;
       product.updatedAt = new Date().toISOString();
     }
     markDirty("stock", "Stok & Sevkiyat değişiklikleri kaydedilmeyi bekliyor");
@@ -4649,6 +4655,7 @@
   }
 
   function renderStockProducts() {
+    if (!els.stockProductList) return;
     const categories = stockCategoryMap();
     const products = filteredStockProducts();
     if (!products.length) {

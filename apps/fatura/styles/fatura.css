@@ -19,6 +19,7 @@
 .auth-tabs button.is-active{background:var(--panel-surface);color:var(--panel-coffee);box-shadow:0 3px 10px rgba(90,47,29,.09)}
 .auth-form{display:grid;gap:12px;text-align:left}.auth-form label,.form-grid label{display:grid;gap:6px;color:#604a3b;font-size:12px;font-weight:600}
 .auth-form input,.form-grid input,.form-grid select,.form-grid textarea,.toolbar-control{width:100%;min-height:42px;padding:9px 11px;border:1px solid var(--panel-line);border-radius:var(--panel-control-radius);background:var(--panel-surface);color:var(--panel-ink);outline:none}
+.fatura-combobox{position:relative;min-width:0}.fatura-combobox>input[type="hidden"]{display:none}.fatura-combobox>input[type="search"]{min-width:0;max-width:100%;touch-action:manipulation}.detail-stock-location{display:grid;min-width:min(100%,220px);gap:6px;color:var(--panel-muted);font-size:10px;font-weight:700}.detail-stock-location select{width:100%;min-height:40px;padding:8px 30px 8px 10px;border:1px solid var(--panel-line);border-radius:var(--panel-control-radius);background:var(--panel-surface);color:var(--panel-ink);touch-action:manipulation}
 .auth-form input:focus,.form-grid :is(input,select,textarea):focus,.toolbar-control:focus{border-color:rgba(90,47,29,.5);box-shadow:0 0 0 3px var(--panel-focus)}
 .form-message{min-height:18px;margin:9px 0 0;color:var(--panel-danger);font-size:12px}
 .fatura-shell{min-height:100dvh}

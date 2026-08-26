@@ -1,6 +1,16 @@
 (function initialiseTahmisciPwaClient() {
   "use strict";
 
+  // Ortak istemci yanlışlıkla ikinci kez yüklense bile worker kaydı ve yaşam
+  // döngüsü dinleyicileri yalnızca bir kez bağlanır.
+  if (window.__TAHMISCI_PWA_CLIENT_INITIALIZED__ === true) return;
+  Object.defineProperty(window, "__TAHMISCI_PWA_CLIENT_INITIALIZED__", {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false
+  });
+
   const root = document.documentElement;
   const appId = String(root.dataset.pwaApp || "").trim();
   const workerUrl = String(root.dataset.pwaWorker || "").trim();
@@ -10,6 +20,9 @@
   const notificationIntroKey = `tahmisci:pwa-notification-intro:${appId}:v1`;
   const updateCheckIntervalMs = 6 * 60 * 60 * 1000;
   const dirtyForms = new WeakSet();
+  let registrationPromise = null;
+  let watchedRegistration = null;
+  let controllerChangeBound = false;
   let waitingWorker = null;
   let controllerChangeHandled = false;
   let updateRequested = false;
@@ -37,7 +50,9 @@
   });
 
   window.TahmisciPWA = Object.freeze({
-    checkForUpdate: () => navigator.serviceWorker && navigator.serviceWorker.getRegistration(workerScope).then((registration) => registration && registration.update()),
+    checkForUpdate: () => ensureServiceWorkerRegistration().then((registration) => registration && registration.update()),
+    ensureServiceWorker: ensureServiceWorkerRegistration,
+    getRegistration: () => ensureServiceWorkerRegistration(),
     canInstall: () => Boolean(deferredInstallPrompt && !isStandalone()),
     promptInstall: requestInstall,
     registerNotificationPrompt(config) {
@@ -181,19 +196,45 @@
 
   async function registerServiceWorker() {
     if (!appId || !workerUrl || !workerScope || !("serviceWorker" in navigator) || !isSafeRegistrationOrigin()) return;
-    const hadController = Boolean(navigator.serviceWorker.controller);
-
     try {
-      const registration = await navigator.serviceWorker.register(workerUrl, {
-        scope: workerScope,
-        updateViaCache: "none"
-      });
-
-      watchRegistration(registration, hadController);
-      navigator.serviceWorker.addEventListener("controllerchange", () => handleControllerChange(hadController));
-      scheduleAutomaticUpdateCheck(registration);
+      await ensureServiceWorkerRegistration();
     } catch (error) {
       console.warn("PWA çevrimdışı desteği başlatılamadı; web uygulaması normal çalışmaya devam ediyor.", error);
+    }
+  }
+
+  function ensureServiceWorkerRegistration() {
+    if (!appId || !workerUrl || !workerScope || !("serviceWorker" in navigator) || !isSafeRegistrationOrigin()) {
+      return Promise.resolve(null);
+    }
+    if (registrationPromise) return registrationPromise;
+
+    registrationPromise = navigator.serviceWorker.getRegistration(workerScope)
+      .then((existing) => existing || navigator.serviceWorker.register(workerUrl, {
+        scope: workerScope,
+        updateViaCache: "none"
+      }))
+      .then((registration) => {
+        if (!registration) return null;
+        bindRegistrationLifecycle(registration);
+        return registration;
+      })
+      .catch((error) => {
+        registrationPromise = null;
+        throw error;
+      });
+    return registrationPromise;
+  }
+
+  function bindRegistrationLifecycle(registration) {
+    if (watchedRegistration !== registration) {
+      watchedRegistration = registration;
+      watchRegistration(registration);
+      scheduleAutomaticUpdateCheck(registration);
+    }
+    if (!controllerChangeBound) {
+      controllerChangeBound = true;
+      navigator.serviceWorker.addEventListener("controllerchange", handleControllerChange);
     }
   }
 
@@ -212,8 +253,8 @@
     }
   }
 
-  function watchRegistration(registration, hadController) {
-    if (registration.waiting && hadController) showUpdateReady(registration.waiting);
+  function watchRegistration(registration) {
+    if (registration.waiting && navigator.serviceWorker.controller) showUpdateReady(registration.waiting);
 
     registration.addEventListener("updatefound", () => {
       const installing = registration.installing;
@@ -254,8 +295,8 @@
     waitingWorker.postMessage({ type: "SKIP_WAITING" });
   }
 
-  function handleControllerChange(hadController) {
-    if (controllerChangeHandled || (!hadController && !updateRequested)) return;
+  function handleControllerChange() {
+    if (controllerChangeHandled || !updateRequested) return;
     controllerChangeHandled = true;
 
     if (!updateRequested && hasUnsavedChanges()) {

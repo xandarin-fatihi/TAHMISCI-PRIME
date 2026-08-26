@@ -1002,13 +1002,13 @@ function normalizeStockState(stockState) {
     ? source.products.map((product, index) => normalizeStockProduct(product, index, categoryNames)).filter(Boolean)
     : defaultStockState().products;
   const locations = normalizeStockLocations(source.locations);
-  const generalLocation = locations.find((location) => location.code === "GENEL") || locations[0];
+  const generalLocation = locations.find((location) => location.code === "GENEL" || location.type === "central") || locations[0];
   const cafeLocation = locations.find((location) => location.code === "CAFE" || location.type === "cafe") || locations[0];
   const legacyMigrationRequired = !Array.isArray(source.balances) || Number(source.locationMigrationVersion || 0) < 1;
-  const balances = normalizeStockBalances(source.balances, products, locations, legacyMigrationRequired, cafeLocation && cafeLocation.id);
+  const balances = normalizeStockBalances(source.balances, products, locations, legacyMigrationRequired, generalLocation && generalLocation.id);
   const productsById = new Map(products.map((product) => [String(product.id), product]));
   const movements = normalizeArray(source.movements)
-    .map((movement) => normalizeStockMovement(movement, productsById, cafeLocation && cafeLocation.id))
+    .map((movement) => normalizeStockMovement(movement, productsById, generalLocation && generalLocation.id))
     .filter(Boolean).slice(0, 5000);
   const next = {
     ...source,
@@ -1025,7 +1025,8 @@ function normalizeStockState(stockState) {
     operationKeys: normalizeStockOperationKeys(source.operationKeys),
     notificationSettings: source.notificationSettings && typeof source.notificationSettings === "object" && !Array.isArray(source.notificationSettings)
       ? source.notificationSettings
-      : {}
+      : {},
+    migrationAudit: normalizeStockMigrationAudit(source.migrationAudit, legacyMigrationRequired, balances, generalLocation)
   };
   // `stockQuantity` remains a calculated legacy projection so current public
   // API consumers keep working, but every persistent balance is location-bound.
@@ -1113,6 +1114,7 @@ function normalizeStockBalances(value, products, locations, legacyMigrationRequi
         locationId,
         productId,
         quantity: Math.max(0, finiteNumber(item.quantity ?? item.stockQuantity, 0)),
+        revision: Math.max(0, Math.trunc(finiteNumber(item.revision, 0))),
         criticalThreshold: Math.max(0, finiteNumber(item.criticalThreshold, 0)),
         orderThreshold: Math.max(0, finiteNumber(item.orderThreshold ?? item.warningThreshold, 0)),
         targetLevel: Math.max(0, finiteNumber(item.targetLevel, 0)),
@@ -1128,7 +1130,7 @@ function normalizeStockBalances(value, products, locations, legacyMigrationRequi
       const quantity = legacyMigrationRequired && location.id === legacyLocationId
         ? Math.max(0, finiteNumber(product.stockQuantity ?? product.quantity ?? product.stock, 0))
         : 0;
-      // İlk lokasyon migration'ında eski tekil stok Kafe Deposuna bağlanır.
+      // İlk lokasyon migration'ında eski tekil stok Genel Depoya bağlanır.
       // Daha önce lokasyon migration'ı tamamlanmış store'lar bu kola girmez;
       // dolayısıyla mevcut Genel/Kafe dağılımı yeniden taşınmaz.
       const inheritLegacyThresholds = location.id === legacyLocationId;
@@ -1137,6 +1139,7 @@ function normalizeStockBalances(value, products, locations, legacyMigrationRequi
         locationId: location.id,
         productId: product.id,
         quantity,
+        revision: 0,
         criticalThreshold: inheritLegacyThresholds ? Math.max(0, finiteNumber(product.criticalThreshold, 0)) : 0,
         orderThreshold: inheritLegacyThresholds ? Math.max(0, finiteNumber(product.orderThreshold ?? product.warningThreshold, 0)) : 0,
         targetLevel: inheritLegacyThresholds ? Math.max(0, finiteNumber(product.targetLevel, 0)) : 0,
@@ -1147,29 +1150,76 @@ function normalizeStockBalances(value, products, locations, legacyMigrationRequi
   return balances;
 }
 
+function normalizeStockMigrationAudit(value, legacyMigrationRequired, balances, generalLocation) {
+  const source = normalizeArray(value).filter((item) => item && typeof item === "object" && !Array.isArray(item));
+  if (!legacyMigrationRequired || source.some((item) => item.id === "stock-location-migration-v1")) return source.slice(-100);
+  const destinationLocationId = String(generalLocation && generalLocation.id || "stock-location-general");
+  const migratedQuantity = balances
+    .filter((balance) => String(balance.locationId) === destinationLocationId)
+    .reduce((total, balance) => total + Number(balance.quantity || 0), 0);
+  return source.concat({
+    id: "stock-location-migration-v1",
+    type: "legacy_single_balance_to_general",
+    destinationLocationId,
+    migratedProductCount: balances.filter((balance) => String(balance.locationId) === destinationLocationId && Number(balance.quantity || 0) > 0).length,
+    migratedQuantity: Math.max(0, finiteNumber(migratedQuantity, 0)),
+    appliedAt: null
+  }).slice(-100);
+}
+
 function normalizeStockTransfers(value, productsById, locations) {
   const locationIds = new Set(locations.map((location) => String(location.id)));
   const seen = new Set();
   return normalizeArray(value).map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return null;
     const id = String(item.id || "").trim();
-    const productId = String(item.productId || item.stockProductId || "").trim();
+    const productId = String(item.productId || item.stockProductId || item.items && item.items[0] && (item.items[0].productId || item.items[0].stockProductId) || "").trim();
     const fromLocationId = String(item.fromLocationId || "").trim();
     const toLocationId = String(item.toLocationId || "").trim();
     if (!id || seen.has(id) || !productsById.has(productId) || !locationIds.has(fromLocationId) || !locationIds.has(toLocationId) || fromLocationId === toLocationId) return null;
     seen.add(id);
+    const rawItems = normalizeArray(item.items).length ? normalizeArray(item.items) : [item];
+    const itemIds = new Set();
+    const items = rawItems.map((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+      const entryProductId = String(entry.productId || entry.stockProductId || "").trim();
+      const product = productsById.get(entryProductId);
+      if (!product || itemIds.has(entryProductId)) return null;
+      itemIds.add(entryProductId);
+      const baseUnit = normalizeStockUnit(entry.baseUnit || product.baseUnit || product.unit || "adet");
+      return {
+        productId: entryProductId,
+        quantity: Math.max(0, finiteNumber(entry.quantity, 0)),
+        baseUnit,
+        sourceQuantity: Math.max(0, finiteNumber(entry.sourceQuantity ?? entry.quantity, 0)),
+        sourceUnit: normalizeStockUnit(entry.sourceUnit || entry.inputUnit || entry.baseUnit || baseUnit),
+        conversionFactor: Math.max(0, finiteNumber(entry.conversionFactor, 1)),
+        conversionSnapshot: entry.conversionSnapshot && typeof entry.conversionSnapshot === "object" && !Array.isArray(entry.conversionSnapshot)
+          ? { ...entry.conversionSnapshot }
+          : null,
+        sourceExpectedRevision: entry.sourceExpectedRevision === null || entry.sourceExpectedRevision === undefined
+          ? null
+          : Math.max(0, Math.trunc(finiteNumber(entry.sourceExpectedRevision, 0))),
+        destinationExpectedRevision: entry.destinationExpectedRevision === null || entry.destinationExpectedRevision === undefined
+          ? null
+          : Math.max(0, Math.trunc(finiteNumber(entry.destinationExpectedRevision, 0)))
+      };
+    }).filter((entry) => entry && entry.quantity > 0);
+    if (!items.length) return null;
+    const firstItem = items[0];
     return {
       ...item,
       id,
       status: ["draft", "pending", "approved", "rejected", "cancelled"].includes(item.status) ? item.status : "pending",
-      productId,
+      productId: firstItem.productId,
+      items,
       fromLocationId,
       toLocationId,
-      quantity: Math.max(0, finiteNumber(item.quantity, 0)),
-      baseUnit: String(item.baseUnit || productsById.get(productId).unit || "adet"),
-      sourceQuantity: Math.max(0, finiteNumber(item.sourceQuantity ?? item.quantity, 0)),
-      sourceUnit: String(item.sourceUnit || item.baseUnit || productsById.get(productId).unit || "adet"),
-      conversionFactor: finiteNumber(item.conversionFactor, 1),
+      quantity: firstItem.quantity,
+      baseUnit: firstItem.baseUnit,
+      sourceQuantity: firstItem.sourceQuantity,
+      sourceUnit: firstItem.sourceUnit,
+      conversionFactor: firstItem.conversionFactor,
       requestedBy: String(item.requestedBy || ""),
       requestedByName: String(item.requestedByName || ""),
       requestId: String(item.requestId || ""),
@@ -1314,12 +1364,15 @@ function normalizeStockProduct(product, index, categoryNames) {
 function normalizeStockUnit(value) {
   const unit = String(value || "").trim().toLocaleLowerCase("tr-TR");
   const ascii = unit.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  return {
+  const normalized = {
     l: "litre", lt: "litre", liter: "litre", litre: "litre",
     kilogram: "kg", kilo: "kg", gram: "gr",
     tane: "adet", adet: "adet", sise: "şişe", "şişe": "şişe",
     kutu: "kutu", paket: "paket", koli: "koli", kasa: "kasa", cuval: "çuval", "çuval": "çuval"
   }[ascii] || unit;
+  return new Set(["adet", "paket", "şişe", "kutu", "koli", "kasa", "çuval", "kg", "gr", "litre", "ml"]).has(normalized)
+    ? normalized
+    : "";
 }
 
 function normalizeStockMovement(movement, productsById = new Map(), legacyGeneralLocationId = "stock-location-general") {
@@ -1348,7 +1401,7 @@ function normalizeStockMovement(movement, productsById = new Map(), legacyGenera
     productId: String(movement.productId || movement.stockProductId || ""),
     stockProductCode: normalizeProductCode(movement.stockProductCode || product && product.productCode),
     productName: String(movement.productName || ""),
-    type: ["opening_balance", "manual_in", "manual_out", "waste", "inbound_shipment", "transfer", "adjustment", "reversal", "stock_in", "stock_out", "order_suggestion", "import"].includes(movement.type) ? movement.type : "stock_out",
+    type: ["opening_balance", "manual_in", "manual_out", "waste", "inbound_shipment", "shipment_in", "transfer", "transfer_out", "transfer_in", "adjustment", "correction", "reversal", "stock_in", "stock_out", "order_suggestion", "import"].includes(movement.type) ? movement.type : "stock_out",
     quantity: Math.max(0, finiteNumber(movement.quantity, 0)),
     unit: baseUnit,
     baseUnit,
@@ -1363,6 +1416,7 @@ function normalizeStockMovement(movement, productsById = new Map(), legacyGenera
     fromLocationId: movement.fromLocationId ? String(movement.fromLocationId) : null,
     toLocationId: movement.toLocationId ? String(movement.toLocationId) : null,
     transactionRef: String(movement.transactionRef || ""),
+    transferId: String(movement.transferId || movement.referenceType === "transfer" && movement.referenceId || ""),
     referenceType: String(movement.referenceType || ""),
     referenceId: String(movement.referenceId || ""),
     previousBalance,
@@ -1374,6 +1428,10 @@ function normalizeStockMovement(movement, productsById = new Map(), legacyGenera
     approvedBy: String(movement.approvedBy || ""),
     actorId: String(movement.actorId || movement.personnelId || movement.userId || ""),
     requestId: String(movement.requestId || ""),
+    idempotencyKey: String(movement.idempotencyKey || movement.requestId || ""),
+    expectedRevision: movement.expectedRevision === null || movement.expectedRevision === undefined
+      ? null
+      : Math.max(0, Math.trunc(finiteNumber(movement.expectedRevision, 0))),
     reason: String(movement.reason || ""),
     note: String(movement.note || ""),
     actor: String(movement.actor || "system"),

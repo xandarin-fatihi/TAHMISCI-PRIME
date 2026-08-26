@@ -11,17 +11,17 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/app-icons/personel/apple-touch-icon-180.png">
   <link rel="stylesheet" href="/personel/personel.css?v=20260801-phase2">
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20260801-phase2">
-  <link rel="stylesheet" href="/personel/personel-compact.css?v=20260822-profile-shipment">
+  <link rel="stylesheet" href="/personel/personel-compact.css?v=20260826-stock-location">
   <link rel="stylesheet" href="/personel/notifications.css?v=20260816-push-status">
   <link rel="stylesheet" href="/shared/styles/account-security.css?v=20260816-account-security">
   <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260816-account-notifications">
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
-  <script src="/personel/personel.js?v=20260822-profile-shipment" defer></script>
+  <script src="/personel/personel.js?v=20260826-stock-location" defer></script>
   <script src="/personel/workforce.js?v=20260822-profile-shipment" defer></script>
-  <script src="/personel/notifications.js?v=20260822-fatura-center" defer></script>
+  <script src="/personel/notifications.js?v=20260826-pwa-update" defer></script>
   <script src="/shared/scripts/live-preview-receiver.js?v=20260801-phase3" defer></script>
   <script src="/shared/scripts/account-security.js?v=20260816-account-security" defer></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260816-install-prompt" defer></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260826-update-ready" defer></script>
 </head>
 <body>
   <main class="personel-app" id="personelApp" data-view="booting">
@@ -101,7 +101,7 @@
               <div class="stock-location-summary" id="stockLocationSummary" aria-live="polite"></div>
               <label class="stock-catalog-search">
                 <span aria-hidden="true">⌕</span>
-                <input id="stockSearchInput" type="search" placeholder="stokta ara...">
+                <input id="stockSearchInput" type="search" placeholder="Ürün, kategori veya kod ara…" autocomplete="off" spellcheck="false">
               </label>
               <div class="stock-categories" id="stockCategoryPills" aria-label="Stok kategorileri"></div>
             </header>

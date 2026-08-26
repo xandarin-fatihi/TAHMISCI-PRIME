@@ -41,7 +41,7 @@ export function shipmentFormBody() {
 }
 
 export function shipmentLine(products, index) {
-  return `<div class="shipment-line" data-line-index="${index}">${comboField({ name: "stockProductId", label: "Stok ürünü", items: products.map((item) => ({ id: item.id, label: `${item.name} · ${item.productCode || "Kodsuz"}` })), placeholder: "İlk harften itibaren ürün ara", required: true })}<label>Miktar<input name="quantity" type="number" min="0.001" step="0.001" required></label><label>Birim<input name="unit" maxlength="40" required></label><label>Birim fiyat (₺)<input name="unitPrice" type="number" min="0" step="0.01" value="0"></label><button class="remove-line" type="button" data-action="remove-shipment-line" aria-label="Satırı kaldır">×</button></div>`;
+  return `<div class="shipment-line" data-line-index="${index}">${comboField({ name: "stockProductId", label: "Stok ürünü", items: products.map((item) => ({ id: item.id, label: `${item.name} · ${item.productCode || "Kodsuz"}` })), placeholder: "İlk harften itibaren ürün ara", required: true })}<label>Miktar<input name="quantity" type="number" min="0.001" step="0.001" required></label><label>Birim<select name="unit" required><option value="">Önce ürün seçin</option></select></label><label>Birim fiyat (₺)<input name="unitPrice" type="number" min="0" step="0.01" value="0"></label><button class="remove-line" type="button" data-action="remove-shipment-line" aria-label="Satırı kaldır">×</button></div>`;
 }
 
 function shipmentRow(shipment) {

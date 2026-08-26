@@ -97,6 +97,9 @@ test("service worker runtime yalnız güvenli statikleri cache'ler ve hassas yol
 test("waiting worker güncellemesi kontrollü ve controllerchange yenilemesi tek seferliktir", () => {
   const source = read("shared/scripts/pwa-client.js");
 
+  assert.match(source, /__TAHMISCI_PWA_CLIENT_INITIALIZED__/);
+  assert.match(source, /registrationPromise/);
+  assert.match(source, /ensureServiceWorkerRegistration/);
   assert.match(source, /Yeni sürüm hazır\./);
   assert.match(source, /Şimdi Güncelle/);
   assert.match(source, /postMessage\(\{ type: "SKIP_WAITING" \}\)/);
@@ -110,6 +113,13 @@ test("waiting worker güncellemesi kontrollü ve controllerchange yenilemesi tek
   assert.match(source, /hostname === "localhost"/);
   assert.match(source, /updateViaCache: "none"/);
   assert.match(source, /PWA çevrimdışı desteği başlatılamadı/);
+});
+
+test("yönetici ve personel bildirim modülleri ortak tek worker kaydını kullanır", () => {
+  for (const file of ["apps/admin/scripts/app.js", "apps/personel/notifications.js"]) {
+    const source = read(file);
+    assert.match(source, /TahmisciPWA\.ensureServiceWorker/);
+  }
 });
 
 test("offline kabukları gerçek durumu söyler ve çevrimiçi başarı taklidi yapmaz", () => {

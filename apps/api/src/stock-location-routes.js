@@ -34,6 +34,20 @@ function registerStockLocationRoutes(deps) {
     return value;
   }
 
+  function routeOperation(state, type, operationId) {
+    const key = type && operationId ? `${type}:${operationId}` : "";
+    if (!key) return null;
+    return (state.operationKeys || []).find((item) => item && item.key === key) || null;
+  }
+
+  function rememberRouteOperation(state, type, operationId, value, timestamp) {
+    const key = type && operationId ? `${type}:${operationId}` : "";
+    if (!key) return;
+    state.operationKeys = (Array.isArray(state.operationKeys) ? state.operationKeys : [])
+      .concat({ key, type, requestId: operationId, value: value || {}, createdAt: timestamp })
+      .slice(-1000);
+  }
+
   function adminActor(req) {
     return {
       type: "admin",
@@ -115,11 +129,67 @@ function registerStockLocationRoutes(deps) {
       ok: true,
       location: inventory.location,
       locations: publicLocations(state, actor),
-      balances: inventory.balances,
+      balances: actor && actor.type !== "admin"
+        ? inventory.balances.map(personnelInventoryBalance)
+        : inventory.balances,
       summary: inventory.summary,
       revision: stockRevision(data),
       publishRevision: Number(data.revisions && data.revisions.publish || 0),
       updatedAt: data.stockUpdatedAt || state.updatedAt || null
+    };
+  }
+
+  function personnelInventoryBalance(balance) {
+    const source = balance && typeof balance === "object" ? balance : {};
+    const {
+      generalQuantity: _generalQuantity,
+      otherLocationQuantity: _otherLocationQuantity,
+      totalQuantity: _totalQuantity,
+      totalQuantityDisplay: _totalQuantityDisplay,
+      suggestedTransfer: _suggestedTransfer,
+      product: sourceProduct,
+      ...publicBalance
+    } = source;
+    const product = sourceProduct && typeof sourceProduct === "object" ? sourceProduct : {};
+    const {
+      stockQuantity: _stockQuantity,
+      stockQuantityText: _stockQuantityText,
+      totalQuantity: _productTotalQuantity,
+      generalQuantity: _productGeneralQuantity,
+      otherLocationQuantity: _productOtherLocationQuantity,
+      suggestedTransfer: _productSuggestedTransfer,
+      ...publicProduct
+    } = product;
+    const recommendation = source.recommendation && typeof source.recommendation === "object"
+      ? { type: String(source.recommendation.type || "") }
+      : null;
+    return {
+      ...publicBalance,
+      product: {
+        ...publicProduct,
+        stockQuantity: Number(source.quantity || 0),
+        stockQuantityText: source.quantityDisplay && source.quantityDisplay.display
+          ? String(source.quantityDisplay.display)
+          : `${Number(source.quantity || 0)} ${publicProduct.baseUnit || publicProduct.unit || "adet"}`
+      },
+      recommendation
+    };
+  }
+
+  function personnelTransfer(transfer, ownLocationId) {
+    if (!transfer || typeof transfer !== "object") return transfer;
+    const sanitizeItem = (item) => {
+      if (!item || typeof item !== "object") return item;
+      const { fromBalance: _fromBalance, ...publicItem } = item;
+      return publicItem;
+    };
+    const { fromBalance: _fromBalance, items, ...publicTransfer } = transfer;
+    return {
+      ...publicTransfer,
+      toBalance: String(transfer.toLocationId || "") === String(ownLocationId || "")
+        ? transfer.toBalance || null
+        : null,
+      items: Array.isArray(items) ? items.map(sanitizeItem) : []
     };
   }
 
@@ -148,11 +218,19 @@ function registerStockLocationRoutes(deps) {
         if (type !== "cafe" && normalizeIdList(body.assignedPersonnelIds).length) {
           throw fail("Personel yalnızca Kafe Deposuna atanabilir.");
         }
-      const operationId = requestId(req);
+      const operationId = requestId(req, true);
       const timestamp = nowIso();
       let location;
-      const saved = await store.update((data) => {
+      let idempotent = false;
+      const saved = await store.update((data, context) => {
         const state = normalizeStockState(data.stockState);
+        const replay = routeOperation(state, "location_create", operationId);
+        if (replay) {
+          location = state.locations.find((item) => String(item.id) === String(replay.value && replay.value.locationId));
+          idempotent = true;
+          return context.noChange;
+        }
+        assertExpectedStockRevision(data, body, "location_create", operationId);
         if (state.locations.some((item) => item.code === code)) throw fail("Bu depo kodu zaten kullanılıyor.", 409);
         location = {
           id: uniqueLocationId(state, code),
@@ -172,25 +250,37 @@ function registerStockLocationRoutes(deps) {
         }
         state.locations.push(location);
         assignPersonnelToLocation(data, state, location.id, location.assignedPersonnelIds);
+        rememberRouteOperation(state, "location_create", operationId, { locationId: location.id }, timestamp);
         persistStockMutation(data, normalizeStockState(state), timestamp);
         appendStockAudit(data, adminActor(req), "stock.location.create", location.id, operationId, null, location, timestamp);
         return data;
       });
-      broadcastStockUpdate(saved.stockState, timestamp);
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp);
       const stockState = normalizeStockState(saved.stockState);
-      res.status(201).json({ ok: true, location, locations: locationsForAdmin(saved, stockState), personnel: personnelForLocations(saved), stockState, revision: stockRevision(saved), updatedAt: timestamp });
+      res.status(idempotent ? 200 : 201).json({ ok: true, location, locations: locationsForAdmin(saved, stockState), personnel: personnelForLocations(saved), stockState, idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
 
   app.patch("/api/admin/stock/locations/:id", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const body = req.body || {};
-      const operationId = requestId(req);
+      const operationId = requestId(req, true);
       const timestamp = nowIso();
       let location;
-      const saved = await store.update((data) => {
-        assertExpectedStockRevision(data, body);
-        const state = normalizeStockState(data.stockState);
+      let idempotent = false;
+      const saved = await store.update((data, context) => {
+        const replayState = normalizeStockState(data.stockState);
+        const replay = routeOperation(replayState, "location_update", operationId);
+        if (replay) {
+          if (String(replay.value && replay.value.locationId || "") !== String(req.params.id)) {
+            throw fail("Bu requestId başka bir depo güncellemesi için kullanıldı.", 409);
+          }
+          location = replayState.locations.find((item) => String(item.id) === String(replay.value && replay.value.locationId));
+          idempotent = true;
+          return context.noChange;
+        }
+        assertExpectedStockRevision(data, body, "location_update", operationId);
+        const state = replayState;
         location = state.locations.find((item) => String(item.id) === String(req.params.id));
         if (!location) throw fail("Stok lokasyonu bulunamadı.", 404);
         const previous = { ...location };
@@ -241,14 +331,15 @@ function registerStockLocationRoutes(deps) {
           throw fail("Bu depoya atanmış aktif personel varken depo pasifleştirilemez.", 409);
         }
         location.updatedAt = timestamp;
+        rememberRouteOperation(state, "location_update", operationId, { locationId: location.id }, timestamp);
         persistStockMutation(data, normalizeStockState(state), timestamp);
         appendStockAudit(data, adminActor(req), "stock.location.update", location.id, operationId, previous, location, timestamp);
         return data;
       });
-      broadcastStockUpdate(saved.stockState, timestamp);
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp);
       const stockState = normalizeStockState(saved.stockState);
       location = stockState.locations.find((item) => item.id === location.id);
-      res.json({ ok: true, location, locations: locationsForAdmin(saved, stockState), personnel: personnelForLocations(saved), stockState, revision: stockRevision(saved), updatedAt: timestamp });
+      res.json({ ok: true, location, locations: locationsForAdmin(saved, stockState), personnel: personnelForLocations(saved), stockState, idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
 
@@ -258,9 +349,20 @@ function registerStockLocationRoutes(deps) {
       const operationId = requestId(req, true);
       const timestamp = nowIso();
       let location;
-      const saved = await store.update((data) => {
-        assertExpectedStockRevision(data, body);
-        const state = normalizeStockState(data.stockState);
+      let idempotent = false;
+      const saved = await store.update((data, context) => {
+        const replayState = normalizeStockState(data.stockState);
+        const replay = routeOperation(replayState, "location_deactivate", operationId);
+        if (replay) {
+          if (String(replay.value && replay.value.locationId || "") !== String(req.params.id)) {
+            throw fail("Bu requestId başka bir depo işlemi için kullanıldı.", 409);
+          }
+          location = replayState.locations.find((item) => String(item.id) === String(replay.value && replay.value.locationId));
+          idempotent = true;
+          return context.noChange;
+        }
+        assertExpectedStockRevision(data, body, "location_deactivate", operationId);
+        const state = replayState;
         location = state.locations.find((item) => String(item.id) === String(req.params.id));
         if (!location) throw fail("Stok lokasyonu bulunamadı.", 404);
         if (["CAFE", "GENEL"].includes(location.code)) throw fail("Sistem depoları kaldırılamaz; yalnızca adı ve eşikleri düzenlenebilir.", 409);
@@ -272,13 +374,14 @@ function registerStockLocationRoutes(deps) {
         location.active = false;
         location.deactivatedAt = timestamp;
         location.updatedAt = timestamp;
+        rememberRouteOperation(state, "location_deactivate", operationId, { locationId: location.id }, timestamp);
         persistStockMutation(data, state, timestamp);
         appendStockAudit(data, adminActor(req), "stock.location.deactivate", location.id, operationId, previous, location, timestamp);
         return data;
       });
-      broadcastStockUpdate(saved.stockState, timestamp);
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp);
       const state = normalizeStockState(saved.stockState);
-      res.json({ ok: true, location: state.locations.find((item) => item.id === location.id), locations: locationsForAdmin(saved, state), revision: stockRevision(saved), updatedAt: timestamp });
+      res.json({ ok: true, location: state.locations.find((item) => item.id === location.id), locations: locationsForAdmin(saved, state), idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
 
@@ -294,14 +397,27 @@ function registerStockLocationRoutes(deps) {
   app.patch("/api/admin/stock/inventory/:productId", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const body = req.body || {};
-      const operationId = requestId(req);
+      const operationId = requestId(req, true);
       const locationId = String(body.locationId || "").trim();
       if (!locationId) throw fail("Depo seçimi zorunludur.");
       const timestamp = nowIso();
       let balance;
-      const saved = await store.update((data) => {
-        assertExpectedStockRevision(data, body);
-        const state = normalizeStockState(data.stockState);
+      let idempotent = false;
+      const saved = await store.update((data, context) => {
+        const replayState = normalizeStockState(data.stockState);
+        const replay = routeOperation(replayState, "inventory_threshold_update", operationId);
+        if (replay) {
+          if (String(replay.value && replay.value.locationId || "") !== String(locationId)
+            || String(replay.value && replay.value.productId || "") !== String(req.params.productId)) {
+            throw fail("Bu requestId başka bir ürün-depo ayarı için kullanıldı.", 409);
+          }
+          balance = replayState.balances.find((item) => String(item.locationId) === String(locationId)
+            && String(item.productId) === String(req.params.productId));
+          idempotent = true;
+          return context.noChange;
+        }
+        assertExpectedStockRevision(data, body, "inventory_threshold_update", operationId);
+        const state = replayState;
         const location = stockService.getLocation(state, locationId);
         const product = state.products.find((item) => String(item.id) === String(req.params.productId));
         if (!product) throw fail("Stok ürünü bulunamadı.", 404);
@@ -342,14 +458,16 @@ function registerStockLocationRoutes(deps) {
         const allowedUnits = stockService.allowedProductUnits(product);
         if (!allowedUnits.includes(product.defaultMovementUnit)) throw fail("Varsayılan hareket birimi ürünün temel veya toplu birimi olmalıdır.");
         balance.updatedAt = timestamp;
+        balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
         product.updatedAt = timestamp;
+        rememberRouteOperation(state, "inventory_threshold_update", operationId, { locationId: location.id, productId: product.id }, timestamp);
         persistStockMutation(data, state, timestamp);
         appendStockAudit(data, adminActor(req), "stock.inventory.settings", `${location.id}:${product.id}`, operationId, previous, { balance, product }, timestamp);
         return data;
       });
-      broadcastStockUpdate(saved.stockState, timestamp);
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp);
       const payload = locationPayload(saved, locationId, adminActor(req));
-      res.json({ ...payload, balance: payload.balances.find((item) => item.productId === req.params.productId) || balance });
+      res.json({ ...payload, balance: payload.balances.find((item) => item.productId === req.params.productId) || balance, idempotent });
     } catch (error) { next(error); }
   });
 
@@ -376,7 +494,7 @@ function registerStockLocationRoutes(deps) {
         const pendingNotifications = [];
         let result;
         const saved = await store.update((data, context) => {
-          assertExpectedStockRevision(data, body);
+          assertExpectedStockRevision(data, body, `count_${action}`, operationId);
           const previousState = normalizeStockState(data.stockState);
           if (action === "start") result = stockService.startStockCount(previousState, { ...body, requestId: operationId }, actor, { now: timestamp });
           else if (action === "update") result = stockService.updateStockCount(previousState, req.params.id, { ...body, requestId: operationId }, actor, { now: timestamp });
@@ -419,7 +537,7 @@ function registerStockLocationRoutes(deps) {
       const pendingNotifications = [];
       let result;
       const saved = await store.update((data, context) => {
-        assertExpectedStockRevision(data, body);
+        assertExpectedStockRevision(data, body, "movement", operationId);
         const previousStockState = normalizeStockState(data.stockState);
         result = stockService.applyStockMovement(previousStockState, { ...body, requestId: operationId }, adminActor(req), { now: timestamp });
         // Retried HTTP requests must return the original movement without a
@@ -459,7 +577,7 @@ function registerStockLocationRoutes(deps) {
       const pendingNotifications = [];
       let result;
       const saved = await store.update((data, context) => {
-        assertExpectedStockRevision(data, body);
+        assertExpectedStockRevision(data, body, "transfer_create", operationId);
         const previousStockState = normalizeStockState(data.stockState);
         const created = stockService.createTransferRequest(previousStockState, { ...body, requestId: operationId }, actor, { now: timestamp });
         result = created;
@@ -494,7 +612,7 @@ function registerStockLocationRoutes(deps) {
         const pendingNotifications = [];
         let result;
         const saved = await store.update((data, context) => {
-          assertExpectedStockRevision(data, body);
+          assertExpectedStockRevision(data, body, `transfer_${decision}`, operationId);
           const previousStockState = normalizeStockState(data.stockState);
           result = decision === "approve"
             ? stockService.approveTransfer(previousStockState, req.params.id, { ...body, requestId: operationId }, actor, { now: timestamp })
@@ -540,7 +658,7 @@ function registerStockLocationRoutes(deps) {
       const pendingNotifications = [];
       let result;
       const saved = await store.update((data, context) => {
-        assertExpectedStockRevision(data, body);
+        assertExpectedStockRevision(data, body, "movement_reverse", operationId);
         const previousStockState = normalizeStockState(data.stockState);
         result = stockService.reverseMovement(previousStockState, req.params.id, { ...body, requestId: operationId }, actor, { now: timestamp });
         if (result.idempotent) return context.noChange;
@@ -564,7 +682,8 @@ function registerStockLocationRoutes(deps) {
       const state = normalizeStockState(data.stockState);
       const locationId = stockService.actorLocationId(state, actor);
       const payload = locationPayload(data, locationId, actor);
-      payload.transfers = stockService.serializeTransfers(state, { locationId, userId: actor.id });
+      payload.transfers = stockService.serializeTransfers(state, { locationId, userId: actor.id })
+        .map((transfer) => personnelTransfer(transfer, locationId));
       res.json(payload);
     } catch (error) { next(error); }
   });
@@ -575,7 +694,14 @@ function registerStockLocationRoutes(deps) {
       const actor = personnelActor(req);
       const state = normalizeStockState(data.stockState);
       const locationId = stockService.actorLocationId(state, actor);
-      res.json({ ok: true, location: stockService.getLocation(state, locationId), transfers: stockService.serializeTransfers(state, { locationId, userId: actor.id }), revision: stockRevision(data), updatedAt: data.stockUpdatedAt || state.updatedAt || null });
+      res.json({
+        ok: true,
+        location: stockService.getLocation(state, locationId),
+        transfers: stockService.serializeTransfers(state, { locationId, userId: actor.id })
+          .map((transfer) => personnelTransfer(transfer, locationId)),
+        revision: stockRevision(data),
+        updatedAt: data.stockUpdatedAt || state.updatedAt || null
+      });
     } catch (error) { next(error); }
   });
 
@@ -588,6 +714,7 @@ function registerStockLocationRoutes(deps) {
       const pendingNotifications = [];
       let result;
       const saved = await store.update((data, context) => {
+        assertExpectedStockRevision(data, body, "transfer_create", operationId);
         const state = normalizeStockState(data.stockState);
         const from = stockService.defaultGeneralLocation(state);
         const toLocationId = stockService.actorLocationId(state, actor);
@@ -623,7 +750,13 @@ function registerStockLocationRoutes(deps) {
       });
       if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp);
       publishNotifications(pendingNotifications);
-      res.status(result.idempotent ? 200 : 201).json({ ok: true, transfer: result.transfer, stockState: normalizeStockState(saved.stockState), idempotent: result.idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
+      res.status(result.idempotent ? 200 : 201).json({
+        ok: true,
+        transfer: personnelTransfer(result.transfer, stockService.actorLocationId(saved.stockState, actor)),
+        idempotent: result.idempotent,
+        revision: stockRevision(saved),
+        updatedAt: saved.stockUpdatedAt || timestamp
+      });
     } catch (error) { next(error); }
   });
 
@@ -672,8 +805,15 @@ function assignPersonnelToLocation(data, state, locationId, personnelIds, previo
   }
 }
 
-function assertExpectedStockRevision(data, body) {
-  if (!body || body.expectedRevision === undefined || body.expectedRevision === null || body.expectedRevision === "") return;
+function assertExpectedStockRevision(data, body, operationType = "", operationId = "") {
+  const operationKey = operationType && operationId ? `${operationType}:${operationId}` : "";
+  const operationKeys = data && data.stockState && Array.isArray(data.stockState.operationKeys)
+    ? data.stockState.operationKeys
+    : [];
+  if (operationKey && operationKeys.some((item) => item && item.key === operationKey)) return;
+  if (!body || body.expectedRevision === undefined || body.expectedRevision === null || body.expectedRevision === "") {
+    throw Object.assign(new Error("Beklenen stok revision zorunludur."), { status: 400 });
+  }
   const expected = Number(body.expectedRevision);
   const current = Math.max(0, Number(data.revisions && data.revisions.stock || 0));
   if (!Number.isInteger(expected) || expected < 0) throw Object.assign(new Error("Beklenen stok revision geçersiz."), { status: 400 });

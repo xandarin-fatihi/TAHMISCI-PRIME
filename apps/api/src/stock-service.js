@@ -11,9 +11,11 @@ const { normalizeProductCode } = require("./store/product-code-registry");
 const CAFE_LOCATION_ID = "stock-location-cafe";
 const GENERAL_LOCATION_ID = "stock-location-general";
 const LOCATION_TYPES = new Set(["cafe", "central", "other"]);
+const CONTROLLED_UNITS = new Set(["adet", "paket", "şişe", "kutu", "koli", "kasa", "çuval", "kg", "gr", "litre", "ml"]);
 const MOVEMENT_TYPES = new Set([
   "opening_balance", "manual_in", "manual_out", "waste", "inbound_shipment",
-  "transfer", "adjustment", "reversal", "stock_in", "stock_out", "import"
+  "shipment_in", "transfer", "transfer_out", "transfer_in", "adjustment",
+  "correction", "reversal", "stock_in", "stock_out", "import"
 ]);
 const TRANSFER_STATUSES = new Set(["draft", "pending", "approved", "rejected", "cancelled"]);
 const OPERATION_LIMIT = 1000;
@@ -39,14 +41,19 @@ function finitePositive(value) {
 function normalizeUnit(value) {
   const unit = String(value || "").trim().toLocaleLowerCase("tr-TR");
   return {
-    l: "litre", lt: "litre", liter: "litre", kilogram: "kg", gram: "gr",
+    l: "litre", lt: "litre", liter: "litre", kilogram: "kg", gram: "gr", g: "gr",
     tane: "adet", sise: "şişe"
   }[unit] || unit;
 }
 
+function controlledUnit(value, fallback = "") {
+  const unit = normalizeUnit(value);
+  return CONTROLLED_UNITS.has(unit) ? unit : fallback;
+}
+
 function productUnitMetadata(product = {}) {
-  const baseUnit = normalizeUnit(product.baseUnit || product.unit || "adet") || "adet";
-  const bulkUnit = normalizeUnit(product.bulkUnit || product.caseUnit || product.purchaseUnit || "");
+  const baseUnit = controlledUnit(product.baseUnit || product.unit || "adet", "adet");
+  const bulkUnit = controlledUnit(product.bulkUnit || product.caseUnit || product.purchaseUnit || "", "");
   const unitsPerBulkUnit = finitePositive(product.unitsPerBulkUnit ?? product.unitsPerCase ?? product.packageSize
     ?? product.packSize ?? product.piecesPerBox ?? product.koliIci
     ?? (product.packageInfo && typeof product.packageInfo === "object" ? product.packageInfo.unitsPerCase || product.packageInfo.quantity : null)) || 0;
@@ -129,10 +136,14 @@ function getProduct(stockState, productId, productCode) {
   const state = normalizeState(stockState);
   const wantedId = String(productId || "").trim();
   const wantedCode = normalizeProductCode(productCode);
-  const product = state.products.find((item) =>
-    (wantedCode && normalizeProductCode(item.productCode) === wantedCode)
-    || String(item.id) === wantedId
-  );
+  if (!wantedId && !wantedCode) throw stockError("Stok ürünü kimliği zorunludur.");
+  let product = null;
+  if (wantedId) product = state.products.find((item) => String(item.id) === wantedId) || null;
+  if (!product && !wantedId && wantedCode) {
+    const matches = state.products.filter((item) => normalizeProductCode(item.productCode) === wantedCode);
+    if (matches.length > 1) throw stockError("Stok ürün kodu birden fazla kayıtla eşleşiyor.", 409);
+    product = matches[0] || null;
+  }
   if (!product) throw stockError("Stok ürünü bulunamadı.", 404);
   if (product.active === false || product.sourcePresent === false || product.archivedAt) {
     throw stockError("Stok ürünü aktif katalogda bulunamadı.", 409);
@@ -159,6 +170,7 @@ function findBalance(state, locationId, productId, create = false) {
     locationId: String(locationId),
     productId: String(productId),
     quantity: 0,
+    revision: 0,
     criticalThreshold: Math.max(0, Number(product && product.criticalThreshold || 0)),
     orderThreshold: Math.max(0, Number(product && product.orderThreshold || 0)),
     targetLevel: Math.max(0, Number(product && product.targetLevel || 0)),
@@ -173,7 +185,7 @@ function getProductBalance(stockState, locationId, productId) {
   const balance = findBalance(state, locationId, productId, false);
   return balance ? { ...balance } : {
     locationId: String(locationId), productId: String(productId), quantity: 0,
-    criticalThreshold: 0, orderThreshold: 0, targetLevel: 0, updatedAt: null
+    revision: 0, criticalThreshold: 0, orderThreshold: 0, targetLevel: 0, updatedAt: null
   };
 }
 
@@ -279,9 +291,10 @@ function recordOperation(state, type, requestId, value, timestamp) {
 }
 
 function movementDirection(type, input = {}) {
-  if (type === "manual_in" || type === "stock_in" || type === "inbound_shipment" || type === "opening_balance") return 1;
+  if (type === "manual_in" || type === "stock_in" || type === "inbound_shipment" || type === "shipment_in" || type === "opening_balance" || type === "transfer_in") return 1;
   if (type === "manual_out" || type === "stock_out" || type === "waste") return -1;
-  if (type === "adjustment") return Number(input.delta) < 0 ? -1 : 1;
+  if (type === "transfer_out") return -1;
+  if (type === "adjustment" || type === "correction") return Number(input.delta) < 0 ? -1 : 1;
   return 0;
 }
 
@@ -324,9 +337,13 @@ function addMovement(state, input) {
     resultingStock: round(Number(input.resultingBalance || 0)),
     referenceType: String(input.referenceType || ""),
     referenceId: String(input.referenceId || ""),
+    transferId: String(input.transferId || input.referenceType === "transfer" && input.referenceId || ""),
     shipmentId: String(input.shipmentId || ""),
     requestId: String(input.requestId || ""),
     idempotencyKey: String(input.idempotencyKey || input.requestId || ""),
+    expectedRevision: input.expectedRevision === undefined || input.expectedRevision === null
+      ? null
+      : Math.max(0, Math.trunc(Number(input.expectedRevision) || 0)),
     transactionRef: String(input.transactionRef || ""),
     actorId: String(input.actor && input.actor.id || input.actorId || ""),
     actor: input.actor && (input.actor.name || input.actor.id) || String(input.actorName || "system"),
@@ -364,11 +381,19 @@ function applyStockMovement(stockState, input = {}, actor = {}, options = {}) {
   const delta = movementDirection(type, input) * conversion.quantity;
   if (!delta) throw stockError("Bu hareket türü için geçerli miktar değişimi gerekli.");
   const balance = findBalance(state, location.id, product.id, true);
+  if (input.expectedBalanceRevision !== undefined && input.expectedBalanceRevision !== null && input.expectedBalanceRevision !== "") {
+    const expectedBalanceRevision = Number(input.expectedBalanceRevision);
+    if (!Number.isInteger(expectedBalanceRevision) || expectedBalanceRevision < 0) throw stockError("Beklenen ürün-depo revision geçersiz.");
+    if (expectedBalanceRevision !== Math.max(0, Number(balance.revision || 0))) {
+      throw stockError("Ürün-depo bakiyesi başka bir işlemle güncellendi. Yenileyip tekrar deneyin.", 409);
+    }
+  }
   const previous = round(Number(balance.quantity || 0));
   const resulting = round(previous + delta);
   if (resulting < 0) throw stockError("Stok miktarı eksiye düşemez.", 409);
   const timestamp = nowIso(options.now);
   balance.quantity = resulting;
+  balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
   balance.updatedAt = timestamp;
   if (input.criticalThreshold !== undefined) balance.criticalThreshold = Math.max(0, Number(input.criticalThreshold) || 0);
   if (input.orderThreshold !== undefined) balance.orderThreshold = Math.max(0, Number(input.orderThreshold) || 0);
@@ -386,6 +411,7 @@ function applyStockMovement(stockState, input = {}, actor = {}, options = {}) {
     baseQuantityDelta: delta, conversionFactor: conversion.factor,
     conversionSnapshot: { baseUnit: conversion.baseUnit, bulkUnit: conversion.bulkUnit, unitsPerBulkUnit: conversion.unitsPerBulkUnit, inputUnit: conversion.inputUnit, factor: conversion.factor },
     previousBalance: previous, resultingBalance: resulting,
+    expectedRevision: input.expectedBalanceRevision,
     referenceType: input.referenceType || "manual", referenceId: input.referenceId,
     shipmentId: input.shipmentId,
     transactionRef: input.transactionRef,
@@ -409,16 +435,40 @@ function assertTransferLocations(state, fromLocationId, toLocationId) {
 
 function serializeTransfer(state, transfer) {
   if (!transfer) return null;
-  const product = (state.products || []).find((item) => String(item.id) === String(transfer.productId));
+  const transferItems = Array.isArray(transfer.items) && transfer.items.length
+    ? transfer.items
+    : [{
+        productId: transfer.productId,
+        quantity: transfer.quantity,
+        baseUnit: transfer.baseUnit,
+        sourceQuantity: transfer.sourceQuantity,
+        sourceUnit: transfer.sourceUnit,
+        conversionFactor: transfer.conversionFactor,
+        conversionSnapshot: transfer.conversionSnapshot,
+        sourceExpectedRevision: transfer.sourceExpectedRevision,
+        destinationExpectedRevision: transfer.destinationExpectedRevision
+      }];
+  const serializedItems = transferItems.map((item) => {
+    const product = (state.products || []).find((candidate) => String(candidate.id) === String(item.productId));
+    return {
+      ...item,
+      product: product ? { id: product.id, name: productName(product), productName: productName(product), unit: product.unit, productCode: product.productCode || "" } : null,
+      fromBalance: getProductBalance(state, transfer.fromLocationId, item.productId),
+      toBalance: getProductBalance(state, transfer.toLocationId, item.productId)
+    };
+  });
+  const product = serializedItems[0] && serializedItems[0].product;
   const fromLocation = getLocations(state, { includeInactive: true }).find((item) => String(item.id) === String(transfer.fromLocationId));
   const toLocation = getLocations(state, { includeInactive: true }).find((item) => String(item.id) === String(transfer.toLocationId));
   return {
     ...transfer,
-    product: product ? { id: product.id, name: productName(product), productName: productName(product), unit: product.unit, productCode: product.productCode || "" } : null,
+    items: serializedItems,
+    itemCount: serializedItems.length,
+    product: product || null,
     fromLocation: fromLocation || null,
     toLocation: toLocation || null,
-    fromBalance: getProductBalance(state, transfer.fromLocationId, transfer.productId),
-    toBalance: getProductBalance(state, transfer.toLocationId, transfer.productId)
+    fromBalance: serializedItems[0] && serializedItems[0].fromBalance || null,
+    toBalance: serializedItems[0] && serializedItems[0].toBalance || null
   };
 }
 
@@ -430,29 +480,55 @@ function createTransferRequest(stockState, input = {}, actor = {}, options = {})
     const transfer = (state.transfers || []).find((item) => String(item.id) === String(duplicate.value && duplicate.value.transferId));
     return { stockState: state, transfer: serializeTransfer(state, transfer), idempotent: true };
   }
-  const product = getProduct(state, input.productId || input.stockProductId, input.productCode || input.stockProductCode);
   const fromLocationId = String(input.fromLocationId || options.fromLocationId || defaultGeneralLocation(state) && defaultGeneralLocation(state).id || "").trim();
   const toLocationId = String(input.toLocationId || options.toLocationId || actorLocationId(state, actor) || "").trim();
   const { from, to } = assertTransferLocations(state, fromLocationId, toLocationId);
-  if (actor && actor.type !== "admin" && String(actorLocationId(state, actor)) !== to.id) {
-    throw stockError("Yalnızca atanmış kafe deponuz için talep oluşturabilirsiniz.", 403);
+  if (actor && actor.type !== "admin") {
+    const general = defaultGeneralLocation(state);
+    if (!general || from.id !== general.id || String(actorLocationId(state, actor)) !== to.id || to.type !== "cafe") {
+      throw stockError("Yalnızca Genel Depodan atanmış kafe deponuza talep oluşturabilirsiniz.", 403);
+    }
   }
-  const sourceQuantity = finitePositive(input.quantity);
-  if (!sourceQuantity) throw stockError("Geçerli bir miktar girin.");
-  const conversion = convertToBaseUnit(sourceQuantity, input.unit || product.unit, product);
+  const rawItems = Array.isArray(input.items) && input.items.length ? input.items : [input];
+  const seenProducts = new Set();
+  const items = rawItems.map((item) => {
+    const product = getProduct(state, item.productId || item.stockProductId, item.productCode || item.stockProductCode);
+    if (seenProducts.has(String(product.id))) throw stockError("Aynı ürün bir transferde yalnızca bir kez bulunabilir.", 409);
+    seenProducts.add(String(product.id));
+    const sourceQuantity = finitePositive(item.quantity);
+    if (!sourceQuantity) throw stockError("Geçerli bir miktar girin.");
+    const conversion = convertToBaseUnit(sourceQuantity, item.unit || product.unit, product);
+    const sourceBalance = findBalance(state, from.id, product.id, true);
+    const destinationBalance = findBalance(state, to.id, product.id, true);
+    return {
+      productId: product.id,
+      quantity: conversion.quantity,
+      baseUnit: conversion.baseUnit,
+      sourceQuantity,
+      sourceUnit: conversion.inputUnit,
+      conversionFactor: conversion.factor,
+      conversionSnapshot: { baseUnit: conversion.baseUnit, bulkUnit: conversion.bulkUnit, unitsPerBulkUnit: conversion.unitsPerBulkUnit, inputUnit: conversion.inputUnit, factor: conversion.factor },
+      sourceExpectedRevision: Math.max(0, Number(sourceBalance.revision || 0)),
+      destinationExpectedRevision: Math.max(0, Number(destinationBalance.revision || 0))
+    };
+  });
+  const firstItem = items[0];
   const timestamp = nowIso(options.now);
   const transfer = {
     id: createId("stock-transfer"),
     status: input.status === "draft" && actor && actor.type === "admin" ? "draft" : "pending",
-    productId: product.id,
+    productId: firstItem.productId,
+    items,
     fromLocationId: from.id,
     toLocationId: to.id,
-    quantity: conversion.quantity,
-    baseUnit: conversion.baseUnit,
-    sourceQuantity,
-    sourceUnit: conversion.inputUnit,
-    conversionFactor: conversion.factor,
-    conversionSnapshot: { baseUnit: conversion.baseUnit, bulkUnit: conversion.bulkUnit, unitsPerBulkUnit: conversion.unitsPerBulkUnit, inputUnit: conversion.inputUnit, factor: conversion.factor },
+    quantity: firstItem.quantity,
+    baseUnit: firstItem.baseUnit,
+    sourceQuantity: firstItem.sourceQuantity,
+    sourceUnit: firstItem.sourceUnit,
+    conversionFactor: firstItem.conversionFactor,
+    conversionSnapshot: firstItem.conversionSnapshot,
+    sourceExpectedRevision: firstItem.sourceExpectedRevision,
+    destinationExpectedRevision: firstItem.destinationExpectedRevision,
     urgency: String(input.urgency || "normal").trim().slice(0, 32) || "normal",
     note: String(input.note || input.description || "").trim().slice(0, 500),
     requestedBy: String(actor && actor.id || ""),
@@ -488,42 +564,64 @@ function approveTransfer(stockState, transferId, input = {}, actor = {}, options
     return { stockState: state, transfer: serializeTransfer(state, transfer), movements: [], idempotent: true };
   }
   if (!["draft", "pending"].includes(transfer.status)) throw stockError("Bu aktarım talebi artık onaylanamaz.", 409);
-  const product = getProduct(state, transfer.productId);
   const { from, to } = assertTransferLocations(state, transfer.fromLocationId, transfer.toLocationId);
-  const amount = finitePositive(transfer.quantity);
-  if (!amount) throw stockError("Aktarım miktarı geçersiz.");
-  const fromBalance = findBalance(state, from.id, product.id, true);
-  const toBalance = findBalance(state, to.id, product.id, true);
-  const beforeFrom = round(Number(fromBalance.quantity || 0));
-  const beforeTo = round(Number(toBalance.quantity || 0));
-  if (beforeFrom < amount) throw stockError("Kaynak depoda yeterli stok bulunmuyor.", 409);
+  const rawItems = Array.isArray(transfer.items) && transfer.items.length ? transfer.items : [transfer];
+  const prepared = rawItems.map((item) => {
+    const product = getProduct(state, item.productId || transfer.productId);
+    const amount = finitePositive(item.quantity);
+    if (!amount) throw stockError("Aktarım miktarı geçersiz.");
+    const fromBalance = findBalance(state, from.id, product.id, true);
+    const toBalance = findBalance(state, to.id, product.id, true);
+    const sourceRevision = Math.max(0, Number(fromBalance.revision || 0));
+    const destinationRevision = Math.max(0, Number(toBalance.revision || 0));
+    if (item.sourceExpectedRevision !== null && item.sourceExpectedRevision !== undefined
+      && Number(item.sourceExpectedRevision) !== sourceRevision) {
+      throw stockError(`${productName(product)} kaynak depo bakiyesi talep sonrasında değişti. Talebi yenileyin.`, 409);
+    }
+    if (item.destinationExpectedRevision !== null && item.destinationExpectedRevision !== undefined
+      && Number(item.destinationExpectedRevision) !== destinationRevision) {
+      throw stockError(`${productName(product)} hedef depo bakiyesi talep sonrasında değişti. Talebi yenileyin.`, 409);
+    }
+    const beforeFrom = round(Number(fromBalance.quantity || 0));
+    const beforeTo = round(Number(toBalance.quantity || 0));
+    if (beforeFrom < amount) throw stockError(`${productName(product)} için kaynak depoda yeterli stok bulunmuyor.`, 409);
+    return { item, product, amount, fromBalance, toBalance, beforeFrom, beforeTo };
+  });
   const timestamp = nowIso(options.now);
   const transactionRef = createId("stock-transfer-transaction");
-  fromBalance.quantity = round(beforeFrom - amount);
-  toBalance.quantity = round(beforeTo + amount);
-  fromBalance.updatedAt = timestamp;
-  toBalance.updatedAt = timestamp;
-  const common = {
-    type: "transfer", productId: product.id, stockProductCode: product.productCode, productName: productName(product),
-    quantity: amount, baseUnit: transfer.baseUnit || product.unit, sourceQuantity: transfer.sourceQuantity || amount,
-    sourceUnit: transfer.sourceUnit || product.unit, conversionFactor: transfer.conversionFactor || 1,
-    conversionSnapshot: transfer.conversionSnapshot || { ...productUnitMetadata(product), inputUnit: transfer.sourceUnit || product.unit, factor: transfer.conversionFactor || 1 },
-    referenceType: "transfer", referenceId: transfer.id, requestId, idempotencyKey: requestId,
-    transactionRef, actor, note: input.note || transfer.note, reason: "Depolar arası aktarım", createdAt: timestamp, approvedAt: timestamp
-  };
-  const outgoing = addMovement(state, { ...common, locationId: from.id, fromLocationId: from.id, toLocationId: to.id, previousBalance: beforeFrom, resultingBalance: fromBalance.quantity });
-  const incoming = addMovement(state, { ...common, locationId: to.id, fromLocationId: from.id, toLocationId: to.id, previousBalance: beforeTo, resultingBalance: toBalance.quantity });
+  const movements = [];
+  for (const entry of prepared) {
+    const { item, product, amount, fromBalance, toBalance, beforeFrom, beforeTo } = entry;
+    fromBalance.quantity = round(beforeFrom - amount);
+    toBalance.quantity = round(beforeTo + amount);
+    fromBalance.revision = Math.max(0, Number(fromBalance.revision || 0)) + 1;
+    toBalance.revision = Math.max(0, Number(toBalance.revision || 0)) + 1;
+    fromBalance.updatedAt = timestamp;
+    toBalance.updatedAt = timestamp;
+    const common = {
+      productId: product.id, stockProductCode: product.productCode, productName: productName(product),
+      quantity: amount, baseUnit: item.baseUnit || product.unit, sourceQuantity: item.sourceQuantity || amount,
+      sourceUnit: item.sourceUnit || product.unit, conversionFactor: item.conversionFactor || 1,
+      conversionSnapshot: item.conversionSnapshot || { ...productUnitMetadata(product), inputUnit: item.sourceUnit || product.unit, factor: item.conversionFactor || 1 },
+      referenceType: "transfer", referenceId: transfer.id, transferId: transfer.id, requestId, idempotencyKey: requestId,
+      transactionRef, actor, note: input.note || transfer.note, reason: "Depolar arası aktarım", createdAt: timestamp, approvedAt: timestamp
+    };
+    const outgoing = addMovement(state, { ...common, type: "transfer_out", locationId: from.id, fromLocationId: from.id, toLocationId: to.id, baseQuantityDelta: -amount, expectedRevision: item.sourceExpectedRevision, previousBalance: beforeFrom, resultingBalance: fromBalance.quantity });
+    const incoming = addMovement(state, { ...common, type: "transfer_in", locationId: to.id, fromLocationId: from.id, toLocationId: to.id, baseQuantityDelta: amount, expectedRevision: item.destinationExpectedRevision, previousBalance: beforeTo, resultingBalance: toBalance.quantity });
+    item.movementIds = [outgoing.id, incoming.id];
+    movements.push(outgoing, incoming);
+    updateProductTotalProjection(state, product.id, timestamp);
+  }
   transfer.status = "approved";
   transfer.transactionRef = transactionRef;
-  transfer.movementIds = [outgoing.id, incoming.id];
+  transfer.movementIds = movements.map((movement) => movement.id);
   transfer.approvedBy = String(actor && actor.id || "");
   transfer.approvedAt = timestamp;
   transfer.updatedAt = timestamp;
   if (input.note !== undefined) transfer.note = String(input.note || "").trim().slice(0, 500);
-  updateProductTotalProjection(state, product.id, timestamp);
   state.updatedAt = timestamp;
   recordOperation(state, "transfer_approve", requestId, { transferId: transfer.id }, timestamp);
-  return { stockState: normalizeState(state), transfer: serializeTransfer(state, transfer), movements: [outgoing, incoming], idempotent: false };
+  return { stockState: normalizeState(state), transfer: serializeTransfer(state, transfer), movements, idempotent: false };
 }
 
 function rejectTransfer(stockState, transferId, input = {}, actor = {}, options = {}) {

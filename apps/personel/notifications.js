@@ -1119,6 +1119,9 @@
   }
 
   async function ensurePersonelServiceWorker() {
+    if (window.TahmisciPWA && typeof window.TahmisciPWA.ensureServiceWorker === "function") {
+      return window.TahmisciPWA.ensureServiceWorker();
+    }
     const existing = await navigator.serviceWorker.getRegistration("/personel/");
     if (existing) return existing;
     return navigator.serviceWorker.register("/personel/sw.js", { scope: "/personel/", updateViaCache: "none" });
