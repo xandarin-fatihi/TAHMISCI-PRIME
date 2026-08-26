@@ -176,23 +176,6 @@ function registerStockLocationRoutes(deps) {
     };
   }
 
-  function personnelTransfer(transfer, ownLocationId) {
-    if (!transfer || typeof transfer !== "object") return transfer;
-    const sanitizeItem = (item) => {
-      if (!item || typeof item !== "object") return item;
-      const { fromBalance: _fromBalance, ...publicItem } = item;
-      return publicItem;
-    };
-    const { fromBalance: _fromBalance, items, ...publicTransfer } = transfer;
-    return {
-      ...publicTransfer,
-      toBalance: String(transfer.toLocationId || "") === String(ownLocationId || "")
-        ? transfer.toBalance || null
-        : null,
-      items: Array.isArray(items) ? items.map(sanitizeItem) : []
-    };
-  }
-
   app.get("/api/admin/stock/locations", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const data = req.storeSnapshot || await store.read();
@@ -429,6 +412,10 @@ function registerStockLocationRoutes(deps) {
           const value = Number(body[field]);
           if (!Number.isFinite(value) || value < 0) throw fail("Eşik değerleri negatif olamaz.");
           balance[field] = Math.round(value * 1000) / 1000;
+        }
+        if (body.criticalThreshold !== undefined && body.orderThreshold !== undefined
+          && Number(balance.criticalThreshold || 0) > Number(balance.orderThreshold || 0)) {
+          throw fail("Kritik eşik sipariş eşiğinden büyük olamaz.");
         }
         const currentBaseUnit = String(product.baseUnit || product.unit || "adet");
         const nextBaseUnit = body.baseUnit === undefined ? currentBaseUnit : String(body.baseUnit || "").trim().toLocaleLowerCase("tr-TR");
@@ -682,80 +669,24 @@ function registerStockLocationRoutes(deps) {
       const state = normalizeStockState(data.stockState);
       const locationId = stockService.actorLocationId(state, actor);
       const payload = locationPayload(data, locationId, actor);
-      payload.transfers = stockService.serializeTransfers(state, { locationId, userId: actor.id })
-        .map((transfer) => personnelTransfer(transfer, locationId));
       res.json(payload);
     } catch (error) { next(error); }
   });
 
   app.get("/api/workforce/stock/transfer-requests", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
     try {
-      const data = req.storeSnapshot || await store.read();
-      const actor = personnelActor(req);
-      const state = normalizeStockState(data.stockState);
-      const locationId = stockService.actorLocationId(state, actor);
-      res.json({
-        ok: true,
-        location: stockService.getLocation(state, locationId),
-        transfers: stockService.serializeTransfers(state, { locationId, userId: actor.id })
-          .map((transfer) => personnelTransfer(transfer, locationId)),
-        revision: stockRevision(data),
-        updatedAt: data.stockUpdatedAt || state.updatedAt || null
+      res.status(403).json({
+        ok: false,
+        message: "Depolar arası transfer bilgileri Yönetici yetkisi gerektirir."
       });
     } catch (error) { next(error); }
   });
 
   app.post("/api/workforce/stock/transfer-requests", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
     try {
-      const body = req.body || {};
-      const operationId = requestId(req, true);
-      const timestamp = nowIso();
-      const actor = personnelActor(req);
-      const pendingNotifications = [];
-      let result;
-      const saved = await store.update((data, context) => {
-        assertExpectedStockRevision(data, body, "transfer_create", operationId);
-        const state = normalizeStockState(data.stockState);
-        const from = stockService.defaultGeneralLocation(state);
-        const toLocationId = stockService.actorLocationId(state, actor);
-        result = stockService.createTransferRequest(state, {
-          productId: body.productId || body.stockProductId,
-          productCode: body.productCode || body.stockProductCode,
-          quantity: body.quantity,
-          unit: body.unit,
-          note: body.note,
-          urgency: body.urgency,
-          requestId: operationId,
-          fromLocationId: from && from.id,
-          toLocationId
-        }, actor, { now: timestamp, fromLocationId: from && from.id, toLocationId });
-        if (result.idempotent) return context.noChange;
-        persistStockMutation(data, result.stockState, timestamp);
-        queueNotification(data, pendingNotifications, {
-          recipientRole: "manager",
-          recipientId: "manager",
-          category: "stock",
-          eventType: "stock_transfer_requested",
-          title: "Yeni depo transfer talebi",
-          body: `${actor.name}, ${result.transfer.product && (result.transfer.product.name || result.transfer.product.productName) || "stok ürünü"} için transfer istedi.`,
-          severity: result.transfer.urgency === "critical" ? "critical" : "warning",
-          entityType: "stock_transfer",
-          entityId: result.transfer.id,
-          deepLink: `/yonetici/?section=stock&stockPanel=transfers&transferId=${encodeURIComponent(result.transfer.id)}`,
-          dedupeKey: `stock-transfer-requested:${result.transfer.id}:manager`,
-          metadata: { transferId: result.transfer.id, locationId: toLocationId, personId: actor.id }
-        });
-        appendStockAudit(data, actor, "stock.transfer.request", result.transfer.id, operationId, null, result.transfer, timestamp);
-        return data;
-      });
-      if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp);
-      publishNotifications(pendingNotifications);
-      res.status(result.idempotent ? 200 : 201).json({
-        ok: true,
-        transfer: personnelTransfer(result.transfer, stockService.actorLocationId(saved.stockState, actor)),
-        idempotent: result.idempotent,
-        revision: stockRevision(saved),
-        updatedAt: saved.stockUpdatedAt || timestamp
+      res.status(403).json({
+        ok: false,
+        message: "Depolar arası transfer işlemi Yönetici yetkisi gerektirir."
       });
     } catch (error) { next(error); }
   });

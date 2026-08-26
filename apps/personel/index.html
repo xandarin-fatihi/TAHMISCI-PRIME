@@ -98,7 +98,6 @@
           <div class="stock-catalog-shell">
             <header class="stock-catalog-toolbar">
               <div class="stock-message" id="stockMessage" hidden></div>
-              <div class="stock-location-summary" id="stockLocationSummary" aria-live="polite"></div>
               <label class="stock-catalog-search">
                 <span aria-hidden="true">⌕</span>
                 <input id="stockSearchInput" type="search" placeholder="Ürün, kategori veya kod ara…" autocomplete="off" spellcheck="false">
@@ -107,10 +106,8 @@
             </header>
             <div class="stock-catalog-content">
               <div class="stock-grid" id="stockGrid"></div>
-              <section class="stock-transfer-requests" id="stockTransferRequests" aria-label="Transfer taleplerim"></section>
             </div>
           </div>
-          <div class="stock-stats" id="stockStats" hidden></div>
         </section>
 
         <section class="personel-section profile-section" id="sectionProfile" data-section-panel="profile" hidden>
@@ -259,24 +256,6 @@
     </footer>
   </aside>
 
-  <div class="stock-modal" id="stockModal" hidden>
-    <form class="stock-dialog" id="stockForm" role="dialog" aria-modal="true" aria-labelledby="stockModalTitle">
-      <button class="stock-close" type="button" data-close aria-label="Kapat">×</button>
-      <p class="eyebrow" id="stockModalKicker">Stok</p>
-      <h2 id="stockModalTitle">Stok işlemi</h2>
-      <p id="stockModalProduct">Ürün seçilmedi.</p>
-      <label><span>Miktar</span><input id="stockQuantity" type="number" min="0.01" step="0.01" required></label>
-      <label id="stockUnitField" hidden><span>Birim</span><select id="stockUnit"></select></label>
-      <label id="stockUrgencyField" hidden><span>Aciliyet</span><select id="stockUrgency"><option value="normal">Normal</option><option value="high">Yüksek</option><option value="urgent">Acil</option></select></label>
-      <label><span>Not</span><textarea id="stockNote" rows="3" maxlength="240" placeholder="İsteğe bağlı"></textarea></label>
-      <div class="stock-dialog-actions">
-        <button class="ghost ui-button ui-button--secondary" type="button" data-close>Vazgeç</button>
-        <button class="primary ui-button ui-button--primary" type="submit">Kaydet</button>
-      </div>
-      <p class="form-message" id="stockFormMessage"></p>
-    </form>
-  </div>
-
   <div class="stock-modal" id="stockDetailModal" hidden>
     <article class="stock-dialog stock-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="stockDetailTitle">
       <button class="stock-close" type="button" data-detail-close aria-label="Kapat">×</button>
@@ -287,16 +266,12 @@
       </div>
       <div class="stock-detail-grid">
         <div><span>Elde olan</span><strong id="stockDetailQuantity">—</strong></div>
+        <div><span>Birim</span><strong id="stockDetailUnit">—</strong></div>
         <div><span>Sipariş eşiği</span><strong id="stockDetailThreshold">—</strong></div>
         <div><span>Kritik eşik</span><strong id="stockDetailCritical">—</strong></div>
         <div><span>Tedarikçi</span><strong id="stockDetailSupplier">—</strong></div>
       </div>
       <p class="stock-detail-note" id="stockDetailNote" hidden></p>
-      <div class="stock-detail-actions">
-        <button type="button" data-detail-action="transfer_request">Transfer Talep Et</button>
-        <button type="button" data-detail-action="stock_out">Eksilt</button>
-        <button type="button" data-detail-action="waste">Sarf İşle</button>
-      </div>
     </article>
   </div>
 </body>

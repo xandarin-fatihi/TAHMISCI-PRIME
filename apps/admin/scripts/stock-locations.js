@@ -6,6 +6,7 @@
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[character]));
+  const LOCATION_STORAGE_KEY = "tahmisci.admin.stock.location.v1";
 
   const state = {
     locations: [],
@@ -21,14 +22,18 @@
     secondaryLoadPromise: null,
     secondaryLocationId: "",
     selectedCategory: "all",
-    view: "grid",
+    selectedProductId: "",
+    drawerReturnFocus: null,
+    inventoryController: null,
+    loadSequence: 0,
     revision: 0,
     updatedAt: "",
     loaded: false,
     stale: true,
     loadPromise: null,
     busyKeys: new Set(),
-    bound: false
+    bound: false,
+    confirmResolver: null
   };
 
   function requestId(prefix) {
@@ -110,22 +115,30 @@
     return String(balance.productId || product.id || "");
   }
 
+  function textValue(value, fallback = "") {
+    if (value && typeof value === "object") {
+      const nested = value.unit ?? value.code ?? value.name ?? value.label ?? value.value ?? value.display;
+      return nested === undefined || nested === null ? fallback : String(nested).trim() || fallback;
+    }
+    return value === undefined || value === null ? fallback : String(value).trim() || fallback;
+  }
+
   function unitOf(balance) {
     const product = productOf(balance);
-    return String(product.baseUnit || product.unit || balance.unit || "adet");
+    return textValue(product.baseUnit || product.unit || balance.unit, "adet").toLocaleLowerCase("tr-TR");
   }
 
   function unitsOf(balance) {
     const product = productOf(balance);
     const baseUnit = unitOf(balance);
-    const bulkUnit = String(product.bulkUnit || product.caseUnit || "");
+    const bulkUnit = textValue(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR");
     const factor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
     return [{ value: baseUnit, label: baseUnit }, ...(bulkUnit && factor > 0 ? [{ value: bulkUnit, label: `${bulkUnit} (1 = ${formatNumber(factor)} ${baseUnit})` }] : [])];
   }
 
   function toBaseQuantity(balance, quantity, unit) {
     const product = productOf(balance);
-    const factor = String(unit) === String(product.bulkUnit || product.caseUnit || "")
+    const factor = textValue(unit).toLocaleLowerCase("tr-TR") === textValue(product.bulkUnit || product.caseUnit).toLocaleLowerCase("tr-TR")
       ? Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0)
       : 1;
     return Number(quantity || 0) * (factor > 0 ? factor : 1);
@@ -134,7 +147,7 @@
   function quantityDisplay(balance, value = balance && balance.quantity) {
     if (balance && balance.quantityDisplay && Number(value) === Number(balance.quantity)) return balance.quantityDisplay.display || `${formatNumber(value)} ${unitOf(balance)}`;
     const product = productOf(balance);
-    const bulkUnit = String(product.bulkUnit || product.caseUnit || "");
+    const bulkUnit = textValue(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR");
     const factor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
     const baseUnit = unitOf(balance);
     const quantity = Math.max(0, Number(value || 0));
@@ -179,32 +192,37 @@
     if (result && result.updatedAt) state.updatedAt = result.updatedAt;
   }
 
-  async function loadLocations() {
+  async function loadLocations(options = {}) {
+    if (state.locations.length && !options.force) return { locations: state.locations, personnel: state.personnel, revision: state.revision };
     const result = await api("/api/admin/stock/locations");
     state.locations = Array.isArray(result.locations) ? result.locations : [];
     state.personnel = Array.isArray(result.personnel) ? result.personnel : [];
     updateRevision(result);
+    if (!state.selectedLocationId) {
+      try { state.selectedLocationId = localStorage.getItem(LOCATION_STORAGE_KEY) || ""; } catch (_error) {}
+    }
     const valid = state.selectedLocationId === "total"
       || state.locations.some((location) => String(location.id) === String(state.selectedLocationId));
     if (!valid) {
       const cafe = state.locations.find((location) => location.code === "CAFE" || location.type === "cafe");
       state.selectedLocationId = String((cafe || state.locations[0] || {}).id || "total");
     }
+    try { localStorage.setItem(LOCATION_STORAGE_KEY, state.selectedLocationId); } catch (_error) {}
     publishLocationContext();
     return result;
   }
 
-  async function loadInventory() {
-    const locationId = state.selectedLocationId || "total";
-    const result = await api(`/api/admin/stock/inventory?locationId=${encodeURIComponent(locationId)}`);
+  async function loadInventory(locationId = state.selectedLocationId || "total", signal) {
+    const result = await api(`/api/admin/stock/inventory?locationId=${encodeURIComponent(locationId)}`, { signal });
+    if (String(locationId) !== String(state.selectedLocationId)) return result;
     state.balances = Array.isArray(result.balances) ? result.balances : [];
     state.summary = result.summary && typeof result.summary === "object" ? result.summary : {};
     updateRevision(result);
     return result;
   }
 
-  async function loadTransfers() {
-    const result = await api("/api/admin/stock/transfers?status=pending");
+  async function loadTransfers(signal) {
+    const result = await api("/api/admin/stock/transfers?status=pending", { signal });
     state.transfers = Array.isArray(result.transfers) ? result.transfers : [];
     if (Array.isArray(result.locations) && result.locations.length) state.locations = result.locations;
     updateRevision(result);
@@ -236,28 +254,37 @@
 
   async function loadAll(options = {}) {
     if (state.loadPromise && !options.force) return state.loadPromise;
+    if (options.force && state.inventoryController) state.inventoryController.abort();
+    const controller = new AbortController();
+    const sequence = ++state.loadSequence;
+    state.inventoryController = controller;
     const workspace = $("#stockLocationWorkspace");
     if (workspace) workspace.setAttribute("aria-busy", "true");
-    state.loadPromise = (async () => {
-      await loadLocations();
+    const currentPromise = (async () => {
+      await loadLocations({ force: options.reloadLocations === true });
+      const requestedLocationId = String(state.selectedLocationId || "total");
       // İlk görünüm yalnız envanter ve bekleyen transfer projection'ını bekler.
       // Ağır hareket/sayım geçmişi aşağıdaki ikincil alanlar görünür olduğunda
       // yüklenir; ham/boş ekran süresi ve duplicate GET zinciri azalır.
-      await Promise.all([loadInventory(), loadTransfers()]);
+      await Promise.all([loadInventory(requestedLocationId, controller.signal), loadTransfers(controller.signal)]);
+      if (controller.signal.aborted || sequence !== state.loadSequence || requestedLocationId !== String(state.selectedLocationId || "total")) return;
       state.loaded = true;
       state.stale = false;
       renderAll();
       scheduleSecondaryLoad(options.force === true);
       setMessage("");
     })().catch((error) => {
+      if (error && error.name === "AbortError") return;
       setMessage(error.message, "error");
       renderError(error);
       throw error;
     }).finally(() => {
-      state.loadPromise = null;
-      if (workspace) workspace.setAttribute("aria-busy", "false");
+      if (state.loadPromise === currentPromise) state.loadPromise = null;
+      if (state.inventoryController === controller) state.inventoryController = null;
+      if (workspace && sequence === state.loadSequence) workspace.setAttribute("aria-busy", "false");
     });
-    return state.loadPromise;
+    state.loadPromise = currentPromise;
+    return currentPromise;
   }
 
   function scheduleSecondaryLoad(force = false) {
@@ -356,28 +383,73 @@
     const host = $("#stockLocationInventory");
     const meta = $("#stockLocationInventoryMeta");
     if (!host) return;
-    host.dataset.view = state.view;
     const balances = filteredBalances();
     if (meta) meta.textContent = `${locationName(state.selectedLocationId)} · ${balances.length} ürün · ${state.updatedAt ? formatDate(state.updatedAt) : "güncel"}`;
     host.innerHTML = balances.length ? balances.map((balance) => {
       const product = productOf(balance);
-      const status = balanceStatus(balance);
+      const rawStatus = balanceStatus(balance);
+      const status = Number(balance.quantity || 0) <= 0 ? "empty" : rawStatus === "sufficient" ? "sufficient" : "critical";
       const suggestion = balance.recommendation || (balance.suggestedTransfer ? { type: "transfer", quantity: balance.suggestedTransfer } : null);
       const display = balance.quantityDisplay || {};
-      const bulkUnit = product.bulkUnit || product.caseUnit || "";
+      const bulkUnit = textValue(product.bulkUnit || product.caseUnit, "");
       const factor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
       const bulk = display.bulkQuantity ?? (factor > 0 ? Math.floor(Number(balance.quantity || 0) / factor) : 0);
-      const selected = String($("#stockLocationMovementProduct")?.value || "") === productId(balance) && !$("#stockLocationOperationDock")?.hidden;
-      return `<article class="stock-location-product is-${esc(status)}${selected ? " is-selected" : ""}" data-stock-product-card="${esc(productId(balance))}">
+      const selected = String(state.selectedProductId) === productId(balance) && !$("#stockProductDrawerLayer")?.hidden;
+      return `<article class="stock-location-product is-${esc(status)}${selected ? " is-selected" : ""}" data-stock-product-card="${esc(productId(balance))}" role="button" tabindex="0" aria-haspopup="dialog" aria-label="${esc(productName(balance))} stok detayını aç">
         <div class="stock-location-product__top"><span class="stock-location-product__category">${esc(product.category || "Kategori yok")}</span>${selected ? `<span class="stock-location-product__selected" aria-label="Seçili">✓</span>` : ""}</div>
         <div class="stock-location-product__identity"><strong>${esc(productName(balance))}</strong><span>${esc(product.productCode || product.code || "Kod yok")}</span></div>
         <span class="stock-location-status is-${esc(status)}">${esc(statusLabel(status))}</span>
         <div class="stock-location-product__quantity"><strong>${esc(factor > 0 ? formatNumber(bulk) : formatNumber(balance.quantity))}</strong><span>${esc(factor > 0 ? bulkUnit : unitOf(balance))}</span></div>
         <p class="stock-location-product__conversion">${esc(formatNumber(balance.quantity))} ${esc(unitOf(balance))}${factor > 0 ? ` · 1 ${esc(bulkUnit)} = ${esc(formatNumber(factor))} ${esc(unitOf(balance))}` : ""}</p>
         ${suggestion ? `<p class="stock-transfer-suggestion">${suggestion.type === "transfer" ? "Genel Depodan transfer önerisi" : "Satın alma önerisi"}: ${esc(formatNumber(suggestion.quantity))} ${esc(unitOf(balance))}</p>` : ""}
-        ${state.selectedLocationId !== "total" ? `<footer><button type="button" data-stock-card-movement="waste" data-product-id="${esc(productId(balance))}">Sarf İşle</button><button type="button" data-stock-card-movement="manual_in" data-product-id="${esc(productId(balance))}">+ Stok Ekle</button><button type="button" data-stock-transfer-product="${esc(productId(balance))}">Transfer</button><button type="button" data-edit-stock-thresholds="${esc(productId(balance))}" aria-label="${esc(productName(balance))} ayrıntıları">•••</button></footer>` : ""}
+        <span class="stock-location-product__open">Ayrıntıları aç <b aria-hidden="true">›</b></span>
       </article>`;
     }).join("") : `<div class="stock-location-empty"><strong>Bu görünümde ürün yok</strong><span>Arama veya durum filtresini değiştirin.</span></div>`;
+  }
+
+  function selectedProductBalance(productIdValue = state.selectedProductId) {
+    return state.balances.find((item) => productId(item) === String(productIdValue)) || null;
+  }
+
+  function openProductDrawer(productIdValue, trigger) {
+    const balance = selectedProductBalance(productIdValue);
+    const layer = $("#stockProductDrawerLayer");
+    const drawer = $("#stockProductDrawer");
+    if (!balance || !layer || !drawer) return;
+    state.selectedProductId = productId(balance);
+    state.drawerReturnFocus = trigger instanceof HTMLElement ? trigger : document.activeElement;
+    const product = productOf(balance);
+    const totalReadOnly = state.selectedLocationId === "total";
+    $("#stockProductDrawerTitle").textContent = productName(balance);
+    $("#stockProductDrawerSubtitle").textContent = `${product.productCode || "Kod yok"} · ${product.category || "Kategori yok"}`;
+    $("#stockProductDrawerMessage").textContent = totalReadOnly ? "Tüm Depolar görünümü salt okunurdur. İşlem için Kafe veya Genel Depoyu seçin." : "";
+    const body = $("#stockProductDrawerBody");
+    body.innerHTML = `<section class="stock-drawer-overview">
+      <article><span>Seçili görünüm</span><strong>${esc(quantityDisplay(balance))}</strong><small>${esc(locationName(state.selectedLocationId))}</small></article>
+      <article><span>Genel Depo</span><strong>${esc(quantityDisplay(balance, balance.generalQuantity ?? 0))}</strong><small>Merkez bakiyesi</small></article>
+      <article><span>Tüm Depolar</span><strong>${esc(quantityDisplay(balance, balance.totalQuantity ?? balance.quantity ?? 0))}</strong><small>Toplam bakiye</small></article>
+    </section>
+    <dl class="stock-drawer-details"><div><dt>Kritik eşik</dt><dd>${esc(formatNumber(balance.criticalThreshold))} ${esc(unitOf(balance))}</dd></div><div><dt>Sipariş eşiği</dt><dd>${esc(formatNumber(balance.orderThreshold))} ${esc(unitOf(balance))}</dd></div><div><dt>Hedef stok</dt><dd>${esc(formatNumber(balance.targetLevel))} ${esc(unitOf(balance))}</dd></div><div><dt>Dönüşüm</dt><dd>${esc(unitsOf(balance).map((unit) => unit.label).join(" · "))}</dd></div></dl>
+    <div class="stock-drawer-actions" aria-label="${esc(productName(balance))} stok işlemleri">
+      ${totalReadOnly ? "" : `<button class="ui-button ui-button--primary" type="button" data-stock-drawer-action="manual_in">Stok Ekle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="waste">Sarf İşle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="transfer">Transfer Oluştur</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="settings">Eşik ve Birim Ayarları</button>`}
+      <button class="ui-button ui-button--ghost" type="button" data-stock-drawer-action="history">Hareket Geçmişi</button>
+    </div>`;
+    layer.hidden = false;
+    document.documentElement.classList.add("is-stock-drawer-open");
+    renderInventory();
+    window.setTimeout(() => drawer.focus(), 0);
+  }
+
+  function closeProductDrawer(options = {}) {
+    const layer = $("#stockProductDrawerLayer");
+    if (!layer || layer.hidden) return;
+    layer.hidden = true;
+    document.documentElement.classList.remove("is-stock-drawer-open");
+    const restore = state.drawerReturnFocus;
+    state.drawerReturnFocus = null;
+    state.selectedProductId = "";
+    renderInventory();
+    if (options.restoreFocus !== false && restore && typeof restore.focus === "function") restore.focus();
   }
 
   function inventoryProducts() {
@@ -452,24 +524,66 @@
       return;
     }
     const balance = state.balances.find((item) => productId(item) === String(productIdValue));
-    const dock = $("#stockLocationOperationDock");
-    if (!balance || !dock) return;
+    const dialog = $("#stockMovementDialog");
+    if (!balance || !dialog) return;
     $("#stockLocationMovementProduct").value = productId(balance);
     $("#stockLocationMovementType").value = type === "manual_in" ? "manual_in" : "waste";
     $("#stockLocationMovementQuantity").value = "1";
     $("#stockLocationMovementProductName").textContent = productName(balance);
     $("#stockLocationMovementModeLabel").textContent = type === "manual_in" ? "Stok Ekle" : "Sarf İşle";
     if ($("#stockLocationMovementReason")) $("#stockLocationMovementReason").value = type === "manual_in" ? "Kullanım" : type === "waste" ? "Sarf" : "Kullanım";
-    dock.hidden = false;
+    $("#stockMovementDialogMessage").textContent = "";
     updateProductUnits();
-    renderInventory();
+    if (!dialog.open) dialog.showModal();
     $("#stockLocationMovementQuantity")?.focus();
   }
 
   function closeMovementDock() {
-    const dock = $("#stockLocationOperationDock");
-    if (dock) dock.hidden = true;
-    renderInventory();
+    const dialog = $("#stockMovementDialog");
+    if (dialog && dialog.open) dialog.close();
+  }
+
+  function openTransferDialog(productIdValue = state.selectedProductId) {
+    if (state.selectedLocationId === "total") {
+      setMessage("Transfer için gerçek bir depo seçin.", "error");
+      return;
+    }
+    renderFormOptions();
+    if ($("#stockTransferFrom")) {
+      $("#stockTransferFrom").value = state.selectedLocationId;
+      $("#stockTransferFrom").disabled = true;
+    }
+    renderFormOptions();
+    if ($("#stockTransferProduct")) $("#stockTransferProduct").value = String(productIdValue || "");
+    if ($("#stockTransferQuantity")) $("#stockTransferQuantity").value = "1";
+    if ($("#stockTransferDialogMessage")) $("#stockTransferDialogMessage").textContent = "";
+    updateProductUnits();
+    updateTransferPreview();
+    const dialog = $("#stockTransferDialog");
+    if (dialog && !dialog.open) dialog.showModal();
+    $("#stockTransferQuantity")?.focus();
+  }
+
+  function openThresholdDialog(productIdValue = state.selectedProductId) {
+    const balance = selectedProductBalance(productIdValue);
+    if (!balance || state.selectedLocationId === "total") {
+      setMessage("Eşik ayarları için gerçek bir depo seçin.", "error");
+      return;
+    }
+    const product = productOf(balance);
+    state.selectedProductId = productId(balance);
+    $("#stockThresholdDialogTitle").textContent = productName(balance);
+    $("#stockThresholdDialogMeta").textContent = `${locationName(state.selectedLocationId)} · ${product.productCode || "Kod yok"}`;
+    $("#stockThresholdCritical").value = String(balance.criticalThreshold ?? 0);
+    $("#stockThresholdOrder").value = String(balance.orderThreshold ?? 0);
+    $("#stockThresholdTarget").value = String(balance.targetLevel ?? 0);
+    $("#stockThresholdBaseUnit").value = unitOf(balance);
+    $("#stockThresholdBulkUnit").value = textValue(product.bulkUnit || product.caseUnit, "");
+    $("#stockThresholdFactor").value = String(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
+    $("#stockThresholdDialogMessage").textContent = "";
+    const dialog = $("#stockThresholdDialog");
+    if (dialog && !dialog.open) dialog.showModal();
+    $("#stockThresholdCritical")?.focus();
   }
 
   function updateTransferPreview() {
@@ -567,7 +681,7 @@
   async function reloadAfterMutation(result, message) {
     updateRevision(result);
     state.stale = true;
-    await loadAll({ force: true });
+    await loadAll({ force: true, reloadLocations: true });
     setMessage(message);
     document.dispatchEvent(new CustomEvent("tahmisci:stock-location-updated", { detail: { revision: state.revision } }));
   }
@@ -596,6 +710,24 @@
     }
   }
 
+  function requestConfirmation(title, message, confirmLabel = "Onayla") {
+    const dialog = $("#stockConfirmDialog");
+    if (!dialog) return Promise.resolve(false);
+    $("#stockConfirmTitle").textContent = title;
+    $("#stockConfirmMessage").textContent = message;
+    $("#stockConfirmSubmit").textContent = confirmLabel;
+    dialog.returnValue = "cancel";
+    if (!dialog.open) dialog.showModal();
+    return new Promise((resolve) => {
+      dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm"), { once: true });
+    });
+  }
+
+  function closeDialog(id) {
+    const dialog = document.getElementById(id);
+    if (dialog && dialog.open) dialog.close();
+  }
+
   async function submitTransfer(form) {
     const button = $("#stockTransferSubmit");
     return runOperation("direct-transfer", button, async () => {
@@ -613,6 +745,8 @@
         unit: transferUnit, note: $("#stockTransferNote")?.value.trim() || "", directApply: true, approveNow: true
       }, "admin-stock-transfer"));
       form.reset();
+      $("#stockTransferDialog")?.close();
+      closeProductDrawer({ restoreFocus: false });
       await reloadAfterMutation(result, "Depolar arası transfer tamamlandı.");
     });
   }
@@ -636,6 +770,7 @@
       }, "admin-stock-movement"));
       form.reset();
       closeMovementDock();
+      closeProductDrawer({ restoreFocus: false });
       await reloadAfterMutation(result, "Stok hareketi seçili depoya kaydedildi.");
     });
   }
@@ -655,7 +790,7 @@
   }
 
   async function reverseMovement(id, button) {
-    if (!window.confirm("Bu stok hareketi için denetimli ters kayıt oluşturulsun mu?")) return;
+    if (!await requestConfirmation("Ters kayıt oluştur", "Bu stok hareketi silinmeden, denetimli bir ters hareketle geri alınacaktır.", "Ters Kayıt Oluştur")) return;
     return runOperation(`reverse:${id}`, button, async () => {
       const result = await api(`/api/admin/stock/movements/${encodeURIComponent(id)}/reverse`, mutation("POST", {
         note: "Yönetici arayüzünden ters kayıt"
@@ -690,19 +825,31 @@
   async function editLocation(id, button) {
     const location = state.locations.find((item) => String(item.id) === String(id));
     if (!location) return;
-    const name = window.prompt("Depo adı", location.name || "");
-    if (name === null) return;
-    const description = window.prompt("Depo açıklaması", location.description || "");
-    if (description === null) return;
+    $("#stockLocationEditId").value = String(id);
+    $("#stockLocationEditName").value = location.name || "";
+    $("#stockLocationEditDescription").value = location.description || "";
+    $("#stockLocationEditMessage").textContent = "";
+    const dialog = $("#stockLocationEditDialog");
+    if (dialog && !dialog.open) dialog.showModal();
+    $("#stockLocationEditName")?.focus();
+  }
+
+  async function saveLocationEdit(form) {
+    const id = $("#stockLocationEditId")?.value || "";
+    const name = $("#stockLocationEditName")?.value.trim() || "";
+    const description = $("#stockLocationEditDescription")?.value.trim() || "";
+    if (!id || !name) throw new Error("Depo adı zorunludur.");
+    const button = $("#stockLocationEditSubmit");
     return runOperation(`location-edit:${id}`, button, async () => {
       const result = await api(`/api/admin/stock/locations/${encodeURIComponent(id)}`, mutation("PATCH", { name, description }, "admin-stock-location-edit"));
+      $("#stockLocationEditDialog")?.close();
       await reloadAfterMutation(result, "Depo bilgileri güncellendi.");
     });
   }
 
   async function removeLocation(id, button) {
     const location = state.locations.find((item) => String(item.id) === String(id));
-    if (!location || !window.confirm(`${location.name} pasifleştirilsin mi? Hareket geçmişi korunacaktır.`)) return;
+    if (!location || !await requestConfirmation("Depoyu pasifleştir", `${location.name} yeni işlemlere kapatılacak; geçmiş hareketleri korunacaktır.`, "Pasifleştir")) return;
     return runOperation(`location-remove:${id}`, button, async () => {
       const result = await api(`/api/admin/stock/locations/${encodeURIComponent(id)}`, mutation("DELETE", {}, "admin-stock-location-remove"));
       await reloadAfterMutation(result, "Depo pasifleştirildi; geçmiş hareketler korundu.");
@@ -720,39 +867,31 @@
   }
 
   async function editThresholds(productIdValue) {
-    const balance = state.balances.find((item) => productId(item) === String(productIdValue));
-    if (!balance || state.selectedLocationId === "total") return;
-    const critical = window.prompt("Kritik stok eşiği", String(balance.criticalThreshold ?? 0));
-    if (critical === null) return;
-    const order = window.prompt("Sipariş/transfer eşiği", String(balance.orderThreshold ?? 0));
-    if (order === null) return;
-    const target = window.prompt("Hedef stok seviyesi", String(balance.targetLevel ?? 0));
-    if (target === null) return;
-    const values = [critical, order, target].map(Number);
-    if (values.some((value) => !Number.isFinite(value) || value < 0)) {
-      setMessage("Eşik değerleri sıfır veya daha büyük sayı olmalıdır.", "error");
-      return;
-    }
-    const button = $(`[data-edit-stock-thresholds="${CSS.escape(String(productIdValue))}"]`);
+    openThresholdDialog(productIdValue);
+  }
+
+  async function submitThresholds(form) {
+    const balance = selectedProductBalance();
+    if (!balance || state.selectedLocationId === "total") throw new Error("Önce gerçek bir depo ve ürün seçin.");
+    const critical = Number($("#stockThresholdCritical")?.value);
+    const order = Number($("#stockThresholdOrder")?.value);
+    const target = Number($("#stockThresholdTarget")?.value);
+    const baseUnit = textValue($("#stockThresholdBaseUnit")?.value, "adet").toLocaleLowerCase("tr-TR");
+    const bulkUnit = textValue($("#stockThresholdBulkUnit")?.value, "").toLocaleLowerCase("tr-TR");
+    const factor = Number($("#stockThresholdFactor")?.value || 0);
+    if ([critical, order, target].some((value) => !Number.isFinite(value) || value < 0)) throw new Error("Eşik değerleri sıfır veya daha büyük olmalıdır.");
+    if (critical > order) throw new Error("Kritik eşik sipariş eşiğinden büyük olamaz.");
+    if (!baseUnit || !Number.isFinite(factor) || factor < 0 || (bulkUnit && factor <= 0)) throw new Error("Birim dönüşümü geçersiz.");
     const product = productOf(balance);
-    const baseUnit = window.prompt("Temel birim", String(product.baseUnit || product.unit || "adet"));
-    if (baseUnit === null) return;
-    const bulkUnit = window.prompt("Toplu birim (koli, kasa, paket vb.; kullanılmıyorsa boş)", String(product.bulkUnit || product.caseUnit || ""));
-    if (bulkUnit === null) return;
-    const factorText = bulkUnit ? window.prompt(`1 ${bulkUnit} içindeki ${baseUnit} miktarı`, String(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0)) : "0";
-    if (factorText === null) return;
-    const factor = Number(factorText);
-    if (!Number.isFinite(factor) || factor < 0 || (bulkUnit && factor <= 0)) {
-      setMessage("Toplu birim dönüşümü geçersiz.", "error");
-      return;
-    }
-    return runOperation(`thresholds:${productIdValue}`, button, async () => {
-      const result = await api(`/api/admin/stock/inventory/${encodeURIComponent(productIdValue)}`, mutation("PATCH", {
-        locationId: state.selectedLocationId,
-        criticalThreshold: values[0], orderThreshold: values[1], targetLevel: values[2],
-        baseUnit: baseUnit.trim(), bulkUnit: bulkUnit.trim(), unitsPerBulkUnit: factor,
-        allowDecimal: Boolean(product.allowDecimal), defaultMovementUnit: product.defaultMovementUnit || baseUnit.trim()
+    return runOperation(`thresholds:${productId(balance)}`, $("#stockThresholdSubmit"), async () => {
+      const result = await api(`/api/admin/stock/inventory/${encodeURIComponent(productId(balance))}`, mutation("PATCH", {
+        locationId: state.selectedLocationId, criticalThreshold: critical, orderThreshold: order, targetLevel: target,
+        baseUnit, bulkUnit, unitsPerBulkUnit: factor, allowDecimal: Boolean(product.allowDecimal),
+        defaultMovementUnit: product.defaultMovementUnit || baseUnit
       }, "admin-stock-thresholds"));
+      form.reset();
+      $("#stockThresholdDialog")?.close();
+      closeProductDrawer({ restoreFocus: false });
       await reloadAfterMutation(result, "Depo eşikleri ve birim dönüşümü güncellendi.");
     });
   }
@@ -826,7 +965,7 @@
   }
 
   async function cancelCount(button) {
-    if (!state.activeCount || !window.confirm("Bu sayım iptal edilsin mi? Stok bakiyesi değişmeyecektir.")) return;
+    if (!state.activeCount || !await requestConfirmation("Sayımı iptal et", "Taslak sayım kapatılacak; stok bakiyesi değişmeyecektir.", "Sayımı İptal Et")) return;
     return runOperation("stock-count-cancel", button, async () => {
       const result = await api(`/api/admin/stock/counts/${encodeURIComponent(state.activeCount.id)}/cancel`, mutation("POST", {}, "admin-stock-count-cancel"));
       $("#stockCountDialog")?.close();
@@ -849,6 +988,9 @@
       const locationButton = event.target.closest("[data-stock-location-select]");
       if (locationButton) {
         state.selectedLocationId = locationButton.dataset.stockLocationSelect;
+        try { localStorage.setItem(LOCATION_STORAGE_KEY, state.selectedLocationId); } catch (_error) {}
+        closeProductDrawer({ restoreFocus: false });
+        state.secondaryLoaded = false;
         state.stale = true;
         loadAll({ force: true }).catch(() => {});
         return;
@@ -860,31 +1002,26 @@
         renderInventory();
         return;
       }
-      const view = event.target.closest("[data-stock-view]");
-      if (view) {
-        state.view = view.dataset.stockView === "list" ? "list" : "grid";
-        $$('[data-stock-view]').forEach((button) => {
-          const active = button.dataset.stockView === state.view;
-          button.classList.toggle("is-active", active);
-          button.setAttribute("aria-pressed", String(active));
-        });
-        renderInventory();
+      const drawerClose = event.target.closest("[data-stock-drawer-close]");
+      if (drawerClose) { closeProductDrawer(); return; }
+      const drawerAction = event.target.closest("[data-stock-drawer-action]");
+      if (drawerAction) {
+        const action = drawerAction.dataset.stockDrawerAction;
+        if (action === "manual_in" || action === "waste") openMovementDock(state.selectedProductId, action);
+        else if (action === "transfer") openTransferDialog(state.selectedProductId);
+        else if (action === "settings") openThresholdDialog(state.selectedProductId);
+        else if (action === "history") {
+          if ($("#stockMovementProductFilter")) $("#stockMovementProductFilter").value = state.selectedProductId;
+          loadMovements().then(() => {
+            renderMovements();
+            const dialog = $("#stockHistoryDialog");
+            if (dialog && !dialog.open) dialog.showModal();
+          }).catch((error) => setMessage(error.message, "error"));
+        }
         return;
       }
-      const cardMovement = event.target.closest("[data-stock-card-movement]");
-      if (cardMovement) {
-        openMovementDock(cardMovement.dataset.productId, cardMovement.dataset.stockCardMovement);
-        return;
-      }
-      const transferProduct = event.target.closest("[data-stock-transfer-product]");
-      if (transferProduct) {
-        const productSelect = $("#stockTransferProduct");
-        if (productSelect) productSelect.value = transferProduct.dataset.stockTransferProduct;
-        updateProductUnits();
-        updateTransferPreview();
-        $(".stock-transfer-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
-        return;
-      }
+      const productCard = event.target.closest("[data-stock-product-card]");
+      if (productCard) { openProductDrawer(productCard.dataset.stockProductCard, productCard); return; }
       const stepper = event.target.closest("[data-stock-quantity-step]");
       if (stepper) {
         const input = $("#stockLocationMovementQuantity");
@@ -923,22 +1060,15 @@
         saveLocationPersonnel(locationPersonnel.dataset.locationPersonnelSave, locationPersonnel).catch(() => {});
         return;
       }
-      const threshold = event.target.closest("[data-edit-stock-thresholds]");
-      if (threshold) editThresholds(threshold.dataset.editStockThresholds).catch(() => {});
+    });
+    workspace.addEventListener("keydown", (event) => {
+      const card = event.target.closest("[data-stock-product-card]");
+      if (!card || !["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      openProductDrawer(card.dataset.stockProductCard, card);
     });
     $("#stockLocationSearch")?.addEventListener("input", renderInventory);
     $("#stockLocationStatusFilter")?.addEventListener("change", renderInventory);
-    $("#stockTransferFrom")?.addEventListener("change", (event) => {
-      const sourceLocationId = String(event.currentTarget.value || "");
-      if (sourceLocationId && sourceLocationId !== state.selectedLocationId) {
-        state.selectedLocationId = sourceLocationId;
-        state.stale = true;
-        loadAll({ force: true }).catch(() => {});
-        return;
-      }
-      renderFormOptions();
-      updateTransferPreview();
-    });
     $("#stockTransferTo")?.addEventListener("change", updateTransferPreview);
     $("#stockTransferProduct")?.addEventListener("change", () => { updateProductUnits(); updateTransferPreview(); });
     $("#stockTransferQuantity")?.addEventListener("input", updateTransferPreview);
@@ -959,13 +1089,32 @@
       document.dispatchEvent(new CustomEvent("tahmisci:stock-catalog-open", { detail: { action: "new-product" } }));
       $("#stockManagementAccordion")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
+    $("#stockTransferRequestsButton")?.addEventListener("click", () => {
+      const dialog = $("#stockTransferRequestsDialog");
+      if (dialog && !dialog.open) dialog.showModal();
+    });
+    $("#stockMovementHistoryButton")?.addEventListener("click", () => loadMovements().then(() => {
+      renderMovements();
+      const dialog = $("#stockHistoryDialog");
+      if (dialog && !dialog.open) dialog.showModal();
+    }).catch((error) => setMessage(error.message, "error")));
+    $("#stockLocationManagementButton")?.addEventListener("click", () => {
+      const dialog = $("#stockLocationManagementDialog");
+      if (dialog && !dialog.open) dialog.showModal();
+    });
     $("#stockCountStartButton")?.addEventListener("click", (event) => openOrStartCount(event.currentTarget).catch((error) => setMessage(error.message, "error")));
     $("#stockCountSaveButton")?.addEventListener("click", (event) => saveCount(event.currentTarget).catch((error) => { $("#stockCountMessage").textContent = error.message; }));
     $("#stockCountApproveButton")?.addEventListener("click", (event) => approveCount(event.currentTarget).catch((error) => { $("#stockCountMessage").textContent = error.message; }));
     $("#stockCountCancelButton")?.addEventListener("click", (event) => cancelCount(event.currentTarget).catch((error) => { $("#stockCountMessage").textContent = error.message; }));
-    $("#stockTransferForm")?.addEventListener("submit", (event) => { event.preventDefault(); submitTransfer(event.currentTarget).catch(() => {}); });
-    $("#stockLocationMovementForm")?.addEventListener("submit", (event) => { event.preventDefault(); submitMovement(event.currentTarget).catch(() => {}); });
+    $("#stockTransferForm")?.addEventListener("submit", (event) => { event.preventDefault(); submitTransfer(event.currentTarget).catch((error) => { $("#stockTransferDialogMessage").textContent = error.message; }); });
+    $("#stockLocationMovementForm")?.addEventListener("submit", (event) => { event.preventDefault(); submitMovement(event.currentTarget).catch((error) => { $("#stockMovementDialogMessage").textContent = error.message; }); });
+    $("#stockThresholdForm")?.addEventListener("submit", (event) => { event.preventDefault(); submitThresholds(event.currentTarget).catch((error) => { $("#stockThresholdDialogMessage").textContent = error.message; }); });
+    $("#stockLocationEditForm")?.addEventListener("submit", (event) => { event.preventDefault(); saveLocationEdit(event.currentTarget).catch((error) => { $("#stockLocationEditMessage").textContent = error.message; }); });
     $("#stockLocationCreateForm")?.addEventListener("submit", (event) => { event.preventDefault(); createLocation(event.currentTarget).catch(() => {}); });
+    $$('[data-stock-dialog-close]').forEach((button) => button.addEventListener("click", () => closeDialog(button.dataset.stockDialogClose)));
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !$("#stockProductDrawerLayer")?.hidden && !document.querySelector("dialog[open]")) closeProductDrawer();
+    });
   }
 
   function mount() {

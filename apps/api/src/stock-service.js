@@ -39,7 +39,10 @@ function finitePositive(value) {
 }
 
 function normalizeUnit(value) {
-  const unit = String(value || "").trim().toLocaleLowerCase("tr-TR");
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value.value ?? value.code ?? value.unit ?? value.baseUnit ?? value.name ?? value.label ?? ""
+    : value;
+  const unit = String(source || "").trim().toLocaleLowerCase("tr-TR");
   return {
     l: "litre", lt: "litre", liter: "litre", kilogram: "kg", gram: "gr", g: "gr",
     tane: "adet", sise: "şişe"
@@ -364,6 +367,9 @@ function applyStockMovement(stockState, input = {}, actor = {}, options = {}) {
   const requestId = String(input.requestId || input.idempotencyKey || options.requestId || "").trim();
   const type = String(input.type || "").trim();
   if (!MOVEMENT_TYPES.has(type)) throw stockError("Geçersiz stok hareket türü.");
+  if (actor && actor.type !== "admin") {
+    throw stockError("Personel hesabı stok bakiyesini doğrudan değiştiremez.", 403);
+  }
   const duplicate = idempotentRecord(state, "movement", requestId);
   if (duplicate) {
     const movement = (state.movements || []).find((item) => String(item.id) === String(duplicate.value && duplicate.value.movementId));
@@ -475,6 +481,9 @@ function serializeTransfer(state, transfer) {
 function createTransferRequest(stockState, input = {}, actor = {}, options = {}) {
   const state = normalizeState(stockState);
   const requestId = String(input.requestId || input.idempotencyKey || options.requestId || "").trim();
+  if (actor && actor.type !== "admin") {
+    throw stockError("Depolar arası transfer işlemi Yönetici yetkisi gerektirir.", 403);
+  }
   const duplicate = idempotentRecord(state, "transfer_create", requestId);
   if (duplicate) {
     const transfer = (state.transfers || []).find((item) => String(item.id) === String(duplicate.value && duplicate.value.transferId));
@@ -483,12 +492,6 @@ function createTransferRequest(stockState, input = {}, actor = {}, options = {})
   const fromLocationId = String(input.fromLocationId || options.fromLocationId || defaultGeneralLocation(state) && defaultGeneralLocation(state).id || "").trim();
   const toLocationId = String(input.toLocationId || options.toLocationId || actorLocationId(state, actor) || "").trim();
   const { from, to } = assertTransferLocations(state, fromLocationId, toLocationId);
-  if (actor && actor.type !== "admin") {
-    const general = defaultGeneralLocation(state);
-    if (!general || from.id !== general.id || String(actorLocationId(state, actor)) !== to.id || to.type !== "cafe") {
-      throw stockError("Yalnızca Genel Depodan atanmış kafe deponuza talep oluşturabilirsiniz.", 403);
-    }
-  }
   const rawItems = Array.isArray(input.items) && input.items.length ? input.items : [input];
   const seenProducts = new Set();
   const items = rawItems.map((item) => {

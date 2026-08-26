@@ -16,7 +16,7 @@
     stock: {
       kicker: "Personel",
       title: "Stok",
-      description: "Raf ürünlerini eksiltin, sarf işleyin ve stok durumunu takip edin."
+      description: "Ürünlerin güncel stok durumunu görüntüleyin."
     },
     profile: {
       kicker: "Personel",
@@ -48,17 +48,12 @@
     stockLoaded: false,
     stockLoadPromise: null,
     stockRevision: 0,
-    stockTransferLoadPromise: null,
-    stockTransferLoaded: false,
-    stockMutationPending: false,
-    stockTransferRequestId: "",
     stockSearchTimer: null,
     stockRefreshTimer: null,
     stockRefreshPending: false,
     previewRecipeDraft: null,
     query: "",
     category: "all",
-    action: null,
     detailProductId: null,
     pendingProfileAvatar: "",
     mobileSidebar: false,
@@ -76,12 +71,11 @@
       "loginMessage", "personelSidebarToggle", "personelSidebar", "personelSidebarOverlay", "sectionKicker", "sectionTitle",
       "sectionDescription", "sectionRecipe", "sectionStock", "sectionProfile", "sectionTasks", "sectionShipment", "sectionShift", "sidebarUser", "profilePopover",
       "profileMenuAvatar", "profileMenuName", "profileMenuRole", "profileMenuMessage",
-      "recipeFrame", "stockStats", "stockMessage", "stockLocationSummary", "stockTransferRequests", "stockSearchInput", "stockCategoryPills", "stockGrid",
+      "recipeFrame", "stockMessage", "stockSearchInput", "stockCategoryPills", "stockGrid",
       "profileForm", "profileName", "profilePhone", "profileAvatarUrl", "profilePhotoInput", "profileBio",
-      "profileMessage", "profileAvatar", "stockModal", "stockForm", "stockModalKicker",
-      "stockModalTitle", "stockModalProduct", "stockQuantity", "stockUnitField", "stockUnit", "stockUrgencyField", "stockUrgency", "stockNote", "stockFormMessage",
+      "profileMessage", "profileAvatar",
       "stockDetailModal", "stockDetailCategory", "stockDetailTitle", "stockDetailStatus",
-      "stockDetailQuantity", "stockDetailThreshold", "stockDetailCritical", "stockDetailSupplier", "stockDetailNote"
+      "stockDetailQuantity", "stockDetailUnit", "stockDetailThreshold", "stockDetailCritical", "stockDetailSupplier", "stockDetailNote"
     ].forEach((id) => { els[id] = document.getElementById(id); });
 
     setView("booting");
@@ -153,11 +147,6 @@
     });
 
     if (els.stockGrid) els.stockGrid.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-stock-action]");
-      if (button) {
-        openStockAction(button.dataset.productId, button.dataset.stockAction);
-        return;
-      }
       const card = event.target.closest("[data-stock-product-id]");
       if (card) openStockDetail(card.dataset.stockProductId);
     });
@@ -171,23 +160,12 @@
       openStockDetail(card.dataset.stockProductId);
     });
 
-    if (els.stockModal) els.stockModal.addEventListener("click", (event) => {
-      if (event.target === els.stockModal || event.target.closest("[data-close]")) closeStockAction();
-    });
-
     if (els.stockDetailModal) els.stockDetailModal.addEventListener("click", (event) => {
       if (event.target === els.stockDetailModal || event.target.closest("[data-detail-close]")) {
         closeStockDetail();
-        return;
       }
-      const action = event.target.closest("[data-detail-action]");
-      if (!action || !state.detailProductId) return;
-      const productId = state.detailProductId;
-      closeStockDetail();
-      openStockAction(productId, action.dataset.detailAction);
     });
 
-    if (els.stockForm) els.stockForm.addEventListener("submit", submitStockAction);
     if (els.profileForm) els.profileForm.addEventListener("submit", saveProfile);
     if (els.profilePhotoInput) els.profilePhotoInput.addEventListener("change", previewProfilePhoto);
     if (els.recipeFrame) els.recipeFrame.addEventListener("load", () => {
@@ -198,7 +176,6 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Tab" && trapPersonelDrawerFocus(event)) return;
       if (event.key === "Escape") {
-        closeStockAction();
         closeStockDetail();
         closeProfilePopover({ restoreFocus: true });
         if (isMobileSidebar() && !isSidebarCollapsed()) {
@@ -366,10 +343,6 @@
     state.stock = emptyStockState();
     state.stockLoaded = false;
     state.stockLoadPromise = null;
-    state.stockTransferLoadPromise = null;
-    state.stockTransferLoaded = false;
-    state.stockMutationPending = false;
-    state.stockTransferRequestId = "";
     window.clearTimeout(state.stockSearchTimer);
     window.clearTimeout(state.stockRefreshTimer);
     state.stockSearchTimer = null;
@@ -587,10 +560,7 @@
     }
     if (options && options.updateHash) history.replaceState(null, "", "/personel/");
     if (next === "stock") {
-      loadStock().then(() => {
-        if (!state.stockTransferLoaded) return loadTransferRequests();
-        return null;
-      }).catch(() => {});
+      loadStock().catch(() => {});
       setupStockEvents();
     } else {
       closeStockEvents();
@@ -636,7 +606,6 @@
         state.stock = normalizeStock(result);
         state.stockRevision = responseRevision(result, state.stockRevision);
         state.stockLoaded = true;
-        state.stockTransferLoaded = Array.isArray(result && result.transfers);
         if (state.section === "stock") renderStock();
         return state.stock;
       })
@@ -654,29 +623,6 @@
     return state.stockLoadPromise;
   }
 
-  async function loadTransferRequests(options = {}) {
-    if (!options.force && state.stockTransferLoaded) return state.stock.transferRequests;
-    if (state.stockTransferLoadPromise) return state.stockTransferLoadPromise;
-    state.stockTransferLoadPromise = api("/api/workforce/stock/transfer-requests")
-      .then((result) => {
-        state.stock.transfers = Array.isArray(result.transfers)
-          ? result.transfers
-          : Array.isArray(result.requests) ? result.requests : [];
-        if (result.location && typeof result.location === "object") state.stock.location = result.location;
-        if (Array.isArray(result.locations)) state.stock.locations = result.locations;
-        state.stock.updatedAt = result.updatedAt || state.stock.updatedAt;
-        state.stockTransferLoaded = true;
-        if (state.section === "stock") renderStock();
-        return state.stock.transfers;
-      })
-      .catch((error) => {
-        showStockMessage(error.message || "Transfer talepleri alınamadı.", true);
-        throw error;
-      })
-      .finally(() => { state.stockTransferLoadPromise = null; });
-    return state.stockTransferLoadPromise;
-  }
-
   function setupStockEvents() {
     if (PREVIEW_TOKEN || state.stockEventSource || !window.EventSource) return;
     const source = new EventSource("/api/stock/events");
@@ -687,7 +633,6 @@
         if (revision <= state.stockRevision && !payload.requiresRefetch) return;
         state.stockRevision = Math.max(state.stockRevision, revision);
         state.stockLoaded = false;
-        state.stockTransferLoaded = false;
         if (state.section === "stock") scheduleStockRefresh();
       } catch (_error) {}
     };
@@ -726,61 +671,8 @@
   }
 
   function renderStock() {
-    renderStockLocationSummary();
-    renderStats();
     renderCategories();
     renderProducts();
-    renderTransferRequests();
-  }
-
-  function renderStockLocationSummary() {
-    if (!els.stockLocationSummary) return;
-    const location = state.stock.location;
-    const summary = state.stock.summary || {};
-    if (!location) {
-      els.stockLocationSummary.innerHTML = `
-        <div class="stock-location-summary__empty">
-          <strong>Kafe deposu atanmadı</strong>
-          <span>Stok işlemi yapabilmek için yöneticinizin hesabınıza bir kafe deposu ataması gerekir.</span>
-        </div>`;
-      return;
-    }
-    const pending = numberValue(summary.pendingTransfers ?? pendingTransferCount());
-    els.stockLocationSummary.innerHTML = `
-      <div class="stock-location-summary__identity">
-        <span class="stock-location-summary__mark" aria-hidden="true">${stockLocationIcon()}</span>
-        <div><small>Atanmış stok noktası</small><strong>${escapeHTML(location.name || "Kafe Deposu")}</strong><em>${escapeHTML(location.code || "CAFE")}</em></div>
-      </div>
-      <div class="stock-location-summary__metrics">
-        <span><small>Kritik ürün</small><strong>${escapeHTML(numberValue(summary.criticalProducts))}</strong></span>
-        <span><small>Bekleyen transfer</small><strong>${escapeHTML(pending)}</strong></span>
-        <span><small>Son güncelleme</small><strong>${escapeHTML(formatStockUpdatedAt(state.stock.updatedAt || summary.lastUpdatedAt))}</strong></span>
-      </div>`;
-  }
-
-  function renderStats() {
-    if (!els.stockStats) return;
-    const products = stockProducts();
-    const critical = Number.isFinite(Number(state.stock.summary && state.stock.summary.criticalProducts))
-      ? Number(state.stock.summary.criticalProducts)
-      : products.filter((product) => stockStatus(product).key === "critical").length;
-    const todayKey = new Date().toISOString().slice(0, 10);
-    const waste = stockMovements()
-      .filter((movement) => movement.type === "waste" && String(movement.createdAt || "").slice(0, 10) === todayKey)
-      .reduce((sum, movement) => sum + numberValue(movement.quantity), 0);
-
-    const cards = [
-      ["Takip Edilecek", products.length, "Stok ürünü"],
-      ["Kritik Ürün", critical, "Kritik eşiğin altında"],
-      ["Bugün Çıkış", formatNumber(state.stock.summary && state.stock.summary.todayOut || waste), "Kafe deposundan"]
-    ];
-
-    els.stockStats.innerHTML = cards.map(([label, value, text]) => `
-      <article class="stock-stat">
-        <span aria-hidden="true"></span>
-        <div><p>${escapeHTML(label)}</p><strong>${escapeHTML(value)}</strong><small>${escapeHTML(text)}</small></div>
-      </article>
-    `).join("");
   }
 
   function renderCategories() {
@@ -800,9 +692,8 @@
     const products = filteredProducts();
     els.stockGrid.innerHTML = products.length ? products.map((product) => {
       const category = categories.get(product.categoryId);
-      const quantity = currentStockLabel(product);
+      const quantity = stockDisplay(product);
       const status = stockStatus(product);
-      const recommendation = stockRecommendation(product);
       return `
         <article class="stock-card" data-stock-product-id="${escapeAttribute(product.id)}" role="button" tabindex="0" aria-label="${escapeAttribute(product.name)} detayını aç">
           <div class="stock-card-head">
@@ -810,87 +701,13 @@
             <em class="badge ${escapeAttribute(status.key)}">${escapeHTML(status.label)}</em>
           </div>
           <div class="stock-card-quantity">
-            <small>${escapeHTML(state.stock.location && state.stock.location.name || "Kafe Deposu")}</small>
-            <strong>${escapeHTML(quantity)}</strong>
+            <small>Mevcut miktar</small>
+            <strong><span>${escapeHTML(formatNumber(quantity.value))}</span><em>${escapeHTML(quantity.unit)}</em></strong>
           </div>
-          <div class="stock-card-location-meta">
-            <span><small>Kritik eşik</small><b>${escapeHTML(formatNumber(product.criticalThreshold))} ${escapeHTML(productBaseUnit(product))}</b></span>
-            <span><small>Tedarik önerisi</small><b class="stock-transfer-availability ${escapeAttribute(recommendation.key)}">${escapeHTML(recommendation.label)}</b></span>
-          </div>
-          <div class="stock-card-actions">
-            <button type="button" data-stock-action="transfer_request" data-product-id="${escapeAttribute(product.id)}">Transfer Talep Et</button>
-            <button type="button" data-stock-action="stock_out" data-product-id="${escapeAttribute(product.id)}">Eksilt</button>
-            <button type="button" data-stock-action="waste" data-product-id="${escapeAttribute(product.id)}">Sarf İşle</button>
-          </div>
+          <div class="stock-card-open"><span>Ürün detayını görüntüle</span><b aria-hidden="true">›</b></div>
         </article>
       `;
-    }).join("") : `<div class="stock-empty">${stockProducts().length ? "Aradığınız stok ürünü bulunamadı." : "Atanmış kafe deponuzda gösterilecek aktif stok ürünü bulunmuyor."}</div>`;
-  }
-
-  function renderTransferRequests() {
-    if (!els.stockTransferRequests) return;
-    const transfers = stockTransfers().slice(0, 12);
-    els.stockTransferRequests.innerHTML = `
-      <header class="stock-transfer-requests__head">
-        <div><small>Genel Depo → ${escapeHTML(state.stock.location && state.stock.location.name || "Kafe Deposu")}</small><h2>Transfer Taleplerim</h2></div>
-        <span>${escapeHTML(pendingTransferCount())} bekleyen</span>
-      </header>
-      <div class="stock-transfer-requests__list">
-        ${transfers.length ? transfers.map((transfer) => {
-          const product = transfer.product || stockProducts().find((item) => String(item.id) === String(transfer.productId)) || {};
-          const status = transferStatus(transfer.status);
-          const sourceQuantity = transfer.sourceQuantity ?? transfer.quantity;
-          const sourceUnit = transfer.sourceUnit || transfer.baseUnit || product.unit || "adet";
-          return `<article class="stock-transfer-request">
-            <span class="stock-transfer-request__status ${escapeAttribute(status.key)}">${escapeHTML(status.label)}</span>
-            <div><strong>${escapeHTML(product.name || product.productName || "Stok ürünü")}</strong><small>${escapeHTML(formatNumber(sourceQuantity))} ${escapeHTML(sourceUnit)} · ${escapeHTML(formatDateTimeShort(transfer.createdAt))}</small>${transfer.note ? `<p>${escapeHTML(transfer.note)}</p>` : ""}${transfer.rejectionReason ? `<p class="is-rejected">Yönetici notu: ${escapeHTML(transfer.rejectionReason)}</p>` : ""}</div>
-            <em>${escapeHTML(urgencyLabel(transfer.urgency))}</em>
-          </article>`;
-        }).join("") : `<div class="stock-empty stock-empty--compact">Henüz transfer talebiniz bulunmuyor.</div>`}
-      </div>`;
-  }
-
-  function openStockAction(productId, type) {
-    const product = stockProducts().find((item) => item.id === productId);
-    if (!product || !els.stockModal) return;
-    const transferRequest = type === "transfer_request";
-    state.action = {
-      productId,
-      productCode: String(product.productCode || ""),
-      type,
-      requestId: newStockRequestId(transferRequest ? "stock-transfer" : "stock-movement")
-    };
-    const label = transferRequest ? "Transfer Talep Et" : type === "waste" ? "Sarf İşle" : "Eksilt";
-    if (els.stockModalKicker) els.stockModalKicker.textContent = label;
-    if (els.stockModalTitle) els.stockModalTitle.textContent = label;
-    if (els.stockModalProduct) {
-      els.stockModalProduct.textContent = transferRequest
-        ? `${product.name} · ${state.stock.location && state.stock.location.name || "Kafe Deposu"} için transfer talebi`
-        : `${product.name} · Kafe stoğu: ${currentStockLabel(product)}`;
-    }
-    if (els.stockQuantity) {
-      els.stockQuantity.value = "";
-      els.stockQuantity.step = product.allowDecimal === true ? "0.01" : "1";
-      els.stockQuantity.min = product.allowDecimal === true ? "0.01" : "1";
-    }
-    if (els.stockUnitField) els.stockUnitField.hidden = false;
-    if (els.stockUnit) {
-      const units = stockSupportedUnits(product);
-      els.stockUnit.innerHTML = units.map((unit) => `<option value="${escapeAttribute(unit)}">${escapeHTML(unit)}</option>`).join("");
-      const preferredUnit = String(product.defaultMovementUnit || product.baseUnit || product.unit || "adet").toLocaleLowerCase("tr-TR");
-      els.stockUnit.value = units.includes(preferredUnit) ? preferredUnit : units[0] || "adet";
-    }
-    if (els.stockUrgencyField) els.stockUrgencyField.hidden = !transferRequest;
-    if (els.stockUrgency) els.stockUrgency.value = "normal";
-    if (els.stockNote) {
-      els.stockNote.value = "";
-      els.stockNote.placeholder = transferRequest ? "Transfer talebiniz için kısa açıklama" : "İsteğe bağlı";
-    }
-    if (els.stockFormMessage) els.stockFormMessage.textContent = "";
-    setStockFormPending(false);
-    els.stockModal.hidden = false;
-    syncPanelModalLock();
-    setTimeout(() => els.stockQuantity && els.stockQuantity.focus(), 40);
+    }).join("") : `<div class="stock-empty">${stockProducts().length ? "Aradığınız stok ürünü bulunamadı." : "Gösterilecek aktif stok ürünü bulunmuyor."}</div>`;
   }
 
   function openStockDetail(productId) {
@@ -898,7 +715,8 @@
     if (!product || !els.stockDetailModal) return;
     const category = stockCategories().find((item) => item.id === product.categoryId);
     const status = stockStatus(product);
-    const unit = productBaseUnit(product);
+    const display = stockDisplay(product);
+    const thresholdUnit = productBaseUnit(product);
     state.detailProductId = productId;
     if (els.stockDetailCategory) els.stockDetailCategory.textContent = (category && category.name) || "Stok";
     if (els.stockDetailTitle) els.stockDetailTitle.textContent = product.name || "Ürün detayı";
@@ -906,12 +724,13 @@
       els.stockDetailStatus.className = `badge ${status.key}`;
       els.stockDetailStatus.textContent = status.label;
     }
-    if (els.stockDetailQuantity) els.stockDetailQuantity.textContent = currentStockLabel(product);
-    if (els.stockDetailThreshold) els.stockDetailThreshold.textContent = product.orderThresholdText || `${formatNumber(product.orderThreshold)} ${unit}`;
-    if (els.stockDetailCritical) els.stockDetailCritical.textContent = product.criticalThresholdText || `${formatNumber(product.criticalThreshold)} ${unit}`;
-    if (els.stockDetailSupplier) els.stockDetailSupplier.textContent = product.supplier || "Belirtilmedi";
+    if (els.stockDetailQuantity) els.stockDetailQuantity.textContent = formatNumber(display.value);
+    if (els.stockDetailUnit) els.stockDetailUnit.textContent = display.unit;
+    if (els.stockDetailThreshold) els.stockDetailThreshold.textContent = `${formatNumber(product.orderThreshold)} ${thresholdUnit}`;
+    if (els.stockDetailCritical) els.stockDetailCritical.textContent = `${formatNumber(product.criticalThreshold)} ${thresholdUnit}`;
+    if (els.stockDetailSupplier) els.stockDetailSupplier.textContent = safeText(product.supplier, "Belirtilmedi");
     if (els.stockDetailNote) {
-      const note = String(product.note || product.description || "").trim();
+      const note = safeText(product.note || product.description, "");
       els.stockDetailNote.textContent = note;
       els.stockDetailNote.hidden = !note;
     }
@@ -925,130 +744,9 @@
     syncPanelModalLock();
   }
 
-  function closeStockAction() {
-    if (state.stockMutationPending) return;
-    state.action = null;
-    if (els.stockModal) els.stockModal.hidden = true;
-    syncPanelModalLock();
-  }
-
   function syncPanelModalLock() {
-    const hasOpenModal = [els.stockModal, els.stockDetailModal].some((modal) => modal && !modal.hidden);
+    const hasOpenModal = Boolean(els.stockDetailModal && !els.stockDetailModal.hidden);
     document.documentElement.classList.toggle("is-panel-modal-open", hasOpenModal);
-  }
-
-  async function submitStockAction(event) {
-    event.preventDefault();
-    if (!state.action || state.stockMutationPending) return;
-    const quantity = Number(els.stockQuantity && els.stockQuantity.value || 0);
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      if (els.stockFormMessage) els.stockFormMessage.textContent = "Geçerli bir miktar girin.";
-      return;
-    }
-
-    const activeAction = Object.assign({}, state.action);
-    const activeProduct = stockProducts().find((item) => item.id === activeAction.productId);
-    const currentQuantity = activeProduct ? numberValue(activeProduct.stockQuantity) : 0;
-    if (!activeProduct) {
-      if (els.stockFormMessage) els.stockFormMessage.textContent = "Stok ürünü bulunamadı.";
-      return;
-    }
-    const transferRequest = activeAction.type === "transfer_request";
-    const selectedUnit = els.stockUnit ? els.stockUnit.value : productBaseUnit(activeProduct);
-    const requestedBaseQuantity = stockQuantityToBase(activeProduct, quantity, selectedUnit);
-    if (!Number.isFinite(requestedBaseQuantity) || requestedBaseQuantity <= 0) {
-      if (els.stockFormMessage) els.stockFormMessage.textContent = "Seçilen miktar ve birim geçerli değil.";
-      return;
-    }
-    if (!transferRequest && requestedBaseQuantity > currentQuantity) {
-      if (els.stockFormMessage) els.stockFormMessage.textContent = `En fazla ${currentStockLabel(activeProduct)} eksiltebilirsiniz.`;
-      return;
-    }
-
-    setStockFormPending(true, transferRequest ? "Talep gönderiliyor…" : "Kaydediliyor…");
-    try {
-      if (transferRequest) {
-        const requestId = activeAction.requestId || newStockRequestId("stock-transfer");
-        const result = await api("/api/workforce/stock/transfer-requests", {
-          method: "POST",
-          headers: stockMutationHeaders(requestId),
-          body: JSON.stringify({
-            productId: activeAction.productId,
-            quantity,
-            unit: selectedUnit,
-            urgency: els.stockUrgency ? els.stockUrgency.value : "normal",
-            note: els.stockNote ? els.stockNote.value.trim() : "",
-            requestId,
-            expectedRevision: state.stockRevision
-          })
-        });
-        if (result && result.transfer) upsertStockTransfer(result.transfer);
-        state.stockTransferLoaded = true;
-        state.stock.updatedAt = result && result.updatedAt || state.stock.updatedAt;
-        state.stockRevision = responseRevision(result, state.stockRevision);
-        cancelScheduledStockRefresh();
-        setStockFormPending(false);
-        closeStockAction();
-        showStockMessage("Transfer talebiniz Genel Depo onayına gönderildi.");
-        renderStock();
-        return;
-      }
-
-      const requestId = activeAction.requestId || newStockRequestId("stock-movement");
-      const result = await api("/api/stock/movements", {
-        method: "POST",
-        headers: stockMutationHeaders(requestId),
-        body: JSON.stringify({
-          productId: activeAction.productId,
-          productCode: activeAction.productCode || activeProduct.productCode || "",
-          stockProductCode: activeAction.productCode || activeProduct.productCode || "",
-          type: activeAction.type,
-          quantity,
-          unit: selectedUnit,
-          reason: activeAction.type === "waste" ? "Personel sarf" : "Personel stok eksiltme",
-          note: els.stockNote ? els.stockNote.value.trim() : "",
-          requestId,
-          expectedRevision: state.stockRevision,
-          expectedBalanceRevision: Math.max(0, Number(activeProduct.balanceRevision || 0))
-        })
-      });
-      state.stockRevision = responseRevision(result, state.stockRevision);
-      state.stockLoaded = false;
-      cancelScheduledStockRefresh();
-      await loadStock({ force: true });
-      setStockFormPending(false);
-      closeStockAction();
-      showStockMessage(activeAction.type === "waste" ? "Sarf hareketi kafe deponuza kaydedildi." : "Stok çıkışı kafe deponuza kaydedildi.");
-      renderStock();
-    } catch (error) {
-      setStockFormPending(false);
-      if (els.stockFormMessage) els.stockFormMessage.textContent = error.message || "Stok işlemi kaydedilemedi.";
-    }
-  }
-
-  function setStockFormPending(pending, label = "Kaydediliyor…") {
-    state.stockMutationPending = pending === true;
-    if (!els.stockForm) return;
-    const submit = els.stockForm.querySelector('[type="submit"]');
-    const controls = els.stockForm.querySelectorAll("input, select, textarea, button");
-    controls.forEach((control) => { control.disabled = state.stockMutationPending; });
-    if (!submit) return;
-    if (!submit.dataset.defaultLabel) submit.dataset.defaultLabel = submit.textContent || "Kaydet";
-    submit.textContent = state.stockMutationPending ? label : submit.dataset.defaultLabel;
-    submit.toggleAttribute("aria-busy", state.stockMutationPending);
-  }
-
-  function cancelScheduledStockRefresh() {
-    window.clearTimeout(state.stockRefreshTimer);
-    state.stockRefreshTimer = null;
-    state.stockRefreshPending = false;
-  }
-
-  function upsertStockTransfer(transfer) {
-    if (!transfer || !transfer.id) return;
-    const id = String(transfer.id);
-    state.stock.transfers = [transfer, ...stockTransfers().filter((item) => String(item.id) !== id)];
-    if (state.stock.summary) state.stock.summary.pendingTransfers = pendingTransferCount();
   }
 
   async function saveProfile(event) {
@@ -1331,7 +1029,7 @@
         orderThreshold: numberValue(balance.orderThreshold ?? product.orderThreshold),
         targetLevel: numberValue(balance.targetLevel ?? product.targetLevel),
         totalQuantity: numberValue(balance.totalQuantity ?? product.totalQuantity ?? product.stockQuantity),
-        quantityDisplay: String(balance.quantityDisplay || product.quantityDisplay || ""),
+        quantityDisplay: quantityDisplayText(balance.quantityDisplay || product.quantityDisplay),
         recommendation,
         transferAvailable: recommendation && recommendation.type === "transfer"
           || numberValue(balance.suggestedTransfer ?? product.suggestedTransfer) > 0,
@@ -1439,8 +1137,24 @@
   }
 
   function numberValue(value) {
+    if (value && typeof value === "object") {
+      const nested = value.quantity ?? value.value ?? value.amount ?? value.baseQuantity ?? value.total;
+      if (nested !== undefined && nested !== value) return numberValue(nested);
+    }
     const parsed = Number(String(value ?? "").replace(/[^\d.,-]/g, "").replace(",", "."));
     return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function safeText(value, fallback = "") {
+    if (value && typeof value === "object") {
+      const nested = value.label ?? value.name ?? value.unit ?? value.code ?? value.display ?? value.value;
+      return nested === undefined || nested === null ? fallback : String(nested).trim() || fallback;
+    }
+    return value === undefined || value === null ? fallback : String(value).trim() || fallback;
+  }
+
+  function quantityDisplayText(value) {
+    return safeText(value && typeof value === "object" ? value.display ?? value.label ?? "" : value, "");
   }
 
   function formatNumber(value) {
@@ -1448,7 +1162,7 @@
   }
 
   function currentStockLabel(product) {
-    const provided = String(product && product.quantityDisplay || "").trim();
+    const provided = quantityDisplayText(product && product.quantityDisplay);
     if (provided) return provided;
     const baseQuantity = numberValue(product && product.stockQuantity);
     const baseUnit = productBaseUnit(product);
@@ -1462,6 +1176,17 @@
         : `${formatNumber(bulk)} ${bulkUnit}`;
     }
     return `${formatNumber(baseQuantity)} ${baseUnit}`;
+  }
+
+  function stockDisplay(product) {
+    const baseQuantity = numberValue(product && product.stockQuantity);
+    const baseUnit = productBaseUnit(product);
+    const bulkUnit = productBulkUnit(product);
+    const factor = productUnitsPerBulk(product);
+    if (factor > 0 && baseQuantity >= factor && Math.abs(baseQuantity % factor) < 0.000001) {
+      return { value: baseQuantity / factor, unit: bulkUnit };
+    }
+    return { value: baseQuantity, unit: baseUnit };
   }
 
   function transferStatus(value) {
@@ -1508,11 +1233,11 @@
   }
 
   function productBaseUnit(product) {
-    return String(product && (product.baseUnit || product.unit) || "adet").trim().toLocaleLowerCase("tr-TR");
+    return safeText(product && (product.baseUnit || product.unit), "adet").toLocaleLowerCase("tr-TR");
   }
 
   function productBulkUnit(product) {
-    return String(product && (product.bulkUnit || product.caseUnit) || "koli").trim().toLocaleLowerCase("tr-TR");
+    return safeText(product && (product.bulkUnit || product.caseUnit), "koli").toLocaleLowerCase("tr-TR");
   }
 
   function productUnitsPerBulk(product) {

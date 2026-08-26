@@ -67,25 +67,32 @@ test("depo transferi atomik, idempotent ve toplam stoğu koruyan bir işlemdir",
   assert.equal(stockService.getProductBalance(replay.stockState, stockService.CAFE_LOCATION_ID, "milk-1").quantity, 25);
 });
 
-test("personel sadece atanmış Kafe Deposundan eksiltebilir ve eksi bakiye oluşmaz", () => {
+test("personel stok bakiyesini ve depolar arası transferi doğrudan değiştiremez", () => {
   const state = stateWithCafeQuantity(20);
-  const stockedCafe = state;
   const personel = { type: "personel", id: "person-1", stockLocationId: stockService.CAFE_LOCATION_ID };
-  const out = stockService.applyStockMovement(stockedCafe, {
+  assert.throws(() => stockService.applyStockMovement(state, {
     type: "stock_out", productId: "milk-1", locationId: stockService.CAFE_LOCATION_ID,
     quantity: 4, unit: "adet", requestId: "personel-out-0001"
-  }, personel);
+  }, personel), /doğrudan değiştiremez/);
+  assert.throws(() => stockService.createTransferRequest(state, {
+    productId: "milk-1", quantity: 1, unit: "adet", requestId: "personel-transfer-0001",
+    fromLocationId: stockService.GENERAL_LOCATION_ID, toLocationId: stockService.CAFE_LOCATION_ID
+  }, personel), /Yönetici yetkisi/);
+  assert.equal(stockService.getProductBalance(state, stockService.CAFE_LOCATION_ID, "milk-1").quantity, 20);
+});
 
-  assert.equal(stockService.getProductBalance(out.stockState, stockService.CAFE_LOCATION_ID, "milk-1").quantity, 16);
-  assert.equal(stockService.getProductBalance(out.stockState, stockService.GENERAL_LOCATION_ID, "milk-1").quantity, 0);
-  assert.throws(() => stockService.applyStockMovement(out.stockState, {
-    type: "stock_out", productId: "milk-1", locationId: stockService.GENERAL_LOCATION_ID,
-    quantity: 1, unit: "adet", requestId: "personel-out-0002"
-  }, personel), /yetkiniz yok/);
-  assert.throws(() => stockService.applyStockMovement(out.stockState, {
-    type: "waste", productId: "milk-1", locationId: stockService.CAFE_LOCATION_ID,
-    quantity: 17, unit: "adet", requestId: "personel-out-0003"
-  }, personel), /eksiye düşemez/);
+test("nesne biçimli eski birim değeri güvenli scalar birime normalize edilir", () => {
+  const state = normalizeStockState(legacyStockState(0));
+  state.products[0].unit = { value: "adet", label: "Adet" };
+  state.products[0].baseUnit = { code: "adet" };
+  state.products[0].bulkUnit = { value: "koli" };
+  const result = stockService.applyStockMovement(state, {
+    type: "stock_in", productId: "milk-1", locationId: stockService.CAFE_LOCATION_ID,
+    quantity: 1, unit: { value: "koli" }, requestId: "object-unit-normalize-0001"
+  }, { type: "admin", id: "manager-1" });
+  assert.equal(result.movement.inputUnit, "koli");
+  assert.equal(result.movement.baseUnit, "adet");
+  assert.equal(String(result.movement.inputUnit).includes("[object Object]"), false);
 });
 
 test("koli dönüşümü backend tarafından doğrulanır ve hareket snapshot'ına yazılır", () => {

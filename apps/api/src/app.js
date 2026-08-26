@@ -1872,10 +1872,10 @@ app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireRe
     const operationId = String(req.get("Idempotency-Key") || req.get("X-Request-ID") || submitted.requestId || "").trim().slice(0, 160);
     if (!operationId) return res.status(400).json({ ok: false, message: "Stok işlemi için requestId zorunludur." });
     const movementInput = { ...submitted, requestId: operationId, idempotencyKey: operationId };
-    if (actor.type !== "admin" && !["stock_out", "waste"].includes(String(movementInput.type || ""))) {
+    if (actor.type !== "admin") {
       return res.status(403).json({
         ok: false,
-        message: "Personel yalnızca atanmış Kafe Deposunda eksiltme veya sarf işlemi yapabilir."
+        message: "Personel hesabı stok bakiyesini doğrudan değiştiremez."
       });
     }
     const updatedAt = new Date().toISOString();

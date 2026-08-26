@@ -1362,7 +1362,10 @@ function normalizeStockProduct(product, index, categoryNames) {
 }
 
 function normalizeStockUnit(value) {
-  const unit = String(value || "").trim().toLocaleLowerCase("tr-TR");
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value.value ?? value.code ?? value.unit ?? value.baseUnit ?? value.name ?? value.label ?? ""
+    : value;
+  const unit = String(source || "").trim().toLocaleLowerCase("tr-TR");
   const ascii = unit.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const normalized = {
     l: "litre", lt: "litre", liter: "litre", litre: "litre",

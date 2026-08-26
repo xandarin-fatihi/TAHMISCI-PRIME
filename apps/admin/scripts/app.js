@@ -4487,7 +4487,7 @@
     const product = selectedStockEditorProduct();
     els.stockEditorCategoryName.value = category ? category.name : "";
     els.stockEditorProductName.value = product ? product.name : "";
-    if (els.stockEditorUnit) els.stockEditorUnit.value = product ? product.unit || "" : "";
+    if (els.stockEditorUnit) els.stockEditorUnit.value = product ? stockUnitText(product.unit || product.baseUnit, "") : "";
     if (els.stockEditorSupplier) els.stockEditorSupplier.value = product ? product.supplier || "" : "";
     if (els.stockEditorNote) els.stockEditorNote.value = product ? product.note || "" : "";
     if (els.stockEditorActive) els.stockEditorActive.checked = Boolean(product && product.active !== false);
@@ -4508,8 +4508,48 @@
     }
   }
 
-  function addStockCategory() {
-    const name = String(window.prompt("Yeni stok kategorisinin adı", "Yeni Kategori") || "").trim();
+  function stockCatalogDialog(options = {}) {
+    let dialog = document.getElementById("stockCatalogOperationDialog");
+    if (!dialog) {
+      dialog = document.createElement("dialog");
+      dialog.id = "stockCatalogOperationDialog";
+      dialog.className = "stock-admin-dialog";
+      dialog.innerHTML = `<form class="stock-admin-dialog__shell" novalidate><header><div><p class="eyebrow">Stok Kataloğu</p><h4 data-stock-catalog-title></h4></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-catalog-cancel aria-label="Pencereyi kapat">×</button></header><div class="stock-admin-dialog__body stock-location-form"><p data-stock-catalog-message></p><label data-stock-catalog-field><span data-stock-catalog-label></span><input data-stock-catalog-input type="text" maxlength="120"></label><p class="stock-admin-dialog__message" data-stock-catalog-error role="alert"></p></div><footer><button class="ui-button ui-button--secondary" type="button" data-stock-catalog-cancel>Vazgeç</button><button class="ui-button ui-button--primary" type="submit" data-stock-catalog-submit>Kaydet</button></footer></form>`;
+      document.body.appendChild(dialog);
+    }
+    const form = dialog.querySelector("form");
+    const input = dialog.querySelector("[data-stock-catalog-input]");
+    const field = dialog.querySelector("[data-stock-catalog-field]");
+    const error = dialog.querySelector("[data-stock-catalog-error]");
+    dialog.querySelector("[data-stock-catalog-title]").textContent = options.title || "Stok işlemi";
+    dialog.querySelector("[data-stock-catalog-message]").textContent = options.message || "";
+    dialog.querySelector("[data-stock-catalog-label]").textContent = options.label || "Değer";
+    field.hidden = options.confirmOnly === true;
+    input.value = options.value || "";
+    input.required = options.confirmOnly !== true;
+    error.textContent = "";
+    const submit = dialog.querySelector("[data-stock-catalog-submit]");
+    submit.textContent = options.confirmLabel || "Kaydet";
+    submit.classList.toggle("ui-button--danger", options.danger === true);
+    submit.classList.toggle("ui-button--primary", options.danger !== true);
+    dialog.returnValue = "cancel";
+    return new Promise((resolve) => {
+      const cancel = () => { dialog.returnValue = "cancel"; dialog.close(); };
+      dialog.querySelectorAll("[data-stock-catalog-cancel]").forEach((button) => { button.onclick = cancel; });
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        const value = input.value.trim();
+        if (!options.confirmOnly && !value) { error.textContent = "Bu alan boş bırakılamaz."; input.focus(); return; }
+        dialog.close("confirm");
+      };
+      dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm" ? (options.confirmOnly ? true : input.value.trim()) : options.confirmOnly ? false : ""), { once: true });
+      dialog.showModal();
+      window.setTimeout(() => (options.confirmOnly ? submit : input).focus(), 0);
+    });
+  }
+
+  async function addStockCategory() {
+    const name = await stockCatalogDialog({ title: "Yeni stok kategorisi", label: "Kategori adı", value: "Yeni Kategori", confirmLabel: "Kategoriyi Ekle" });
     if (!name) return;
     const duplicate = stockCategories().find((category) => normalizeText(category.name) === normalizeText(name));
     if (duplicate) {
@@ -4526,10 +4566,10 @@
     renderStockPanel();
   }
 
-  function addStockProduct() {
+  async function addStockProduct() {
     const category = selectedStockEditorCategory();
     if (!category) return;
-    const name = String(window.prompt("Yeni stok ürününün adı", "Yeni Stok Ürünü") || "").trim();
+    const name = await stockCatalogDialog({ title: "Yeni stok ürünü", message: category.name, label: "Ürün adı", value: "Yeni Stok Ürünü", confirmLabel: "Ürünü Ekle" });
     if (!name) return;
     const product = {
       id: `${makeId("stock-product", name)}-${Date.now()}`,
@@ -4554,10 +4594,10 @@
     renderStockPanel();
   }
 
-  function addStockSupplier() {
+  async function addStockSupplier() {
     const product = selectedStockEditorProduct();
     if (!product) return;
-    const supplier = String(window.prompt("Tedarikçi adı", product.supplier || "") || "").trim();
+    const supplier = await stockCatalogDialog({ title: "Tedarikçi bilgisi", message: product.name, label: "Tedarikçi adı", value: product.supplier || "", confirmLabel: "Tedarikçiyi Kaydet" });
     if (!supplier) return;
     product.supplier = supplier;
     product.updatedAt = new Date().toISOString();
@@ -4565,23 +4605,23 @@
     renderStockPanel();
   }
 
-  function deleteStockEditorProduct() {
+  async function deleteStockEditorProduct() {
     const product = selectedStockEditorProduct();
-    if (!product || !window.confirm(`"${product.name}" stok ürününü silmek istiyor musunuz?`)) return;
+    if (!product || !await stockCatalogDialog({ title: "Stok ürününü sil", message: `“${product.name}” katalogdan kaldırılacak.`, confirmOnly: true, confirmLabel: "Ürünü Sil", danger: true })) return;
     state.stock.products = state.stock.products.filter((item) => item.id !== product.id);
     state.stockEditorProductId = "";
     markDirty("stock", "Stok ürünü silindi");
     renderStockPanel();
   }
 
-  function deleteStockEditorCategory() {
+  async function deleteStockEditorCategory() {
     const category = selectedStockEditorCategory();
     if (!category) return;
     const count = stockProducts().filter((product) => product.categoryId === category.id).length;
     const message = count
       ? `"${category.name}" kategorisi ve içindeki ${count} stok ürünü silinecek. Devam edilsin mi?`
       : `"${category.name}" kategorisini silmek istiyor musunuz?`;
-    if (!window.confirm(message)) return;
+    if (!await stockCatalogDialog({ title: "Stok kategorisini sil", message, confirmOnly: true, confirmLabel: "Kategoriyi Sil", danger: true })) return;
     state.stock.categories = state.stock.categories.filter((item) => item.id !== category.id);
     state.stock.products = state.stock.products.filter((item) => item.categoryId !== category.id);
     state.stockEditorCategoryId = "";
@@ -4706,7 +4746,7 @@
         <div><strong>${escapeHTML(product.name)}</strong><p>${escapeHTML(product.note || "Not eklenmedi.")}</p></div>
         <div class="stock-detail-movements">
           ${movements.length ? movements.map((movement) => `
-            <span>${escapeHTML(stockMovementTypeText(movement.type))} · ${escapeHTML(formatStockNumber(movement.quantity))} ${escapeHTML(movement.unit || product.unit || "adet")} · ${escapeHTML(formatStockDate(movement.createdAt))}</span>
+            <span>${escapeHTML(stockMovementTypeText(movement.type))} · ${escapeHTML(formatStockNumber(movement.quantity))} ${escapeHTML(stockUnitText(movement.unit || product.unit, "adet"))} · ${escapeHTML(formatStockDate(movement.createdAt))}</span>
           `).join("") : `<span>Henüz hareket yok.</span>`}
         </div>
       </div>
@@ -4720,7 +4760,7 @@
       ? movements.map((movement) => `
         <article class="stock-movement-item">
           <strong>${escapeHTML(movement.productName || "Stok ürünü")}</strong>
-          <span>${escapeHTML(stockMovementTypeText(movement.type))} · ${escapeHTML(formatStockNumber(movement.quantity))} ${escapeHTML(movement.unit || "")}</span>
+          <span>${escapeHTML(stockMovementTypeText(movement.type))} · ${escapeHTML(formatStockNumber(movement.quantity))} ${escapeHTML(stockUnitText(movement.unit, ""))}</span>
           <time>${escapeHTML(formatStockDate(movement.createdAt))}</time>
         </article>
       `).join("")
@@ -4738,7 +4778,7 @@
         return `
           <button class="stock-suggestion" type="button" data-stock-suggestion="${escapeAttribute(product.id)}">
             <strong>${escapeHTML(product.name)}</strong>
-            <span>Önerilen: ${escapeHTML(formatStockNumber(suggested))} ${escapeHTML(product.unit || "adet")}</span>
+            <span>Önerilen: ${escapeHTML(formatStockNumber(suggested))} ${escapeHTML(stockUnitText(product.unit || product.baseUnit, "adet"))}</span>
             <em class="stock-badge is-${status.key}">${escapeHTML(status.label)}</em>
           </button>
         `;
@@ -4773,7 +4813,7 @@
       return;
     }
     if (action === "delete") {
-      if (!window.confirm(`"${product.name}" stok kaydını silmek istediğinize emin misiniz?`)) return;
+      if (!await stockCatalogDialog({ title: "Stok kaydını sil", message: `“${product.name}” stok kaydı silinecek.`, confirmOnly: true, confirmLabel: "Kaydı Sil", danger: true })) return;
       state.stock.products = state.stock.products.filter((item) => item.id !== productId);
       state.dirtyStock = true;
       try {
@@ -4807,7 +4847,7 @@
     const label = stockMovementTypeText(action);
     if (els.stockActionKicker) els.stockActionKicker.textContent = label;
     if (els.stockActionTitle) els.stockActionTitle.textContent = label;
-    if (els.stockActionProduct) els.stockActionProduct.textContent = `${product.name} · Mevcut stok: ${formatStockNumber(product.stockQuantity)} ${product.unit || "adet"}`;
+    if (els.stockActionProduct) els.stockActionProduct.textContent = `${product.name} · Mevcut stok: ${formatStockNumber(product.stockQuantity)} ${stockUnitText(product.unit || product.baseUnit, "adet")}`;
     if (els.stockActionQuantity) els.stockActionQuantity.value = "";
     if (els.stockActionReason) els.stockActionReason.value = label;
     if (els.stockActionNote) els.stockActionNote.value = "";
@@ -4901,7 +4941,7 @@
       categoryId: product.categoryId,
       type: movement.type,
       quantity,
-      unit: product.unit || "adet",
+      unit: stockUnitText(product.unit || product.baseUnit, "adet"),
       reason: movement.reason || stockMovementTypeText(movement.type),
       note: movement.note || "",
       actor: { type: "admin", name: "Yönetici" },
@@ -4929,7 +4969,7 @@
       categoryId: validCategoryId.has(product.categoryId) ? product.categoryId : fallbackCategoryId,
       name: String(product.name || "Stok ürünü"),
       supplier: String(product.supplier || product.brand || ""),
-      unit: String(product.unit || "adet"),
+      unit: stockUnitText(product.unit || product.baseUnit, "adet"),
       stockQuantity: roundStockQuantity(product.stockQuantity),
       stockQuantityText: String(product.stockQuantityText ?? product.stockQuantity ?? ""),
       orderThreshold: roundStockQuantity(product.orderThreshold),
@@ -4960,7 +5000,7 @@
       categoryId: String(movement.categoryId || ""),
       type: String(movement.type || ""),
       quantity: roundStockQuantity(movement.quantity),
-      unit: String(movement.unit || ""),
+      unit: stockUnitText(movement.unit, ""),
       reason: String(movement.reason || ""),
       note: String(movement.note || ""),
       actor: movement.actor && typeof movement.actor === "object" ? movement.actor : {},
@@ -4999,7 +5039,7 @@
       if (categoryId !== "all" && product.categoryId !== categoryId) return false;
       if (state.stockOnlyOrderNeeded && !["order", "out"].includes(stockProductStatus(product).key)) return false;
       if (!query) return true;
-      return normalizeText(`${product.name} ${product.supplier} ${product.unit}`).includes(query);
+      return normalizeText(`${product.name} ${product.supplier} ${stockUnitText(product.unit || product.baseUnit, "")}`).includes(query);
     });
   }
 
@@ -5025,12 +5065,28 @@
   }
 
   function stockNumber(value) {
+    if (value && typeof value === "object") {
+      const nested = value.quantity ?? value.value ?? value.amount ?? value.baseQuantity;
+      if (nested !== undefined && nested !== value) return stockNumber(nested);
+    }
     if (typeof value === "number") return Number.isFinite(value) ? value : 0;
     const numberValue = Number(String(value ?? "").replace(/[^\d.,-]/g, "").replace(",", "."));
     return Number.isFinite(numberValue) ? numberValue : 0;
   }
 
+  function stockUnitText(value, fallback = "adet") {
+    if (value && typeof value === "object") {
+      const nested = value.unit ?? value.code ?? value.name ?? value.label ?? value.value;
+      return nested === undefined || nested === null ? fallback : String(nested).trim() || fallback;
+    }
+    return value === undefined || value === null ? fallback : String(value).trim() || fallback;
+  }
+
   function stockNumberOrNull(value) {
+    if (value && typeof value === "object") {
+      const nested = value.quantity ?? value.value ?? value.amount ?? value.baseQuantity;
+      if (nested !== undefined && nested !== value) return stockNumberOrNull(nested);
+    }
     const match = String(value ?? "").replace(",", ".").match(/-?\d+(?:\.\d+)?/);
     if (!match) return null;
     const number = Number(match[0]);
@@ -9601,7 +9657,9 @@
       ["Fiyatsız ürün", ["missingPrices", "missingPriceCount"]],
       ["Karşılıksız fiyat", ["orphanPrices", "unmatchedPrices", "unmatchedPricing"]],
       ["Bağlantısız reçete", ["unlinkedRecipes", "unlinkedRecipeCount"]],
-      ["Stok inceleme", ["stockReviewRows", "manualStockReview", "manualReviewCount"]]
+      ["Stok inceleme", ["stockReviewRows", "manualStockReview", "manualReviewCount"]],
+      ["Sipariş eşiği", ["orderThresholdChanges"]],
+      ["Kritik eşik", ["criticalThresholdChanges"]]
     ];
     const values = definitions.map(([label, keys]) => ({ label, value: firstImportMetric(report, keys) }));
     return values.filter((item, index) => item.value !== 0 || index < 6);

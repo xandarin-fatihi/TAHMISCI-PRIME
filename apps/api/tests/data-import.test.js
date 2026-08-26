@@ -348,6 +348,58 @@ test("kodlu dört dosya kanonik Ürün Kodu ile bağlanır ve çoklu fiyat ailel
   assert.ok(analysis.changes.filter((change) => change.product).every((change) => change.productCode || change.workbook === "menu" && change.field === "kategori"));
 });
 
+test("stok Excel sipariş ve kritik eşiklerini yalnız Kafe Deposuna uygular", () => {
+  const source = workbook({
+    İÇECEKLER: sheet(["Ürün Adı", "Ürün Adedi", "Sipariş Eşiği", "Kritik Eşik", "Ürün Kodu"], [{
+      "Ürün Adı": "Kodlu Su", "Ürün Adedi": "10 adet", "Sipariş Eşiği": 5, "Kritik Eşik": 2, "Ürün Kodu": "STK-SU-001"
+    }])
+  });
+  const first = analyzeDataImport(emptyData(), { workbooks: { stock: source }, files: {} }, { analysisId: "stock-thresholds-cafe" });
+  assert.equal(first.report.canApply, true);
+  assert.equal(first.report.orderThresholdChanges, 1);
+  assert.equal(first.report.criticalThresholdChanges, 1);
+  const product = first.plan.stockState.products.find((item) => item.productCode === "STK-SU-001");
+  const cafe = first.plan.stockState.locations.find((item) => item.code === "CAFE");
+  const general = first.plan.stockState.locations.find((item) => item.code === "GENEL");
+  const cafeBalance = first.plan.stockState.balances.find((item) => item.productId === product.id && item.locationId === cafe.id);
+  const generalBalance = first.plan.stockState.balances.find((item) => item.productId === product.id && item.locationId === general.id);
+  assert.equal(cafeBalance.orderThreshold, 5);
+  assert.equal(cafeBalance.criticalThreshold, 2);
+  assert.equal(generalBalance.orderThreshold, 0);
+  assert.equal(generalBalance.criticalThreshold, 0);
+  assert.equal(cafeBalance.quantity, 0, "eşik aktarımı stok miktarını değiştirmemeli");
+
+  const preserve = workbook({
+    İÇECEKLER: sheet(["Ürün Adı", "Ürün Adedi", "Sipariş Eşiği", "Kritik Eşik", "Ürün Kodu"], [{
+      "Ürün Adı": "Kodlu Su", "Ürün Adedi": "99 adet", "Sipariş Eşiği": "-", "Kritik Eşik": "-", "Ürün Kodu": "STK-SU-001"
+    }])
+  });
+  const second = analyzeDataImport(importedData(emptyData(), first), { workbooks: { stock: preserve }, files: {} }, { analysisId: "stock-thresholds-preserve" });
+  const preserved = second.plan.stockState.balances.find((item) => item.productId === product.id && item.locationId === cafe.id);
+  assert.equal(preserved.orderThreshold, 5);
+  assert.equal(preserved.criticalThreshold, 2);
+  assert.equal(preserved.quantity, 0);
+});
+
+test("stok Excel sıfır eşiğini kabul eder ve kritik eşik sipariş eşiğini aşamaz", () => {
+  const zero = workbook({
+    İÇECEKLER: sheet(["Ürün Adı", "Ürün Adedi", "Sipariş Eşiği", "Kritik Eşik", "Ürün Kodu"], [{
+      "Ürün Adı": "Sıfır Eşik", "Ürün Adedi": "0 adet", "Sipariş Eşiği": 0, "Kritik Eşik": 0, "Ürün Kodu": "STK-SIF-001"
+    }])
+  });
+  const valid = analyzeDataImport(emptyData(), { workbooks: { stock: zero }, files: {} }, { analysisId: "stock-threshold-zero" });
+  assert.equal(valid.issues.some((issue) => issue.code.includes("threshold")), false);
+
+  const invalid = workbook({
+    İÇECEKLER: sheet(["Ürün Adı", "Ürün Adedi", "Sipariş Eşiği", "Kritik Eşik", "Ürün Kodu"], [{
+      "Ürün Adı": "Hatalı Eşik", "Ürün Adedi": "1 adet", "Sipariş Eşiği": 2, "Kritik Eşik": 3, "Ürün Kodu": "STK-HAT-001"
+    }])
+  });
+  const blocked = analyzeDataImport(emptyData(), { workbooks: { stock: invalid }, files: {} }, { analysisId: "stock-threshold-invalid" });
+  assert.ok(blocked.issues.some((issue) => issue.code === "invalid_threshold_relation"));
+  assert.ok(blocked.report.errorCount > 0);
+});
+
 test("kod aynıyken ad güncellenir; aynı ad farklı kodda ayrı ürün ve uyarı olarak kalır", () => {
   const firstWorkbook = workbook({
     SICAKLAR: sheet(["Ürün Adı", "Ürün Kodu"], [{ "Ürün Adı": "İlk Ad", "Ürün Kodu": "SIC-REN-001" }])

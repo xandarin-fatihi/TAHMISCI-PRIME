@@ -879,10 +879,14 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
       ? ["1", "true", "evet", "var", "izin ver"].includes(allowDecimalRaw)
       : ["kg", "gr", "litre", "ml"].includes(requestedBaseUnit);
     const requestedDefaultMovementUnit = defaultMovementUnitRaw || (bulkUnit && unitsPerBulkUnit > 0 ? bulkUnit : requestedBaseUnit);
-    const thresholdRaw = String(cell(source.row, ["sipariş eşiği", "siparis esigi", "eşik", "esik", "order threshold"]) || "").trim();
+    const thresholdRaw = String(cell(source.row, ["sipariş eşiği", "siparis esigi", "eşik", "esik", "order threshold"]) ?? "").trim();
     const thresholdUnspecified = !thresholdRaw || /^[-–—]$/.test(thresholdRaw);
     const parsedThreshold = thresholdUnspecified ? null : numericPrefix(thresholdRaw);
     if (!thresholdUnspecified && (parsedThreshold === null || parsedThreshold < 0)) { addIssue(ctx, "stock", source, "invalid_threshold", "Sipariş eşiği geçersiz."); continue; }
+    const criticalRaw = String(cell(source.row, ["kritik eşik", "kritik esik", "critical threshold"]) ?? "").trim();
+    const criticalUnspecified = !criticalRaw || /^[-–—]$/.test(criticalRaw);
+    const parsedCritical = criticalUnspecified ? null : numericPrefix(criticalRaw);
+    if (!criticalUnspecified && (parsedCritical === null || parsedCritical < 0)) { addIssue(ctx, "stock", source, "invalid_critical_threshold", "Kritik eşik geçersiz."); continue; }
     const candidates = state.products.filter((item) => item.categoryId === category.id && normalizeSourceName(item.productName) === nameKey);
     const externalId = productCode || String(cell(source.row, ["externalid", "external id", "importkey", "import key"]) || "").trim();
     let product;
@@ -923,9 +927,20 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
     // The ordinary stock workbook is a catalog workbook. Its amount and
     // threshold columns are retained as import metadata/defaults, never as a
     // command to overwrite daily location balances.
+    const cafeLocation = (state.locations || []).find((location) => location && (location.code === "CAFE" || location.type === "cafe"));
+    const currentCafeBalance = product && cafeLocation
+      ? (state.balances || []).find((balance) => String(balance.productId) === String(product.id) && String(balance.locationId) === String(cafeLocation.id))
+      : null;
     const threshold = thresholdUnspecified
-      ? Number(product && (product.catalogOrderThreshold ?? product.orderThreshold) || 0)
+      ? Number(currentCafeBalance ? currentCafeBalance.orderThreshold : product && (product.catalogOrderThreshold ?? product.orderThreshold) || 0)
       : parsedThreshold;
+    const criticalThreshold = criticalUnspecified
+      ? Number(currentCafeBalance ? currentCafeBalance.criticalThreshold : product && (product.catalogCriticalThreshold ?? product.criticalThreshold) || 0)
+      : parsedCritical;
+    if (criticalThreshold > threshold) {
+      addIssue(ctx, "stock", source, "invalid_threshold_relation", "Kritik eşik sipariş eşiğinden büyük olamaz.");
+      continue;
+    }
     if (!product) {
       product = {
         id: generatedId("stock-product"), categoryId: category.id, category: category.name, productName: name, name,
@@ -941,10 +956,12 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
         catalogQuantityText: quantityText,
         catalogOrderThreshold: threshold,
         catalogOrderThresholdText: thresholdRaw,
+        catalogCriticalThreshold: criticalThreshold,
+        catalogCriticalThresholdText: criticalRaw,
         // Used only when a later explicit opening-balance import creates a
         // balance. Existing per-location thresholds are never replaced here.
-        orderThreshold: threshold,
-        orderThresholdText: thresholdRaw,
+        orderThreshold: 0,
+        orderThresholdText: "",
         criticalThreshold: 0, active: true, order: state.products.length, updatedAt: ctx.now,
         ...(externalId ? { externalId } : {}),
         ...(productCode ? { productCode } : {}),
@@ -956,7 +973,8 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
       const oldUnit = String(product.baseUnit || product.unit || "");
       const oldBulkUnit = String(product.bulkUnit || "");
       const oldUnitsPerBulkUnit = Number(product.unitsPerBulkUnit || 0);
-      const oldThreshold = Number((product.catalogOrderThreshold ?? product.orderThreshold) || 0);
+      const oldThreshold = Number(currentCafeBalance ? currentCafeBalance.orderThreshold : (product.catalogOrderThreshold ?? product.orderThreshold) || 0);
+      const oldCriticalThreshold = Number(currentCafeBalance ? currentCafeBalance.criticalThreshold : (product.catalogCriticalThreshold ?? product.criticalThreshold) || 0);
       const oldQuantityText = String(product.catalogQuantityText || "");
       const returned = product.sourcePresent === false;
       const hasQuantityOrHistory = (state.balances || []).some((balance) => String(balance.productId) === String(product.id) && Number(balance.quantity || 0) !== 0)
@@ -973,6 +991,8 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
         catalogQuantityText: quantityText,
         catalogOrderThreshold: threshold,
         catalogOrderThresholdText: thresholdRaw,
+        catalogCriticalThreshold: criticalThreshold,
+        catalogCriticalThresholdText: criticalRaw,
         sourcePresent: true, updatedAt: ctx.now,
         ...(productCode ? { productCode, externalId: productCode } : {})
       }, sourceMetadata("stock", source.sheet, name, ctx.now, ctx.analysisId, product.statusSource || "excel_existing"));
@@ -987,9 +1007,38 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
         ctx.report.updatedStockProducts += 1;
         addChange(ctx, "stock", category.name, name, "katalog miktarı/birim", `${oldQuantityText || "—"} ${oldUnit}`.trim(), `${quantityText} ${safeBaseUnit}${bulkUnit ? ` · 1 ${bulkUnit} = ${unitsPerBulkUnit} ${safeBaseUnit}` : ""}`.trim(), "update", "balance-preserved", "excel", productCode);
       }
-      if (oldThreshold !== threshold) addChange(ctx, "stock", category.name, name, "varsayılan sipariş eşiği", oldThreshold, threshold, "update", "location-thresholds-preserved", "excel", productCode);
-      if (oldUnit === safeBaseUnit && oldQuantityText === quantityText && oldThreshold === threshold && oldBulkUnit === bulkUnit && oldUnitsPerBulkUnit === Number(unitsPerBulkUnit || 0)) ctx.report.unchanged += 1;
+      if (oldUnit === safeBaseUnit && oldQuantityText === quantityText && oldThreshold === threshold && oldCriticalThreshold === criticalThreshold && oldBulkUnit === bulkUnit && oldUnitsPerBulkUnit === Number(unitsPerBulkUnit || 0)) ctx.report.unchanged += 1;
       if (returned) ctx.report.rediscovered += 1;
+    }
+    if (cafeLocation) {
+      let cafeBalance = (state.balances || []).find((balance) => String(balance.productId) === String(product.id) && String(balance.locationId) === String(cafeLocation.id));
+      if (!cafeBalance) {
+        cafeBalance = {
+          id: generatedId("stock-balance"), locationId: cafeLocation.id, productId: product.id,
+          quantity: 0, revision: 0, criticalThreshold: 0, orderThreshold: 0, targetLevel: 0, updatedAt: null
+        };
+        state.balances = Array.isArray(state.balances) ? state.balances : [];
+        state.balances.push(cafeBalance);
+      }
+      const previousOrder = Number(cafeBalance.orderThreshold || 0);
+      const previousCritical = Number(cafeBalance.criticalThreshold || 0);
+      let thresholdChanged = false;
+      if (!thresholdUnspecified && previousOrder !== threshold) {
+        cafeBalance.orderThreshold = threshold;
+        ctx.report.orderThresholdChanges += 1;
+        thresholdChanged = true;
+        addChange(ctx, "stock", category.name, name, "Kafe Deposu sipariş eşiği", previousOrder, threshold, "update", "cafe-threshold", "excel", productCode);
+      }
+      if (!criticalUnspecified && previousCritical !== criticalThreshold) {
+        cafeBalance.criticalThreshold = criticalThreshold;
+        ctx.report.criticalThresholdChanges += 1;
+        thresholdChanged = true;
+        addChange(ctx, "stock", category.name, name, "Kafe Deposu kritik eşiği", previousCritical, criticalThreshold, "update", "cafe-threshold", "excel", productCode);
+      }
+      if (thresholdChanged) {
+        cafeBalance.revision = Math.max(0, Number(cafeBalance.revision || 0)) + 1;
+        cafeBalance.updatedAt = ctx.now;
+      }
     }
     if (productCode) {
       ctx.report.codeMatches += 1;
@@ -1571,7 +1620,7 @@ function baseReport() {
     autoReactivated: 0, manualInactivePreserved: 0, invalidRows: 0, ambiguousMatches: 0,
     missingPrices: 0, unmatchedPricing: 0, mixedPricingFamilies: 0, updatedPrices: 0,
     newRecipes: 0, updatedRecipes: 0, unlinkedRecipes: 0,
-    newStockProducts: 0, updatedStockProducts: 0, manualStockReview: 0, mergedDuplicates: 0,
+    newStockProducts: 0, updatedStockProducts: 0, manualStockReview: 0, orderThresholdChanges: 0, criticalThresholdChanges: 0, mergedDuplicates: 0,
     invalidProductCodes: 0, duplicateProductCodes: 0, duplicatePriceOptions: 0,
     orphanProductCodes: 0, unknownProductCodes: 0, duplicateRecipeMeasures: 0,
     codeMatches: 0, pricePendingProducts: 0, linkedRecipes: 0, stockLinks: 0,
