@@ -327,6 +327,7 @@
     modulePromises: new Map(),
     loadedScopes: new Set(),
     scopeRevisions: { menu: 0, recipes: 0, stock: 0, workforce: 0 },
+    adminSummary: null,
     previewRevisions: { menu: 0, recipes: 0, stock: 0, site: 0 },
     bound: false,
     mediaDbPromise: null,
@@ -1999,7 +2000,7 @@
   }
 
   function catalogScopeForSection(section) {
-    if (["overview", "menu", "banner", "category", "product", "bulkPrice", "settings", "menuOutput", "json"].includes(section)) return "menu";
+    if (["menu", "banner", "category", "product", "bulkPrice", "menuOutput", "json", "settings"].includes(section)) return "menu";
     if (section === "recipe") return "recipes";
     if (section === "stock") return "stock";
     return "";
@@ -2101,7 +2102,8 @@
   }
 
   function scopesForSection(section) {
-    if (["overview", "menu", "banner", "category", "product", "bulkPrice", "settings", "menuOutput", "json"].includes(section)) return ["menu"];
+    if (section === "overview") return ["adminSummary"];
+    if (["menu", "banner", "category", "product", "bulkPrice", "menuOutput", "json", "settings"].includes(section)) return ["menu"];
     if (section === "recipe") return ["recipes"];
     // Depo kartları kendi küçük projection endpointlerini kullanır. Tam katalog
     // yalnız Katalog Bilgileri açıldığında yüklenir; böylece aynı ekranda ikinci
@@ -2122,15 +2124,51 @@
     if (["bulkPrice", "product"].includes(section)) {
       return loadScriptOnce("pricing", "scripts/pricing.js?v=20260815-performance");
     }
-    if (section === "staffAccess" || section === "stock") {
+    if (section === "staffAccess") {
       return loadScriptOnce("workforce", "scripts/workforce.js?v=20260816-stock-shipments");
     }
+    if (section === "stock") {
+      return Promise.all([
+        loadScriptOnce("workforce", "scripts/workforce.js?v=20260827-performance"),
+        loadScriptOnce("stockLocations", "scripts/stock-locations.js?v=20260827-performance")
+      ]);
+    }
+    if (section === "settings") {
+      return Promise.all([
+        loadStyleOnce("accountSecurity", "/shared/styles/account-security.css?v=20260827-performance"),
+        loadScriptOnce("accountSecurity", "/shared/scripts/account-security.js?v=20260827-performance")
+      ]);
+    }
     return Promise.resolve();
+  }
+
+  function loadStyleOnce(key, href) {
+    const promiseKey = `style:${key}`;
+    if (state.modulePromises.has(promiseKey)) return state.modulePromises.get(promiseKey);
+    const promise = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`link[data-lazy-admin-style="${key}"]`);
+      if (existing && existing.sheet) return resolve(existing);
+      const link = existing || document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = href;
+      link.dataset.lazyAdminStyle = key;
+      link.addEventListener("load", () => resolve(link), { once: true });
+      link.addEventListener("error", () => reject(new Error("Bölüm stili yüklenemedi.")), { once: true });
+      if (!existing) document.head.append(link);
+    }).catch((error) => {
+      state.modulePromises.delete(promiseKey);
+      throw error;
+    });
+    state.modulePromises.set(promiseKey, promise);
+    return promise;
   }
 
   function loadScriptOnce(key, source) {
     if (key === "pricing" && window.TahmisciPricing) return Promise.resolve(window.TahmisciPricing);
     if (key === "workforce" && window.__tahmisciWorkforceMounted) return Promise.resolve(true);
+    if (key === "stockLocations" && window.TahmisciStockLocations) return Promise.resolve(window.TahmisciStockLocations);
+    if (key === "livePreview" && window.TahmisciLivePreview) return Promise.resolve(window.TahmisciLivePreview);
+    if (key === "accountSecurity" && window.TahmisciAccountSecurity) return Promise.resolve(window.TahmisciAccountSecurity);
     if (state.modulePromises.has(key)) return state.modulePromises.get(key);
     const promise = new Promise((resolve, reject) => {
       const existing = document.querySelector(`script[data-lazy-admin-module="${key}"]`);
@@ -2158,7 +2196,11 @@
     if (!options.force && state.loadedScopes.has(scope)) return Promise.resolve();
     if (state.sectionLoadPromises.has(scope)) return state.sectionLoadPromises.get(scope);
     const load = (async () => {
-      if (scope === "menu") {
+      if (scope === "adminSummary") {
+        const result = await backendRequest("/api/admin/summary", { noDedupe: Boolean(options.force) });
+        state.adminSummary = result.summary || null;
+        state.scopeRevisions.adminSummary = responseRevision(result, "summary");
+      } else if (scope === "menu") {
         const result = await backendRequest("/api/menu", { skipToken: true, noDedupe: Boolean(options.force) });
         syncPublishRevision(result);
         if (hasMenuContent(result.menuState) && !state.dirtyMenu && !state.saving && !state.pendingPublishVerification) {
@@ -2237,8 +2279,21 @@
       if (event.detail && event.detail.scope === "admin") loadAdminNotificationPreferences().catch(() => {});
     });
     const previewTrigger = document.querySelector("[data-global-preview-trigger]");
-    if (previewTrigger) previewTrigger.addEventListener("click", () => {
+    if (previewTrigger) previewTrigger.addEventListener("click", async (event) => {
       if (state.notificationCenter.open) closeAdminNotificationDrawer({ restoreFocus: false });
+      if (window.TahmisciLivePreview) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      previewTrigger.setAttribute("aria-busy", "true");
+      try {
+        await loadSectionScope("menu");
+        await loadScriptOnce("livePreview", "scripts/live-preview.js?v=20260827-performance");
+        window.TahmisciLivePreview?.toggle?.();
+      } catch (error) {
+        updateSaveControls(error.message || "Canlı önizleme yüklenemedi");
+      } finally {
+        previewTrigger.removeAttribute("aria-busy");
+      }
     });
     document.addEventListener("keydown", handleAdminNotificationKeydown);
   }
@@ -2257,10 +2312,7 @@
   async function initializeAdminNotifications() {
     syncAdminNotificationFilters();
     renderAdminNotifications();
-    await Promise.allSettled([
-      loadAdminNotificationUnreadCount(),
-      loadAdminNotificationPreferences()
-    ]);
+    await loadAdminNotificationUnreadCount().catch(() => null);
   }
 
   function openAdminNotificationDrawer() {
@@ -2895,9 +2947,10 @@
     return text.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
   }
 
-  function openAdminAccountSecurity() {
+  async function openAdminAccountSecurity() {
     closeAdminNotificationDrawer({ restoreFocus: false });
     setActiveSection("settings", { collapseSidebar: true });
+    await ensureSectionModule("settings").catch(() => null);
     window.setTimeout(() => {
       const card = document.querySelector('[data-account-security][data-account-scope="admin"]');
       const details = card && card.closest("details");
@@ -4116,28 +4169,37 @@
   function renderStats() {
     const categories = state.data.categories;
     const products = flatProducts();
-    const activeProducts = products.filter(({ product, category }) => product.active && product.stock === "active" && category.active).length;
-    const soldOut = products.filter(({ product }) => product.stock === "sold-out" || product.active === false).length;
-    const popular = products.filter(({ product }) => product.popular).length;
-    const recipeStats = countRecipes();
+    const summary = state.adminSummary;
+    const activeProducts = summary ? Number(summary.activeProducts || 0) : products.filter(({ product, category }) => product.active && product.stock === "active" && category.active).length;
+    const soldOut = summary ? Number(summary.hiddenProducts || 0) : products.filter(({ product }) => product.stock === "sold-out" || product.active === false).length;
+    const popular = summary ? Number(summary.popularProducts || 0) : products.filter(({ product }) => product.popular).length;
+    const recipeStats = summary ? { products: Number(summary.recipeProducts || 0) } : countRecipes();
+    const categoryCount = summary ? Number(summary.totalCategories || 0) : categories.length;
+    const productCount = summary ? Number(summary.totalProducts || 0) : products.length;
     const menuIsOpen = activeProducts > 0;
     const summaryCards = [
-      { label: "Toplam Kategori", value: categories.length, icon: "categories" },
-      { label: "Toplam Ürün", value: products.length, icon: "products" },
+      { label: "Toplam Kategori", value: categoryCount, icon: "categories" },
+      { label: "Toplam Ürün", value: productCount, icon: "products" },
       { label: "Aktif Ürün", value: activeProducts, icon: "active" },
       { label: "Reçete Ürünü", value: recipeStats.products, icon: "recipe" },
       { label: "Canlı Menü", value: menuIsOpen ? "Açık" : "Kapalı", icon: "live", status: menuIsOpen },
       { label: "Gizli / Tükendi", value: soldOut, icon: "hidden", secondary: true },
       { label: "Popüler", value: popular, icon: "popular", secondary: true }
     ];
-    const distribution = overviewCategoryDistribution(categories, products.length);
+    const distributionCategories = summary && Array.isArray(summary.categoryDistribution)
+      ? summary.categoryDistribution.map((item) => ({
+        name: item.name,
+        productCount: Math.max(0, Number(item.productCount || 0))
+      }))
+      : categories;
+    const distribution = overviewCategoryDistribution(distributionCategories, productCount);
     const conicGradient = distribution.length
       ? `conic-gradient(${distribution.map((item) => `${item.color} ${item.start.toFixed(2)}% ${item.end.toFixed(2)}%`).join(", ")})`
       : "conic-gradient(#e7d8ca 0 100%)";
-    const updateDate = state.data.settings.menuUpdateDate || state.site.updatedAt || new Date().toISOString();
+    const updateDate = summary && summary.updatedAt || state.data.settings.menuUpdateDate || state.site.updatedAt || new Date().toISOString();
     const updates = [
-      { icon: "menu", title: "Menü verisi güncel", meta: `${formatOverviewNumber(products.length)} ürün · ${formatOverviewTime(updateDate)}` },
-      { icon: "categories", title: "Kategoriler hazır", meta: `${formatOverviewNumber(categories.length)} aktif yapı` },
+      { icon: "menu", title: "Menü verisi güncel", meta: `${formatOverviewNumber(productCount)} ürün · ${formatOverviewTime(updateDate)}` },
+      { icon: "categories", title: "Kategoriler hazır", meta: `${formatOverviewNumber(categoryCount)} aktif yapı` },
       { icon: "recipe", title: "Reçeteler eşitlendi", meta: `${formatOverviewNumber(recipeStats.products)} reçete ürünü` },
       { icon: "active", title: "Müdavim özeti hazır", meta: `${formatOverviewNumber(MUDAVIM_CUSTOMERS.length)} kayıt` }
     ];
@@ -4163,8 +4225,8 @@
           <article class="overview-panel overview-distribution-panel">
             <header><h3>Kategorilere Göre Ürün Dağılımı</h3></header>
             <div class="overview-distribution-content">
-              <div class="overview-donut" style="background:${conicGradient}" role="img" aria-label="Toplam ${formatOverviewNumber(products.length)} ürünün kategori dağılımı">
-                <div><strong>${formatOverviewNumber(products.length)}</strong><span>Toplam</span></div>
+              <div class="overview-donut" style="background:${conicGradient}" role="img" aria-label="Toplam ${formatOverviewNumber(productCount)} ürünün kategori dağılımı">
+                <div><strong>${formatOverviewNumber(productCount)}</strong><span>Toplam</span></div>
               </div>
               <ul class="overview-legend">
                 ${distribution.map((item) => `
@@ -4229,8 +4291,8 @@
     `;
     if (els.miniStats) {
       const miniStats = [
-        ["Kategori", categories.length],
-        ["Ürün", products.length],
+        ["Kategori", categoryCount],
+        ["Ürün", productCount],
         ["Aktif", activeProducts],
         ["Gizli/Tükendi", soldOut]
       ];
@@ -4257,7 +4319,9 @@
     const colors = ["#4a2c1d", "#75462d", "#a96f45", "#c99b78", "#dec4ad"];
     const sorted = categories.map((category) => ({
       label: category.name,
-      count: Array.isArray(category.products) ? category.products.length : 0
+      count: Number.isFinite(Number(category.productCount))
+        ? Math.max(0, Number(category.productCount))
+        : Array.isArray(category.products) ? category.products.length : 0
     })).sort((a, b) => b.count - a.count);
     const visible = sorted.slice(0, 4);
     const otherCount = sorted.slice(4).reduce((sum, item) => sum + item.count, 0);

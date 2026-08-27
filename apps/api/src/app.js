@@ -483,6 +483,58 @@ app.get("/api/admin/me", requireAdminOrMainRequestOrigin, auth.requireAdmin, (re
   });
 });
 
+app.get("/api/admin/summary", requireAdminRequestOrigin, auth.requireAdmin, (req, res) => {
+  const data = req.storeSnapshot;
+  if (!data) return res.status(503).json({ ok: false, message: "Yönetici özeti hazırlanamadı." });
+  const menuState = data.menuState && typeof data.menuState === "object" ? data.menuState : {};
+  const categories = Array.isArray(menuState.categories) ? menuState.categories : [];
+  const products = categories.flatMap((category) => (Array.isArray(category && category.products) ? category.products : [])
+    .map((product) => ({ category, product })));
+  const recipeState = data.recipeState && typeof data.recipeState === "object" ? data.recipeState : {};
+  const recipeProducts = Object.values(recipeState).reduce((total, category) => (
+    total + (category && typeof category === "object" ? Object.keys(category).length : 0)
+  ), 0);
+  const stockState = normalizeStockState(data.stockState);
+  const stockProducts = Array.isArray(stockState.products) ? stockState.products : [];
+  const criticalStock = stockProducts.filter((product) => {
+    const quantity = Number(product && (product.stockQuantity ?? product.currentStock ?? product.amount) || 0);
+    const threshold = Number(product && (product.criticalThreshold ?? product.orderThreshold) || 0);
+    return product && product.active !== false && threshold > 0 && quantity <= threshold;
+  }).length;
+  const pendingShipments = (Array.isArray(data.workforceShipments) ? data.workforceShipments : [])
+    .filter((shipment) => shipment && shipment.status === "onay_bekliyor").length;
+  const unreadNotifications = (Array.isArray(data.notifications) ? data.notifications : [])
+    .filter((notification) => notification && notification.recipientRole === "manager"
+      && notification.inAppVisible !== false && !notification.readAt && !notification.archivedAt).length;
+  const revision = resolveScopeRevision(data, "menu");
+  res.set({
+    "Cache-Control": "private, no-cache, must-revalidate",
+    "X-Summary-Revision": String(revision)
+  });
+  res.json({
+    ok: true,
+    revision,
+    summary: {
+      totalCategories: categories.length,
+      totalProducts: products.length,
+      activeProducts: products.filter(({ category, product }) => category.active !== false && product.active !== false && product.stock !== "sold-out").length,
+      hiddenProducts: products.filter(({ category, product }) => category.active === false || product.active === false || product.stock === "sold-out").length,
+      popularProducts: products.filter(({ product }) => product && product.popular === true).length,
+      recipeProducts,
+      stockProducts: stockProducts.length,
+      criticalStock,
+      pendingShipments,
+      unreadNotifications,
+      categoryDistribution: categories.map((category) => ({
+        id: String(category && category.id || ""),
+        name: String(category && category.name || "Kategori"),
+        productCount: Array.isArray(category && category.products) ? category.products.length : 0
+      })),
+      updatedAt: data.menuUpdatedAt || data.updatedAt || null
+    }
+  });
+});
+
 app.post("/api/admin/preview-token", requireAdminRequestOrigin, auth.requireAdmin, (req, res) => {
   try {
     const mode = String(req.body && req.body.mode || "").trim().toLowerCase();
@@ -721,9 +773,9 @@ app.post("/api/recipe/session/refresh", requireAdminOrMainRequestOrigin, auth.re
   }
 });
 
-app.get("/api/admin/recipe-access", requireAdminRequestOrigin, auth.requireAdmin, async (_req, res, next) => {
+app.get("/api/admin/recipe-access", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
   try {
-    const data = await store.read();
+    const data = req.storeSnapshot;
     res.json({
       ok: true,
       revision: Math.max(0, Number(data.revisions && data.revisions.workforce || 0)),
@@ -1214,7 +1266,7 @@ app.get("/api/recipe/assignments", requireAdminOrMainRequestOrigin, auth.require
       return res.json({ ok: true, assignments: [] });
     }
 
-    const data = await store.read();
+    const data = req.storeSnapshot;
     const assignments = (data.recipeAssignments || [])
       .filter((item) => item.userId === payload.userId);
     res.json({
@@ -1616,7 +1668,7 @@ app.delete("/api/media/:name", requireAdminRequestOrigin, auth.requireAdmin, asy
   try {
     const name = String(req.params.name || "");
     if (!isSafeMediaFileName(name)) return res.status(400).json({ ok: false, message: "Gecersiz medya adi." });
-    const data = await store.read();
+    const data = req.storeSnapshot;
     const reference = `/media/${name}`;
     const publishedData = JSON.stringify({ menuState: data.menuState, siteState: data.siteState });
     if (publishedData.includes(reference)) {
@@ -1711,9 +1763,9 @@ app.get("/api/recipes/events", requireAdminOrMainRequestOrigin, auth.requireReci
   }
 });
 
-app.get("/api/feedback", requireAdminRequestOrigin, auth.requireAdmin, async (_req, res, next) => {
+app.get("/api/feedback", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
   try {
-    const data = await store.read();
+    const data = req.storeSnapshot;
     res.json({ ok: true, feedbackItems: data.feedbackItems || [], updatedAt: data.feedbackUpdatedAt || null });
   } catch (error) {
     next(error);
@@ -1768,9 +1820,10 @@ app.get("/api/feedback/events", requireAdminRequestOrigin, auth.requireAdmin, as
       Connection: "keep-alive"
     });
 
-    const data = await store.read();
-    sendSse(res, "feedback", {
-      feedbackItems: data.feedbackItems || [],
+    const data = req.storeSnapshot;
+    sendSse(res, "ready", {
+      scope: "feedback",
+      revision: resolveScopeRevision(data, "feedback"),
       updatedAt: data.feedbackUpdatedAt || null
     });
 
@@ -2100,9 +2153,9 @@ app.get("/api/site/events", async (req, res, next) => {
   }
 });
 
-app.get("/api/admin/site/revisions", requireAdminRequestOrigin, auth.requireAdmin, async (_req, res, next) => {
+app.get("/api/admin/site/revisions", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
   try {
-    const data = await store.read();
+    const data = req.storeSnapshot;
     res.json({
       ok: true,
       revisions: (data.siteRevisions || []).map((item) => ({ id: item.id, createdAt: item.createdAt })).reverse()

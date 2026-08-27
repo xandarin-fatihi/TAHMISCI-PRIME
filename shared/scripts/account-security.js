@@ -3,9 +3,13 @@
 
   const controllers = new Map();
 
-  document.addEventListener("DOMContentLoaded", initialise);
+  let initialised = false;
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initialise, { once: true });
+  else initialise();
 
   function initialise() {
+    if (initialised) return;
+    initialised = true;
     document.querySelectorAll("[data-account-security][data-account-scope]").forEach((root) => {
       const controller = createController(root);
       if (controller) controllers.set(controller.scope, controller);

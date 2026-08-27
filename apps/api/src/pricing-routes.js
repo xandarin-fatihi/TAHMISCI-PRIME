@@ -34,9 +34,9 @@ function registerPricingRoutes(options) {
     broadcastPublicUpdate
   } = options;
 
-  app.get("/api/admin/pricing", requireAdminRequestOrigin, auth.requireAdmin, async (_req, res, next) => {
+  app.get("/api/admin/pricing", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
-      const data = await store.read();
+      const data = req.storeSnapshot || await store.read();
       res.json({
         ok: true,
         pricing: normalizePricingCatalog(data.pricing),
@@ -466,7 +466,7 @@ function registerPricingRoutes(options) {
 
   app.get("/api/admin/pricing/history", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
-      const data = await store.read();
+      const data = req.storeSnapshot || await store.read();
       const limit = Math.min(100, Math.max(1, Number(req.query && req.query.limit) || 50));
       const history = (Array.isArray(data.pricingAudit) ? data.pricingAudit : [])
         .slice()

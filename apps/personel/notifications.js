@@ -67,9 +67,13 @@
   };
   const elements = {};
 
-  document.addEventListener("DOMContentLoaded", initialise);
+  let initialised = false;
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initialise, { once: true });
+  else initialise();
 
   function initialise() {
+    if (initialised) return;
+    initialised = true;
     [
       "personelNotificationTrigger", "personelNotificationBadge", "personelNotificationDrawer",
       "personelNotificationBackdrop", "personelNotificationClose", "personelNotificationUnreadText",
@@ -771,10 +775,12 @@
   }
 
   function openAccountSecurity() {
-    const card = document.querySelector('[data-account-security][data-account-scope="personel"]');
-    card?.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" });
-    card?.querySelector("[data-account-email]")?.focus({ preventScroll: true });
-    window.TahmisciAccountSecurity?.refresh("personel");
+    Promise.resolve(window.TahmisciPersonelShell?.ensureAccountSecurity?.()).then(() => {
+      const card = document.querySelector('[data-account-security][data-account-scope="personel"]');
+      card?.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" });
+      card?.querySelector("[data-account-email]")?.focus({ preventScroll: true });
+      return window.TahmisciAccountSecurity?.refresh("personel");
+    }).catch(() => setPreferencesMessage("Hesap güvenliği yüklenemedi.", true));
   }
 
   function notificationDeviceId() {

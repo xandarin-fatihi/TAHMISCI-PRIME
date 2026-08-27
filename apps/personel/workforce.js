@@ -56,7 +56,9 @@
     return promise.catch(() => undefined);
   }
 
-  document.addEventListener("DOMContentLoaded", () => {
+  function mount() {
+    if (window.__tahmisciPersonelWorkforceMounted) return;
+    window.__tahmisciPersonelWorkforceMounted = true;
     document.addEventListener("personel:section-change", (event) => {
       const section = event.detail && event.detail.section;
       if (["tasks", "shipment", "shift"].includes(section)) {
@@ -70,7 +72,10 @@
     document.addEventListener("personel:session-ended", handleSessionEnded);
     document.addEventListener("personel:stock-updated", handleStockUpdated);
     document.addEventListener("visibilitychange", handleVisibilityChange);
-  });
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once: true });
+  else mount();
 
   function handleSessionStarted() {
     state.sessionEnded = false;

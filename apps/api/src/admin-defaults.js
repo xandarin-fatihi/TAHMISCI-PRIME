@@ -32,18 +32,18 @@ class IdempotentReplay extends Error {
 function registerAdminDefaultRoutes({ app, store, auth, requireAdminRequestOrigin }) {
   const guards = [requireAdminRequestOrigin, auth.requireAdmin];
 
-  app.get("/api/admin/defaults", ...guards, async (_req, res, next) => {
+  app.get("/api/admin/defaults", ...guards, async (req, res, next) => {
     try {
-      const data = await store.read();
+      const data = req.storeSnapshot || await store.read();
       res.json({ ok: true, adminDefaults: normalizeAdminDefaults(data.adminDefaults) });
     } catch (error) {
       next(error);
     }
   });
 
-  app.get("/api/admin/defaults/menu-design", ...guards, async (_req, res, next) => {
+  app.get("/api/admin/defaults/menu-design", ...guards, async (req, res, next) => {
     try {
-      const data = await store.read();
+      const data = req.storeSnapshot || await store.read();
       res.json({ ok: true, menuDesign: normalizeAdminDefaults(data.adminDefaults).menuDesign });
     } catch (error) {
       next(error);
@@ -100,9 +100,9 @@ function registerAdminDefaultRoutes({ app, store, auth, requireAdminRequestOrigi
     }
   });
 
-  app.get("/api/admin/defaults/system-settings", ...guards, async (_req, res, next) => {
+  app.get("/api/admin/defaults/system-settings", ...guards, async (req, res, next) => {
     try {
-      const data = await store.read();
+      const data = req.storeSnapshot || await store.read();
       res.json({ ok: true, systemSettings: normalizeAdminDefaults(data.adminDefaults).systemSettings });
     } catch (error) {
       next(error);

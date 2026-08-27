@@ -6,6 +6,8 @@
   const SIDEBAR_KEY = "tahmisci.personel.sidebarCollapsed.v1";
   const LAST_SECTION_KEY = "tahmisci.personel.lastSection.v1";
   const MOBILE_SIDEBAR_QUERY = "(max-width: 880px)";
+  const WORKFORCE_SECTIONS = new Set(["tasks", "shipment", "shift"]);
+  const lazyResources = new Map();
 
   const sectionMeta = {
     recipe: {
@@ -65,10 +67,22 @@
     pendingProfileAvatar: "",
     mobileSidebar: false,
     sessionActive: false,
+    sessionPreview: false,
+    notificationUnreadCount: 0,
+    notificationUnreadLoaded: false,
+    notificationUnreadLoadedAt: 0,
+    notificationBadgePromise: null,
     logoutPending: false
   };
 
   const els = {};
+
+  window.TahmisciPersonelShell = Object.freeze({
+    getContext: personelShellContext,
+    ensureWorkforce: ensureWorkforceModule,
+    ensureNotifications: ensureNotificationsModule,
+    ensureAccountSecurity: ensureAccountSecurityModule
+  });
 
   document.addEventListener("DOMContentLoaded", init);
 
@@ -80,7 +94,8 @@
       "profileMenuAvatar", "profileMenuName", "profileMenuRole", "profileMenuMessage",
       "recipeFrame", "stockMessage", "stockSearchInput", "stockCategoryPills", "stockGrid",
       "profileForm", "profileName", "profilePhone", "profileAvatarUrl", "profilePhotoInput", "profileBio",
-      "profileMessage", "profileAvatar",
+      "profileMessage", "profileAvatar", "personelNotificationTrigger", "personelNotificationBadge", "personelNotificationUnreadText",
+      "personelNotificationPreferencesState", "personelAccountSecurityMessage",
       "stockDetailModal", "stockDetailClose", "stockDetailCategory", "stockDetailTitle", "stockDetailStatus",
       "stockDetailQuantity", "stockDetailActions", "stockDetailMessage",
       "stockActionModal", "stockActionForm", "stockActionClose", "stockActionKicker", "stockActionTitle", "stockActionProduct",
@@ -110,6 +125,20 @@
       toggleProfilePopover();
     });
 
+    if (els.personelNotificationTrigger) els.personelNotificationTrigger.addEventListener("click", async (event) => {
+      if (window.TahmisciPersonelNotifications) return;
+      event.preventDefault();
+      els.personelNotificationTrigger.setAttribute("aria-busy", "true");
+      try {
+        await ensureNotificationsModule();
+        if (state.sessionActive) await window.TahmisciPersonelNotifications?.open?.();
+      } catch (_error) {
+        els.personelNotificationTrigger.setAttribute("title", "Bildirimler yüklenemedi. Yeniden deneyin.");
+      } finally {
+        els.personelNotificationTrigger.removeAttribute("aria-busy");
+      }
+    });
+
     if (els.profilePopover) els.profilePopover.addEventListener("click", (event) => {
       const action = event.target.closest("[data-profile-action]");
       if (!action) return;
@@ -125,7 +154,9 @@
       if (action.dataset.profileAction === "notifications") {
         closeProfilePopover();
         setSection("profile", { updateHash: false });
-        window.setTimeout(() => document.getElementById("personelNotificationPreferencesForm")?.scrollIntoView({ block: "start" }), 80);
+        void Promise.all([ensureNotificationsModule(), ensureAccountSecurityModule()]).then(() => {
+          document.getElementById("personelNotificationPreferencesForm")?.scrollIntoView({ block: "start" });
+        }).catch(() => setProfileMenuMessage("Bildirim ayarları yüklenemedi."));
       }
       if (action.dataset.profileAction === "logout") {
         closeProfilePopover();
@@ -374,9 +405,11 @@
     }
     state.user = mergeProfile({ ...user, id: userId });
     state.sessionActive = true;
+    state.sessionPreview = session.role === "preview";
     document.dispatchEvent(new CustomEvent("personel:session-started", {
-      detail: { userId, preview: session.role === "preview" }
+      detail: { userId, preview: state.sessionPreview }
     }));
+    if (!state.sessionPreview) void loadNotificationUnreadBadge();
   }
 
   function handlePersonelSessionEnded(event) {
@@ -393,6 +426,7 @@
 
   function resetPersonelSession() {
     state.sessionActive = false;
+    state.sessionPreview = false;
     state.user = null;
     state.stock = emptyStockState();
     state.stockLoaded = false;
@@ -403,6 +437,11 @@
     state.stockRefreshTimer = null;
     state.stockRefreshPending = false;
     state.stockRevision = 0;
+    state.notificationUnreadCount = 0;
+    state.notificationUnreadLoaded = false;
+    state.notificationUnreadLoadedAt = 0;
+    state.notificationBadgePromise = null;
+    renderNotificationUnreadBadge(0);
   }
 
   function showLogin() {
@@ -626,6 +665,13 @@
       loadRecipeFrame();
       compactRecipeFrame();
     }
+    if (WORKFORCE_SECTIONS.has(next)) {
+      void ensureWorkforceModule().catch(() => {
+        const panel = document.querySelector(`[data-section-panel="${next}"]`);
+        if (panel) panel.dataset.moduleState = "error";
+      });
+    }
+    if (next === "profile") void ensureAccountSecurityModule().catch(() => {});
     document.dispatchEvent(new CustomEvent("personel:section-change", { detail: { section: next } }));
   }
 
@@ -640,8 +686,22 @@
   }
 
   function loadRecipeFrame() {
-    if (!els.recipeFrame) return;
-    const source = els.recipeFrame.dataset.src || "/personel/recete-embed/";
+    if (!els.recipeFrame) {
+      if (!els.sectionRecipe || !state.sessionActive) return;
+      const frame = document.createElement("iframe");
+      frame.id = "recipeFrame";
+      frame.title = "Tahmisçi Reçete";
+      frame.loading = "eager";
+      frame.setAttribute("src", "about:blank");
+      frame.dataset.src = els.sectionRecipe.dataset.recipeSrc || "/personel/recete-embed/";
+      frame.addEventListener("load", () => {
+        compactRecipeFrame();
+        forwardRecipePreviewDraft();
+      });
+      els.sectionRecipe.append(frame);
+      els.recipeFrame = frame;
+    }
+    const source = els.recipeFrame.dataset.src || els.sectionRecipe?.dataset.recipeSrc || "/personel/recete-embed/";
     const target = appendPreviewToken(source);
     if (els.recipeFrame.getAttribute("src") !== target) {
       els.recipeFrame.setAttribute("src", target);
@@ -650,9 +710,9 @@
 
   function unloadRecipeFrame() {
     if (!els.recipeFrame) return;
-    if (els.recipeFrame.getAttribute("src") !== "about:blank") {
-      els.recipeFrame.setAttribute("src", "about:blank");
-    }
+    els.recipeFrame.setAttribute("src", "about:blank");
+    els.recipeFrame.remove();
+    els.recipeFrame = null;
   }
 
   async function loadStock(options = {}) {
@@ -1386,6 +1446,136 @@
     els.stockMessage.textContent = message;
     els.stockMessage.hidden = false;
     if (!persist) setTimeout(() => { if (els.stockMessage) els.stockMessage.hidden = true; }, 1800);
+  }
+
+  function personelShellContext() {
+    return Object.freeze({
+      active: state.sessionActive,
+      preview: state.sessionPreview,
+      userId: String(state.user && state.user.id || ""),
+      section: state.section
+    });
+  }
+
+  function loadLazyStyle(key, href) {
+    const resourceKey = `style:${key}`;
+    if (lazyResources.has(resourceKey)) return lazyResources.get(resourceKey);
+    const promise = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`link[data-personel-lazy-style="${key}"]`);
+      if (existing && existing.sheet) return resolve(existing);
+      const link = existing || document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = href;
+      link.dataset.personelLazyStyle = key;
+      link.addEventListener("load", () => resolve(link), { once: true });
+      link.addEventListener("error", () => reject(new Error("Bölüm stili yüklenemedi.")), { once: true });
+      if (!existing) document.head.append(link);
+    }).catch((error) => {
+      lazyResources.delete(resourceKey);
+      throw error;
+    });
+    lazyResources.set(resourceKey, promise);
+    return promise;
+  }
+
+  function loadLazyScript(key, source) {
+    const resourceKey = `script:${key}`;
+    if (lazyResources.has(resourceKey)) return lazyResources.get(resourceKey);
+    const promise = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[data-personel-lazy-script="${key}"]`);
+      if (existing && existing.dataset.loaded === "true") return resolve(existing);
+      const script = existing || document.createElement("script");
+      script.src = source;
+      script.defer = true;
+      script.dataset.personelLazyScript = key;
+      script.addEventListener("load", () => {
+        script.dataset.loaded = "true";
+        resolve(script);
+      }, { once: true });
+      script.addEventListener("error", () => reject(new Error("Bölüm modülü yüklenemedi.")), { once: true });
+      if (!existing) document.head.append(script);
+    }).catch((error) => {
+      lazyResources.delete(resourceKey);
+      throw error;
+    });
+    lazyResources.set(resourceKey, promise);
+    return promise;
+  }
+
+  async function ensureWorkforceModule() {
+    if (window.__tahmisciPersonelWorkforceMounted) return true;
+    await loadLazyScript("workforce", "/personel/workforce.js?v=20260827-performance");
+    if (state.sessionActive) {
+      document.dispatchEvent(new CustomEvent("personel:session-started", {
+        detail: { userId: state.user && state.user.id, preview: state.sessionPreview, replay: true }
+      }));
+      document.dispatchEvent(new CustomEvent("personel:section-change", {
+        detail: { section: state.section, replay: true }
+      }));
+    }
+    return true;
+  }
+
+  async function ensureNotificationsModule() {
+    if (window.TahmisciPersonelNotifications) return window.TahmisciPersonelNotifications;
+    await Promise.all([
+      loadLazyStyle("notifications", "/personel/notifications.css?v=20260827-performance"),
+      loadLazyScript("notifications", "/personel/notifications.js?v=20260827-performance")
+    ]);
+    if (state.sessionActive) {
+      document.dispatchEvent(new CustomEvent("personel:session-started", {
+        detail: { userId: state.user && state.user.id, preview: state.sessionPreview, replay: true }
+      }));
+    }
+    return window.TahmisciPersonelNotifications;
+  }
+
+  async function ensureAccountSecurityModule() {
+    if (window.TahmisciAccountSecurity) return window.TahmisciAccountSecurity;
+    await Promise.all([
+      loadLazyStyle("account-security", "/shared/styles/account-security.css?v=20260827-performance"),
+      loadLazyScript("account-security", "/shared/scripts/account-security.js?v=20260827-performance")
+    ]);
+    if (state.sessionActive) {
+      document.dispatchEvent(new CustomEvent("personel:session-started", {
+        detail: { userId: state.user && state.user.id, preview: state.sessionPreview, replay: true }
+      }));
+    }
+    return window.TahmisciAccountSecurity;
+  }
+
+  function renderNotificationUnreadBadge(value) {
+    const count = Math.max(0, Number(value || 0));
+    if (els.personelNotificationBadge) {
+      els.personelNotificationBadge.textContent = count > 99 ? "99+" : String(count);
+      els.personelNotificationBadge.hidden = count < 1;
+      els.personelNotificationBadge.setAttribute("aria-label", `${count} okunmamış bildirim`);
+    }
+    if (els.personelNotificationUnreadText) {
+      els.personelNotificationUnreadText.textContent = count ? `${count} okunmamış` : "Yeni bildirim yok";
+    }
+  }
+
+  function loadNotificationUnreadBadge(options = {}) {
+    if (state.sessionPreview || !state.sessionActive) return Promise.resolve(0);
+    if (!options.force && state.notificationUnreadLoaded && Date.now() - state.notificationUnreadLoadedAt < 30000) {
+      return Promise.resolve(state.notificationUnreadCount);
+    }
+    if (state.notificationBadgePromise) return state.notificationBadgePromise;
+    const promise = api("/api/notifications/unread-count")
+      .then((result) => {
+        state.notificationUnreadCount = Math.max(0, Number(result.unreadCount ?? result.count ?? 0));
+        state.notificationUnreadLoaded = true;
+        state.notificationUnreadLoadedAt = Date.now();
+        renderNotificationUnreadBadge(state.notificationUnreadCount);
+        return state.notificationUnreadCount;
+      })
+      .catch(() => state.notificationUnreadCount)
+      .finally(() => {
+        if (state.notificationBadgePromise === promise) state.notificationBadgePromise = null;
+      });
+    state.notificationBadgePromise = promise;
+    return promise;
   }
 
   async function api(path, options) {

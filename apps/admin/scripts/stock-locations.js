@@ -266,7 +266,7 @@
   }
 
   async function loadMovements() {
-    const query = new URLSearchParams({ limit: "120" });
+    const query = new URLSearchParams({ limit: "40" });
     if (state.selectedLocationId && state.selectedLocationId !== "total") query.set("locationId", state.selectedLocationId);
     const type = $("#stockMovementTypeFilter")?.value || "all";
     const productId = $("#stockMovementProductFilter")?.value || "all";
@@ -307,7 +307,6 @@
       state.loaded = true;
       state.stale = false;
       renderAll();
-      scheduleSecondaryLoad(options.force === true);
       setMessage("");
     })().catch((error) => {
       if (error && error.name === "AbortError") return;
@@ -1368,7 +1367,14 @@
       const values = String(input && input.value || "");
       mutateUnitCatalog("add", form.dataset.stockUnitAdd, { values }, form.querySelector("button[type=submit]")).then(() => { if (input) input.value = ""; }).catch(() => {});
     }));
-    $("#stockCountStartButton")?.addEventListener("click", (event) => openOrStartCount(event.currentTarget).catch((error) => setMessage(error.message, "error")));
+    $("#stockCountStartButton")?.addEventListener("click", async (event) => {
+      try {
+        await loadCounts();
+        await openOrStartCount(event.currentTarget);
+      } catch (error) {
+        setMessage(error.message, "error");
+      }
+    });
     $("#stockCountSaveButton")?.addEventListener("click", (event) => saveCount(event.currentTarget).catch((error) => { $("#stockCountMessage").textContent = error.message; }));
     $("#stockCountApproveButton")?.addEventListener("click", (event) => approveCount(event.currentTarget).catch((error) => { $("#stockCountMessage").textContent = error.message; }));
     $("#stockCountCancelButton")?.addEventListener("click", (event) => cancelCount(event.currentTarget).catch((error) => { $("#stockCountMessage").textContent = error.message; }));

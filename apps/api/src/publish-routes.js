@@ -19,9 +19,9 @@ class IdempotentReplay extends Error {
 function registerPublishRoutes(options) {
   const { app, store, auth, requireAdminRequestOrigin, onPublished } = options;
 
-  app.get("/api/admin/publish-state", requireAdminRequestOrigin, auth.requireAdmin, async (_req, res, next) => {
+  app.get("/api/admin/publish-state", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
-      const data = await store.read();
+      const data = req.storeSnapshot || await store.read();
       res.json({
         ok: true,
         revision: revisionOf(data),
