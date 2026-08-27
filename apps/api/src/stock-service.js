@@ -78,8 +78,6 @@ function allowedProductUnits(product) {
   const metadata = productUnitMetadata(product);
   const result = new Set([metadata.baseUnit]);
   if (metadata.bulkUnit && metadata.unitsPerBulkUnit > 0) result.add(metadata.bulkUnit);
-  if (["kg", "gr"].includes(metadata.baseUnit)) result.add(metadata.baseUnit === "kg" ? "gr" : "kg");
-  if (["litre", "ml"].includes(metadata.baseUnit)) result.add(metadata.baseUnit === "litre" ? "ml" : "litre");
   return Array.from(result).filter(Boolean);
 }
 

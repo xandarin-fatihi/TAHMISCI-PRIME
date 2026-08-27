@@ -1515,7 +1515,7 @@ test("admin reseti yalnızca admin oturumlarını iptal eder", async () => {
   });
 });
 
-test("eski ortak reçete şifresi yalnızca bireysel personel hesabı bulunmayan legacy durumda kullanılır", async () => {
+test("eski ortak reçete şifresi yönetici kurtarma adresiyle personel kapsamında sıfırlanamaz", async () => {
   const snapshot = await store.read();
   const users = snapshot.recipeUsers;
   const sessions = snapshot.authSessions;
@@ -1540,9 +1540,9 @@ test("eski ortak reçete şifresi yalnızca bireysel personel hesabı bulunmayan
     headers: { "Content-Type": "application/json", Origin: baseUrl },
     body: JSON.stringify({ challengeId: requested.body.challengeId, scope: "personel", code: "654321", newPassword: "LegacyPersonel123" })
   });
-  assert.equal(confirmed.response.status, 200);
+  assert.equal(confirmed.response.status, 401);
   const legacyAfter = await store.read();
-  assert.equal(await bcrypt.compare("LegacyPersonel123", legacyAfter.admin.recipePasswordHash), true);
+  assert.equal(legacyAfter.admin.recipePasswordHash, sharedHash);
 
   await store.update((data) => {
     data.recipeUsers = users;

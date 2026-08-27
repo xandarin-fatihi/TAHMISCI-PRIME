@@ -1816,21 +1816,44 @@ app.put("/api/admin/stock", requireAdminRequestOrigin, auth.requireAdmin, async 
   try {
     const rawStockState = req.body && req.body.stockState;
     const productCodeError = validateStockProductCodes(rawStockState);
+    const unitCatalogError = validateStockUnitCatalog(rawStockState);
     const submittedState = normalizeStockState(rawStockState);
-    const error = productCodeError || validateStockStateForApi(submittedState);
+    const error = productCodeError || unitCatalogError || validateStockStateForApi(submittedState);
     if (error) return res.status(400).json({ ok: false, message: error });
 
     const updatedAt = new Date().toISOString();
     const pendingNotifications = [];
     const nextStore = await store.update((data) => {
       const previousStockState = normalizeStockState(data.stockState);
-      // Katalog kaydı depo bakiyelerinin sahibi değildir. Eski Stok Düzenleme
-      // ekranı `stockQuantity` gönderse bile miktar, hareket ve transfer defteri
-      // yalnız stok servisi üzerinden değişir.
+      const previousProducts = new Map(previousStockState.products.map((product) => [String(product.id), product]));
+      const submittedProductIds = new Set(submittedState.products.map((product) => String(product.id)));
+      const historyProductIds = new Set(previousStockState.movements.map((movement) => String(movement.productId || "")));
+      const stockedProductIds = new Set(previousStockState.balances.filter((balance) => Number(balance.quantity || 0) !== 0).map((balance) => String(balance.productId || "")));
+      for (const product of submittedState.products) {
+        const previous = previousProducts.get(String(product.id));
+        if (!previous) continue;
+        const oldBaseUnit = String(previous.baseUnit || previous.unit || "adet").trim().toLocaleLowerCase("tr-TR");
+        const nextBaseUnit = String(product.baseUnit || product.unit || "adet").trim().toLocaleLowerCase("tr-TR");
+        const hasHistory = historyProductIds.has(String(product.id));
+        const hasBalance = stockedProductIds.has(String(product.id));
+        if (oldBaseUnit !== nextBaseUnit && (hasHistory || hasBalance)) {
+          throw Object.assign(new Error(`“${product.name || product.productName || "Ürün"}” için hareket veya bakiye varken temel birim değiştirilemez.`), { status: 409 });
+        }
+      }
+      // Var olan ürünlerin depo bakiyeleri yalnız stok servisi üzerinden değişir.
+      // Geriye uyumlu tam katalog isteğiyle ilk kez eklenen bir ürün ise gönderilen
+      // başlangıç miktarını yalnız varsayılan Kafe Deposu bakiyesi olarak bir kez alır.
+      const preservedBalances = previousStockState.balances
+        .filter((balance) => submittedProductIds.has(String(balance.productId || "")));
+      const initialBalances = submittedState.balances
+        .filter((balance) => !previousProducts.has(String(balance.productId || "")));
       const stockState = normalizeStockState({
         ...submittedState,
+        unitDefinitions: rawStockState && rawStockState.unitDefinitions
+          ? submittedState.unitDefinitions
+          : previousStockState.unitDefinitions,
         locations: previousStockState.locations,
-        balances: previousStockState.balances,
+        balances: preservedBalances.concat(initialBalances),
         movements: previousStockState.movements,
         transfers: previousStockState.transfers,
         counts: previousStockState.counts,
@@ -3235,6 +3258,26 @@ function validateStockStateForApi(stockState) {
       const value = Number(product[field] || 0);
       if (!Number.isFinite(value) || value < 0) return "Stok miktarı ve eşikler negatif olamaz.";
     }
+    const bulkUnit = String(product.bulkUnit || product.caseUnit || "").trim();
+    const factor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
+    if (bulkUnit && (!Number.isFinite(factor) || factor <= 0)) return "Toplu birim kullanılan üründe Toplu Birim İçeriği sıfırdan büyük olmalıdır.";
+    if (!bulkUnit && factor < 0) return "Toplu Birim İçeriği negatif olamaz.";
+  }
+  return "";
+}
+
+function validateStockUnitCatalog(stockState) {
+  const definitions = stockState && stockState.unitDefinitions;
+  if (!definitions || typeof definitions !== "object" || Array.isArray(definitions)) return "";
+  const key = (value) => String(value || "").trim().toLocaleLowerCase("tr-TR").normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i").replace(/\s+/g, " ");
+  const base = new Set((Array.isArray(definitions.base) ? definitions.base : []).map(key).filter(Boolean));
+  const bulk = new Set((Array.isArray(definitions.bulk) ? definitions.bulk : []).map(key).filter(Boolean));
+  for (const product of Array.isArray(stockState.products) ? stockState.products : []) {
+    const baseUnit = key(product && (product.baseUnit || product.unit));
+    const bulkUnit = key(product && (product.bulkUnit || product.caseUnit));
+    if (baseUnit && !base.has(baseUnit)) return `“${product.name || product.productName || "Ürün"}” temel birimi merkezi katalogda bulunamadı.`;
+    if (bulkUnit && !bulk.has(bulkUnit)) return `“${product.name || product.productName || "Ürün"}” toplu birimi merkezi katalogda bulunamadı.`;
   }
   return "";
 }

@@ -4395,6 +4395,29 @@
         if (event.detail && event.detail.action === "new-product") addStockProduct();
       }).catch((error) => updateSaveControls(error.message || "Stok kataloğu yüklenemedi"));
     });
+    document.addEventListener("tahmisci:stock-unit-definitions-updated", (event) => {
+      if (!state.stock) return;
+      const detail = event.detail || {};
+      state.stock.unitDefinitions = detail.unitDefinitions || state.stock.unitDefinitions;
+      if (detail.action === "rename" && detail.payload) {
+        const from = String(detail.payload.from || "").trim().toLocaleLowerCase("tr-TR");
+        const to = String(detail.payload.to || "").trim().toLocaleLowerCase("tr-TR");
+        state.stock.products.forEach((product) => {
+          if (detail.kind === "base" && stockUnitText(product.baseUnit || product.unit, "").toLocaleLowerCase("tr-TR") === from) {
+            product.baseUnit = to;
+            product.unit = to;
+            if (stockUnitText(product.defaultMovementUnit, "").toLocaleLowerCase("tr-TR") === from) product.defaultMovementUnit = to;
+          }
+          if (detail.kind === "bulk" && stockUnitText(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR") === from) {
+            product.bulkUnit = to;
+            product.caseUnit = to;
+            if (stockUnitText(product.defaultMovementUnit, "").toLocaleLowerCase("tr-TR") === from) product.defaultMovementUnit = to;
+          }
+        });
+      }
+      safeLocalSet(STOCK_STORAGE_KEY, JSON.stringify(state.stock));
+      if (state.activeSection === "stock") renderStockEditor();
+    });
   }
 
   function loadStockData() {
@@ -4485,10 +4508,25 @@
 
     const category = selectedStockEditorCategory();
     const product = selectedStockEditorProduct();
+    const definitions = state.stock && state.stock.unitDefinitions || { base: [], bulk: [] };
+    const baseUnits = Array.isArray(definitions.base) ? definitions.base.slice() : [];
+    const bulkUnits = Array.isArray(definitions.bulk) ? definitions.bulk.slice() : [];
+    const selectedBaseUnit = product ? stockUnitText(product.baseUnit || product.unit, "adet").toLocaleLowerCase("tr-TR") : "";
+    const selectedBulkUnit = product ? stockUnitText(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR") : "";
+    if (selectedBaseUnit && !baseUnits.includes(selectedBaseUnit)) baseUnits.push(selectedBaseUnit);
+    if (selectedBulkUnit && !bulkUnits.includes(selectedBulkUnit)) bulkUnits.push(selectedBulkUnit);
+    if (els.stockEditorUnit) {
+      els.stockEditorUnit.innerHTML = baseUnits.length
+        ? baseUnits.map((unit) => `<option value="${escapeAttribute(unit)}">${escapeHTML(unit)}</option>`).join("")
+        : `<option value="">Önce Birim Ayarları'ndan temel birim ekleyin</option>`;
+    }
+    if (els.stockEditorBulkUnit) {
+      els.stockEditorBulkUnit.innerHTML = `<option value="">Toplu birim yok</option>${bulkUnits.map((unit) => `<option value="${escapeAttribute(unit)}">${escapeHTML(unit)}</option>`).join("")}`;
+    }
     els.stockEditorCategoryName.value = category ? category.name : "";
     els.stockEditorProductName.value = product ? product.name : "";
-    if (els.stockEditorUnit) els.stockEditorUnit.value = product ? stockUnitText(product.unit || product.baseUnit, "") : "";
-    if (els.stockEditorBulkUnit) els.stockEditorBulkUnit.value = product ? stockUnitText(product.bulkUnit || product.caseUnit, "") : "";
+    if (els.stockEditorUnit) els.stockEditorUnit.value = selectedBaseUnit;
+    if (els.stockEditorBulkUnit) els.stockEditorBulkUnit.value = selectedBulkUnit;
     if (els.stockEditorUnitFactor) els.stockEditorUnitFactor.value = product ? String(Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0) || "") : "";
     if (els.stockEditorSupplier) els.stockEditorSupplier.value = product ? product.supplier || "" : "";
     if (els.stockEditorNote) els.stockEditorNote.value = product ? product.note || "" : "";
@@ -4496,6 +4534,7 @@
 
     const productFields = [els.stockEditorProductName, els.stockEditorUnit, els.stockEditorBulkUnit, els.stockEditorUnitFactor, els.stockEditorSupplier, els.stockEditorActive, els.stockEditorNote];
     productFields.forEach((field) => { if (field) field.disabled = !product; });
+    if (els.stockEditorUnitFactor) els.stockEditorUnitFactor.disabled = !product || !selectedBulkUnit;
     if (els.stockEditorCategoryName) els.stockEditorCategoryName.disabled = !category;
     if (els.stockAddProductButton) els.stockAddProductButton.disabled = !category;
     if (els.stockAddSupplierButton) els.stockAddSupplierButton.disabled = !product;
@@ -4573,12 +4612,16 @@
     if (!category) return;
     const name = await stockCatalogDialog({ title: "Yeni stok ürünü", message: category.name, label: "Ürün adı", value: "Yeni Stok Ürünü", confirmLabel: "Ürünü Ekle" });
     if (!name) return;
+    const defaultBaseUnit = state.stock && state.stock.unitDefinitions && state.stock.unitDefinitions.base && state.stock.unitDefinitions.base[0] || "adet";
     const product = {
       id: `${makeId("stock-product", name)}-${Date.now()}`,
       categoryId: category.id,
       name,
       supplier: "",
-      unit: "adet",
+      unit: defaultBaseUnit,
+      baseUnit: defaultBaseUnit,
+      bulkUnit: "",
+      unitsPerBulkUnit: 0,
       stockQuantity: 0,
       stockQuantityText: "0",
       orderThreshold: 0,
@@ -4641,7 +4684,10 @@
       product.unit = els.stockEditorUnit ? els.stockEditorUnit.value.trim() || "adet" : product.unit;
       product.baseUnit = product.unit;
       product.bulkUnit = els.stockEditorBulkUnit ? els.stockEditorBulkUnit.value.trim() : product.bulkUnit;
-      product.unitsPerBulkUnit = els.stockEditorUnitFactor ? Math.max(0, Number(els.stockEditorUnitFactor.value || 0)) : product.unitsPerBulkUnit;
+      product.caseUnit = product.bulkUnit;
+      product.unitsPerBulkUnit = product.bulkUnit && els.stockEditorUnitFactor ? Math.max(0, Number(els.stockEditorUnitFactor.value || 0)) : 0;
+      product.unitsPerCase = product.unitsPerBulkUnit;
+      product.defaultMovementUnit = product.baseUnit;
       product.allowedUnits = Array.from(new Set([product.baseUnit, product.bulkUnit].filter(Boolean)));
       product.supplier = els.stockEditorSupplier ? els.stockEditorSupplier.value.trim() : product.supplier;
       product.note = els.stockEditorNote ? els.stockEditorNote.value.trim() : product.note;
@@ -4969,26 +5015,49 @@
     })) : defaultStockCategories();
     const validCategoryId = new Set(categories.map((category) => category.id));
     const fallbackCategoryId = categories[0] ? categories[0].id : "stock-category-general";
-    const products = Array.isArray(source.products) ? source.products.map((product, index) => ({
-      ...product,
-      id: String(product.id || makeId("stock-product", `${product.name || index}`)),
-      categoryId: validCategoryId.has(product.categoryId) ? product.categoryId : fallbackCategoryId,
-      name: String(product.name || "Stok ürünü"),
-      supplier: String(product.supplier || product.brand || ""),
-      unit: stockUnitText(product.unit || product.baseUnit, "adet"),
-      stockQuantity: roundStockQuantity(product.stockQuantity),
-      stockQuantityText: String(product.stockQuantityText ?? product.stockQuantity ?? ""),
-      orderThreshold: roundStockQuantity(product.orderThreshold),
-      orderThresholdText: String(product.orderThresholdText ?? product.orderThreshold ?? ""),
-      criticalThreshold: roundStockQuantity(product.criticalThreshold),
-      imageUrl: String(product.imageUrl || ""),
-      note: String(product.note || ""),
-      active: product.active !== false,
-      order: Number.isFinite(Number(product.order)) ? Number(product.order) : index,
-      updatedAt: String(product.updatedAt || source.updatedAt || "")
-    })) : defaultStockProducts();
+    const products = Array.isArray(source.products) ? source.products.map((product, index) => {
+      const baseUnit = stockUnitText(product.baseUnit || product.unit, "adet").toLocaleLowerCase("tr-TR");
+      const bulkUnit = stockUnitText(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR");
+      const unitsPerBulkUnit = Math.max(0, roundStockQuantity(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0));
+      return {
+        ...product,
+        id: String(product.id || makeId("stock-product", `${product.name || index}`)),
+        categoryId: validCategoryId.has(product.categoryId) ? product.categoryId : fallbackCategoryId,
+        name: String(product.name || "Stok ürünü"),
+        supplier: String(product.supplier || product.brand || ""),
+        unit: baseUnit,
+        baseUnit,
+        bulkUnit,
+        caseUnit: bulkUnit,
+        unitsPerBulkUnit,
+        unitsPerCase: unitsPerBulkUnit,
+        stockQuantity: roundStockQuantity(product.stockQuantity),
+        stockQuantityText: String(product.stockQuantityText ?? product.stockQuantity ?? ""),
+        orderThreshold: roundStockQuantity(product.orderThreshold),
+        orderThresholdText: String(product.orderThresholdText ?? product.orderThreshold ?? ""),
+        criticalThreshold: roundStockQuantity(product.criticalThreshold),
+        imageUrl: String(product.imageUrl || ""),
+        note: String(product.note || ""),
+        active: product.active !== false,
+        order: Number.isFinite(Number(product.order)) ? Number(product.order) : index,
+        updatedAt: String(product.updatedAt || source.updatedAt || "")
+      };
+    }) : defaultStockProducts();
+    const cleanUnits = (items) => Array.from(new Set((Array.isArray(items) ? items : []).map((item) => stockUnitText(item, "").toLocaleLowerCase("tr-TR")).filter(Boolean)));
+    const sourceDefinitions = source.unitDefinitions && typeof source.unitDefinitions === "object" ? source.unitDefinitions : {};
+    const baseUnits = cleanUnits(sourceDefinitions.base || sourceDefinitions.baseUnits);
+    const bulkUnits = cleanUnits(sourceDefinitions.bulk || sourceDefinitions.bulkUnits);
+    if (!source.unitDefinitions) {
+      ["adet", "şişe", "litre", "ml", "kg", "gr", "metre"].forEach((unit) => { if (!baseUnits.includes(unit)) baseUnits.push(unit); });
+      ["koli", "kasa", "paket", "kutu", "çuval"].forEach((unit) => { if (!bulkUnits.includes(unit)) bulkUnits.push(unit); });
+    }
+    products.forEach((product) => {
+      if (product.baseUnit && !baseUnits.includes(product.baseUnit)) baseUnits.push(product.baseUnit);
+      if (product.bulkUnit && !bulkUnits.includes(product.bulkUnit)) bulkUnits.push(product.bulkUnit);
+    });
     return {
       schemaVersion: Number(source.schemaVersion || 1),
+      unitDefinitions: { base: baseUnits, bulk: bulkUnits, updatedAt: sourceDefinitions.updatedAt || null, updatedBy: sourceDefinitions.updatedBy || "" },
       categories,
       products,
       movements: Array.isArray(source.movements) ? source.movements.map(normalizeStockMovementForAdmin).filter(Boolean) : [],

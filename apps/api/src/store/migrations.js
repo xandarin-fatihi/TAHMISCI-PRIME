@@ -1001,6 +1001,7 @@ function normalizeStockState(stockState) {
   const products = Array.isArray(source.products)
     ? source.products.map((product, index) => normalizeStockProduct(product, index, categoryNames)).filter(Boolean)
     : defaultStockState().products;
+  const unitDefinitions = normalizeStockUnitDefinitions(source.unitDefinitions, products);
   const locations = normalizeStockLocations(source.locations);
   const generalLocation = locations.find((location) => location.code === "GENEL" || location.type === "central") || locations[0];
   const cafeLocation = locations.find((location) => location.code === "CAFE" || location.type === "cafe") || locations[0];
@@ -1016,9 +1017,11 @@ function normalizeStockState(stockState) {
     ...source,
     schemaVersion: 3,
     locationMigrationVersion: 1,
-    unitMetadataMigrationVersion: 1,
+    unitMetadataMigrationVersion: 2,
+    unitCatalogMigrationVersion: 1,
     categories,
     products,
+    unitDefinitions,
     locations,
     balances,
     movements,
@@ -1043,6 +1046,51 @@ function normalizeStockState(stockState) {
     };
   });
   return next;
+}
+
+const DEFAULT_STOCK_BASE_UNITS = Object.freeze(["adet", "şişe", "litre", "ml", "kg", "gr", "metre"]);
+const DEFAULT_STOCK_BULK_UNITS = Object.freeze(["koli", "kasa", "paket", "kutu", "çuval"]);
+
+function normalizeStockUnitDefinitions(value, products = []) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  const base = source ? normalizeStockUnitList(source.base || source.baseUnits) : DEFAULT_STOCK_BASE_UNITS.slice();
+  const bulk = source ? normalizeStockUnitList(source.bulk || source.bulkUnits) : DEFAULT_STOCK_BULK_UNITS.slice();
+  for (const product of normalizeArray(products)) {
+    const baseUnit = normalizeStockUnit(product && (product.baseUnit || product.unit));
+    const bulkUnit = normalizeStockUnit(product && (product.bulkUnit || product.caseUnit));
+    if (baseUnit && !base.includes(baseUnit)) base.push(baseUnit);
+    if (bulkUnit && !bulk.includes(bulkUnit)) bulk.push(bulkUnit);
+  }
+  return {
+    base: base.slice(0, 200),
+    bulk: bulk.slice(0, 200),
+    updatedAt: source && source.updatedAt || null,
+    updatedBy: source && String(source.updatedBy || "") || ""
+  };
+}
+
+function normalizeStockUnitList(value) {
+  const seen = new Set();
+  const result = [];
+  const source = Array.isArray(value) ? value : String(value || "").split(",");
+  for (const item of source) {
+    const unit = normalizeStockUnit(item);
+    const key = stockUnitIdentity(unit);
+    if (!unit || !key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(unit);
+  }
+  return result;
+}
+
+function stockUnitIdentity(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ı/g, "i")
+    .replace(/\s+/g, " ");
 }
 
 function normalizeStockLocations(value) {
@@ -1447,7 +1495,14 @@ function defaultStockState() {
   return {
     schemaVersion: 3,
     locationMigrationVersion: 1,
-    unitMetadataMigrationVersion: 1,
+    unitMetadataMigrationVersion: 2,
+    unitCatalogMigrationVersion: 1,
+    unitDefinitions: {
+      base: DEFAULT_STOCK_BASE_UNITS.slice(),
+      bulk: DEFAULT_STOCK_BULK_UNITS.slice(),
+      updatedAt: null,
+      updatedBy: ""
+    },
     categories: [],
     products: [],
     locations: [

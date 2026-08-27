@@ -82,7 +82,7 @@
       "profileForm", "profileName", "profilePhone", "profileAvatarUrl", "profilePhotoInput", "profileBio",
       "profileMessage", "profileAvatar",
       "stockDetailModal", "stockDetailClose", "stockDetailCategory", "stockDetailTitle", "stockDetailStatus",
-      "stockDetailLocation", "stockDetailQuantity", "stockDetailActions", "stockDetailMessage",
+      "stockDetailQuantity", "stockDetailActions", "stockDetailMessage",
       "stockActionModal", "stockActionForm", "stockActionClose", "stockActionKicker", "stockActionTitle", "stockActionProduct",
       "stockActionLocation", "stockActionCurrent", "stockActionConversion", "stockActionQuantity", "stockActionUnit", "stockQuickAmounts",
       "stockActionConverted", "stockActionAfter", "stockActionNote", "stockActionMessage", "stockActionCancel", "stockActionSubmit"
@@ -772,7 +772,6 @@
     if (!product || !els.stockDetailModal) return;
     const category = stockCategories().find((item) => item.id === product.categoryId);
     const status = stockStatus(product);
-    const location = state.stock.location || {};
     if (els.stockDetailModal.hidden) {
       state.detailTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     }
@@ -783,7 +782,6 @@
       els.stockDetailStatus.className = `badge ${status.key}`;
       els.stockDetailStatus.textContent = status.label;
     }
-    if (els.stockDetailLocation) els.stockDetailLocation.textContent = safeText(location.name, "Kafe Deposu");
     if (els.stockDetailQuantity) els.stockDetailQuantity.textContent = currentStockLabel(product);
     if (els.stockDetailMessage) {
       els.stockDetailMessage.textContent = "";
@@ -1680,13 +1678,10 @@
   }
 
   function stockSupportedUnits(product) {
-    const declared = Array.isArray(product && product.allowedUnits)
-      ? product.allowedUnits.map((unit) => safeText(unit, "").toLocaleLowerCase("tr-TR")).filter(Boolean)
-      : [];
     const baseUnit = productBaseUnit(product);
     const bulkUnit = productBulkUnit(product);
-    const units = declared.length ? declared : [baseUnit];
-    if (productUnitsPerBulk(product) > 0) units.push(bulkUnit);
+    const units = [baseUnit];
+    if (bulkUnit && productUnitsPerBulk(product) > 0) units.push(bulkUnit);
     return Array.from(new Set(units));
   }
 

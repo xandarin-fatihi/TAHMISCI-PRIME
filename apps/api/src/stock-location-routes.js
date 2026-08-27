@@ -148,10 +148,46 @@ function registerStockLocationRoutes(deps) {
         ? inventory.balances.map(personnelInventoryBalance)
         : inventory.balances,
       summary: inventory.summary,
+      unitDefinitions: state.unitDefinitions,
       revision: stockRevision(data),
       publishRevision: Number(data.revisions && data.revisions.publish || 0),
       updatedAt: data.stockUpdatedAt || state.updatedAt || null
     };
+  }
+
+  function normalizeCatalogUnit(value) {
+    const unit = String(value || "").trim().replace(/\s+/g, " ").toLocaleLowerCase("tr-TR");
+    return unit && unit.length <= 30 && /^[\p{L}\p{N} _-]+$/u.test(unit) ? unit : "";
+  }
+
+  function catalogUnitKey(value) {
+    return String(value || "").trim().toLocaleLowerCase("tr-TR").normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i").replace(/\s+/g, " ");
+  }
+
+  function unitCatalogUsage(state, kind, unit) {
+    const key = catalogUnitKey(unit);
+    return state.products.filter((product) => catalogUnitKey(kind === "base"
+      ? product.baseUnit || product.unit
+      : product.bulkUnit || product.caseUnit) === key);
+  }
+
+  function updateProductUnitReferences(state, kind, from, to, timestamp) {
+    const fromKey = catalogUnitKey(from);
+    for (const product of state.products) {
+      if (kind === "base" && catalogUnitKey(product.baseUnit || product.unit) === fromKey) {
+        product.baseUnit = to;
+        product.unit = to;
+        if (catalogUnitKey(product.defaultMovementUnit) === fromKey) product.defaultMovementUnit = to;
+        product.updatedAt = timestamp;
+      }
+      if (kind === "bulk" && catalogUnitKey(product.bulkUnit || product.caseUnit) === fromKey) {
+        product.bulkUnit = to;
+        product.caseUnit = to;
+        if (catalogUnitKey(product.defaultMovementUnit) === fromKey) product.defaultMovementUnit = to;
+        product.updatedAt = timestamp;
+      }
+    }
   }
 
   function personnelInventoryBalance(balance) {
@@ -200,9 +236,79 @@ function registerStockLocationRoutes(deps) {
         ok: true,
         locations: locationsForAdmin(data, state),
         personnel: personnelForLocations(data),
+        unitDefinitions: state.unitDefinitions,
         revision: stockRevision(data),
         updatedAt: data.stockUpdatedAt || state.updatedAt || null
       });
+    } catch (error) { next(error); }
+  });
+
+  app.post("/api/admin/stock/unit-definitions", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+    try {
+      const body = req.body || {};
+      const action = String(body.action || "add").trim();
+      const kind = String(body.kind || "").trim();
+      if (!new Set(["add", "rename", "remove"]).has(action)) throw fail("Birim kataloğu işlemi geçersiz.", 422);
+      if (!new Set(["base", "bulk"]).has(kind)) throw fail("Birim türü temel veya toplu olmalıdır.", 422);
+      const operationId = requestId(req, true);
+      const timestamp = nowIso();
+      const operationSignature = JSON.stringify({ action, kind, values: body.values || body.value || "", from: body.from || "", to: body.to || "" });
+      let unitDefinitions;
+      let usage = [];
+      let idempotent = false;
+      const saved = await store.update((data, context) => {
+        const state = normalizeStockState(data.stockState);
+        const replay = routeOperation(state, `unit_catalog_${action}`, operationId);
+        if (replay) {
+          if (replay.value && replay.value.signature && replay.value.signature !== operationSignature) {
+            throw fail("Bu requestId başka bir birim kataloğu işlemi için kullanıldı.", 409);
+          }
+          unitDefinitions = state.unitDefinitions;
+          idempotent = true;
+          return context.noChange;
+        }
+        assertExpectedStockRevision(data, body, `unit_catalog_${action}`, operationId);
+        const definitions = state.unitDefinitions && typeof state.unitDefinitions === "object"
+          ? state.unitDefinitions
+          : { base: [], bulk: [] };
+        const current = Array.isArray(definitions[kind]) ? definitions[kind].slice() : [];
+        if (action === "add") {
+          const rawValues = Array.isArray(body.values) ? body.values : String(body.values || body.value || "").split(",");
+          const values = rawValues.map(normalizeCatalogUnit).filter(Boolean);
+          if (!values.length) throw fail("En az bir geçerli birim girin.", 422);
+          for (const value of values) {
+            if (!current.some((item) => catalogUnitKey(item) === catalogUnitKey(value))) current.push(value);
+          }
+        } else {
+          const from = normalizeCatalogUnit(body.from || body.value);
+          if (!from || !current.some((item) => catalogUnitKey(item) === catalogUnitKey(from))) throw fail("Düzenlenecek birim bulunamadı.", 404);
+          if (action === "rename") {
+            const to = normalizeCatalogUnit(body.to);
+            if (!to) throw fail("Yeni birim adı geçersiz.", 422);
+            const next = current.filter((item) => catalogUnitKey(item) !== catalogUnitKey(from));
+            if (!next.some((item) => catalogUnitKey(item) === catalogUnitKey(to))) next.push(to);
+            definitions[kind] = next;
+            updateProductUnitReferences(state, kind, from, to, timestamp);
+          } else {
+            usage = unitCatalogUsage(state, kind, from);
+            if (usage.length) {
+              const names = usage.slice(0, 8).map((product) => String(product.name || product.productName || product.id)).join(", ");
+              throw fail(`“${from}” birimi ${usage.length} üründe kullanılıyor: ${names}. Önce ürün birimlerini değiştirin.`, 409);
+            }
+            definitions[kind] = current.filter((item) => catalogUnitKey(item) !== catalogUnitKey(from));
+          }
+        }
+        if (action === "add") definitions[kind] = current;
+        definitions.updatedAt = timestamp;
+        definitions.updatedBy = adminActor(req).id;
+        state.unitDefinitions = definitions;
+        rememberRouteOperation(state, `unit_catalog_${action}`, operationId, { action, kind, signature: operationSignature }, timestamp);
+        unitDefinitions = persistStockMutation(data, state, timestamp).unitDefinitions;
+        appendStockAudit(data, adminActor(req), `stock.unit_catalog.${action}`, kind, operationId, null, { unitDefinitions }, timestamp);
+        return data;
+      });
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp);
+      res.json({ ok: true, unitDefinitions: unitDefinitions || normalizeStockState(saved.stockState).unitDefinitions, usage, idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
 
@@ -433,8 +539,13 @@ function registerStockLocationRoutes(deps) {
           throw fail("Kritik eşik sipariş eşiğinden büyük olamaz.");
         }
         const currentBaseUnit = String(product.baseUnit || product.unit || "adet");
-        const nextBaseUnit = body.baseUnit === undefined ? currentBaseUnit : String(body.baseUnit || "").trim().toLocaleLowerCase("tr-TR");
+        const nextBaseUnit = body.baseUnit === undefined ? currentBaseUnit : normalizeCatalogUnit(body.baseUnit);
         if (!nextBaseUnit) throw fail("Temel birim boş olamaz.");
+        const baseCatalog = state.unitDefinitions && Array.isArray(state.unitDefinitions.base) ? state.unitDefinitions.base : [];
+        const bulkCatalog = state.unitDefinitions && Array.isArray(state.unitDefinitions.bulk) ? state.unitDefinitions.bulk : [];
+        if (!baseCatalog.some((unit) => catalogUnitKey(unit) === catalogUnitKey(nextBaseUnit))) {
+          throw fail("Temel birim merkezi Temel Birimler kataloğunda bulunmalıdır.", 422);
+        }
         const hasHistory = state.movements.some((movement) => String(movement.productId) === String(product.id));
         const hasBalance = state.balances.some((candidate) => String(candidate.productId) === String(product.id) && Number(candidate.quantity || 0) !== 0);
         if (nextBaseUnit !== currentBaseUnit && (hasHistory || hasBalance)) {
@@ -445,7 +556,10 @@ function registerStockLocationRoutes(deps) {
           product.unit = nextBaseUnit;
         }
         if (body.bulkUnit !== undefined) {
-          product.bulkUnit = String(body.bulkUnit || "").trim().toLocaleLowerCase("tr-TR");
+          product.bulkUnit = normalizeCatalogUnit(body.bulkUnit);
+          if (product.bulkUnit && !bulkCatalog.some((unit) => catalogUnitKey(unit) === catalogUnitKey(product.bulkUnit))) {
+            throw fail("Toplu birim merkezi Toplu Birimler kataloğunda bulunmalıdır.", 422);
+          }
           product.caseUnit = product.bulkUnit;
         }
         if (body.unitsPerBulkUnit !== undefined || body.unitsPerCase !== undefined) {
@@ -844,7 +958,7 @@ function appendStockAudit(data, actor, action, entityId, requestId, previous, ne
     actorRole: actor && actor.type === "admin" ? "admin" : "personel",
     userId: String(actor && actor.id || "system"),
     name: String(actor && actor.name || "Sistem"),
-    entityType: action.includes("location") ? "stock_location" : action.includes("transfer") ? "stock_transfer" : "stock_movement",
+    entityType: action.includes("unit_catalog") ? "stock_unit_definition" : action.includes("location") ? "stock_location" : action.includes("transfer") ? "stock_transfer" : "stock_movement",
     entityId: String(entityId || ""),
     requestId: String(requestId || ""),
     previousState: previous || null,

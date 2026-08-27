@@ -52,6 +52,30 @@ test("legacy stok bir kez Kafe Deposuna taşınır ve toplam iki kez yazılmaz",
   assert.equal(stockService.calculateTotalStock(twice, "milk-1"), 100);
 });
 
+test("eski ürün birimleri merkezi kataloglara idempotent taşınır ve bakiye değişmez", () => {
+  const legacy = legacyStockState(126);
+  legacy.products[0].baseUnit = "Adet";
+  legacy.products[0].bulkUnit = "Koli";
+  legacy.products[0].unitsPerBulkUnit = 12;
+  const once = normalizeStockState(legacy);
+  const twice = normalizeStockState(once);
+  assert.ok(once.unitDefinitions.base.includes("adet"));
+  assert.ok(once.unitDefinitions.bulk.includes("koli"));
+  assert.deepEqual(twice.unitDefinitions, once.unitDefinitions);
+  assert.equal(stockService.calculateTotalStock(once, "milk-1"), 126);
+  assert.equal(stockService.calculateTotalStock(twice, "milk-1"), 126);
+  assert.equal(stockService.formatBaseQuantity(once.products[0], 126).display, "10 koli + 6 adet");
+});
+
+test("özel temel ve toplu birim katalogları yenilemede korunur ve ürün seçenekleriyle sınırlı kalır", () => {
+  const source = legacyStockState(24);
+  source.unitDefinitions = { base: ["adet", "porsiyon"], bulk: ["koli", "tepsi"] };
+  const state = normalizeStockState(source);
+  assert.deepEqual(state.unitDefinitions.base, ["adet", "porsiyon"]);
+  assert.deepEqual(state.unitDefinitions.bulk, ["koli", "tepsi"]);
+  assert.deepEqual(stockService.allowedProductUnits(state.products[0]), ["adet", "koli"]);
+});
+
 test("depo transferi atomik, idempotent ve toplam stoğu koruyan bir işlemdir", () => {
   const admin = { type: "admin", id: "manager-1", name: "Yönetici" };
   const initial = stateWithGeneralQuantity(100);
