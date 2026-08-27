@@ -390,10 +390,10 @@
 .stock-warehouse-card > .ui-button { grid-column: 1 / -1; }
 .stock-warehouse-back { min-height: 38px; margin-bottom: 10px; padding: 0 12px; border: 1px solid var(--panel-line); border-radius: 9px; background: var(--panel-surface); color: var(--panel-coffee); font: 700 11px/1 var(--panel-font-ui); cursor: pointer; }
 
-.stock-product-drawer-layer { position: fixed; z-index: 1250; inset: 0; display: grid; place-items: center; padding: 14px; }
+.stock-product-drawer-layer { position: fixed; z-index: 1250; inset: 0; display: grid; place-items: center; padding: 14px; overflow: hidden; overscroll-behavior: contain; }
 .stock-product-drawer-layer[hidden] { display: none; }
 .stock-product-drawer-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: rgba(44, 22, 9, .43); backdrop-filter: blur(4px); cursor: default; }
-.stock-product-drawer { position: relative; z-index: 1; display: grid; width: min(760px, calc(100vw - 28px)); min-width: 0; max-height: calc(100dvh - 28px); grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; border: 1px solid var(--panel-line); border-radius: 16px; background: var(--panel-surface, #fffaf3); box-shadow: 0 24px 70px rgba(44, 22, 9, .28); }
+.stock-product-drawer { position: relative; z-index: 1; display: grid; width: min(760px, calc(100vw - 28px)); min-width: 0; max-height: calc(100dvh - 28px); margin: auto; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; border: 1px solid var(--panel-line); border-radius: 16px; background: var(--panel-surface, #fffaf3); box-shadow: 0 24px 70px rgba(44, 22, 9, .28); }
 .stock-product-drawer > header,
 .stock-admin-dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 18px; border-bottom: 1px solid var(--panel-line); }
 .stock-product-drawer h4,

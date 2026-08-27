@@ -68,6 +68,7 @@
         <a href="#productEditorCard" data-panel-section="product"><svg aria-hidden="true"><use href="#panel-icon-product"/></svg><span class="panel-nav-label">Ürün Düzenleme</span></a>
         <a href="#bulkPriceCard" data-panel-section="bulkPrice"><svg aria-hidden="true"><use href="#panel-icon-price"/></svg><span class="panel-nav-label">Toplu Fiyat Güncelleme</span></a>
         <a href="#dataImportCenter" data-panel-section="dataCenter"><svg aria-hidden="true"><use href="#panel-icon-import"/></svg><span class="panel-nav-label">Excel Veri Merkezi</span></a>
+        <a href="/fatura/?view=stock" aria-label="Stok &amp; Sevkiyat"><svg aria-hidden="true"><use href="#panel-icon-stock"/></svg><span class="panel-nav-label">Stok &amp; Sevkiyat</span></a>
         <a href="/fatura/" aria-label="Tahmisçi Fatura"><svg aria-hidden="true"><use href="#panel-icon-import"/></svg><span class="panel-nav-label">Tahmisçi Fatura</span></a>
         <a href="#recipeEditorCard" data-panel-section="recipe"><svg aria-hidden="true"><use href="#panel-icon-recipe"/></svg><span class="panel-nav-label">Reçete Düzenleme</span></a>
         <!-- PASIF_SITE_MODULU_BASLANGIC
@@ -1487,6 +1488,1357 @@
               </div>
             </div>
           </section>
+      <!-- Güvenli geri dönüş kaynağı: aktif yönetici menüsü /fatura/?view=stock adresine gider. -->
+      <template id="legacyStockWorkspaceTemplate">
+        <section class="section-panel stock-admin-panel" id="stockCard" data-section-panel="stock" aria-labelledby="stockPageTitle">
+          <div class="staff-page-head stock-page-head">
+            <div>
+              <p class="eyebrow">Stok &amp; Sevkiyat</p>
+              <h3 id="stockPageTitle">Stok Yönetimi</h3>
+              <p>Depo bakiyelerini, sayımları, hareketleri ve sevkiyatları tek merkezden yönetin.</p>
+            </div>
+            <div class="stock-page-actions">
+              <button class="ui-button ui-button--secondary ui-button--sm" id="stockUnitSettingsButton" type="button">Birim Ayarları</button>
+              <button class="ui-button ui-button--secondary" id="stockTransferRequestsButton" type="button">Transfer Talepleri <span class="stock-location-count" id="stockTransferPendingCount">0</span></button>
+              <button class="ui-button ui-button--secondary" id="stockMovementHistoryButton" type="button">Hareket Geçmişi</button>
+              <button class="ui-button ui-button--secondary" id="stockLocationManagementButton" type="button">Depolar</button>
+              <button class="ui-button ui-button--secondary" id="stockLocationNewProductButton" type="button">+ Yeni Ürün</button>
+              <button class="ui-button ui-button--primary" id="stockCountStartButton" type="button">Sayım Başlat</button>
+            </div>
+          </div>
+
+          <div class="stock-domain-stack stock-main-col">
+          <details class="stock-accordion stock-domain-accordion stock-location-accordion" id="stockLocationAccordion" open>
+            <summary>
+              <span class="stock-step">1</span>
+              <span><small class="stock-accordion-kicker">DEPO YÖNETİMİ</small><strong>Depo Bazlı Stok</strong><small>Depoları, stok bakiyelerini, transferleri ve eşikleri yönetin.</small></span>
+              <i aria-hidden="true"></i>
+            </summary>
+            <div class="stock-accordion-body">
+          <section class="stock-location-workspace" id="stockLocationWorkspace" aria-label="Depo bazlı stok yönetimi" aria-busy="true">
+            <div class="stock-location-workspace__head">
+              <div>
+                <p class="eyebrow">Depo Bazlı Stok</p>
+                <h4 id="stockActiveLocationTitle">Kafe Deposu</h4>
+                <p id="stockLocationFreshness">Veri güncelliği denetleniyor…</p>
+              </div>
+              <button class="ui-button ui-button--secondary ui-button--sm" id="stockLocationRefreshButton" type="button">Yenile</button>
+            </div>
+            <div class="stock-location-message" id="stockLocationMessage" role="status" aria-live="polite" hidden></div>
+            <div class="stock-location-summary" id="stockLocationSummary" aria-live="polite"></div>
+            <section class="stock-warehouse-overview" id="stockWarehouseOverview" aria-labelledby="stockWarehouseOverviewTitle">
+              <header class="stock-warehouse-overview__head">
+                <div><p class="eyebrow">Tüm Depolar</p><h4 id="stockWarehouseOverviewTitle">Depo Genel Bakışı</h4><p>Kafe, genel ve diğer depo bakiyelerini tek merkezden yönetin.</p></div>
+                <button class="ui-button ui-button--secondary" id="stockLocationOverviewAddButton" type="button">+ Depo Ekle</button>
+              </header>
+              <div class="stock-warehouse-cards" id="stockWarehouseCards" aria-live="polite"><div class="stock-location-loading">Depolar yükleniyor...</div></div>
+            </section>
+            <div class="stock-location-grid" id="stockLocationInventoryView" hidden>
+              <section class="panel-card stock-location-inventory-card">
+                <div class="stock-section-heading">
+                  <div><button class="stock-warehouse-back" id="stockWarehouseBackButton" type="button">← Depolara Dön</button><p class="eyebrow">Seçili Lokasyon</p><h4>Depo Envanteri</h4><p id="stockLocationInventoryMeta">Depo seçildiğinde güncel bakiyeler görünür.</p></div>
+                </div>
+                <div class="stock-location-selector" id="stockLocationSelector" role="tablist" aria-label="Stok lokasyonu seçimi"></div>
+                <div class="stock-location-toolbar">
+                  <label><span>Ürün ara</span><input id="stockLocationSearch" type="search" placeholder="Ürün ara... (ör. espresso, süt, çikolata)"></label>
+                  <label><span>Durum</span><select id="stockLocationStatusFilter"><option value="all">Tüm durumlar</option><option value="critical">Kritik</option><option value="transfer">Transfer öneriliyor</option><option value="sufficient">Yeterli</option></select></label>
+                </div>
+                <div class="stock-location-category-filter" id="stockLocationCategoryFilter" aria-label="Kategori filtresi"></div>
+                <div class="stock-location-inventory" id="stockLocationInventory" aria-live="polite"></div>
+              </section>
+            </div>
+
+            <div class="stock-product-drawer-layer" id="stockProductDrawerLayer" hidden>
+              <button class="stock-product-drawer-backdrop" type="button" data-stock-drawer-close tabindex="-1" aria-label="Ürün detayını kapat"></button>
+              <aside class="stock-product-drawer" id="stockProductDrawer" role="dialog" aria-modal="true" aria-labelledby="stockProductDrawerTitle" aria-describedby="stockProductDrawerSubtitle" tabindex="-1">
+                <header><div><p class="eyebrow">Stok Ürünü</p><h4 id="stockProductDrawerTitle">Ürün detayı</h4><span id="stockProductDrawerSubtitle"></span></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-drawer-close aria-label="Ürün detayını kapat">×</button></header>
+                <div class="stock-product-drawer__message" id="stockProductDrawerMessage" role="status" aria-live="polite"></div>
+                <div class="stock-product-drawer__body" id="stockProductDrawerBody"></div>
+              </aside>
+            </div>
+
+            <dialog class="stock-admin-dialog" id="stockMovementDialog" aria-labelledby="stockLocationMovementModeLabel">
+              <form id="stockLocationMovementForm" class="stock-admin-dialog__shell" novalidate>
+                <header><div><p class="eyebrow" id="stockLocationMovementModeLabel">Stok Hareketi</p><h4 id="stockLocationMovementProductName">Ürün seçin</h4><span id="stockLocationMovementCurrent">Mevcut miktar: —</span></div><button class="ui-button ui-button--icon ui-button--secondary" id="stockLocationMovementClose" type="button" aria-label="İşlem penceresini kapat">×</button></header>
+                <div class="stock-admin-dialog__body stock-location-form">
+                  <select id="stockLocationMovementProduct" required hidden></select><select id="stockLocationMovementType" hidden><option value="manual_in">Stok girişi</option><option value="manual_out">Stok çıkışı</option><option value="waste">Fire / sarf</option></select>
+                  <label><span>Miktar</span><div class="stock-operation-stepper"><button type="button" data-stock-quantity-step="-1" aria-label="Miktarı azalt">−</button><input id="stockLocationMovementQuantity" type="number" min="0.01" step="1" inputmode="decimal" required><button type="button" data-stock-quantity-step="1" aria-label="Miktarı artır">+</button></div></label>
+                  <label><span>Birim</span><select id="stockLocationMovementUnit" required></select></label>
+                  <div class="stock-operation-quick" id="stockMovementQuickAmounts" aria-label="Hızlı miktar seçenekleri"></div>
+                  <label><span>Neden</span><select id="stockLocationMovementReason"><option value="Kullanım">Kullanım</option><option value="Sarf">Sarf</option><option value="Eksiltme">Eksiltme</option><option value="Fire">Fire</option><option value="Sayım düzeltmesi">Sayım düzeltmesi</option><option value="Hasarlı ürün">Hasarlı ürün</option><option value="Son kullanma tarihi">Son kullanma tarihi</option><option value="Diğer">Diğer</option></select></label>
+                  <label><span>Açıklama</span><input id="stockLocationMovementNote" type="text" maxlength="250" placeholder="İsteğe bağlı"></label>
+                  <div class="stock-operation-conversion" id="stockLocationMovementConversion">Miktar seçildiğinde temel birim karşılığı gösterilir.</div>
+                  <div class="stock-operation-preview"><span>İşlem sonrası stok</span><strong id="stockLocationMovementPreview">—</strong></div>
+                  <p class="stock-admin-dialog__message" id="stockMovementDialogMessage" role="alert"></p>
+                </div>
+                <footer><button class="ui-button ui-button--secondary" type="button" data-stock-dialog-close="stockMovementDialog">Vazgeç</button><button class="ui-button ui-button--primary" id="stockLocationMovementSubmit" type="submit" data-operation-class="immediate-operation">İşlemi Kaydet</button></footer>
+              </form>
+            </dialog>
+
+            <dialog class="stock-admin-dialog" id="stockTransferDialog" aria-labelledby="stockTransferDialogTitle">
+              <form id="stockTransferForm" class="stock-admin-dialog__shell" novalidate>
+                <header><div><p class="eyebrow">Atomik İşlem</p><h4 id="stockTransferDialogTitle">Depolar Arası Aktar</h4><span>Kaynak ve hedef bakiye aynı işlemde güncellenir.</span></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-dialog-close="stockTransferDialog" aria-label="Transfer penceresini kapat">×</button></header>
+                <div class="stock-admin-dialog__body stock-location-form">
+                  <label><span>Kaynak depo</span><select id="stockTransferFrom" required></select></label>
+                  <label><span>Hedef depo</span><select id="stockTransferTo" required></select></label>
+                  <label><span>Ürün</span><select id="stockTransferProduct" required></select></label>
+                  <div class="stock-location-form__row"><label><span>Miktar</span><input id="stockTransferQuantity" type="number" min="0.01" step="0.01" inputmode="decimal" required></label><label><span>Birim</span><select id="stockTransferUnit" required></select></label></div>
+                  <label><span>Not</span><textarea id="stockTransferNote" rows="2" maxlength="250" placeholder="İsteğe bağlı açıklama"></textarea></label>
+                  <div class="stock-transfer-preview" id="stockTransferPreview">Ürün ve miktar seçildiğinde önizleme görünür.</div>
+                  <p class="stock-admin-dialog__message" id="stockTransferDialogMessage" role="alert"></p>
+                </div>
+                <footer><button class="ui-button ui-button--secondary" type="button" data-stock-dialog-close="stockTransferDialog">Vazgeç</button><button class="ui-button ui-button--primary" id="stockTransferSubmit" type="submit" data-operation-class="immediate-operation">Onayla ve Aktar</button></footer>
+              </form>
+            </dialog>
+
+            <dialog class="stock-admin-dialog" id="stockThresholdDialog" aria-labelledby="stockThresholdDialogTitle">
+              <form id="stockThresholdForm" class="stock-admin-dialog__shell" novalidate>
+                <header><div><p class="eyebrow">Ürün Ayarları</p><h4 id="stockThresholdDialogTitle">Eşik ve birim bilgileri</h4><span id="stockThresholdDialogMeta"></span></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-dialog-close="stockThresholdDialog" aria-label="Ayar penceresini kapat">×</button></header>
+                <div class="stock-admin-dialog__body stock-threshold-form">
+                  <label><span>Kritik eşik</span><input id="stockThresholdCritical" type="number" min="0" step="0.001" required></label>
+                  <label><span>Sipariş / transfer eşiği</span><input id="stockThresholdOrder" type="number" min="0" step="0.001" required></label>
+                  <label><span>Hedef stok</span><input id="stockThresholdTarget" type="number" min="0" step="0.001" required></label>
+                  <label><span>Temel birim</span><select id="stockThresholdBaseUnit" required></select></label>
+                  <label><span>Toplu birim</span><select id="stockThresholdBulkUnit"><option value="">Toplu birim yok</option></select></label>
+                  <label><span>Toplu birim çarpanı</span><input id="stockThresholdFactor" type="number" min="0" step="0.001"></label>
+                  <output class="stock-unit-conversion-preview" id="stockThresholdConversionPreview">Toplu birim seçilmedi.</output>
+                  <p class="stock-admin-dialog__message" id="stockThresholdDialogMessage" role="alert"></p>
+                </div>
+                <footer><button class="ui-button ui-button--secondary" type="button" data-stock-dialog-close="stockThresholdDialog">Vazgeç</button><button class="ui-button ui-button--primary" id="stockThresholdSubmit" type="submit">Kaydet</button></footer>
+              </form>
+            </dialog>
+
+            <dialog class="stock-admin-dialog stock-admin-dialog--wide stock-unit-settings-dialog" id="stockUnitSettingsDialog" aria-labelledby="stockUnitSettingsTitle">
+              <div class="stock-admin-dialog__shell">
+                <header><div><p class="eyebrow">Merkezi Katalog</p><h4 id="stockUnitSettingsTitle">Birim Ayarları</h4><span>Ürünlerde kullanılabilen temel ve toplu birimleri tek merkezden yönetin.</span></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-dialog-close="stockUnitSettingsDialog" aria-label="Birim ayarlarını kapat">×</button></header>
+                <div class="stock-admin-dialog__body stock-unit-settings-grid">
+                  <section class="stock-unit-settings-group" data-unit-kind="base">
+                    <div><h5>Temel Birimler</h5><p>Virgülle ayırarak birden fazla birim ekleyebilirsiniz.</p></div>
+                    <form class="stock-unit-add-form" data-stock-unit-add="base"><label><span>Yeni temel birimler</span><input type="text" data-stock-unit-input placeholder="adet, şişe, litre, ml, kg, gram"></label><button class="ui-button ui-button--secondary" type="submit">Ekle</button></form>
+                    <div class="stock-unit-list" id="stockBaseUnitList" aria-live="polite"></div>
+                  </section>
+                  <section class="stock-unit-settings-group" data-unit-kind="bulk">
+                    <div><h5>Toplu Birimler</h5><p>Bu liste ürün kartlarındaki toplu birim seçimlerini besler.</p></div>
+                    <form class="stock-unit-add-form" data-stock-unit-add="bulk"><label><span>Yeni toplu birimler</span><input type="text" data-stock-unit-input placeholder="koli, kasa, paket, kutu, çuval"></label><button class="ui-button ui-button--secondary" type="submit">Ekle</button></form>
+                    <div class="stock-unit-list" id="stockBulkUnitList" aria-live="polite"></div>
+                  </section>
+                  <p class="stock-admin-dialog__message" id="stockUnitSettingsMessage" role="alert"></p>
+                </div>
+                <footer><button class="ui-button ui-button--secondary" type="button" data-stock-dialog-close="stockUnitSettingsDialog">Kapat</button></footer>
+              </div>
+            </dialog>
+
+            <dialog class="stock-admin-dialog stock-admin-dialog--wide" id="stockHistoryDialog" aria-labelledby="stockHistoryDialogTitle">
+              <div class="stock-admin-dialog__shell">
+                <header><div><p class="eyebrow">Denetim Kaydı</p><h4 id="stockHistoryDialogTitle">Hareket Geçmişi</h4><span>Her bakiye değişimi kaynak ve referansıyla saklanır.</span></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-dialog-close="stockHistoryDialog" aria-label="Hareket geçmişini kapat">×</button></header>
+                <div class="stock-admin-dialog__body"><div class="stock-location-history-filters"><label><span>Tür</span><select id="stockMovementTypeFilter"><option value="all">Tüm hareketler</option><option value="transfer">Transfer</option><option value="manual_in">Stok girişi</option><option value="manual_out">Stok çıkışı</option><option value="waste">Fire / sarf</option><option value="inbound_shipment">Sevkiyat girişi</option><option value="adjustment">Düzeltme</option></select></label><label><span>Ürün</span><select id="stockMovementProductFilter"><option value="all">Tüm ürünler</option></select></label></div><div id="stockLocationMovementHistory" class="stock-location-history"></div></div>
+              </div>
+            </dialog>
+
+            <dialog class="stock-admin-dialog stock-admin-dialog--wide" id="stockTransferRequestsDialog" aria-labelledby="stockTransferRequestsTitle">
+              <div class="stock-admin-dialog__shell"><header><div><p class="eyebrow">Personel Talepleri</p><h4 id="stockTransferRequestsTitle">Bekleyen Transfer Talepleri</h4><span>Onay anındaki bakiye yeniden doğrulanır.</span></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-dialog-close="stockTransferRequestsDialog" aria-label="Transfer taleplerini kapat">×</button></header><div class="stock-admin-dialog__body"><div id="stockTransferRequests" class="stock-transfer-requests"></div></div></div>
+            </dialog>
+
+            <dialog class="stock-admin-dialog stock-admin-dialog--wide" id="stockLocationManagementDialog" aria-labelledby="stockLocationManagementTitle">
+              <div class="stock-admin-dialog__shell"><header><div><p class="eyebrow">Depo Ayarları</p><h4 id="stockLocationManagementTitle">Depo Yönetimi</h4><span>Lokasyon ekleyin, düzenleyin ve personel atamalarını yönetin.</span></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-dialog-close="stockLocationManagementDialog" aria-label="Depo yönetimini kapat">×</button></header><div class="stock-admin-dialog__body stock-location-management__body"><form id="stockLocationCreateForm" class="stock-location-create-form" novalidate><label><span>Depo adı</span><input id="stockLocationName" type="text" maxlength="80" required></label><label><span>Kod</span><input id="stockLocationCode" type="text" maxlength="30" required></label><label><span>Tür</span><select id="stockLocationType"><option value="cafe">Kafe</option><option value="central">Genel depo</option><option value="other">Diğer</option></select></label><label><span>Açıklama</span><input id="stockLocationDescription" type="text" maxlength="500"></label><label class="stock-location-toggle"><input id="stockLocationDefault" type="checkbox"><span>Varsayılan depo yap</span></label><button class="ui-button ui-button--secondary" type="submit" data-operation-class="immediate-operation">Depo Ekle</button></form><div id="stockLocationManagementList" class="stock-location-management-list"></div></div></div>
+            </dialog>
+
+            <dialog class="stock-admin-dialog" id="stockLocationEditDialog" aria-labelledby="stockLocationEditTitle">
+              <form id="stockLocationEditForm" class="stock-admin-dialog__shell" novalidate><header><div><p class="eyebrow">Depo Ayarı</p><h4 id="stockLocationEditTitle">Depoyu düzenle</h4></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-dialog-close="stockLocationEditDialog" aria-label="Depo düzenlemeyi kapat">×</button></header><div class="stock-admin-dialog__body stock-location-form"><input id="stockLocationEditId" type="hidden"><label><span>Depo adı</span><input id="stockLocationEditName" type="text" maxlength="120" required></label><label><span>Açıklama</span><textarea id="stockLocationEditDescription" rows="3" maxlength="500"></textarea></label><p class="stock-admin-dialog__message" id="stockLocationEditMessage" role="alert"></p></div><footer><button class="ui-button ui-button--secondary" type="button" data-stock-dialog-close="stockLocationEditDialog">Vazgeç</button><button class="ui-button ui-button--primary" id="stockLocationEditSubmit" type="submit">Kaydet</button></footer></form>
+            </dialog>
+
+            <dialog class="stock-admin-dialog stock-confirm-dialog" id="stockConfirmDialog" aria-labelledby="stockConfirmTitle">
+              <form method="dialog" class="stock-admin-dialog__shell"><header><div><p class="eyebrow">Onay Gerekli</p><h4 id="stockConfirmTitle">İşlemi onaylayın</h4></div><button class="ui-button ui-button--icon ui-button--secondary" value="cancel" type="submit" aria-label="Onay penceresini kapat">×</button></header><div class="stock-admin-dialog__body"><p id="stockConfirmMessage"></p></div><footer><button class="ui-button ui-button--secondary" value="cancel" type="submit">Vazgeç</button><button class="ui-button ui-button--danger" id="stockConfirmSubmit" value="confirm" type="submit">Onayla</button></footer></form>
+            </dialog>
+            <dialog class="stock-count-dialog" id="stockCountDialog" aria-labelledby="stockCountDialogTitle">
+              <form method="dialog" class="stock-count-dialog__shell" id="stockCountForm">
+                <header><div><p class="eyebrow">Fiziksel Sayım</p><h4 id="stockCountDialogTitle">Depo Sayımı</h4><span id="stockCountDialogMeta"></span></div><button class="ui-button ui-button--icon ui-button--secondary" value="cancel" type="submit" aria-label="Sayımı kapat">×</button></header>
+                <div class="stock-count-dialog__message" id="stockCountMessage" role="status" aria-live="polite"></div>
+                <div class="stock-count-items" id="stockCountItems"></div>
+                <footer><button class="ui-button ui-button--secondary" id="stockCountCancelButton" type="button">Sayımı İptal Et</button><button class="ui-button ui-button--secondary" id="stockCountSaveButton" type="button">Taslağı Kaydet</button><button class="ui-button ui-button--primary" id="stockCountApproveButton" type="button">Onayla ve Farkları Uygula</button></footer>
+              </form>
+            </dialog>
+          </section>
+            </div>
+          </details>
+          <details class="stock-accordion stock-domain-accordion stock-catalog-accordion" id="stockManagementAccordion">
+            <summary>
+              <span class="stock-step">2</span>
+              <span><strong>Stok Düzenleme</strong><small>Ürün, kategori, tedarikçi ve stok metadatasını yönetin.</small></span>
+              <i aria-hidden="true"></i>
+            </summary>
+            <div class="stock-accordion-body">
+                <div class="stock-editor-body stock-editor-direct-body">
+                  <p class="stock-catalog-note">Günlük miktarlar burada değiştirilmez. Stok Ekle, Sarf, transfer ve sayım işlemleri seçili depo üzerinden kalıcı hareket kaydı üretir.</p>
+                  <div class="form-grid two stock-editor-selects">
+                    <label><span>Stok kategorisi</span><select id="stockEditorCategorySelect"></select></label>
+                    <label><span>Stok ürünü</span><select id="stockEditorProductSelect"></select></label>
+                  </div>
+                  <div class="recipe-admin-actions stock-editor-actions" aria-label="Stok yönetimi işlemleri">
+                    <div class="stock-editor-action-group stock-editor-action-group--create" role="group" aria-label="Oluşturma işlemleri">
+                      <button class="secondary-action ui-button ui-button--secondary" id="stockAddCategoryButton" type="button">+ Kategori</button>
+                      <button class="secondary-action ui-button ui-button--secondary" id="stockAddProductButton" type="button">+ Ürün</button>
+                      <button class="secondary-action ui-button ui-button--secondary" id="stockAddSupplierButton" type="button">+ Tedarikçi</button>
+                    </div>
+                    <div class="stock-editor-action-group stock-editor-action-group--movement" role="group" aria-label="Stok hareketleri">
+                      <button class="secondary-action ui-button ui-button--secondary stock-action-in" id="stockEditorIncreaseButton" type="button">+ Stok Ekle</button>
+                      <button class="secondary-action ui-button ui-button--secondary stock-action-out" id="stockEditorDecreaseButton" type="button">− Stok Eksilt</button>
+                    </div>
+                    <div class="stock-editor-action-group stock-editor-action-group--danger" role="group" aria-label="Tehlikeli işlemler">
+                      <button class="danger-action ui-button ui-button--danger" id="stockDeleteProductButton" type="button">Ürünü Sil</button>
+                      <button class="danger-action ui-button ui-button--danger" id="stockDeleteCategoryButton" type="button">Kategoriyi Sil</button>
+                    </div>
+                  </div>
+                  <div class="form-grid three stock-editor-fields">
+                    <label><span>Ürün adı</span><input id="stockEditorProductName" type="text"></label>
+                    <label><span>Kategori adı</span><input id="stockEditorCategoryName" type="text"></label>
+                    <label><span>Temel birim</span><select id="stockEditorUnit"></select></label>
+                    <label><span>Toplu birim</span><select id="stockEditorBulkUnit"><option value="">Toplu birim yok</option></select></label>
+                    <label><span>Toplu Birim İçeriği</span><input id="stockEditorUnitFactor" type="number" min="0" step="0.001" placeholder="Örn. 12"></label>
+                    <label><span>Tedarikçi</span><input id="stockEditorSupplier" type="text"></label>
+                    <label class="stock-editor-status-field"><span>Durum</span><output id="stockEditorStatus"></output></label>
+                    <label class="stock-editor-active"><span>Aktif</span><input id="stockEditorActive" type="checkbox"></label>
+                    <label class="stock-editor-note"><span>Stok notu (opsiyonel)</span><textarea id="stockEditorNote" rows="3"></textarea></label>
+                  </div>
+                </div>
+            </div>
+          </details>
+
+          <details class="stock-accordion workforce-accordion" id="workforceShipmentsAccordion">
+            <summary>
+              <span class="stock-step">3</span>
+              <span><strong>Sevkiyat Onayları</strong><small>Personelden gelen sevkiyatları inceleyin, onaylayın veya reddedin.</small></span>
+              <i aria-hidden="true"></i>
+            </summary>
+            <div class="stock-accordion-body">
+              <section class="staff-box staff-box-wide workforce-panel" aria-label="Sevkiyat onayları">
+                <div id="workforceShipmentsPanel">
+                  <div class="workforce-loading">Sevkiyat verileri yükleniyor...</div>
+                </div>
+              </section>
+            </div>
+          </details>
+          </div>
+        </section>
+
+        <section class="content-grid" id="contentGrid">
+          <div class="editor-column">
+            <section class="section-panel settings-dashboard" id="panelSettingsCard" data-section-panel="settings">
+              <div class="panel-card settings-preferences-card">
+                <div class="card-head">
+                  <div>
+                    <p class="eyebrow">Yalnızca Bu Cihaz</p>
+                    <h3>Ayarlar</h3>
+                  </div>
+                </div>
+                <div class="settings-accordion-stack">
+                  <details class="settings-accordion" open>
+                    <summary><span>1</span><strong>Bu Cihazdaki Panel Davranışı</strong><i aria-hidden="true"></i></summary>
+                    <div class="settings-accordion-body settings-list-form">
+                      <label class="settings-toggle-row"><span><strong>Sayfa yenilenince son sekmede kal</strong><small>Yalnızca bu tarayıcıda son bulunduğunuz sekme açık kalır.</small></span><input id="settingsLastSectionToggle" type="checkbox"></label>
+                      <label class="settings-toggle-row"><span><strong>Kenar çubuğu varsayılan açık</strong><small>Yalnızca bu cihazda panel açılış tercihini saklar.</small></span><input id="settingsSidebarDefaultOpen" type="checkbox"></label>
+                      <label class="settings-toggle-row"><span><strong>Çıkışta onay sor</strong><small>Yalnızca bu tarayıcıda oturumu kapatmadan önce onay ister.</small></span><input id="settingsConfirmOnExit" type="checkbox"></label>
+                      <div class="settings-grid two">
+                        <label><span>Varsayılan açılış sekmesi</span><select id="settingsDefaultSection"></select></label>
+                      </div>
+                      <div class="settings-scope-actions">
+                        <div><strong>Cihaza özel tercihler</strong><small>Bu işlem yalnızca bu tarayıcıdaki panel davranışlarını etkiler.</small></div>
+                        <button class="ui-button ui-button--secondary" id="settingsResetDeviceButton" type="button">Bu Cihazın Ayarlarını Sıfırla</button>
+                      </div>
+                    </div>
+                  </details>
+
+                  <details class="settings-accordion">
+                    <summary><span>2</span><strong>Site Bilgileri</strong><i aria-hidden="true"></i></summary>
+                    <div class="settings-accordion-body">
+                      <div class="settings-grid two">
+                        <label><span>Kafe adı</span><input id="siteCafeName" type="text"></label>
+                        <label><span>Kısa açıklama</span><textarea id="siteShortDescription" rows="2"></textarea></label>
+                        <label><span>Telefon</span><input id="sitePhoneInfo" type="tel"></label>
+                        <label><span>WhatsApp</span><input id="siteWhatsappInfo" type="tel"></label>
+                        <label><span>Adres</span><input id="siteAddressInfo" type="text"></label>
+                        <label><span>Çalışma saatleri</span><input id="siteHoursInfo" type="text"></label>
+                        <label><span>Instagram</span><input id="siteInstagramInfo" type="text"></label>
+                        <label><span>E-posta</span><input id="siteEmailInfo" type="email"></label>
+                      </div>
+                      <div class="settings-media-grid">
+                        <div class="settings-media-upload">
+                          <strong>Logo yükle</strong>
+                          <small>PNG, SVG veya JPG önerilir.</small>
+                          <div class="settings-media-row">
+                            <div class="settings-media-preview" id="siteLogoPreview"></div>
+                            <label class="line-action">Dosya Seç<input id="siteLogoFile" type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp"></label>
+                            <button class="line-action" id="siteLogoClear" type="button">Temizle</button>
+                          </div>
+                        </div>
+                        <div class="settings-media-upload">
+                          <strong>Favicon yükle</strong>
+                          <small>PNG veya ICO önerilir.</small>
+                          <div class="settings-media-row">
+                            <div class="settings-media-preview" id="siteFaviconPreview"></div>
+                            <label class="line-action">Dosya Seç<input id="siteFaviconFile" type="file" accept="image/png,image/x-icon,image/vnd.microsoft.icon,image/webp"></label>
+                            <button class="line-action" id="siteFaviconClear" type="button">Temizle</button>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="settings-scope-actions settings-scope-actions--system">
+                        <div><strong>Sistem genelindeki güvenli site bilgileri</strong><small id="systemDefaultMeta">Henüz Yönetici varsayılanı kaydedilmedi. Değişiklikler yayınlanmadan herkese açık alana çıkmaz.</small></div>
+                        <div>
+                          <button class="ui-button ui-button--secondary" id="settingsSaveSystemDefaultButton" type="button">Yönetici Varsayılanı Olarak Kaydet</button>
+                          <button class="ui-button ui-button--primary" id="settingsRestoreSystemDefaultButton" type="button">Varsayılana Dön</button>
+                        </div>
+                      </div>
+                    </div>
+                  </details>
+
+                  <details class="settings-accordion">
+                    <summary><span>3</span><strong>Güvenlik</strong><i aria-hidden="true"></i></summary>
+                    <div class="settings-accordion-body">
+                      <p class="muted">Giriş denemesi sınırı sunucu tarafından uygulanır. Bu ekranda sahte bir güvenlik sayacı tutulmaz.</p>
+                      <section class="account-security-card" data-account-security data-account-scope="admin" aria-labelledby="adminAccountSecurityTitle">
+                        <header class="account-security-head">
+                          <div>
+                            <p class="eyebrow">Hesap güvenliği</p>
+                            <h4 id="adminAccountSecurityTitle">Doğrulanmış yönetici e-postası</h4>
+                            <p>Şifre kurtarma ve güvenlik bildirimleri yalnız doğrulanmış hesap adresine gönderilir.</p>
+                          </div>
+                          <span class="account-security-state" id="adminAccountEmailState" data-account-email-state>Denetlenmedi</span>
+                        </header>
+                        <form class="account-security-email-form" id="adminAccountEmailForm" data-account-email-form novalidate>
+                          <label><span>Hesap e-postası</span><input id="adminAccountEmail" data-account-email type="email" name="email" maxlength="254" autocomplete="email" required placeholder="yonetici@tahmisci.com"></label>
+                          <button class="ui-button ui-button--secondary" id="adminAccountEmailSave" type="submit">E-postayı kaydet</button>
+                        </form>
+                        <div class="account-security-verification" data-account-verification hidden>
+                          <div><strong data-account-verification-title>E-posta doğrulaması gerekli</strong><span data-account-verification-copy>Adrese altı haneli güvenlik kodu gönderin.</span></div>
+                          <button class="ui-button ui-button--secondary" id="adminAccountEmailVerificationRequest" data-account-email-send type="button">Doğrulama kodu gönder</button>
+                          <form class="account-security-code-form" id="adminAccountEmailVerificationForm" data-account-email-confirm-form hidden novalidate>
+                            <label><span>Altı haneli kod</span><input id="adminAccountEmailCode" data-account-email-code type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>
+                            <button class="ui-button ui-button--primary" id="adminAccountEmailVerificationConfirm" type="submit">E-postayı doğrula</button>
+                          </form>
+                        </div>
+                        <div class="account-security-meta">
+                          <span><small>Etkin adres</small><strong data-account-current-email>Henüz eklenmedi</strong></span>
+                          <span><small>Son şifre yenileme</small><strong data-account-password-reset>Bilgi yok</strong></span>
+                        </div>
+                        <div class="account-security-danger-row">
+                          <span><strong>Tüm cihazlardan çıkış yap</strong><small>Açık oturumları ve hesaba bağlı bildirim cihazlarını güvenle kapatır.</small></span>
+                          <button class="ui-button ui-button--danger ui-button--sm" type="button" data-account-logout-all>Tümünden çıkış yap</button>
+                        </div>
+                        <p class="account-security-message" id="adminAccountSecurityMessage" data-account-security-message role="status" aria-live="polite"></p>
+                      </section>
+                      <div class="settings-security-actions">
+                        <button class="line-action" id="settingsChangePassword" type="button">Şifreyi değiştir</button>
+                        <button class="line-action" id="settingsLogoutNow" type="button">Oturumu kapat</button>
+                      </div>
+                    </div>
+                  </details>
+
+                  <details class="settings-accordion">
+                    <summary><span>4</span><strong>Yedekleme &amp; Veri</strong><i aria-hidden="true"></i></summary>
+                    <div class="settings-accordion-body">
+                      <div class="settings-backup-status"><span>Son yedekleme</span><strong id="settingsLastBackup">Henüz yedek yok</strong></div>
+                      <div class="settings-export-grid">
+                        <button class="line-action" id="exportMenuData" type="button">Menü verisini dışa aktar</button>
+                        <button class="line-action" id="exportRecipeData" type="button">Reçete verisini dışa aktar</button>
+                        <button class="line-action" id="exportCustomerData" type="button">Müşteri verisini dışa aktar</button>
+                      </div>
+                      <div class="settings-backup-create">
+                        <div><strong>Yedek oluştur</strong><small>Mevcut menü, reçete, site ve panel ayarlarını indirir.</small></div>
+                        <button class="line-action" id="createBackup" type="button">Yedek oluştur</button>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </div>
+            </section>
+
+            <!-- PASIF_SITE_MODULU_BASLANGIC
+            <section class="panel-card section-panel site-editor-card" id="siteEditorCard" data-section-panel="site">
+              <div class="card-head site-editor-head">
+                <div>
+                  <p class="eyebrow">Web İçeriği</p>
+                  <h3>Site</h3>
+                  <p>Web sitenizde görünen tüm içerikleri yönetin. Değişikliklerinizi kaydedip yayınlayarak anında yayına alın.</p>
+                </div>
+              </div>
+              <div class="site-status-grid" id="siteStatusCards" aria-label="Site bölüm durumları"></div>
+
+              <details data-site-accordion="header" open>
+                <summary>Header Navigasyonu</summary>
+                <div class="site-nav-table" id="siteNavigationRows" aria-label="Header menü satırları"></div>
+                <button class="line-action site-add-nav-button" id="siteAddNavButton" type="button">+ Yeni Menü Ekle</button>
+                <div class="form-grid three">
+                  <label class="toggle-row"><input data-site-path="header.visible" data-site-type="boolean" type="checkbox"><span>Header görünür</span></label>
+                  <label class="toggle-row"><input data-site-path="header.contactVisible" data-site-type="boolean" type="checkbox"><span>Header iletişim görünür</span></label>
+                </div>
+              </details>
+
+              <details data-site-accordion="hero" open>
+                <summary>Hero ve Medya</summary>
+                <div class="form-grid two">
+                  <label><span>Marka satırı (TR)</span><input data-site-path="hero.brand.tr" type="text"></label>
+                  <label><span>Marka satırı (EN)</span><input data-site-path="hero.brand.en" type="text"></label>
+                  <label><span>Başlık (TR)</span><input data-site-path="hero.slides.0.title.tr" type="text"></label>
+                  <label><span>Başlık (EN)</span><input data-site-path="hero.slides.0.title.en" type="text"></label>
+                  <label><span>Alt başlık (TR)</span><input data-site-path="hero.slides.0.description.tr" type="text"></label>
+                  <label><span>Alt başlık (EN)</span><input data-site-path="hero.slides.0.description.en" type="text"></label>
+                  <label><span>CTA 1 metni (TR)</span><input data-site-path="hero.slides.0.buttonText.tr" type="text"></label>
+                  <label><span>CTA 1 bağlantısı</span><input data-site-path="hero.slides.0.buttonUrl" type="text"></label>
+                  <label><span>CTA 2 metni (TR)</span><input data-site-path="hero.secondaryButtonText.tr" type="text"></label>
+                  <label><span>CTA 2 bağlantısı</span><input data-site-path="hero.secondaryButtonUrl" type="text"></label>
+                  <label><span>Arka plan görseli</span><input data-site-path="hero.slides.0.backgroundImage" type="text"></label>
+                  <label><span>Ana barista görseli</span><input data-site-path="hero.media.primary" type="text"></label>
+                  <label><span>Detay / mobil görsel</span><input data-site-path="hero.media.detail" type="text"></label>
+                  <label><span>Mobil hero görseli</span><input data-site-path="hero.media.mobile" type="text"></label>
+                  <label><span>Ürün görseli</span><input data-site-path="hero.media.coldDrinksTop" type="text"></label>
+                  <label><span>Alternatif ürün görseli</span><input data-site-path="hero.media.coldDrinksFront" type="text"></label>
+                  <label><span>Birincil reel</span><input data-site-path="hero.media.reelPrimary" type="text"></label>
+                  <label><span>İkincil reel</span><input data-site-path="hero.media.reelSecondary" type="text"></label>
+                  <label><span>Mobil video</span><input data-site-path="hero.media.mobileVideo" type="text"></label>
+                  <label><span>Video posteri</span><input data-site-path="hero.media.reelPoster" type="text"></label>
+                  <label><span>Büyük panel medya tipi</span><select data-site-path="hero.mediaType"><option value="video">Video / reel</option><option value="image">Ana görsel</option></select></label>
+                  <label><span>Overlay (0–0.85)</span><input data-site-path="hero.overlay" data-site-type="number" type="number" min="0" max="0.85" step="0.05"></label>
+                  <label><span>Slider süresi (ms)</span><input data-site-path="hero.autoplayInterval" data-site-type="number" type="number" min="2000" step="500"></label>
+                  <label><span>Slayt sırası</span><input data-site-path="hero.slides.0.order" data-site-type="number" type="number" min="0"></label>
+                </div>
+                <div class="form-grid three">
+                  <label class="toggle-row"><input data-site-path="hero.visible" data-site-type="boolean" type="checkbox"><span>Hero görünür</span></label>
+                  <label class="toggle-row"><input data-site-path="hero.sliderEnabled" data-site-type="boolean" type="checkbox"><span>Slider aktif</span></label>
+                  <label class="toggle-row"><input data-site-path="hero.autoplay" data-site-type="boolean" type="checkbox"><span>Video otomatik oynat</span></label>
+                  <label class="toggle-row"><input data-site-path="hero.slides.0.visible" data-site-type="boolean" type="checkbox"><span>Ana slayt görünür</span></label>
+                </div>
+                <div class="asset-row">
+                  <label class="file-button"><span>Arka plan yükle</span><input data-site-upload-target="hero.slides.0.backgroundImage" type="file" accept="image/jpeg,image/png,image/webp"></label>
+                  <label class="file-button"><span>Hero görseli yükle</span><input data-site-upload-target="hero.media.primary" type="file" accept="image/jpeg,image/png,image/webp"></label>
+                  <label class="file-button"><span>Reel yükle</span><input data-site-upload-target="hero.media.reelPrimary" type="file" accept="video/mp4,video/webm"></label>
+                  <label class="file-button"><span>Poster yükle</span><input data-site-upload-target="hero.media.reelPoster" type="file" accept="image/jpeg,image/png,image/webp"></label>
+                </div>
+              </details>
+
+              <details data-site-accordion="menu">
+                <summary>Menü Bölümü</summary>
+                <div class="form-grid two">
+                  <label><span>Öne çıkan başlığı (TR)</span><input data-site-path="featuredProducts.title.tr" type="text"></label>
+                  <label><span>Öne çıkan başlığı (EN)</span><input data-site-path="featuredProducts.title.en" type="text"></label>
+                  <label><span>Menü kaşı (TR)</span><input data-site-path="menuSection.eyebrow.tr" type="text"></label>
+                  <label><span>Menü başlığı (TR)</span><input data-site-path="menuSection.title.tr" type="text"></label>
+                  <label><span>Menü açıklaması (TR)</span><textarea data-site-path="menuSection.description.tr" rows="3"></textarea></label>
+                  <label><span>Menü açıklaması (EN)</span><textarea data-site-path="menuSection.description.en" rows="3"></textarea></label>
+                  <label><span>Manuel ürün kimlikleri (virgülle)</span><input data-site-path="featuredProducts.productIds" data-site-type="array" type="text"></label>
+                  <label><span>Gizli kategori kimlikleri (virgülle)</span><input data-site-path="menuSection.hiddenCategoryIds" data-site-type="array" type="text"></label>
+                </div>
+                <div class="form-grid three">
+                  <label class="toggle-row"><input data-site-path="featuredProducts.visible" data-site-type="boolean" type="checkbox"><span>Öne çıkanlar görünür</span></label>
+                  <label><span>Öne çıkan ürün kaynağı</span><select data-site-path="featuredProducts.source"><option value="popular">Popüler ürünler</option><option value="manual">Manuel sıralama</option></select></label>
+                  <label class="toggle-row"><input data-site-path="menuSection.visible" data-site-type="boolean" type="checkbox"><span>Menü görünür</span></label>
+                  <label class="toggle-row"><input data-site-path="menuSection.showSearch" data-site-type="boolean" type="checkbox"><span>Arama göster</span></label>
+                  <label class="toggle-row"><input data-site-path="menuSection.showSorting" data-site-type="boolean" type="checkbox"><span>Sıralama göster</span></label>
+                  <label class="toggle-row"><input data-site-path="menuSection.showCalories" data-site-type="boolean" type="checkbox"><span>Kalori göster</span></label>
+                  <label class="toggle-row"><input data-site-path="menuSection.showAllergens" data-site-type="boolean" type="checkbox"><span>Alerjen göster</span></label>
+                  <label class="toggle-row"><input data-site-path="menuSection.showContent" data-site-type="boolean" type="checkbox"><span>İçerik göster</span></label>
+                  <label><span>Tükenen ürün</span><select data-site-path="menuSection.soldOutMode"><option value="label">Tükendi etiketi göster</option><option value="hide">Gizle</option></select></label>
+                </div>
+              </details>
+
+              <details data-site-accordion="about">
+                <summary>Hakkımızda ve Özellikler</summary>
+                <div class="form-grid two">
+                  <label><span>Başlık (TR)</span><input data-site-path="about.title.tr" type="text"></label>
+                  <label><span>Başlık (EN)</span><input data-site-path="about.title.en" type="text"></label>
+                  <label><span>Açıklama (TR)</span><textarea data-site-path="about.description.tr" rows="5"></textarea></label>
+                  <label><span>Açıklama (EN)</span><textarea data-site-path="about.description.en" rows="5"></textarea></label>
+                  <label><span>Görsel</span><input data-site-path="about.image" type="text"></label>
+                  <label><span>Alternatif metin</span><input data-site-path="about.imageAlt.tr" type="text"></label>
+                  <label><span>1. özellik başlığı</span><input data-site-path="about.features.0.title.tr" type="text"></label>
+                  <label><span>1. özellik metni</span><input data-site-path="about.features.0.text.tr" type="text"></label>
+                  <label><span>2. özellik başlığı</span><input data-site-path="about.features.1.title.tr" type="text"></label>
+                  <label><span>2. özellik metni</span><input data-site-path="about.features.1.text.tr" type="text"></label>
+                  <label><span>3. özellik başlığı</span><input data-site-path="about.features.2.title.tr" type="text"></label>
+                  <label><span>3. özellik metni</span><input data-site-path="about.features.2.text.tr" type="text"></label>
+                  <label><span>Buton metni (TR)</span><input data-site-path="about.buttonText.tr" type="text"></label>
+                  <label><span>Buton bağlantısı</span><input data-site-path="about.buttonUrl" type="text"></label>
+                </div>
+                <div class="asset-row">
+                  <label class="toggle-row"><input data-site-path="about.visible" data-site-type="boolean" type="checkbox"><span>Bölüm görünür</span></label>
+                  <label class="file-button"><span>Hakkımızda görseli yükle</span><input data-site-upload-target="about.image" type="file" accept="image/jpeg,image/png,image/webp"></label>
+                </div>
+              </details>
+
+              <details data-site-accordion="contact">
+                <summary>QR, İletişim ve Sosyal Bilgiler</summary>
+                <div class="form-grid two">
+                  <label><span>QR başlığı (TR)</span><input data-site-path="qrMenu.title.tr" type="text"></label>
+                  <label><span>QR açıklaması (TR)</span><textarea data-site-path="qrMenu.description.tr" rows="3"></textarea></label>
+                  <label><span>QR hedefi</span><input data-site-path="qrMenu.targetUrl" type="text"></label>
+                  <label><span>QR butonu</span><input data-site-path="qrMenu.buttonText.tr" type="text"></label>
+                  <label><span>İşletme adı</span><input data-site-path="contact.businessName" type="text"></label>
+                  <label><span>Adres (TR)</span><textarea data-site-path="contact.address.tr" rows="3"></textarea></label>
+                  <label><span>Adres (EN)</span><textarea data-site-path="contact.address.en" rows="3"></textarea></label>
+                  <label><span>Telefon</span><input data-site-path="contact.phone" type="tel"></label>
+                  <label><span>WhatsApp</span><input data-site-path="contact.whatsapp" type="tel"></label>
+                  <label><span>E-posta</span><input data-site-path="contact.email" type="email"></label>
+                  <label><span>Çalışma saatleri (TR)</span><input data-site-path="contact.hours.tr" type="text"></label>
+                  <label><span>Çalışma saatleri (EN)</span><input data-site-path="contact.hours.en" type="text"></label>
+                  <label><span>Instagram</span><input data-site-path="contact.instagram" type="url"></label>
+                  <label><span>TikTok</span><input data-site-path="contact.tiktok" type="url"></label>
+                  <label><span>Google Maps bağlantısı</span><input data-site-path="contact.mapsUrl" type="url"></label>
+                  <label><span>Harita embed adresi</span><input data-site-path="contact.mapEmbedUrl" type="url"></label>
+                  <label><span>Ek sosyal bağlantı 1 adı</span><input data-site-path="contact.socialLinks.0.label" type="text"></label>
+                  <label><span>Ek sosyal bağlantı 1 URL</span><input data-site-path="contact.socialLinks.0.url" type="url"></label>
+                  <label><span>Ek sosyal bağlantı 2 adı</span><input data-site-path="contact.socialLinks.1.label" type="text"></label>
+                  <label><span>Ek sosyal bağlantı 2 URL</span><input data-site-path="contact.socialLinks.1.url" type="url"></label>
+                </div>
+                <div class="form-grid three">
+                  <label class="toggle-row"><input data-site-path="qrMenu.visible" data-site-type="boolean" type="checkbox"><span>QR görünür</span></label>
+                  <label class="toggle-row"><input data-site-path="contact.visible" data-site-type="boolean" type="checkbox"><span>İletişim görünür</span></label>
+                </div>
+              </details>
+
+              <details data-site-accordion="footer">
+                <summary>Footer, SEO, Dil ve Bölüm Sırası</summary>
+                <div class="form-grid two">
+                  <label><span>Footer marka açıklaması (TR)</span><textarea data-site-path="footer.description.tr" rows="3"></textarea></label>
+                  <label><span>Footer marka açıklaması (EN)</span><textarea data-site-path="footer.description.en" rows="3"></textarea></label>
+                  <label><span>Telif metni (TR)</span><input data-site-path="footer.copyright.tr" type="text"></label>
+                  <label><span>Sayfa başlığı (TR)</span><input data-site-path="seo.title.tr" type="text"></label>
+                  <label><span>Sayfa başlığı (EN)</span><input data-site-path="seo.title.en" type="text"></label>
+                  <label><span>Meta açıklaması (TR)</span><textarea data-site-path="seo.description.tr" rows="3"></textarea></label>
+                  <label><span>Anahtar kelimeler</span><input data-site-path="seo.keywords" type="text"></label>
+                  <label><span>Open Graph başlığı (TR)</span><input data-site-path="seo.ogTitle.tr" type="text"></label>
+                  <label><span>Open Graph açıklaması (TR)</span><textarea data-site-path="seo.ogDescription.tr" rows="3"></textarea></label>
+                  <label><span>Open Graph görseli</span><input data-site-path="seo.ogImage" type="text"></label>
+                  <label><span>Favicon</span><input data-site-path="seo.favicon" type="text"></label>
+                  <label><span>Canonical URL</span><input data-site-path="seo.canonicalUrl" type="url"></label>
+                  <label><span>Ana dil</span><select data-site-path="global.defaultLanguage"><option value="tr">Türkçe</option><option value="en">İngilizce</option></select></label>
+                  <label><span>Bölüm sırası (virgülle)</span><input id="siteSectionOrder" type="text" placeholder="hero,featuredProducts,menuSection,about,qrMenu,contact"></label>
+                </div>
+                <div class="form-grid three">
+                  <label class="toggle-row"><input data-site-path="footer.visible" data-site-type="boolean" type="checkbox"><span>Footer görünür</span></label>
+                </div>
+                <div class="form-grid two">
+                  <label><span>Hızlı bağlantı 1 etiketi (TR)</span><input data-site-path="footer.quickLinks.0.label.tr" type="text"></label>
+                  <label><span>Hızlı bağlantı 1 URL</span><input data-site-path="footer.quickLinks.0.url" type="text"></label>
+                  <label><span>Hızlı bağlantı 2 etiketi (TR)</span><input data-site-path="footer.quickLinks.1.label.tr" type="text"></label>
+                  <label><span>Hızlı bağlantı 2 URL</span><input data-site-path="footer.quickLinks.1.url" type="text"></label>
+                  <label><span>Hızlı bağlantı 3 etiketi (TR)</span><input data-site-path="footer.quickLinks.2.label.tr" type="text"></label>
+                  <label><span>Hızlı bağlantı 3 URL</span><input data-site-path="footer.quickLinks.2.url" type="text"></label>
+                  <label><span>Hızlı bağlantı 4 etiketi (TR)</span><input data-site-path="footer.quickLinks.3.label.tr" type="text"></label>
+                  <label><span>Hızlı bağlantı 4 URL</span><input data-site-path="footer.quickLinks.3.url" type="text"></label>
+                  <label><span>Alt bağlantı 1 etiketi (TR)</span><input data-site-path="footer.bottomLinks.0.label.tr" type="text"></label>
+                  <label><span>Alt bağlantı 1 URL</span><input data-site-path="footer.bottomLinks.0.url" type="text"></label>
+                  <label><span>Alt bağlantı 2 etiketi (TR)</span><input data-site-path="footer.bottomLinks.1.label.tr" type="text"></label>
+                  <label><span>Alt bağlantı 2 URL</span><input data-site-path="footer.bottomLinks.1.url" type="text"></label>
+                </div>
+              </details>
+
+            </section>
+            PASIF_SITE_MODULU_BITIS -->
+
+            <section class="section-panel menu-settings-section" id="menuAppearanceCard" data-section-panel="menu">
+              <div class="admin-default-toolbar" aria-label="Menü tasarımı varsayılan işlemleri">
+                <div>
+                  <p class="eyebrow">Sistem Genelinde Tasarım</p>
+                  <strong>Menü tasarımı varsayılanı</strong>
+                  <small id="menuDefaultMeta">Henüz Yönetici varsayılanı kaydedilmedi.</small>
+                </div>
+                <div class="admin-default-toolbar__actions">
+                  <button class="ui-button ui-button--secondary" id="saveAdminMenuDefaultButton" type="button">Yönetici Varsayılanı Olarak Kaydet</button>
+                  <button class="ui-button ui-button--primary" id="restoreMenuDefaultButton" type="button">Varsayılana Dön</button>
+                </div>
+              </div>
+              <div class="menu-style-summary" aria-label="Menü stili özeti">
+                <div class="menu-summary-heading">
+                  <span class="menu-summary-icon" aria-hidden="true">◫</span>
+                  <div><strong>Menü stili özeti</strong><small>Etkin görünüm ayarları</small></div>
+                </div>
+                <div class="menu-summary-item"><span class="menu-summary-swatch" id="menuSummaryTheme"></span><small>Tema</small><strong id="menuSummaryThemeText">Aydınlık</strong></div>
+                <div class="menu-summary-item"><span class="menu-summary-swatch" id="menuSummaryDark"></span><small>Karanlık</small><strong>Koyu yüzey</strong></div>
+                <div class="menu-summary-item"><span class="menu-summary-swatch" id="menuSummaryAccent"></span><small>Vurgu</small><strong id="menuSummaryAccentText">Renk</strong></div>
+                <div class="menu-summary-item"><span class="menu-summary-swatch" id="menuSummaryText"></span><small>Yazı</small><strong>Metin</strong></div>
+                <div class="menu-summary-item"><span class="menu-summary-swatch" id="menuSummaryCard"></span><small>Kart</small><strong>Varsayılan</strong></div>
+                <div class="menu-summary-item menu-summary-status"><span class="menu-status-dot"></span><small>Yayın</small><strong id="menuSummaryStatus">Hazır</strong></div>
+              </div>
+
+              <details class="menu-accordion" open>
+                <summary>
+                  <span class="menu-accordion-number">1</span>
+                  <span class="menu-accordion-copy"><strong>Genel menü görünümü</strong><small>Tema, renk ve arka plan ayarları</small></span>
+                  <span class="menu-accordion-chevron" aria-hidden="true"></span>
+                </summary>
+                <div class="menu-accordion-body">
+                  <section class="menu-control-group">
+                    <h4>Tema &amp; renkler</h4>
+                    <div class="form-grid menu-color-grid">
+                      <label><span>Ana arka plan</span><input id="bgColor" type="color"></label>
+                      <label><span>Karanlık tema</span><input id="darkBgColor" type="color"></label>
+                      <label><span>Vurgu rengi</span><input id="accentColor" type="color"></label>
+                      <label><span>Yazı rengi</span><input id="textColor" type="color"></label>
+                      <label><span>Buton yazı rengi</span><input id="buttonTextColor" type="color"></label>
+                      <label><span>Varsayılan kart rengi</span><input id="productCardColor" type="color"></label>
+                    </div>
+                  </section>
+
+                  <section class="menu-control-group">
+                    <h4>Arka plan</h4>
+                    <div class="form-grid menu-background-grid">
+                      <label>
+                        <span>Arka plan tipi</span>
+                        <select id="menuBgType">
+                          <option value="solid">Düz renk</option>
+                          <option value="gradient">Gradient</option>
+                          <option value="image">Görsel</option>
+                        </select>
+                      </label>
+                      <label><span>Gradient başlangıç</span><input id="menuGradientStart" type="color"></label>
+                      <label><span>Gradient bitiş</span><input id="menuGradientEnd" type="color"></label>
+                      <label><span>Gradient açı</span><input id="menuGradientAngle" type="number" min="0" max="360" step="1"></label>
+                    </div>
+                    <div class="form-grid menu-media-grid">
+                      <label><span>Görsel linki</span><input id="menuBgUrl" type="url" placeholder="https://..."></label>
+                      <label>
+                        <span>Overlay opaklığı</span>
+                        <span class="menu-range-control"><input id="menuOverlay" type="range" min="0" max="0.85" step="0.05"><output id="menuOverlayValue">0%</output></span>
+                      </label>
+                    </div>
+                    <div class="asset-row menu-asset-row">
+                      <label class="file-button"><span>Bilgisayardan arka plan yükle</span><input id="menuBgFile" type="file" accept="image/*"></label>
+                      <button class="line-action" id="clearMenuBg" type="button">Arka plan görselini sil</button>
+                    </div>
+                  </section>
+                </div>
+              </details>
+
+              <details class="menu-accordion">
+                <summary>
+                  <span class="menu-accordion-number">2</span>
+                  <span class="menu-accordion-copy"><strong>Toplu metin punto ayarları</strong><small>Menü tipografisini tek noktadan ölçeklendirin</small></span>
+                  <span class="menu-accordion-chevron" aria-hidden="true"></span>
+                </summary>
+                <div class="menu-accordion-body">
+                  <div class="form-grid menu-typography-grid">
+                    <label><span>Menü başlığı</span><span class="menu-unit-control"><input id="menuTitleSize" type="number" min="18" max="54" step="1"><em>px</em></span></label>
+                    <label><span>Kategori başlığı</span><span class="menu-unit-control"><input id="categoryTitleSize" type="number" min="14" max="34" step="1"><em>px</em></span></label>
+                    <label><span>Ürün başlığı</span><span class="menu-unit-control"><input id="productTitleSize" type="number" min="10" max="28" step="1"><em>px</em></span></label>
+                    <label><span>Ürün açıklaması</span><span class="menu-unit-control"><input id="productDescSize" type="number" min="8" max="22" step="1"><em>px</em></span></label>
+                    <label><span>İçindekiler metni</span><span class="menu-unit-control"><input id="productIngredientsSize" type="number" min="8" max="22" step="1"><em>px</em></span></label>
+                    <label><span>Fiyat metni</span><span class="menu-unit-control"><input id="productPriceSize" type="number" min="8" max="22" step="1"><em>px</em></span></label>
+                  </div>
+                </div>
+              </details>
+            </section>
+
+
+            <section class="section-panel banner-editor-panel" id="bannerSettingsCard" data-section-panel="banner">
+              <details class="panel-card banner-accordion banner-editor-card" open>
+                <summary class="banner-card-head">
+                  <span class="banner-step">1</span>
+                  <div>
+                    <h3>Banner Modu &amp; Metin</h3>
+                    <p>Banner modunu seçin ve başlık metinlerini düzenleyin.</p>
+                  </div>
+                  <i aria-hidden="true"></i>
+                </summary>
+                <div class="banner-accordion-body">
+                  <div class="form-grid banner-text-grid">
+                    <label>
+                      <span>Banner modu</span>
+                      <select id="bannerMode">
+                        <option value="random">Rastgele ürünler</option>
+                        <option value="products">Seçili ürün sunusu</option>
+                        <option value="images">Görsel sunu</option>
+                        <option value="video">Video</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Başlık</span>
+                      <input id="bannerTitle" type="text" placeholder="Tahmisçi">
+                    </label>
+                    <label class="banner-field-wide">
+                      <span>Alt metin</span>
+                      <input id="bannerSubtitle" type="text" placeholder="Öne çıkan sunu">
+                    </label>
+                  </div>
+                </div>
+              </details>
+
+              <details class="panel-card banner-accordion banner-editor-card">
+                <summary class="banner-card-head">
+                  <span class="banner-step">2</span>
+                  <div>
+                    <h3>Medya Yüklemeleri</h3>
+                    <p>Banner için arka plan videosu veya görsel yükleyin.</p>
+                  </div>
+                  <i aria-hidden="true"></i>
+                </summary>
+                <div class="banner-accordion-body">
+                  <div class="banner-media-grid">
+                    <section class="banner-upload-card">
+                      <div>
+                        <strong>Video yükleme</strong>
+                        <span>MP4, WebM, MOV veya OGG dosyaları.</span>
+                      </div>
+                      <label class="file-button">
+                        <span>Cihazdan video yükle</span>
+                        <input id="bannerVideoFile" type="file" accept="video/mp4,video/webm,video/ogg,video/quicktime,video/x-m4v,.mp4,.webm,.ogv,.ogg,.mov,.m4v" multiple>
+                      </label>
+                      <button class="line-action" id="clearBannerVideo" type="button">Tüm videoları sil</button>
+                      <div class="banner-media-list" id="bannerVideoList"></div>
+                    </section>
+                    <section class="banner-upload-card">
+                      <div>
+                        <strong>Görsel yükleme</strong>
+                        <span>JPG, PNG, WebP veya GIF dosyaları.</span>
+                      </div>
+                      <label class="file-button">
+                        <span>Cihazdan görsel yükle</span>
+                        <input id="bannerImageFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple>
+                      </label>
+                      <button class="line-action" id="clearBannerImages" type="button">Tüm görselleri sil</button>
+                      <div class="banner-media-list" id="bannerImageList"></div>
+                    </section>
+                  </div>
+                </div>
+              </details>
+
+              <details class="panel-card banner-accordion banner-product-accordion">
+                <summary class="banner-card-head">
+                  <span class="banner-step">3</span>
+                  <span>
+                    <strong>Seçili Ürün Sunusu</strong>
+                    <small>Banner alanında gösterilecek ürünleri seçin.</small>
+                  </span>
+                  <i aria-hidden="true"></i>
+                </summary>
+                <div class="banner-accordion-body banner-product-body">
+                  <div class="form-grid two">
+                    <label>
+                      <span>Kategori</span>
+                      <select id="bannerProductCategory"></select>
+                    </label>
+                    <label>
+                      <span>Ürün ara</span>
+                      <input id="bannerProductSearch" type="search" placeholder="Bu kategoride ara">
+                    </label>
+                  </div>
+                  <div class="banner-product-list" id="bannerProductList"></div>
+                </div>
+              </details>
+            </section>
+
+            <section class="section-panel menu-settings-section" id="bottomActionsCard" data-section-panel="menu">
+              <details class="menu-accordion" open>
+                <summary>
+                  <span class="menu-accordion-number">3</span>
+                  <span class="menu-accordion-copy"><strong>Alt kutu ayarları</strong><small>Popüler Ürünler ve Bana Öner alanlarını yönetin</small></span>
+                  <span class="menu-accordion-chevron" aria-hidden="true"></span>
+                </summary>
+                <div class="menu-accordion-body">
+                  <div class="quick-box-grid menu-quick-box-grid">
+                    <details class="menu-sub-accordion" open>
+                      <summary>
+                        <span class="menu-sub-number">3.1</span>
+                        <strong>Popüler Ürünler</strong>
+                        <span class="menu-sub-state">Görünüm ayarları</span>
+                        <span class="menu-accordion-chevron" aria-hidden="true"></span>
+                      </summary>
+                      <div class="menu-sub-body">
+                        <div class="form-grid menu-action-grid">
+                    <label>
+                      <span>Kutu tipi</span>
+                      <select id="popularBoxType">
+                        <option value="solid">Düz renk</option>
+                        <option value="gradient">Gradyan</option>
+                        <option value="image">Görsel</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Kutu rengi</span>
+                      <input id="popularBoxColor" type="color">
+                    </label>
+                    <label>
+                      <span>Gradyan başlangıç</span>
+                      <input id="popularGradientStart" type="color">
+                    </label>
+                    <label>
+                      <span>Gradyan bitiş</span>
+                      <input id="popularGradientEnd" type="color">
+                    </label>
+                    <label>
+                      <span>Gradyan açı</span>
+                      <input id="popularGradientAngle" type="number" min="0" max="360" step="1">
+                    </label>
+                    <label>
+                      <span>Görsel linki</span>
+                      <input id="popularImageUrl" type="url" placeholder="https://...">
+                    </label>
+                    <label>
+                      <span>Görsel overlay</span>
+                      <span class="menu-range-control"><input id="popularOverlay" type="range" min="0" max="0.85" step="0.05"><output id="popularOverlayValue">0%</output></span>
+                    </label>
+                  </div>
+                  <div class="asset-row menu-asset-row">
+                    <label class="file-button">
+                      <span>Popüler kutu görseli yükle</span>
+                      <input id="popularImageFile" type="file" accept="image/*">
+                    </label>
+                    <button class="line-action" id="clearPopularImage" type="button">Görseli sil</button>
+                  </div>
+                      </div>
+                    </details>
+
+                    <details class="menu-sub-accordion">
+                      <summary>
+                        <span class="menu-sub-number">3.2</span>
+                        <strong>Bana Öner</strong>
+                        <span class="menu-sub-state">Görünüm ayarları</span>
+                        <span class="menu-accordion-chevron" aria-hidden="true"></span>
+                      </summary>
+                      <div class="menu-sub-body">
+                        <div class="form-grid menu-action-grid">
+                    <label>
+                      <span>Kutu tipi</span>
+                      <select id="suggestBoxType">
+                        <option value="solid">Düz renk</option>
+                        <option value="gradient">Gradyan</option>
+                        <option value="image">Görsel</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Kutu rengi</span>
+                      <input id="suggestBoxColor" type="color">
+                    </label>
+                    <label>
+                      <span>Gradyan başlangıç</span>
+                      <input id="suggestGradientStart" type="color">
+                    </label>
+                    <label>
+                      <span>Gradyan bitiş</span>
+                      <input id="suggestGradientEnd" type="color">
+                    </label>
+                    <label>
+                      <span>Gradyan açı</span>
+                      <input id="suggestGradientAngle" type="number" min="0" max="360" step="1">
+                    </label>
+                    <label>
+                      <span>Görsel linki</span>
+                      <input id="suggestImageUrl" type="url" placeholder="https://...">
+                    </label>
+                    <label>
+                      <span>Görsel overlay</span>
+                      <span class="menu-range-control"><input id="suggestOverlay" type="range" min="0" max="0.85" step="0.05"><output id="suggestOverlayValue">0%</output></span>
+                    </label>
+                  </div>
+                  <div class="asset-row menu-asset-row">
+                    <label class="file-button">
+                      <span>Bana Öner kutu görseli yükle</span>
+                      <input id="suggestImageFile" type="file" accept="image/*">
+                    </label>
+                    <button class="line-action" id="clearSuggestImage" type="button">Görseli sil</button>
+                  </div>
+                      </div>
+                    </details>
+                  </div>
+                </div>
+              </details>
+            </section>
+
+            <section class="section-panel menu-settings-section" id="menuOtherCard" data-section-panel="menu">
+              <details class="menu-accordion">
+                <summary>
+                  <span class="menu-accordion-number">4</span>
+                  <span class="menu-accordion-copy"><strong>Diğer ayarlar</strong><small>Güncelleme tarihi ve font aileleri</small></span>
+                  <span class="menu-accordion-chevron" aria-hidden="true"></span>
+                </summary>
+                <div class="menu-accordion-body">
+                  <div class="form-grid menu-other-grid">
+                    <label><span>Menü güncelleme tarihi</span><input id="menuUpdateDate" type="date"></label>
+                    <label><span>Başlık fontu</span><select id="titleFont"></select></label>
+                    <label><span>Kategori fontu</span><select id="categoryFont"></select></label>
+                    <label><span>Ürün adı fontu</span><select id="productFont"></select></label>
+                  </div>
+                </div>
+              </details>
+            </section>
+
+            <section class="section-panel category-editor-panel" id="categoryEditorCard" data-section-panel="category">
+              <details class="panel-card category-accordion" open>
+                <summary class="category-accordion-head">
+                  <span class="category-step">1</span>
+                  <span class="category-accordion-copy">
+                    <strong>Kategori Bilgileri</strong>
+                    <small id="categoryEditorTitle">Kategori düzenle</small>
+                  </span>
+                  <i aria-hidden="true"></i>
+                </summary>
+                <div class="category-accordion-body">
+                  <div class="category-info-grid">
+                    <label>
+                      <span>Kategori adı</span>
+                      <input id="categoryName" type="text">
+                    </label>
+                    <label class="toggle-row category-toggle-row">
+                      <input id="categoryActive" type="checkbox">
+                      <span>Menüde göster</span>
+                    </label>
+                    <label>
+                      <span>Kategori ikonu</span>
+                      <select id="categoryIconKey"></select>
+                    </label>
+                    <button class="danger-action category-delete-action" id="deleteCategoryButton" type="button">Kategoriyi Sil</button>
+                  </div>
+                </div>
+              </details>
+
+              <details class="panel-card category-accordion" open>
+                <summary class="category-accordion-head">
+                  <span class="category-step">2</span>
+                  <span class="category-accordion-copy">
+                    <strong>Görsel ve Stil Ayarları</strong>
+                    <small>Kategori kartının renk, gradyan ve görsel ayarlarını düzenleyin.</small>
+                  </span>
+                  <i aria-hidden="true"></i>
+                </summary>
+                <div class="category-accordion-body">
+                  <div class="category-style-grid">
+                    <label>
+                      <span>Kutu tipi</span>
+                      <select id="categoryStyleType">
+                        <option value="solid">Düz renk</option>
+                        <option value="gradient">Gradyan</option>
+                        <option value="image">Görsel</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Kutu rengi</span>
+                      <input id="categoryColor" type="color">
+                    </label>
+                    <label>
+                      <span>Gradient başlangıç</span>
+                      <input id="categoryGradientStart" type="color">
+                    </label>
+                    <label>
+                      <span>Gradient bitiş</span>
+                      <input id="categoryGradientEnd" type="color">
+                    </label>
+                    <label>
+                      <span>Gradient açı</span>
+                      <input id="categoryGradientAngle" type="number" min="0" max="360" step="1">
+                    </label>
+                    <label class="category-field-wide">
+                      <span>Görsel linki</span>
+                      <input id="categoryImageUrl" type="url" placeholder="https://...">
+                    </label>
+                    <label class="category-overlay-field">
+                      <span>Overlay opaklığı</span>
+                      <input id="categoryOverlay" type="range" min="0" max="0.85" step="0.05">
+                    </label>
+                  </div>
+                  <div class="category-media-row">
+                    <div class="image-preview" id="categoryImagePreview"></div>
+                    <label class="file-button">
+                      <span>Kategori görseli yükle</span>
+                      <input id="categoryImageFile" type="file" accept="image/*">
+                    </label>
+                    <button class="line-action" id="clearCategoryImage" type="button">Kategori görselini sil</button>
+                  </div>
+                </div>
+              </details>
+
+              <details class="panel-card category-accordion" open>
+                <summary class="category-accordion-head">
+                  <span class="category-step">3</span>
+                  <span class="category-accordion-copy">
+                    <strong>Bu kategorideki ürünlere toplu uygula</strong>
+                    <small>Seçili kategori ürünlerinin görsel ve kutu stilini toplu yönetin.</small>
+                  </span>
+                  <i aria-hidden="true"></i>
+                </summary>
+                <div class="category-accordion-body">
+                  <div class="category-bulk-grid">
+                    <label>
+                      <span>Toplu ürün görsel linki</span>
+                      <input id="bulkProductImageUrl" type="url" placeholder="https://...">
+                    </label>
+                    <label>
+                      <span>Ürün kutu tipi</span>
+                      <select id="bulkProductStyleType">
+                        <option value="solid">Düz renk</option>
+                        <option value="gradient">Gradyan</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Toplu kutu rengi</span>
+                      <input id="bulkProductColor" type="color">
+                    </label>
+                    <label>
+                      <span>Gradyan başlangıç</span>
+                      <input id="bulkProductGradientStart" type="color">
+                    </label>
+                    <label>
+                      <span>Gradyan bitiş</span>
+                      <input id="bulkProductGradientEnd" type="color">
+                    </label>
+                    <label>
+                      <span>Gradyan açı</span>
+                      <input id="bulkProductGradientAngle" type="number" min="0" max="360" step="1">
+                    </label>
+                  </div>
+                  <div class="category-action-row">
+                    <button class="line-action" id="applyBulkProductImage" type="button">Görsel linkini tüm ürünlere ata</button>
+                    <label class="file-button">
+                      <span>Bilgisayardan toplu görsel yükle</span>
+                      <input id="bulkProductImageFile" type="file" accept="image/*">
+                    </label>
+                    <button class="line-action" id="clearBulkProductImage" type="button">Ürün görsellerini temizle</button>
+                    <button class="primary-action" id="applyBulkProductStyle" type="button">Kutu rengini tüm ürünlere uygula</button>
+                  </div>
+                </div>
+              </details>
+            </section>
+
+            <section class="section-panel product-editor-panel" id="productEditorCard" data-section-panel="product">
+              <details class="product-panel-card product-selection-card product-accordion-card" open>
+                <summary class="product-card-head">
+                  <span class="product-step">1</span>
+                  <div>
+                    <h3>Ürün Seçimi</h3>
+                    <p>Kategori ve ürün seçimini sade listelerle yönetin.</p>
+                  </div>
+                  <button class="line-action product-add-inline" type="button" data-product-add-inline>+ Ürün Ekle</button>
+                  <span class="product-accordion-chevron" aria-hidden="true"></span>
+                </summary>
+                <div class="product-accordion-body">
+                  <div class="product-select-grid">
+                    <div class="category-tab-strip" id="productCategoryTabs" aria-label="Ürün kategorileri"></div>
+                    <div class="product-chip-strip" id="productQuickList" aria-label="Seçili kategorideki ürünler"></div>
+                  </div>
+                </div>
+              </details>
+
+              <details class="product-panel-card product-detail-card product-accordion-card" id="productDetailsAccordion" open>
+                <summary class="product-card-head">
+                  <span class="product-step">2</span>
+                  <div>
+                    <h3 id="productEditorTitle">Ürün Detayları</h3>
+                    <p>Fiyat, görsel, içerik ve reçete bağlantılarını düzenleyin.</p>
+                  </div>
+                  <span class="product-accordion-chevron" aria-hidden="true"></span>
+                </summary>
+                <div class="product-accordion-body">
+                  <div class="form-grid two product-main-grid">
+                    <label>
+                      <span>Ürün adı</span>
+                      <input id="productName" type="text">
+                    </label>
+                    <label>
+                      <span>Kategori</span>
+                      <select id="productCategory"></select>
+                    </label>
+                    <label class="product-field-wide">
+                      <span>Açıklama</span>
+                      <textarea id="productDesc" rows="3"></textarea>
+                    </label>
+                    <div class="pricing-type-control">
+                      <label>
+                        <span>Fiyat tipi</span>
+                        <select id="priceMode">
+                          <option value="standard">Standart</option>
+                          <option value="size">Boyut</option>
+                          <option value="shot">Shot</option>
+                        </select>
+                      </label>
+                      <button class="ui-button ui-button--secondary ui-button--sm" id="newPriceTypeButton" type="button">+ Yeni Fiyat Tipi</button>
+                    </div>
+                    <label class="legacy-pricing-fields" id="standardPriceField">
+                      <span>Standart fiyat</span>
+                      <input id="standardPrice" type="number" min="0" step="1">
+                    </label>
+                  </div>
+                  <div class="pricing-value-fields" id="pricingValueFields" aria-live="polite"></div>
+                  <div class="form-grid three legacy-pricing-fields" id="sizePriceFields" hidden>
+                    <label>
+                      <span>K fiyat</span>
+                      <input id="priceK" type="number" min="0" step="1">
+                    </label>
+                    <label>
+                      <span>O fiyat</span>
+                      <input id="priceO" type="number" min="0" step="1">
+                    </label>
+                    <label>
+                      <span>B fiyat</span>
+                      <input id="priceB" type="number" min="0" step="1">
+                    </label>
+                  </div>
+                  <div class="form-grid two legacy-pricing-fields" id="singleDoublePriceFields" hidden>
+                    <label>
+                      <span>Single fiyat</span>
+                      <input id="priceSingle" type="number" min="0" step="1">
+                    </label>
+                    <label>
+                      <span>Double fiyat</span>
+                      <input id="priceDouble" type="number" min="0" step="1">
+                    </label>
+                  </div>
+                  <div class="form-grid product-toggle-grid">
+                    <label>
+                      <span>Durum</span>
+                      <select id="productStock">
+                        <option value="active">Aktif</option>
+                        <option value="sold-out">Tükendi / Gizle</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Ürün tipi</span>
+                      <select id="productKind">
+                        <option value="drink">İçecek</option>
+                        <option value="dessert">Tatlı</option>
+                        <option value="food">Yiyecek</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Sıcaklık</span>
+                      <select id="productTemperature">
+                        <option value="none">Yok</option>
+                        <option value="cold">Soğuk</option>
+                        <option value="hot">Sıcak</option>
+                      </select>
+                    </label>
+                    <label class="toggle-row">
+                      <input id="productPopular" type="checkbox">
+                      <span>Popüler yıldızı</span>
+                    </label>
+                    <label class="toggle-row">
+                      <input id="productActive" type="checkbox">
+                      <span>Menüde göster</span>
+                    </label>
+                  </div>
+
+                  <section class="product-subpanel">
+                    <h4>Görsel, Stil ve Ek Bilgiler</h4>
+                    <div class="form-grid product-style-grid">
+                      <label>
+                        <span>Kart tipi</span>
+                        <select id="productStyleType">
+                          <option value="solid">Düz renk</option>
+                          <option value="gradient">Gradyan</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>Kart rengi</span>
+                        <input id="productColor" type="color">
+                      </label>
+                      <label>
+                        <span>Gradient başlangıç</span>
+                        <input id="productGradientStart" type="color">
+                      </label>
+                      <label>
+                        <span>Gradient bitiş</span>
+                        <input id="productGradientEnd" type="color">
+                      </label>
+                      <label>
+                        <span>Gradient açı</span>
+                        <input id="productGradientAngle" type="number" min="0" max="360" step="1">
+                      </label>
+                      <label class="product-field-wide">
+                        <span>Ürün görsel linki</span>
+                        <input id="productImageUrl" type="url" placeholder="https://...">
+                      </label>
+                      <label class="product-field-wide">
+                        <span>Görsel overlay</span>
+                        <input id="productImageOverlay" type="range" min="0" max="0.85" step="0.05">
+                      </label>
+                    </div>
+                    <div class="asset-row product-asset-row">
+                      <label class="file-button">
+                        <span>Ürün görseli yükle</span>
+                        <input id="productImageFile" type="file" accept="image/*">
+                      </label>
+                      <button class="line-action" id="clearProductImage" type="button">Ürün görselini sil</button>
+                    </div>
+                    <div class="image-preview" id="productImagePreview"></div>
+
+                    <div class="detail-grid product-detail-grid">
+                      <label>
+                        <span>Kalori</span>
+                        <input id="productCalories" type="text" placeholder="180 kcal">
+                      </label>
+                      <label>
+                        <span>Alerjen</span>
+                        <input id="productAllergens" type="text" placeholder="Süt, fındık">
+                      </label>
+                      <label>
+                        <span>Manuel ürün içeriği</span>
+                        <input id="productIngredients" type="text" placeholder="Mango, buz, özel frozen bazı">
+                      </label>
+                    </div>
+                    <div class="form-grid three">
+                      <label>
+                        <span>İçerik kaynağı</span>
+                        <select id="productContentMode">
+                          <option value="recipe">Reçeteden otomatik</option>
+                          <option value="manual">Manuel içerik</option>
+                          <option value="hidden">İçeriği gizle</option>
+                          <option value="not-required">Reçete gerekmiyor</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>Bağlı reçete</span>
+                        <select id="productRecipeId"></select>
+                      </label>
+                      <label>
+                        <span>Sitede kullanılacak ölçü</span>
+                        <select id="productRecipeSize"></select>
+                      </label>
+                    </div>
+                    <p class="control-note" id="productRecipeLinkStatus">Reçete bağlantısı seçilmedi.</p>
+                  </section>
+
+                  <section class="product-delete-zone">
+                    <div>
+                      <strong>Ürün Sil</strong>
+                      <span>Seçili ürünü menüden kaldırmak için kullanın.</span>
+                    </div>
+                    <button class="danger-action" id="deleteProductButton" type="button">Ürünü Sil</button>
+                  </section>
+                </div>
+              </details>
+            </section>
+            <!-- Menü Çıktısı modülü geçici olarak pasif. İleride tekrar aktif edilebilir. -->
+            <section class="panel-card section-panel menu-output-panel" id="menuOutputCard" data-section-panel="menuOutput">
+              <div class="card-head">
+                <div>
+                  <p class="eyebrow">TV Menü Çıktısı</p>
+                  <h3>Menü Çıktısı</h3>
+                </div>
+                <div class="menu-output-actions">
+                  <button class="line-action" id="menuOutputReset" type="button">Sıfırla</button>
+                  <button class="line-action" id="menuOutputExportJpg" type="button">JPG İndir</button>
+                  <button class="line-action" id="menuOutputExportPdf" type="button">PDF Hazırla</button>
+                  <button class="primary-action" id="menuOutputExportPng" type="button">PNG İndir</button>
+                </div>
+              </div>
+
+              <div class="menu-output-grid">
+                <div class="menu-output-controls">
+                  <div class="menu-output-control-tabs" id="menuOutputControlTabs" aria-label="Menü çıktısı araçları">
+                    <button class="is-active" type="button" data-menu-output-tab="sections">Alanlar</button>
+                    <button type="button" data-menu-output-tab="style">Stil</button>
+                    <button type="button" data-menu-output-tab="layers">Katmanlar</button>
+                    <button type="button" data-menu-output-tab="templates">Şablonlar</button>
+                    <button type="button" data-menu-output-tab="output">Çıktı</button>
+                  </div>
+
+                  <section class="menu-output-box" data-menu-output-control-panel="templates">
+                    <h4>Şablon Kütüphanesi</h4>
+                    <div class="form-grid two">
+                      <label>
+                        <span>Şablon adı</span>
+                        <input id="menuOutputTemplateName" type="text" placeholder="Örn. Special TV ekranı">
+                      </label>
+                      <label>
+                        <span>Canva Referans Linki</span>
+                        <input id="menuOutputCanvaLink" type="url" placeholder="https://canva.link/...">
+                      </label>
+                    </div>
+                    <div class="asset-row">
+                      <button class="primary-action" id="menuOutputSaveTemplate" type="button">Şablonu Kaydet</button>
+                      <button class="line-action" id="menuOutputUpdateTemplate" type="button">Güncelle</button>
+                      <button class="line-action" id="menuOutputDuplicateTemplate" type="button">Kopyala</button>
+                      <button class="line-action" id="menuOutputSetDefaultTemplate" type="button">Varsayılan Yap</button>
+                      <button class="line-action" id="menuOutputOpenCanva" type="button">Canva’da Aç</button>
+                      <button class="danger-action" id="menuOutputDeleteTemplate" type="button">Sil</button>
+                    </div>
+                    <div class="menu-output-template-list" id="menuOutputTemplateList"></div>
+                  </section>
+
+                  <section class="menu-output-box" data-menu-output-control-panel="style">
+                    <h4>Genel Tasarım</h4>
+                    <div class="form-grid three">
+                      <label><span>Arka plan</span><input id="menuOutputBgColor" type="color"></label>
+                      <label><span>Kutu rengi</span><input id="menuOutputBoxColor" type="color"></label>
+                      <label><span>Yazı rengi</span><input id="menuOutputTextColor" type="color"></label>
+                      <label><span>Başlık fontu</span><select id="menuOutputTitleFont"></select></label>
+                      <label><span>Ürün fontu</span><select id="menuOutputBodyFont"></select></label>
+                      <label><span>Fiyat fontu</span><select id="menuOutputPriceFont"></select></label>
+                      <label><span>Ürün puntosu</span><input id="menuOutputProductSize" type="number" min="14" max="54" step="1"></label>
+                      <label><span>Satır aralığı</span><input id="menuOutputRowGap" type="number" min="12" max="70" step="1"></label>
+                      <label><span>Tarih metni</span><input id="menuOutputDate" type="text"></label>
+                    </div>
+                  </section>
+
+                  <section class="menu-output-box is-active" data-menu-output-control-panel="sections">
+                    <h4>Alan Ekle</h4>
+                    <div class="form-grid three">
+                      <label><span>Alan başlığı</span><input id="menuOutputSectionTitle" type="text" placeholder="SPECIAL"></label>
+                      <label>
+                        <span>Alan tipi</span>
+                        <select id="menuOutputSectionType">
+                          <option value="main">Ana büyük liste</option>
+                          <option value="bottom">Alt yatay kategori</option>
+                          <option value="right">Sağ küçük kategori</option>
+                          <option value="small">Extra/küçük kart</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>Ürün seçimi</span>
+                        <select id="menuOutputSectionMode">
+                          <option value="category">Tüm kategori ürünlerini çek</option>
+                          <option value="manual">Manuel ürün seçimi</option>
+                          <option value="all">Tüm menüden çek</option>
+                        </select>
+                      </label>
+                      <label><span>Kategori</span><select id="menuOutputSectionCategory"></select></label>
+                    </div>
+                    <button class="primary-action" id="menuOutputAddSection" type="button">Alan Ekle</button>
+                  </section>
+
+                  <section class="menu-output-box is-active" data-menu-output-control-panel="sections">
+                    <h4>Alanlar</h4>
+                    <div class="menu-output-section-list" id="menuOutputSectionList"></div>
+                  </section>
+
+                  <section class="menu-output-box" data-menu-output-control-panel="layers">
+                    <h4>Katmanlar</h4>
+                    <p class="control-note">Üstteki kayıt ön plandadır. Alanı seçin, kilitleyin veya sırasını değiştirin.</p>
+                    <div class="menu-output-layer-list" id="menuOutputLayerList"></div>
+                  </section>
+
+                  <section class="menu-output-box" data-menu-output-control-panel="output">
+                    <h4>Çıktı Kontrolü</h4>
+                    <div class="menu-output-quality-panel" id="menuOutputQualityPanel"></div>
+                    <p class="control-note">Uyarılar exportu engellemez. PNG/JPG/PDF düğmeleri ekranın üstündedir.</p>
+                  </section>
+                </div>
+
+                <div class="menu-output-preview-wrap">
+                  <div class="menu-output-preview-head">
+                    <div>
+                      <p class="eyebrow">Canlı Önizleme</p>
+                      <h4>1080 x 1920 TV Menü</h4>
+                      <span>Ayarlar anında uygulanır. Çıktı flash bellek/TV kullanımına hazırdır.</span>
+                    </div>
+                    <strong id="menuOutputStatus">Hazır</strong>
+                  </div>
+                  <div class="menu-output-preview-tools" aria-label="Önizleme kontrolleri">
+                    <button class="line-action" id="menuOutputZoomOut" type="button" title="Uzaklaştır">−</button>
+                    <strong id="menuOutputZoomValue">Sığdır</strong>
+                    <button class="line-action" id="menuOutputZoomIn" type="button" title="Yakınlaştır">+</button>
+                    <button class="line-action" id="menuOutputFitPreview" type="button">Sığdır</button>
+                    <button class="line-action" id="menuOutputZoomActual" type="button">%100</button>
+                    <button class="line-action is-active" id="menuOutputGridToggle" type="button">Grid açık</button>
+                    <button class="line-action is-active" id="menuOutputSafeAreaToggle" type="button">Güvenli alan</button>
+                    <button class="line-action" id="menuOutputFullscreen" type="button">Tam ekran</button>
+                  </div>
+                  <div class="menu-output-preview-stage" id="menuOutputPreviewStage">
+                    <div class="menu-output-canvas-shell" id="menuOutputCanvasShell">
+                      <div class="menu-output-canvas" id="menuOutputPreview" aria-label="Menü çıktısı önizleme"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+      </template>
+
           <section class="section-panel recipe-editor-card" id="recipeEditorCard" data-section-panel="recipe">
             <details class="recipe-panel-card recipe-management-card recipe-accordion-card" open>
               <summary class="recipe-card-head">

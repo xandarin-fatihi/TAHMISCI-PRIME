@@ -4,11 +4,17 @@
 
   // Eski yönetici stok deep-linklerini parametrelerini koruyarak yeni sahibine taşı.
   const legacyStockUrl = new URL(window.location.href);
-  if (String(legacyStockUrl.searchParams.get("section") || "").toLocaleLowerCase("tr-TR") === "stock") {
+  const legacyStockSection = String(legacyStockUrl.searchParams.get("section") || "").toLocaleLowerCase("tr-TR");
+  const legacyStockHash = String(legacyStockUrl.hash || "").replace(/^#/, "").toLocaleLowerCase("tr-TR");
+  const legacyWorkforceTarget = String(legacyStockUrl.searchParams.get("workforce") || legacyStockUrl.searchParams.get("panel") || "").toLocaleLowerCase("tr-TR");
+  if (legacyStockSection === "stock" || legacyStockHash === "stockcard" || ["shipment", "shipments", "sevkiyat"].includes(legacyWorkforceTarget)) {
     legacyStockUrl.pathname = "/fatura/";
     legacyStockUrl.searchParams.delete("section");
+    legacyStockUrl.searchParams.delete("panel");
     legacyStockUrl.searchParams.set("view", "stock");
-    window.location.replace(`${legacyStockUrl.pathname}${legacyStockUrl.search}${legacyStockUrl.hash}`);
+    if (["shipment", "shipments", "sevkiyat"].includes(legacyWorkforceTarget)) legacyStockUrl.searchParams.set("workforce", "shipments");
+    legacyStockUrl.hash = "";
+    window.location.replace(`${legacyStockUrl.pathname}${legacyStockUrl.search}`);
     return;
   }
 
@@ -541,6 +547,13 @@
       "adminNotificationPush", "adminNotificationTest", "adminNotificationSavePreferences", "adminNotificationHealth",
       "adminNotificationClearArchive", "adminNotificationManageEmail", "adminNotificationDevices", "adminNotificationDevicesRefresh",
       "overviewGrid", "contentGrid", "categoryList", "productList", "saveState", "saveChangesButton", "panelThemeToggle", "addCategoryButton",
+      "stockCard", "stockSummaryGrid", "stockCategoryFilter", "stockCategoryChips", "stockSearch", "stockOnlyOrderNeeded", "stockProductList", "stockMovementList", "stockOrderSuggestions",
+      "stockEditorCategorySelect", "stockEditorProductSelect", "stockAddCategoryButton", "stockAddProductButton", "stockAddSupplierButton",
+      "stockEditorIncreaseButton", "stockEditorDecreaseButton", "stockDeleteProductButton", "stockDeleteCategoryButton", "stockEditorProductName",
+      "stockEditorCategoryName", "stockEditorQuantity", "stockEditorThreshold", "stockEditorCriticalThreshold", "stockEditorUnit",
+      "stockEditorBulkUnit", "stockEditorUnitFactor", "stockEditorSupplier", "stockEditorStatus", "stockEditorActive", "stockEditorNote",
+      "stockSuggestionCount", "stockSaveButton", "stockActionModal", "stockActionForm", "stockActionKicker", "stockActionTitle",
+      "stockActionProduct", "stockActionQuantity", "stockActionReason", "stockActionNote", "stockActionMessage",
       "menuOutputCard", "menuOutputTemplateName", "menuOutputCanvaLink", "menuOutputOpenCanva", "menuOutputSaveTemplate",
       "menuOutputUpdateTemplate", "menuOutputDuplicateTemplate", "menuOutputDeleteTemplate", "menuOutputSetDefaultTemplate",
       "menuOutputTemplateList", "menuOutputReset", "menuOutputExportPng", "menuOutputExportJpg", "menuOutputExportPdf",
@@ -2096,6 +2109,7 @@
     if (section === "overview") return ["adminSummary"];
     if (["menu", "banner", "category", "product", "bulkPrice", "menuOutput", "json", "settings"].includes(section)) return ["menu"];
     if (section === "recipe") return ["recipes"];
+    if (section === "stock") return [];
     if (section === "staffAccess") return ["staffAccess"];
     return [];
   }
@@ -2113,6 +2127,13 @@
     }
     if (section === "staffAccess") {
       return loadScriptOnce("workforce", "scripts/workforce.js?v=20260816-stock-shipments");
+    }
+    if (section === "stock") {
+      // Güvenli geri dönüş bağlantıları korunur; aktif menü /fatura/?view=stock sahibine yönlenir.
+      return Promise.all([
+        loadScriptOnce("workforce", "scripts/workforce.js?v=20260827-performance"),
+        loadScriptOnce("stockLocations", "scripts/stock-locations.js?v=20260827-stock-owner-fallback")
+      ]);
     }
     if (section === "settings") {
       return Promise.all([
@@ -2147,6 +2168,7 @@
   function loadScriptOnce(key, source) {
     if (key === "pricing" && window.TahmisciPricing) return Promise.resolve(window.TahmisciPricing);
     if (key === "workforce" && window.__tahmisciWorkforceMounted) return Promise.resolve(true);
+    if (key === "stockLocations" && window.TahmisciStockLocations) return Promise.resolve(window.TahmisciStockLocations);
     if (key === "livePreview" && window.TahmisciLivePreview) return Promise.resolve(window.TahmisciLivePreview);
     if (key === "accountSecurity" && window.TahmisciAccountSecurity) return Promise.resolve(window.TahmisciAccountSecurity);
     if (state.modulePromises.has(key)) return state.modulePromises.get(key);
@@ -4066,6 +4088,9 @@
     if (active === "recipe") ensureRecipeSelection();
     if (active === "overview") renderStats();
     else if (active === "bulkPrice") renderBulkPriceTools();
+    else if (active === "stock") {
+      // Kaynak ve olay bağlantısı güvenli geri dönüş için korunur; normal kullanım Fatura sahibine yönlenir.
+    }
     else if (["menu", "banner", "category", "product"].includes(active)) {
       renderLists();
       renderForms();

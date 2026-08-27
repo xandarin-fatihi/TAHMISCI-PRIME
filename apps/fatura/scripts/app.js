@@ -5,7 +5,7 @@ import { renderProductLinks, renderSuppliers } from "./suppliers.js";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
 import { documentFormBody, renderDocuments } from "./documents.js";
 import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderSettingsAudit, renderUsers, userAccessFormBody } from "./accounting.js";
-import { applyStockIntent, connectStockEvents, disconnectStockEvents, loadStockView, renderStockView, resetStockState } from "./stock.js";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260827-stock-restore";
 
 const app = document.getElementById("faturaApp");
 const shell = document.getElementById("shell");
@@ -189,8 +189,8 @@ async function loadView(view, force = false) {
     ledger: () => Promise.all([loadSuppliers(force), loadLedger(force)]),
     users: () => loadUsers(force),
     stock: async () => {
-      await Promise.all([loadStockView({ force }), loadShipments(force)]);
-      await loadStockView();
+      await loadShipments(force);
+      await loadStockView({ force });
     },
     settings: () => Promise.all([loadSettings(force), has(CAPABILITIES.accountingRead) || has(CAPABILITIES.users) ? loadAudit(force) : null])
   }[view];
