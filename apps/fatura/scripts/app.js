@@ -5,6 +5,7 @@ import { renderProductLinks, renderSuppliers } from "./suppliers.js";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
 import { documentFormBody, renderDocuments } from "./documents.js";
 import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderSettingsAudit, renderUsers, userAccessFormBody } from "./accounting.js";
+import { connectStockEvents, disconnectStockEvents, loadStockView, renderStockView, resetStockState } from "./stock.js";
 
 const app = document.getElementById("faturaApp");
 const shell = document.getElementById("shell");
@@ -23,6 +24,7 @@ const viewDefinitions = [
   { id: "suppliers", label: "Tedarikçiler", description: "Tedarikçi kartları, vadeler ve hesap bakiyeleri.", any: [CAPABILITIES.supplierRead,CAPABILITIES.supplierManage] },
   { id: "links", label: "Ürün Eşleşmeleri", description: "Tedarikçi ürünlerini canonical stok kataloğuna bağlayın.", capability: CAPABILITIES.links },
   { id: "documents", label: "Belgeler", description: "Yetki kontrollü özel fatura ve sevkiyat kanıtları.", capability: CAPABILITIES.documentsRead },
+  { id: "stock", label: "Stok & Sevkiyat", description: "Depoları, stok bakiyelerini, birimleri, transferleri ve sayımları yönetin.", adminOnly: true },
   { id: "ledger", label: "Cari Hesap", description: "Append-only borç, ödeme ve ters kayıt defteri.", capability: CAPABILITIES.accountingRead },
   { id: "users", label: "Kullanıcı ve Yetkiler", description: "Mevcut personel hesaplarına Tahmisçi Fatura yetkileri verin.", capability: CAPABILITIES.users },
   { id: "settings", label: "Ayarlar ve Audit", description: "Birim sözlüğü, mali belge kuralları ve işlem geçmişi.", any: [CAPABILITIES.users,CAPABILITIES.accountingRead] }
@@ -96,6 +98,8 @@ async function resolveContext() {
 
 function showAuth(message = "") {
   stopEvents();
+  disconnectStockEvents();
+  resetStockState();
   shell.hidden = true;
   authView.hidden = false;
   app.dataset.status = "auth";
@@ -132,6 +136,8 @@ function capabilitySummary(actor) {
 }
 
 function canSeeView(view) {
+  const actor = state.context && state.context.actor;
+  if (view.adminOnly) return Boolean(actor && actor.type === "admin");
   const sections = state.context && state.context.access && state.context.access.sections;
   if (Array.isArray(sections)) return sections.includes(view.id);
   if (view.capability) return has(view.capability);
@@ -155,16 +161,18 @@ async function activateInitialView() {
 async function setView(viewId, options = {}) {
   const view = visibleViews.find((item) => item.id === viewId);
   if (!view) return;
+  if (state.activeView === "stock" && viewId !== "stock") disconnectStockEvents();
   state.activeView = viewId;
   safeLocalStorageSet("tahmisci:fatura:view", viewId);
   renderNav();
   document.getElementById("pageTitle").textContent = view.label;
   document.getElementById("pageDescription").textContent = view.description;
-  content.innerHTML = loadingSkeleton(`Güncel ${view.label} verileri alınıyor`);
+  content.innerHTML = viewId === "stock" ? renderStockView() : loadingSkeleton(`Güncel ${view.label} verileri alınıyor`);
   closeMobileSidebar();
   try {
     await loadView(viewId, options.force === true);
     renderActiveView();
+    if (viewId === "stock") connectStockEvents();
   } catch (error) {
     handleViewError(error);
   }
@@ -179,6 +187,7 @@ async function loadView(view, force = false) {
     documents: () => Promise.all([loadSuppliers(force), loadShipments(force), loadDocuments(force)]),
     ledger: () => Promise.all([loadSuppliers(force), loadLedger(force)]),
     users: () => loadUsers(force),
+    stock: () => loadStockView({ force }),
     settings: () => Promise.all([loadSettings(force), has(CAPABILITIES.accountingRead) || has(CAPABILITIES.users) ? loadAudit(force) : null])
   }[view];
   if (loader) await loader();
@@ -212,6 +221,7 @@ function loadingSkeleton(label) {
 }
 
 function renderActiveView() {
+  if (state.activeView === "stock") return;
   const renderer = { dashboard: renderDashboard, shipments: renderShipments, suppliers: renderSuppliers, links: renderProductLinks, documents: renderDocuments, ledger: renderLedger, users: renderUsers, settings: renderSettingsAudit }[state.activeView];
   content.innerHTML = renderer ? renderer() : '<div class="empty-state"><p>Bu bölüm kullanılamıyor.</p></div>';
 }

@@ -44,7 +44,6 @@
     product: "Ürün düzenleme",
     bulkPrice: "Toplu Fiyat Güncelleme",
     dataCenter: "Excel Veri Merkezi",
-    stock: "Stok & Sevkiyat",
     menuOutput: "Menü çıktısı",
     recipe: "Reçete Düzenleme",
     site: "Site",
@@ -317,7 +316,6 @@
     recipeEventSource: null,
     siteEventSource: null,
     feedbackEventSource: null,
-    stockEventSource: null,
     notificationEventSource: null,
     notificationPollTimer: null,
     notificationReconnectTimer: null,
@@ -1853,7 +1851,7 @@
   }
 
   function closeBackendEvents() {
-    ["menuEventSource", "recipeEventSource", "siteEventSource", "feedbackEventSource", "stockEventSource", "notificationEventSource"].forEach((key) => {
+    ["menuEventSource", "recipeEventSource", "siteEventSource", "feedbackEventSource", "notificationEventSource"].forEach((key) => {
       if (!state[key]) return;
       try {
         state[key].close();
@@ -2002,7 +2000,6 @@
   function catalogScopeForSection(section) {
     if (["menu", "banner", "category", "product", "bulkPrice", "menuOutput", "json", "settings"].includes(section)) return "menu";
     if (section === "recipe") return "recipes";
-    if (section === "stock") return "stock";
     return "";
   }
 
@@ -2012,10 +2009,9 @@
     const scope = catalogScopeForSection(section);
     const config = {
       menu: { key: "menuEventSource", path: "/api/menu/events", event: "menu" },
-      recipes: { key: "recipeEventSource", path: "/api/recipes/events", event: "recipes" },
-      stock: { key: "stockEventSource", path: "/api/stock/events", event: "stock" }
+      recipes: { key: "recipeEventSource", path: "/api/recipes/events", event: "recipes" }
     }[scope];
-    ["menuEventSource", "recipeEventSource", "stockEventSource"].forEach((key) => {
+    ["menuEventSource", "recipeEventSource"].forEach((key) => {
       if (!state[key] || config && key === config.key) return;
       state[key].close();
       state[key] = null;
@@ -2050,13 +2046,6 @@
       state.loadedScopes.add("recipes");
       saveRecipesLocalOnly();
       if (state.activeSection === "recipe") renderActiveSection("recipe");
-      return;
-    }
-    if (scope === "stock") {
-      state.scopeRevisions.stock = incomingRevision;
-      document.dispatchEvent(new CustomEvent("tahmisci:stock-updated", {
-        detail: { revision: incomingRevision, source: "stock-sse" }
-      }));
       return;
     }
     if (incomingRevision <= Number(state.scopeRevisions[scope] || 0) && !payload.requiresRefetch) return;
@@ -2105,10 +2094,6 @@
     if (section === "overview") return ["adminSummary"];
     if (["menu", "banner", "category", "product", "bulkPrice", "menuOutput", "json", "settings"].includes(section)) return ["menu"];
     if (section === "recipe") return ["recipes"];
-    // Depo kartları kendi küçük projection endpointlerini kullanır. Tam katalog
-    // yalnız Katalog Bilgileri açıldığında yüklenir; böylece aynı ekranda ikinci
-    // stok bootstrap ve duplicate GET oluşmaz.
-    if (section === "stock") return [];
     if (section === "staffAccess") return ["staffAccess"];
     return [];
   }
@@ -2126,12 +2111,6 @@
     }
     if (section === "staffAccess") {
       return loadScriptOnce("workforce", "scripts/workforce.js?v=20260816-stock-shipments");
-    }
-    if (section === "stock") {
-      return Promise.all([
-        loadScriptOnce("workforce", "scripts/workforce.js?v=20260827-performance"),
-        loadScriptOnce("stockLocations", "scripts/stock-locations.js?v=20260827-performance")
-      ]);
     }
     if (section === "settings") {
       return Promise.all([
@@ -2166,7 +2145,6 @@
   function loadScriptOnce(key, source) {
     if (key === "pricing" && window.TahmisciPricing) return Promise.resolve(window.TahmisciPricing);
     if (key === "workforce" && window.__tahmisciWorkforceMounted) return Promise.resolve(true);
-    if (key === "stockLocations" && window.TahmisciStockLocations) return Promise.resolve(window.TahmisciStockLocations);
     if (key === "livePreview" && window.TahmisciLivePreview) return Promise.resolve(window.TahmisciLivePreview);
     if (key === "accountSecurity" && window.TahmisciAccountSecurity) return Promise.resolve(window.TahmisciAccountSecurity);
     if (state.modulePromises.has(key)) return state.modulePromises.get(key);
@@ -4091,9 +4069,6 @@
     if (active === "recipe") ensureRecipeSelection();
     if (active === "overview") renderStats();
     else if (active === "bulkPrice") renderBulkPriceTools();
-    else if (active === "stock") {
-      // Gerçek depo görünümü stock-locations.js tarafından hedefli render edilir.
-    }
     else if (["menu", "banner", "category", "product"].includes(active)) {
       renderLists();
       renderForms();
