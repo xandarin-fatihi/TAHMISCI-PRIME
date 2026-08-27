@@ -1,12 +1,12 @@
 /* Tahmisçi Fatura PWA — yalnız statik kabuk; API ve özel belgeler asla cache edilmez. */
 "use strict";
-const CACHE = "tahmisci-fatura-shell-v2";
+const CACHE = "tahmisci-fatura-shell-v3-stock-owner";
 const SHELL = [
-  "/fatura/", "/fatura/offline.html", "/fatura/styles/fatura.css",
+  "/fatura/", "/fatura/offline.html", "/fatura/styles/fatura.css", "/fatura/styles/stock.css",
   "/fatura/scripts/app.js", "/fatura/scripts/api.js", "/fatura/scripts/state.js",
   "/fatura/scripts/dashboard.js", "/fatura/scripts/suppliers.js",
   "/fatura/scripts/receipts.js", "/fatura/scripts/documents.js",
-  "/fatura/scripts/accounting.js", "/shared/styles/panel-foundation.css",
+  "/fatura/scripts/accounting.js", "/fatura/scripts/stock.js", "/shared/styles/panel-foundation.css",
   "/assets/brand/logo-compact.png", "/assets/app-icons/fatura/icon-192.png"
 ];
 self.addEventListener("install", (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting())));

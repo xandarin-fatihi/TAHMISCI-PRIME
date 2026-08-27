@@ -1931,6 +1931,7 @@ app.put("/api/admin/stock", requireAdminRequestOrigin, auth.requireAdmin, async 
     res.json({
       ok: true,
       stockState: normalizeStockState(nextStore.stockState),
+      revision: resolveScopeRevision(nextStore, "stock"),
       publishRevision: nextStore.revisions.publish,
       updatedAt
     });
@@ -3944,7 +3945,7 @@ function queueStockThresholdNotifications(data, pending, previousState, nextStat
         severity: kind === "critical" ? "critical" : kind === "ok" ? "success" : "warning",
         entityType: "stock_balance",
         entityId: `${location.id}:${product.id}`,
-        deepLink: `/yonetici/?section=stock&locationId=${encodeURIComponent(location.id)}&stockProductId=${encodeURIComponent(product.id)}`,
+        deepLink: `/fatura/?view=stock&locationId=${encodeURIComponent(location.id)}&stockProductId=${encodeURIComponent(product.id)}`,
         dedupeKey: `stock-${transition}:${location.id}:${product.id}:${operationId}`,
         metadata: {
           productName: product.name,

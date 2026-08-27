@@ -1191,8 +1191,6 @@
     } else if (section === "staffAccess") {
       renderTasks();
       renderShifts();
-    } else if (section === "stock") {
-      renderShipments();
     } else {
       renderTasks();
       renderShipments();
@@ -1210,7 +1208,6 @@
   window.__tahmisciWorkforcePreviewSection = () => activePreviewSection;
 
   function activeWorkforceSection(section) {
-    if (section === "stock") return "shipments";
     if (section !== "staffAccess") return "";
     if ($("#workforceTasksAccordion")?.open) return "tasks";
     if ($("#workforceShiftsAccordion")?.open) return "shifts";
@@ -1218,7 +1215,7 @@
   }
 
   function isWorkforceOwnerSection(section) {
-    return section === "staffAccess" || section === "stock";
+    return section === "staffAccess";
   }
 
   function setupAccordions() {
@@ -1248,15 +1245,6 @@
       });
     });
 
-    const shipmentsAccordion = $("#workforceShipmentsAccordion");
-    if (shipmentsAccordion && shipmentsAccordion.dataset.workforceToggleBound !== "true") {
-      shipmentsAccordion.dataset.workforceToggleBound = "true";
-      shipmentsAccordion.addEventListener("toggle", () => {
-        if (!shipmentsAccordion.open) return;
-        syncLivePreview("shipments");
-        refresh("shipments").catch((error) => showMessage(error.message, "error"));
-      });
-    }
   }
 
   async function mount(section) {

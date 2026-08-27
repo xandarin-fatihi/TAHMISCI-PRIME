@@ -435,7 +435,7 @@ function createProcurementService(options = {}) {
         severity: "warning",
         entityType: "shipment",
         entityId: shipment.id,
-        deepLink: `/yonetici/?section=stock&workforce=shipments&entityId=${encodeURIComponent(shipment.id)}`,
+        deepLink: `/fatura/?view=stock&workforce=shipments&entityId=${encodeURIComponent(shipment.id)}`,
         dedupeKey: `procurement-shipment-submitted:${shipment.id}`
       });
       notifyFaturaReceiptUsers(data, helpers, shipment, {
@@ -454,7 +454,7 @@ function createProcurementService(options = {}) {
           severity: "warning",
           entityType: "shipment",
           entityId: shipment.id,
-          deepLink: `/yonetici/?section=stock&workforce=shipments&entityId=${encodeURIComponent(shipment.id)}`,
+          deepLink: `/fatura/?view=stock&workforce=shipments&entityId=${encodeURIComponent(shipment.id)}`,
           dedupeKey: `procurement-document-missing:${shipment.id}`
         });
         notifyFaturaReceiptUsers(data, helpers, shipment, {

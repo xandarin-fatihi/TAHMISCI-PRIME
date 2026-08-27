@@ -303,7 +303,7 @@ function createCriticalStockNotifications(data, now, created) {
         severity: kind === "critical" ? "critical" : "warning",
         entityType: "stock_balance",
         entityId: id,
-        deepLink: `/yonetici/?section=stock&locationId=${encodeURIComponent(location.id)}&productId=${encodeURIComponent(product.id)}`,
+        deepLink: `/fatura/?view=stock&locationId=${encodeURIComponent(location.id)}&productId=${encodeURIComponent(product.id)}`,
         dedupeKey: `stock-${kind}:${location.id}:${product.id}:${revision}`,
         metadata: {
           productName: String(product.name || product.productName || ""), locationId: location.id,
@@ -334,7 +334,7 @@ function createManagerPendingReminders(data, now, created) {
     entityType: "workforce",
     entityId: "pending",
     deepLink: shipments
-      ? "/yonetici/?section=stock&workforce=shipments"
+      ? "/fatura/?view=stock&workforce=shipments"
       : "/yonetici/?section=staffAccess&workforce=shifts",
     dedupeKey: `manager-pending:${dateKeyInIstanbul(now)}:${shipments}:${shiftRequests}`
   }, now);

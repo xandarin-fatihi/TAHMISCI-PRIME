@@ -2,6 +2,16 @@
   "use strict";
   // Developer: Uzeyir | System Key: xandar | Admin panel runtime marker
 
+  // Eski yönetici stok deep-linklerini parametrelerini koruyarak yeni sahibine taşı.
+  const legacyStockUrl = new URL(window.location.href);
+  if (String(legacyStockUrl.searchParams.get("section") || "").toLocaleLowerCase("tr-TR") === "stock") {
+    legacyStockUrl.pathname = "/fatura/";
+    legacyStockUrl.searchParams.delete("section");
+    legacyStockUrl.searchParams.set("view", "stock");
+    window.location.replace(`${legacyStockUrl.pathname}${legacyStockUrl.search}${legacyStockUrl.hash}`);
+    return;
+  }
+
   const STORAGE_KEY = "tahmisci.menu.state.v1";
   const SITE_STORAGE_KEY = "tahmisci.site.state.v1";
   const FEEDBACK_STORAGE_KEY = "tahmisci.feedback.items.v1";
@@ -531,13 +541,6 @@
       "adminNotificationPush", "adminNotificationTest", "adminNotificationSavePreferences", "adminNotificationHealth",
       "adminNotificationClearArchive", "adminNotificationManageEmail", "adminNotificationDevices", "adminNotificationDevicesRefresh",
       "overviewGrid", "contentGrid", "categoryList", "productList", "saveState", "saveChangesButton", "panelThemeToggle", "addCategoryButton",
-      "stockCard", "stockSummaryGrid", "stockCategoryFilter", "stockCategoryChips", "stockSearch", "stockOnlyOrderNeeded", "stockProductList", "stockMovementList", "stockOrderSuggestions",
-      "stockEditorCategorySelect", "stockEditorProductSelect", "stockAddCategoryButton", "stockAddProductButton", "stockAddSupplierButton",
-      "stockEditorIncreaseButton", "stockEditorDecreaseButton",
-      "stockDeleteProductButton", "stockDeleteCategoryButton", "stockEditorProductName", "stockEditorCategoryName", "stockEditorQuantity",
-      "stockEditorThreshold", "stockEditorCriticalThreshold", "stockEditorUnit", "stockEditorBulkUnit", "stockEditorUnitFactor", "stockEditorSupplier", "stockEditorStatus", "stockEditorActive", "stockEditorNote",
-      "stockSuggestionCount", "stockSaveButton", "stockActionModal", "stockActionForm", "stockActionKicker", "stockActionTitle",
-      "stockActionProduct", "stockActionQuantity", "stockActionReason", "stockActionNote", "stockActionMessage",
       "menuOutputCard", "menuOutputTemplateName", "menuOutputCanvaLink", "menuOutputOpenCanva", "menuOutputSaveTemplate",
       "menuOutputUpdateTemplate", "menuOutputDuplicateTemplate", "menuOutputDeleteTemplate", "menuOutputSetDefaultTemplate",
       "menuOutputTemplateList", "menuOutputReset", "menuOutputExportPng", "menuOutputExportJpg", "menuOutputExportPdf",
@@ -817,7 +820,6 @@
     els.productCategoryTabs.addEventListener("change", handleProductCategorySelect);
     els.productQuickList.addEventListener("change", handleProductSelect);
     if (els.productEditorCard) els.productEditorCard.addEventListener("click", handleProductEditorCardClick);
-    bindStockEvents();
     if (PANEL_MODULES.menuOutput) bindMenuOutputEvents();
     els.deleteCategoryButton.addEventListener("click", deleteSelectedCategory);
     els.deleteProductButton.addEventListener("click", deleteSelectedProduct);
@@ -2651,22 +2653,19 @@
       try {
         const target = new URL(rawLink, window.location.href);
         if (target.origin === window.location.origin && (target.pathname === "/fatura" || target.pathname.startsWith("/fatura/"))) {
-          const procurementEvent = String(notification.eventType || notification.type || details.eventType || "").toLowerCase();
-          const procurementView = /accounting|payment/.test(procurementEvent) || category === "accounting"
-            ? "ledger"
-            : /document/.test(procurementEvent) || category === "document" ? "documents" : "shipments";
-          try {
-            window.sessionStorage.setItem("tahmisci:fatura:intent", JSON.stringify({
-              view: procurementView,
-              entityType: String(notification.entityType || details.entityType || category || ""),
-              entityId
-            }));
-          } catch (_storageError) {}
           closeAdminNotificationDrawer();
-          window.location.assign("/fatura/");
+          window.location.assign(`${target.pathname}${target.search}${target.hash}`);
           return;
         }
         if (target.origin === window.location.origin && (target.pathname === "/yonetici" || target.pathname.startsWith("/yonetici/"))) {
+          if (String(target.searchParams.get("section") || "").toLocaleLowerCase("tr-TR") === "stock") {
+            target.pathname = "/fatura/";
+            target.searchParams.delete("section");
+            target.searchParams.set("view", "stock");
+            closeAdminNotificationDrawer();
+            window.location.assign(`${target.pathname}${target.search}${target.hash}`);
+            return;
+          }
           section = normalizeAdminNotificationSection(target.searchParams.get("section")) || section;
           workforceTarget = String(target.searchParams.get("workforce") || target.searchParams.get("panel") || workforceTarget).toLowerCase();
           entityId = String(target.searchParams.get("entityId") || target.searchParams.get("shipmentId") || entityId).trim();
@@ -2688,12 +2687,16 @@
     // Eski birleşik Personel operasyon bağlantıları sevkiyat sahibine yönlendirilir.
     if (workforceTarget === "operations") workforceTarget = "shipments";
     const targetKind = workforceTarget || ({ task: "tasks", shipment: "shipments", shift: "shifts" }[category] || "");
-    if (targetKind === "shipments" || category === "shipment") {
-      section = "stock";
-      workforceTarget = "shipments";
+    if (section === "stock" || targetKind === "shipments" || category === "shipment" || category === "stock") {
+      const target = new URL("/fatura/", window.location.origin);
+      target.searchParams.set("view", "stock");
+      if (targetKind === "shipments" || category === "shipment") target.searchParams.set("workforce", "shipments");
+      if (entityId) target.searchParams.set("entityId", entityId);
+      closeAdminNotificationDrawer();
+      window.location.assign(`${target.pathname}${target.search}`);
+      return;
     }
     if (!section && ["task", "shift"].includes(category)) section = "staffAccess";
-    if (!section && category === "stock") section = "stock";
     if (!section) section = "overview";
     closeAdminNotificationDrawer();
     if (workforceTarget) replaceAdminNavigationQuery(section, workforceTarget, entityId);
@@ -2728,9 +2731,7 @@
       const reveal = () => {
         attempts += 1;
         let accordion = null;
-        if (section === "stock" && targetKind === "shipments") {
-          accordion = document.getElementById("workforceShipmentsAccordion");
-        } else if (section === "staffAccess" && targetKind === "tasks") {
+        if (section === "staffAccess" && targetKind === "tasks") {
           accordion = document.getElementById("workforceTasksAccordion");
         } else if (section === "staffAccess" && targetKind === "shifts") {
           accordion = document.getElementById("workforceShiftsAccordion");
@@ -2744,10 +2745,6 @@
           entity.focus({ preventScroll: true });
           entity.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
           return;
-        }
-        if (section === "stock" && targetKind === "shipments") {
-          const allShipments = document.querySelector('[data-shipment-view="all"]');
-          if (allShipments && !allShipments.classList.contains("is-active")) allShipments.click();
         }
         if (attempts < 20) window.setTimeout(reveal, 100);
       };
@@ -4359,104 +4356,6 @@
     if (window.TahmisciPricing && typeof window.TahmisciPricing.renderBulk === "function") {
       window.TahmisciPricing.renderBulk();
     }
-  }
-
-  function bindStockEvents() {
-    if (els.stockEditorCategorySelect) els.stockEditorCategorySelect.addEventListener("change", () => {
-      state.stockEditorCategoryId = els.stockEditorCategorySelect.value;
-      state.stockEditorProductId = "";
-      renderStockEditor();
-    });
-    if (els.stockEditorProductSelect) els.stockEditorProductSelect.addEventListener("change", () => {
-      state.stockEditorProductId = els.stockEditorProductSelect.value;
-      renderStockEditor();
-    });
-    if (els.stockAddCategoryButton) els.stockAddCategoryButton.addEventListener("click", addStockCategory);
-    if (els.stockAddProductButton) els.stockAddProductButton.addEventListener("click", addStockProduct);
-    if (els.stockAddSupplierButton) els.stockAddSupplierButton.addEventListener("click", addStockSupplier);
-    if (els.stockEditorIncreaseButton) els.stockEditorIncreaseButton.addEventListener("click", () => {
-      const product = selectedStockEditorProduct();
-      if (product) openStockActionModal(product.id, "stock_in");
-    });
-    if (els.stockEditorDecreaseButton) els.stockEditorDecreaseButton.addEventListener("click", () => {
-      const product = selectedStockEditorProduct();
-      if (product) openStockActionModal(product.id, "stock_out");
-    });
-    if (els.stockDeleteProductButton) els.stockDeleteProductButton.addEventListener("click", deleteStockEditorProduct);
-    if (els.stockDeleteCategoryButton) els.stockDeleteCategoryButton.addEventListener("click", deleteStockEditorCategory);
-    ["stockEditorProductName", "stockEditorCategoryName", "stockEditorQuantity", "stockEditorThreshold",
-      "stockEditorCriticalThreshold", "stockEditorUnit", "stockEditorBulkUnit", "stockEditorUnitFactor", "stockEditorSupplier", "stockEditorActive", "stockEditorNote"]
-      .forEach((id) => {
-        if (!els[id]) return;
-        els[id].addEventListener("change", updateStockEditorFromFields);
-      });
-    if (els.stockSaveButton) els.stockSaveButton.addEventListener("click", () => saveStockToBackend());
-    if (els.stockSearch) els.stockSearch.addEventListener("input", () => {
-      state.stockQuery = els.stockSearch.value.trim();
-      renderStockPanel();
-    });
-    if (els.stockCategoryFilter) els.stockCategoryFilter.addEventListener("change", () => {
-      state.stockCategory = els.stockCategoryFilter.value || "all";
-      renderStockPanel();
-    });
-    if (els.stockOnlyOrderNeeded) els.stockOnlyOrderNeeded.addEventListener("change", () => {
-      state.stockOnlyOrderNeeded = els.stockOnlyOrderNeeded.checked;
-      renderStockPanel();
-    });
-    if (els.stockCategoryChips) els.stockCategoryChips.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-stock-category]");
-      if (!button) return;
-      state.stockCategory = button.dataset.stockCategory || "all";
-      renderStockPanel();
-    });
-    if (els.stockProductList) els.stockProductList.addEventListener("click", handleStockProductClick);
-    if (els.stockOrderSuggestions) els.stockOrderSuggestions.addEventListener("click", handleStockSuggestionClick);
-    if (els.stockActionForm) els.stockActionForm.addEventListener("submit", submitStockAction);
-    if (els.stockActionModal) {
-      els.stockActionModal.addEventListener("click", (event) => {
-        if (event.target === els.stockActionModal || event.target.closest("[data-stock-close]")) closeStockActionModal();
-      });
-    }
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && els.stockActionModal && !els.stockActionModal.hidden) closeStockActionModal();
-    });
-    const catalogAccordion = document.getElementById("stockManagementAccordion");
-    if (catalogAccordion) {
-      catalogAccordion.addEventListener("toggle", () => {
-        if (!catalogAccordion.open || state.loadedScopes.has("stock")) return;
-        loadSectionScope("stock").then(renderStockPanel).catch((error) => updateSaveControls(error.message || "Stok kataloğu yüklenemedi"));
-      });
-    }
-    document.addEventListener("tahmisci:stock-catalog-open", (event) => {
-      if (catalogAccordion) catalogAccordion.open = true;
-      loadSectionScope("stock").then(() => {
-        renderStockPanel();
-        if (event.detail && event.detail.action === "new-product") addStockProduct();
-      }).catch((error) => updateSaveControls(error.message || "Stok kataloğu yüklenemedi"));
-    });
-    document.addEventListener("tahmisci:stock-unit-definitions-updated", (event) => {
-      if (!state.stock) return;
-      const detail = event.detail || {};
-      state.stock.unitDefinitions = detail.unitDefinitions || state.stock.unitDefinitions;
-      if (detail.action === "rename" && detail.payload) {
-        const from = String(detail.payload.from || "").trim().toLocaleLowerCase("tr-TR");
-        const to = String(detail.payload.to || "").trim().toLocaleLowerCase("tr-TR");
-        state.stock.products.forEach((product) => {
-          if (detail.kind === "base" && stockUnitText(product.baseUnit || product.unit, "").toLocaleLowerCase("tr-TR") === from) {
-            product.baseUnit = to;
-            product.unit = to;
-            if (stockUnitText(product.defaultMovementUnit, "").toLocaleLowerCase("tr-TR") === from) product.defaultMovementUnit = to;
-          }
-          if (detail.kind === "bulk" && stockUnitText(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR") === from) {
-            product.bulkUnit = to;
-            product.caseUnit = to;
-            if (stockUnitText(product.defaultMovementUnit, "").toLocaleLowerCase("tr-TR") === from) product.defaultMovementUnit = to;
-          }
-        });
-      }
-      safeLocalSet(STOCK_STORAGE_KEY, JSON.stringify(state.stock));
-      if (state.activeSection === "stock") renderStockEditor();
-    });
   }
 
   function loadStockData() {

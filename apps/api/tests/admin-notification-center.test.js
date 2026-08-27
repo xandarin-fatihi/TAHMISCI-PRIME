@@ -8,6 +8,9 @@ const test = require("node:test");
 const root = path.resolve(__dirname, "..", "..", "..");
 const html = fs.readFileSync(path.join(root, "apps", "admin", "index.html"), "utf8");
 const script = fs.readFileSync(path.join(root, "apps", "admin", "scripts", "app.js"), "utf8");
+const faturaHtml = fs.readFileSync(path.join(root, "apps", "fatura", "index.html"), "utf8");
+const faturaScript = fs.readFileSync(path.join(root, "apps", "fatura", "scripts", "app.js"), "utf8");
+const faturaStockScript = fs.readFileSync(path.join(root, "apps", "fatura", "scripts", "stock.js"), "utf8");
 const styles = fs.readFileSync(path.join(root, "apps", "admin", "styles", "notifications.css"), "utf8");
 const serviceWorker = fs.readFileSync(path.join(root, "apps", "admin", "sw.js"), "utf8");
 
@@ -70,11 +73,11 @@ test("Bildirim deep-link'i yalnız panel içinde güvenle resolve edilir", () =>
   assert.match(script, /target\.pathname\.startsWith\("\/yonetici\/"\)/);
   assert.match(script, /searchParams\.get\("workforce"\)/);
   assert.match(script, /workforceTasksAccordion/);
-  assert.match(script, /workforceShipmentsAccordion/);
   assert.match(script, /workforceShiftsAccordion/);
   assert.match(script, /normalizeAdminNotificationSection/);
   assert.match(script, /"personel"[\s\S]*return "staffAccess"/);
-  assert.match(script, /"shipments"[\s\S]*return "stock"/);
+  assert.match(script, /target\.pathname = "\/fatura\/"/);
+  assert.match(script, /target\.searchParams\.set\("view", "stock"\)/);
 });
 
 test("Personel sahipliği dört akordiyonda kalır, sevkiyat Stok & Sevkiyat bölümünde tek kaynaktır", () => {
@@ -87,8 +90,12 @@ test("Personel sahipliği dört akordiyonda kalır, sevkiyat Stok & Sevkiyat bö
   assert.match(staffMarkup, /class="staff-step">3<\/span>[\s\S]*Shift Yönetimi/);
   assert.match(staffMarkup, /class="staff-step">4<\/span>[\s\S]*Kayıt Defteri/);
   assert.doesNotMatch(staffMarkup, /id="workforceShipmentsAccordion"/);
-  assert.match(html, /id="stockCard"[\s\S]*Stok &amp; Sevkiyat[\s\S]*id="stockManagementAccordion"[\s\S]*id="workforceShipmentsAccordion"/);
-  assert.equal((html.match(/id="workforceShipmentsPanel"/g) || []).length, 1);
+  assert.doesNotMatch(html, /id="stockCard"|data-section="stock"|id="workforceShipmentsPanel"/);
+  assert.match(faturaScript, /id:\s*"stock"[\s\S]*label:\s*"Stok & Sevkiyat"/);
+  assert.match(faturaHtml, /id="stockViewTemplate"[\s\S]*id="stockShipmentWorkspace"[\s\S]*id="stockManagementAccordion"/);
+  assert.match(faturaStockScript, /\/api\/admin\/stock\/inventory/);
+  assert.match(faturaStockScript, /import \{ renderShipments \} from "\.\/receipts\.js"/);
+  assert.match(faturaStockScript, /host\.innerHTML = renderShipments\(\)/);
   assert.match(html, /PASİF MODÜL: Eğitim \/ Görev \/ Sınav Atama/);
 });
 

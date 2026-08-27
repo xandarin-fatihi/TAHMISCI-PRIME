@@ -8,7 +8,7 @@ const criticalFiles = [
   "apps/admin/scripts/app.js",
   "apps/admin/scripts/live-preview.js",
   "apps/admin/scripts/pricing.js",
-  "apps/admin/scripts/stock-locations.js",
+  "apps/fatura/scripts/stock.js",
   "apps/admin/scripts/workforce.js",
   "apps/admin/sw.js",
   "apps/personel/personel.js",

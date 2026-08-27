@@ -5,7 +5,7 @@ import { renderProductLinks, renderSuppliers } from "./suppliers.js";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
 import { documentFormBody, renderDocuments } from "./documents.js";
 import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderSettingsAudit, renderUsers, userAccessFormBody } from "./accounting.js";
-import { connectStockEvents, disconnectStockEvents, loadStockView, renderStockView, resetStockState } from "./stock.js";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, loadStockView, renderStockView, resetStockState } from "./stock.js";
 
 const app = document.getElementById("faturaApp");
 const shell = document.getElementById("shell");
@@ -20,11 +20,11 @@ const notificationDrawer = document.getElementById("notificationDrawer");
 const notificationScrim = document.getElementById("notificationScrim");
 const viewDefinitions = [
   { id: "dashboard", label: "Genel Bakış", description: "Tedarik ve cari süreçlerin güncel özeti.", capability: CAPABILITIES.read },
+  { id: "stock", label: "Stok & Sevkiyat", description: "Depoları, stok bakiyelerini, birimleri, transferleri, sayımları ve sevkiyatları yönetin.", adminOnly: true },
   { id: "shipments", label: "Mal Kabul", description: "Personel sevkiyatları, stok onayı ve muhasebe durumları.", any: [CAPABILITIES.read,CAPABILITIES.receiptCreate,CAPABILITIES.receiptApprove,CAPABILITIES.accountingRead] },
   { id: "suppliers", label: "Tedarikçiler", description: "Tedarikçi kartları, vadeler ve hesap bakiyeleri.", any: [CAPABILITIES.supplierRead,CAPABILITIES.supplierManage] },
   { id: "links", label: "Ürün Eşleşmeleri", description: "Tedarikçi ürünlerini canonical stok kataloğuna bağlayın.", capability: CAPABILITIES.links },
   { id: "documents", label: "Belgeler", description: "Yetki kontrollü özel fatura ve sevkiyat kanıtları.", capability: CAPABILITIES.documentsRead },
-  { id: "stock", label: "Stok & Sevkiyat", description: "Depoları, stok bakiyelerini, birimleri, transferleri ve sayımları yönetin.", adminOnly: true },
   { id: "ledger", label: "Cari Hesap", description: "Append-only borç, ödeme ve ters kayıt defteri.", capability: CAPABILITIES.accountingRead },
   { id: "users", label: "Kullanıcı ve Yetkiler", description: "Mevcut personel hesaplarına Tahmisçi Fatura yetkileri verin.", capability: CAPABILITIES.users },
   { id: "settings", label: "Ayarlar ve Audit", description: "Birim sözlüğü, mali belge kuralları ve işlem geçmişi.", any: [CAPABILITIES.users,CAPABILITIES.accountingRead] }
@@ -39,7 +39,7 @@ let deferredInstallPrompt = null;
 const loadVersions = new Map();
 const pendingEventScopes = new Set();
 const EVENT_SCOPES = {
-  shipment: ["shipments", "dashboard"],
+  shipment: ["shipments", "stock", "dashboard"],
   supplier: ["suppliers", "dashboard"],
   supplierProductLink: ["links", "dashboard"],
   document: ["documents", "shipments", "dashboard"],
@@ -154,6 +154,7 @@ async function activateInitialView() {
   const requested = intent && intent.view || preference;
   if (requested && visibleViews.some((view) => view.id === requested)) state.activeView = requested;
   await setView(state.activeView);
+  if (intent && intent.view === "stock") await applyStockIntent(intent);
   if (intent && intent.entityType === "shipment" && intent.entityId) await openShipment(intent.entityId);
   if (intent && intent.entityType === "document" && intent.entityId && has(CAPABILITIES.documentsRead)) await openDocument(intent.entityId);
 }
@@ -187,7 +188,10 @@ async function loadView(view, force = false) {
     documents: () => Promise.all([loadSuppliers(force), loadShipments(force), loadDocuments(force)]),
     ledger: () => Promise.all([loadSuppliers(force), loadLedger(force)]),
     users: () => loadUsers(force),
-    stock: () => loadStockView({ force }),
+    stock: async () => {
+      await Promise.all([loadStockView({ force }), loadShipments(force)]);
+      await loadStockView();
+    },
     settings: () => Promise.all([loadSettings(force), has(CAPABILITIES.accountingRead) || has(CAPABILITIES.users) ? loadAudit(force) : null])
   }[view];
   if (loader) await loader();
@@ -303,11 +307,17 @@ async function openNotification(notificationId) {
     await refreshAccessContext(null, { firstVisible: true });
     return;
   }
+  const target = String(notification.deepLink || "");
+  if (target) {
+    const url = new URL(target, location.origin);
+    if (url.origin === location.origin && url.pathname.startsWith("/fatura/") && url.searchParams.get("view") === "stock") {
+      return activateIntentFromUrl(url);
+    }
+  }
   if (entityType === "shipment" && visibleViews.some((item) => item.id === "shipments")) { await setView("shipments"); if (entityId) await openShipment(entityId); return; }
   if (entityType === "document" && visibleViews.some((item) => item.id === "documents")) { await setView("documents"); if (entityId) await openDocument(entityId); return; }
   if (entityType === "supplier" && visibleViews.some((item) => item.id === "suppliers")) { await setView("suppliers"); if (entityId) await openSupplier(entityId); return; }
   if (["ledgerEntry", "payment"].includes(entityType) && visibleViews.some((item) => item.id === "ledger")) { await setView("ledger"); return; }
-  const target = String(notification.deepLink || "");
   if (target) {
     const url = new URL(target, location.origin);
     if (url.origin === location.origin && url.pathname.startsWith("/fatura/")) return activateIntentFromUrl(url);
@@ -717,7 +727,7 @@ async function flushEventScopes(){
   if(!state.activeView||!visibleViews.some((view)=>view.id===state.activeView)){state.activeView=visibleViews[0]&&visibleViews[0].id||"";}
   if(state.activeView&&(priorView!==state.activeView||scopes.includes(state.activeView)))await setView(state.activeView,{force:true});
 }
-function stopEvents(){window.clearTimeout(eventRefreshTimer);window.clearTimeout(notificationTimer);pendingEventScopes.clear();if(state.eventSource){state.eventSource.close();state.eventSource=null;}if(state.notificationEventSource){state.notificationEventSource.close();state.notificationEventSource=null;}}
+function stopEvents(){window.clearTimeout(eventRefreshTimer);window.clearTimeout(notificationTimer);pendingEventScopes.clear();disconnectStockEvents();if(state.eventSource){state.eventSource.close();state.eventSource=null;}if(state.notificationEventSource){state.notificationEventSource.close();state.notificationEventSource=null;}}
 function updateNetworkState(){const element=document.getElementById("liveState");if(!element)return;element.classList.toggle("is-offline",!navigator.onLine);element.lastChild.textContent=navigator.onLine?" Güncel":" Çevrimdışı";}
 function handleViewError(error){if(error instanceof ApiError&&[401,403].includes(error.status)){if(error.status===401)return showAuth("Oturumunuz sona erdi. Lütfen yeniden giriş yapın.");}content.innerHTML=`<div class="error-state"><div><h2>Veriler alınamadı</h2><p>${escapeHtml(error.message||"Beklenmeyen hata")}</p><button class="ui-button ui-button--secondary" data-view-target="${escapeHtml(state.activeView)}">Yeniden dene</button></div></div>`;}
 function toast(message,error=false){const element=document.getElementById("toast");element.textContent=message;element.classList.toggle("is-error",error);element.classList.add("is-visible");window.clearTimeout(toastTimer);toastTimer=window.setTimeout(()=>element.classList.remove("is-visible"),3600);}
@@ -735,7 +745,16 @@ function consumeOpenIntent(){
   }catch(_error){}
   const url=new URL(location.href);const entityId=url.searchParams.get("shipmentId")||url.searchParams.get("entityId")||"";const view=url.searchParams.get("view")||url.searchParams.get("section")||"";
   if(!view&&!entityId)return null;
-  return{view:view||"shipments",entityType:url.searchParams.get("entityType")||(entityId?"shipment":""),entityId};
+  const stockIntent=view==="stock";
+  return{
+    view:view||"shipments",
+    entityType:url.searchParams.get("entityType")||(stockIntent&&url.searchParams.get("workforce")==="shipments"&&entityId?"shipment":entityId&&!stockIntent?"shipment":""),
+    entityId,
+    locationId:url.searchParams.get("locationId")||"",
+    productId:url.searchParams.get("productId")||url.searchParams.get("stockProductId")||"",
+    transferId:url.searchParams.get("transferId")||"",
+    workforce:url.searchParams.get("workforce")||""
+  };
 }
 async function activateIntentFromUrl(url){
   const entityId=url.searchParams.get("shipmentId")||url.searchParams.get("entityId")||"";
@@ -744,6 +763,18 @@ async function activateIntentFromUrl(url){
   if(!view)view=entityType==="document"?"documents":entityType==="supplier"?"suppliers":"shipments";
   if(!visibleViews.some((item)=>item.id===view))return toast("Bağlantının hedeflediği bölüm için erişiminiz bulunmuyor.",true);
   await setView(view);
+  if(view==="stock"){
+    const intent={
+      view,
+      entityType,
+      entityId,
+      locationId:url.searchParams.get("locationId")||"",
+      productId:url.searchParams.get("productId")||url.searchParams.get("stockProductId")||"",
+      transferId:url.searchParams.get("transferId")||"",
+      workforce:url.searchParams.get("workforce")||""
+    };
+    await applyStockIntent(intent);
+  }
   if(entityType==="shipment"&&entityId)await openShipment(entityId);
   else if(entityType==="document"&&entityId)await openDocument(entityId);
   else if(entityType==="supplier"&&entityId)await openSupplier(entityId);

@@ -1100,7 +1100,7 @@ function registerWorkforceRoutes(deps) {
             severity: "warning",
             entityType: "shipment",
             entityId: shipment.id,
-            deepLink: `/yonetici/?section=stock&workforce=shipments&entityId=${encodeURIComponent(shipment.id)}`,
+            deepLink: `/fatura/?view=stock&workforce=shipments&entityId=${encodeURIComponent(shipment.id)}`,
             dedupeKey: `shipment-reported:${shipment.id}:manager`,
             metadata: { personId: shipment.userId, personName: shipment.userName, itemCount: lines.length }
           }));

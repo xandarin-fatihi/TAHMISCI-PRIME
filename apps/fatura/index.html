@@ -98,6 +98,7 @@
   <template id="stockViewTemplate">
     <section class="stock-fatura-view" aria-label="Stok ve sevkiyat yönetimi">
       <div class="stock-page-actions">
+        <button class="ui-button ui-button--secondary" id="stockLocationNewProductButton" type="button">Yeni Stok Ürünü</button>
         <button class="ui-button ui-button--secondary" id="stockUnitSettingsButton" type="button">Birim Merkezi</button>
         <button class="ui-button ui-button--secondary" id="stockTransferRequestsButton" type="button">Transfer Talepleri <span id="stockTransferPendingCount">0</span></button>
         <button class="ui-button ui-button--secondary" id="stockMovementHistoryButton" type="button">Hareket Geçmişi</button>
@@ -110,7 +111,34 @@
         <div class="stock-location-summary" id="stockLocationSummary" aria-live="polite"></div>
         <section class="stock-warehouse-overview" id="stockWarehouseOverview"><div class="stock-warehouse-overview__head"><div><p class="eyebrow">TÜM DEPOLAR</p><h3>Depo Genel Bakışı</h3><p>Kafe, genel ve diğer depo bakiyelerini tek merkezden yönetin.</p></div><button class="ui-button ui-button--secondary" id="stockLocationOverviewAddButton" type="button">+ Depo Ekle</button></div><div class="stock-warehouse-cards" id="stockWarehouseCards"><div class="stock-location-loading">Depolar yükleniyor…</div></div></section>
         <div class="stock-location-grid" id="stockLocationInventoryView" hidden><section class="stock-location-inventory-card"><button class="stock-warehouse-back" id="stockWarehouseBackButton" type="button">← Depolara Dön</button><div class="stock-location-selector" id="stockLocationSelector" role="tablist"></div><div class="stock-location-toolbar"><label><span>Ürün ara</span><input id="stockLocationSearch" type="search" placeholder="Ürün, kategori veya kod ara…"></label><label><span>Durum</span><select id="stockLocationStatusFilter"><option value="all">Tüm durumlar</option><option value="critical">Kritik</option><option value="transfer">Transfer öneriliyor</option><option value="sufficient">Yeterli</option></select></label></div><div class="stock-location-category-filter" id="stockLocationCategoryFilter"></div><div class="stock-location-inventory" id="stockLocationInventory"></div></section></div>
-        <section class="stock-shipment-bridge"><div><p class="eyebrow">SEVKİYAT ONAYLARI</p><h3>Mal Kabul kayıtları</h3><p>Onay ve stok işleme süreci tek canonical sevkiyat kaydından yürütülür.</p></div><button class="ui-button ui-button--secondary" type="button" data-stock-go-shipments>Mal Kabul’e Git</button></section>
+        <section class="stock-shipment-panel" aria-labelledby="stockShipmentTitle">
+          <div class="stock-shipment-bridge"><div><p class="eyebrow">SEVKİYAT ONAYLARI</p><h3 id="stockShipmentTitle">Personel Sevkiyatları</h3><p>Liste, onay, ret ve geçmiş aynı canonical <code>workforceShipments</code> kayıtlarından yürütülür.</p></div><button class="ui-button ui-button--secondary" type="button" data-stock-go-shipments>Mal Kabul’e Git</button></div>
+          <div id="stockShipmentWorkspace" class="stock-shipment-workspace"><div class="stock-location-loading">Sevkiyatlar yükleniyor…</div></div>
+        </section>
+
+        <details class="stock-catalog-panel" id="stockManagementAccordion">
+          <summary><span><small>CANONICAL KATALOG</small><strong>Stok Ürün Yönetimi</strong></span><span aria-hidden="true">⌄</span></summary>
+          <div class="stock-catalog-panel__body">
+            <div class="stock-catalog-toolbar">
+              <label><span>Kategori</span><select id="stockCatalogCategorySelect"></select></label>
+              <label><span>Ürün</span><select id="stockCatalogProductSelect"></select></label>
+              <div class="stock-catalog-toolbar__actions"><button class="ui-button ui-button--secondary ui-button--sm" id="stockCatalogAddCategory" type="button">+ Kategori</button><button class="ui-button ui-button--secondary ui-button--sm" id="stockCatalogAddProduct" type="button">+ Ürün</button></div>
+            </div>
+            <form id="stockCatalogForm" class="stock-catalog-form" novalidate>
+              <label><span>Kategori adı</span><input id="stockCatalogCategoryName" maxlength="120" required></label>
+              <label><span>Ürün adı</span><input id="stockCatalogProductName" maxlength="160" required></label>
+              <label><span>Ürün kodu</span><input id="stockCatalogProductCode" maxlength="80" placeholder="STK-... (isteğe bağlı)"></label>
+              <label><span>Temel birim</span><select id="stockCatalogBaseUnit" required></select></label>
+              <label><span>Toplu birim</span><select id="stockCatalogBulkUnit"><option value="">Toplu birim yok</option></select></label>
+              <label><span>Toplu birim içeriği</span><input id="stockCatalogUnitFactor" type="number" min="0" step="0.001"></label>
+              <label><span>Tedarikçi</span><input id="stockCatalogSupplier" maxlength="160"></label>
+              <label class="stock-catalog-check"><input id="stockCatalogProductActive" type="checkbox"><span>Ürün aktif</span></label>
+              <label class="stock-catalog-note"><span>Not</span><textarea id="stockCatalogNote" maxlength="500" rows="2"></textarea></label>
+              <p id="stockCatalogMessage" role="status" aria-live="polite"></p>
+              <div class="stock-catalog-actions"><button class="ui-button ui-button--danger" id="stockCatalogToggleCategory" type="button">Kategoriyi Pasifleştir</button><button class="ui-button ui-button--danger" id="stockCatalogToggleProduct" type="button">Ürünü Pasifleştir</button><button class="ui-button ui-button--primary" id="stockCatalogSave" type="submit">Katalog Değişikliklerini Kaydet</button></div>
+            </form>
+          </div>
+        </details>
 
         <div class="stock-product-drawer-layer" id="stockProductDrawerLayer" hidden><button class="stock-product-drawer-backdrop" type="button" data-stock-drawer-close tabindex="-1" aria-label="Ürün detayını kapat"></button><aside class="stock-product-drawer" id="stockProductDrawer" role="dialog" aria-modal="true" aria-labelledby="stockProductDrawerTitle" tabindex="-1"><header><div><p class="eyebrow">STOK ÜRÜNÜ</p><h3 id="stockProductDrawerTitle">Ürün detayı</h3><span id="stockProductDrawerSubtitle"></span></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-drawer-close aria-label="Ürün detayını kapat">×</button></header><div id="stockProductDrawerMessage" role="status"></div><div class="stock-product-drawer__body" id="stockProductDrawerBody"></div></aside></div>
 

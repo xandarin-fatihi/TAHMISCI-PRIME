@@ -1,4 +1,5 @@
 import { state as faturaState } from "./state.js";
+import { renderShipments } from "./receipts.js";
 
 "use strict";
 
@@ -38,7 +39,14 @@ import { state as faturaState } from "./state.js";
     bound: false,
     boundWorkspace: null,
     confirmResolver: null,
-    thresholdInitial: null
+    thresholdInitial: null,
+    catalogStock: null,
+    catalogLoaded: false,
+    catalogLoading: false,
+    catalogCategoryId: "",
+    catalogProductId: "",
+    catalogBusy: false,
+    appliedIntentKey: ""
   };
 
   function requestId(prefix) {
@@ -274,7 +282,7 @@ import { state as faturaState } from "./state.js";
   }
 
   async function loadTransfers(signal) {
-    const result = await api("/api/admin/stock/transfers?status=pending", { signal });
+    const result = await api("/api/admin/stock/transfers", { signal });
     state.transfers = Array.isArray(result.transfers) ? result.transfers : [];
     if (Array.isArray(result.locations) && result.locations.length) state.locations = result.locations;
     updateRevision(result);
@@ -794,7 +802,7 @@ import { state as faturaState } from "./state.js";
     host.innerHTML = state.transfers.length ? state.transfers.map((transfer) => {
       const product = transfer.product || {};
       const pending = ["pending", "onay_bekliyor"].includes(transfer.status);
-      return `<article class="stock-transfer-request">
+      return `<article class="stock-transfer-request" data-stock-transfer-card="${esc(transfer.id)}">
         <div><strong>${esc(product.name || product.productName || transfer.productName || "Stok ürünü")}</strong><span>${esc(transfer.requestedByName || transfer.personnelName || "Personel")} · ${esc(formatDate(transfer.createdAt))}</span></div>
         <p>${esc(locationName(transfer.fromLocationId))} → ${esc(locationName(transfer.toLocationId))}</p>
         <b>${esc(formatNumber(transfer.quantity))} ${esc(transfer.baseUnit || transfer.unit || "adet")}</b>
@@ -903,6 +911,191 @@ import { state as faturaState } from "./state.js";
     dialog?.querySelector("[data-stock-unit-input]")?.focus();
   }
 
+  function renderShipmentWorkspace() {
+    const host = $("#stockShipmentWorkspace");
+    if (!host) return;
+    host.innerHTML = renderShipments();
+  }
+
+  function setCatalogMessage(message, isError = false) {
+    const node = $("#stockCatalogMessage");
+    if (!node) return;
+    node.textContent = String(message || "");
+    node.dataset.kind = isError ? "error" : "success";
+  }
+
+  function selectedCatalogCategory() {
+    return state.catalogStock && Array.isArray(state.catalogStock.categories)
+      ? state.catalogStock.categories.find((item) => String(item.id) === String(state.catalogCategoryId)) || null
+      : null;
+  }
+
+  function selectedCatalogProduct() {
+    return state.catalogStock && Array.isArray(state.catalogStock.products)
+      ? state.catalogStock.products.find((item) => String(item.id) === String(state.catalogProductId)) || null
+      : null;
+  }
+
+  async function loadCatalog(force = false) {
+    if (state.catalogLoading || state.catalogLoaded && !force) return;
+    state.catalogLoading = true;
+    setCatalogMessage("Stok kataloğu yükleniyor…");
+    try {
+      const result = await api("/api/stock");
+      state.catalogStock = result.stockState && typeof result.stockState === "object" ? result.stockState : { categories: [], products: [] };
+      state.catalogLoaded = true;
+      updateRevision(result);
+      renderCatalogEditor();
+      setCatalogMessage("");
+    } catch (error) {
+      setCatalogMessage(error.message || "Stok kataloğu yüklenemedi.", true);
+      throw error;
+    } finally {
+      state.catalogLoading = false;
+    }
+  }
+
+  function catalogUnitOptions(kind, selected = "", includeNone = false) {
+    return unitCatalogOptions(kind, selected, includeNone).map((item) => `<option value="${esc(item.value)}" ${String(item.value) === String(selected || "") ? "selected" : ""}>${esc(item.label)}</option>`).join("");
+  }
+
+  function renderCatalogEditor() {
+    if (!state.catalogLoaded || !state.catalogStock) return;
+    const categories = Array.isArray(state.catalogStock.categories) ? state.catalogStock.categories : [];
+    if (!categories.some((item) => String(item.id) === String(state.catalogCategoryId))) state.catalogCategoryId = String(categories[0] && categories[0].id || "");
+    const products = (Array.isArray(state.catalogStock.products) ? state.catalogStock.products : []).filter((item) => String(item.categoryId) === String(state.catalogCategoryId));
+    if (!products.some((item) => String(item.id) === String(state.catalogProductId))) state.catalogProductId = String(products[0] && products[0].id || "");
+    const category = selectedCatalogCategory();
+    const product = selectedCatalogProduct();
+    const categorySelect = $("#stockCatalogCategorySelect");
+    const productSelect = $("#stockCatalogProductSelect");
+    if (categorySelect) {
+      categorySelect.innerHTML = categories.length ? categories.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}${item.active === false ? " · Pasif" : ""}</option>`).join("") : '<option value="">Kategori yok</option>';
+      categorySelect.value = state.catalogCategoryId;
+    }
+    if (productSelect) {
+      productSelect.innerHTML = products.length ? products.map((item) => `<option value="${esc(item.id)}">${esc(item.name || item.productName)}${item.active === false ? " · Pasif" : ""}</option>`).join("") : '<option value="">Bu kategoride ürün yok</option>';
+      productSelect.value = state.catalogProductId;
+    }
+    const setValue = (selector, value) => { const node = $(selector); if (node) node.value = String(value ?? ""); };
+    setValue("#stockCatalogCategoryName", category && category.name);
+    setValue("#stockCatalogProductName", product && (product.name || product.productName));
+    setValue("#stockCatalogProductCode", product && product.productCode);
+    setValue("#stockCatalogSupplier", product && product.supplier);
+    setValue("#stockCatalogUnitFactor", product && (product.unitsPerBulkUnit ?? product.unitsPerCase));
+    setValue("#stockCatalogNote", product && product.note);
+    const baseUnit = textValue(product && (product.baseUnit || product.unit), "adet");
+    const bulkUnit = textValue(product && (product.bulkUnit || product.caseUnit), "");
+    const baseSelect = $("#stockCatalogBaseUnit");
+    const bulkSelect = $("#stockCatalogBulkUnit");
+    if (baseSelect) baseSelect.innerHTML = catalogUnitOptions("base", baseUnit);
+    if (bulkSelect) bulkSelect.innerHTML = catalogUnitOptions("bulk", bulkUnit, true);
+    if (baseSelect) baseSelect.value = baseUnit;
+    if (bulkSelect) bulkSelect.value = bulkUnit;
+    if ($("#stockCatalogUnitFactor")) $("#stockCatalogUnitFactor").disabled = !product || !bulkUnit;
+    if ($("#stockCatalogProductActive")) $("#stockCatalogProductActive").checked = Boolean(product && product.active !== false);
+    $$(`#stockCatalogForm input, #stockCatalogForm select, #stockCatalogForm textarea, #stockCatalogSave, #stockCatalogToggleProduct`).forEach((node) => { node.disabled = !product || state.catalogBusy; });
+    if ($("#stockCatalogCategoryName")) $("#stockCatalogCategoryName").disabled = !category || state.catalogBusy;
+    if ($("#stockCatalogToggleCategory")) {
+      $("#stockCatalogToggleCategory").disabled = !category || state.catalogBusy;
+      $("#stockCatalogToggleCategory").textContent = category && category.active === false ? "Kategoriyi Aktifleştir" : "Kategoriyi Pasifleştir";
+    }
+    if ($("#stockCatalogToggleProduct")) $("#stockCatalogToggleProduct").textContent = product && product.active === false ? "Ürünü Aktifleştir" : "Ürünü Pasifleştir";
+  }
+
+  function applyCatalogForm() {
+    const category = selectedCatalogCategory();
+    const product = selectedCatalogProduct();
+    if (!category || !product) throw new Error("Kaydedilecek kategori ve ürünü seçin.");
+    const categoryName = String($("#stockCatalogCategoryName")?.value || "").trim();
+    const productNameValue = String($("#stockCatalogProductName")?.value || "").trim();
+    if (!categoryName || !productNameValue) throw new Error("Kategori ve ürün adı boş bırakılamaz.");
+    const baseUnit = textValue($("#stockCatalogBaseUnit")?.value, "adet");
+    const bulkUnit = textValue($("#stockCatalogBulkUnit")?.value, "");
+    const factor = Number($("#stockCatalogUnitFactor")?.value || 0);
+    if (bulkUnit && !(factor > 0)) throw new Error("Toplu birim içeriği sıfırdan büyük olmalıdır.");
+    category.name = categoryName;
+    product.name = productNameValue;
+    product.productName = productNameValue;
+    product.categoryId = category.id;
+    product.category = categoryName;
+    product.productCode = String($("#stockCatalogProductCode")?.value || "").trim().toLocaleUpperCase("tr-TR");
+    product.baseUnit = baseUnit;
+    product.unit = baseUnit;
+    product.bulkUnit = bulkUnit;
+    product.caseUnit = bulkUnit;
+    product.unitsPerBulkUnit = bulkUnit ? factor : 0;
+    product.unitsPerCase = bulkUnit ? factor : 0;
+    product.supplier = String($("#stockCatalogSupplier")?.value || "").trim();
+    product.note = String($("#stockCatalogNote")?.value || "").trim();
+    product.active = Boolean($("#stockCatalogProductActive")?.checked);
+    product.statusSource = "manual";
+  }
+
+  async function saveCatalog(message) {
+    if (state.catalogBusy || !state.catalogStock) return;
+    state.catalogBusy = true;
+    renderCatalogEditor();
+    setCatalogMessage("Katalog backend’e kaydediliyor…");
+    try {
+      const result = await api("/api/admin/stock", mutation("PUT", { stockState: state.catalogStock }, "fatura-stock-catalog"));
+      state.catalogStock = result.stockState;
+      state.catalogLoaded = true;
+      updateRevision(result);
+      state.stale = true;
+      await loadAll({ force: true, reloadLocations: true });
+      renderCatalogEditor();
+      setCatalogMessage(message || "Stok kataloğu kaydedildi.");
+    } catch (error) {
+      setCatalogMessage(error.message || "Stok kataloğu kaydedilemedi.", true);
+      throw error;
+    } finally {
+      state.catalogBusy = false;
+      renderCatalogEditor();
+    }
+  }
+
+  async function addCatalogCategory() {
+    await loadCatalog();
+    const name = String(window.prompt("Yeni stok kategorisinin adı") || "").trim();
+    if (!name) return;
+    const id = requestId("stock-category");
+    state.catalogStock.categories.push({ id, name, active: true, order: state.catalogStock.categories.length, sourceType: "manual", statusSource: "manual" });
+    state.catalogCategoryId = id;
+    state.catalogProductId = "";
+    await saveCatalog(`“${name}” kategorisi oluşturuldu.`);
+  }
+
+  async function addCatalogProduct() {
+    await loadCatalog();
+    const category = selectedCatalogCategory();
+    if (!category) throw new Error("Önce bir stok kategorisi oluşturun.");
+    const name = String(window.prompt(`“${category.name}” kategorisine eklenecek ürünün adı`) || "").trim();
+    if (!name) return;
+    const id = requestId("stock-product");
+    const baseUnit = state.unitDefinitions.base[0] || "adet";
+    state.catalogStock.products.push({ id, categoryId: category.id, category: category.name, name, productName: name, active: true, baseUnit, unit: baseUnit, bulkUnit: "", caseUnit: "", unitsPerBulkUnit: 0, unitsPerCase: 0, stockQuantity: 0, criticalThreshold: 0, orderThreshold: 0, sourceType: "manual", statusSource: "manual" });
+    state.catalogProductId = id;
+    await saveCatalog(`“${name}” ürünü oluşturuldu.`);
+  }
+
+  async function toggleCatalogEntity(kind) {
+    await loadCatalog();
+    const entity = kind === "category" ? selectedCatalogCategory() : selectedCatalogProduct();
+    if (!entity) return;
+    entity.active = entity.active === false;
+    entity.statusSource = "manual";
+    await saveCatalog(`${kind === "category" ? "Kategori" : "Ürün"} ${entity.active ? "aktifleştirildi" : "pasifleştirildi"}.`);
+  }
+
+  async function openCatalogEditor(action = "") {
+    const panel = $("#stockManagementAccordion");
+    if (panel) panel.open = true;
+    await loadCatalog();
+    if (action === "new-product") await addCatalogProduct();
+    panel?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  }
+
   function renderAll() {
     renderLocations();
     renderSummary();
@@ -915,6 +1108,8 @@ import { state as faturaState } from "./state.js";
     renderMovements();
     renderLocationManagement();
     renderUnitSettings();
+    renderShipmentWorkspace();
+    renderCatalogEditor();
   }
 
   async function reloadAfterMutation(result, message) {
@@ -1404,6 +1599,16 @@ import { state as faturaState } from "./state.js";
     });
     workspace.addEventListener("input", (event) => {
       if (event.target.closest("[data-stock-drawer-base-unit], [data-stock-drawer-bulk-unit], [data-stock-drawer-unit-factor]")) updateDrawerConversionPreview();
+      if (event.target.id === "shipment-search") {
+        faturaState.filters.shipments = event.target.value;
+        renderShipmentWorkspace();
+      }
+    });
+    workspace.addEventListener("change", (event) => {
+      if (event.target.id === "shipment-status") {
+        faturaState.filters.shipmentStatus = event.target.value;
+        renderShipmentWorkspace();
+      }
     });
     $("#stockLocationSearch")?.addEventListener("input", renderInventory);
     $("#stockLocationStatusFilter")?.addEventListener("change", renderInventory);
@@ -1428,9 +1633,34 @@ import { state as faturaState } from "./state.js";
     $("#stockWarehouseBackButton")?.addEventListener("click", () => { closeProductDrawer({ restoreFocus: false }); state.viewMode = "overview"; renderAll(); });
     $("#stockLocationOverviewAddButton")?.addEventListener("click", () => { const dialog = $("#stockLocationManagementDialog"); if (dialog && !dialog.open) dialog.showModal(); });
     $("#stockLocationNewProductButton")?.addEventListener("click", () => {
-      $("#stockManagementAccordion").open = true;
-      document.dispatchEvent(new CustomEvent("tahmisci:stock-catalog-open", { detail: { action: "new-product" } }));
-      $("#stockManagementAccordion")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      openCatalogEditor("new-product").catch((error) => setCatalogMessage(error.message, true));
+    });
+    $("#stockManagementAccordion")?.addEventListener("toggle", (event) => {
+      if (event.currentTarget.open) loadCatalog().catch(() => {});
+    });
+    $("#stockCatalogCategorySelect")?.addEventListener("change", (event) => {
+      state.catalogCategoryId = event.currentTarget.value;
+      state.catalogProductId = "";
+      renderCatalogEditor();
+    });
+    $("#stockCatalogProductSelect")?.addEventListener("change", (event) => {
+      state.catalogProductId = event.currentTarget.value;
+      renderCatalogEditor();
+    });
+    $("#stockCatalogBulkUnit")?.addEventListener("change", (event) => {
+      const factor = $("#stockCatalogUnitFactor");
+      if (factor) factor.disabled = !event.currentTarget.value || state.catalogBusy;
+    });
+    $("#stockCatalogAddCategory")?.addEventListener("click", () => addCatalogCategory().catch((error) => setCatalogMessage(error.message, true)));
+    $("#stockCatalogAddProduct")?.addEventListener("click", () => addCatalogProduct().catch((error) => setCatalogMessage(error.message, true)));
+    $("#stockCatalogToggleCategory")?.addEventListener("click", () => toggleCatalogEntity("category").catch((error) => setCatalogMessage(error.message, true)));
+    $("#stockCatalogToggleProduct")?.addEventListener("click", () => toggleCatalogEntity("product").catch((error) => setCatalogMessage(error.message, true)));
+    $("#stockCatalogForm")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      try {
+        applyCatalogForm();
+        saveCatalog("Stok ürün bilgileri kaydedildi.").catch(() => {});
+      } catch (error) { setCatalogMessage(error.message, true); }
     });
     $("#stockTransferRequestsButton")?.addEventListener("click", () => {
       const dialog = $("#stockTransferRequestsDialog");
@@ -1502,6 +1732,42 @@ export async function loadStockView({ force = false } = {}) {
   return state;
 }
 
+export async function applyStockIntent(intent = {}) {
+  if (activeSection() !== "stock") return false;
+  const locationId = String(intent.locationId || "");
+  if (locationId && (locationId === "total" || state.locations.some((item) => String(item.id) === locationId)) && String(state.selectedLocationId) !== locationId) {
+    state.selectedLocationId = locationId;
+    state.viewMode = locationId === "total" ? "overview" : "inventory";
+    state.secondaryLoaded = false;
+    state.stale = true;
+    try { localStorage.setItem(LOCATION_STORAGE_KEY, locationId); } catch (_error) {}
+    await loadAll({ force: true });
+  }
+  const productIdValue = String(intent.productId || intent.stockProductId || "");
+  if (productIdValue) {
+    state.viewMode = "inventory";
+    renderAll();
+    const card = $(`[data-stock-product-card="${CSS.escape(productIdValue)}"]`);
+    openProductDrawer(productIdValue, card || null);
+  }
+  const transferId = String(intent.transferId || "");
+  if (transferId) {
+    renderTransfers();
+    const dialog = $("#stockTransferRequestsDialog");
+    if (dialog && !dialog.open) dialog.showModal();
+    const transfer = $(`[data-stock-transfer-card="${CSS.escape(transferId)}"]`);
+    if (transfer) {
+      transfer.classList.add("is-deep-linked");
+      transfer.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
+    } else setMessage("Bağlantıdaki transfer mevcut filtrede bulunamadı.", "error");
+  }
+  if (String(intent.workforce || "") === "shipments") {
+    renderShipmentWorkspace();
+    $("#stockShipmentWorkspace")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  }
+  return true;
+}
+
 export function handleStockClick() { return false; }
 export function handleStockChange() { return false; }
 export function handleStockSubmit() { return false; }
@@ -1547,6 +1813,12 @@ export function resetStockState() {
   state.stale = true;
   state.bound = false;
   state.boundWorkspace = null;
+  state.catalogStock = null;
+  state.catalogLoaded = false;
+  state.catalogLoading = false;
+  state.catalogCategoryId = "";
+  state.catalogProductId = "";
+  state.catalogBusy = false;
   faturaState.stockLoaded = false;
   faturaState.stockStale = true;
 }

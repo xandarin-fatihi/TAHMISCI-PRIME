@@ -25,7 +25,7 @@ test("personel ve Yönetici stok detayları gerçek Sarf, Eksilt ve güvenli kap
   const personelHtml = source("apps/personel/index.html");
   const personelScript = source("apps/personel/personel.js");
   const personelCss = source("apps/personel/personel.css");
-  const adminScript = source("apps/admin/scripts/stock-locations.js");
+  const adminScript = source("apps/fatura/scripts/stock.js");
 
   assert.match(personelHtml, /id="stockDetailClose"[^>]*type="button"[^>]*aria-label="Ürün detayını kapat"/);
   assert.match(personelHtml, /data-stock-detail-action="waste">Sarf İşle</);
