@@ -35,7 +35,8 @@
     loadPromise: null,
     busyKeys: new Set(),
     bound: false,
-    confirmResolver: null
+    confirmResolver: null,
+    thresholdInitial: null
   };
 
   function requestId(prefix) {
@@ -123,6 +124,15 @@
       return nested === undefined || nested === null ? fallback : String(nested).trim() || fallback;
     }
     return value === undefined || value === null ? fallback : String(value).trim() || fallback;
+  }
+
+  function unitKey(value) {
+    return textValue(value, "")
+      .toLocaleLowerCase("tr-TR")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/ı/g, "i")
+      .replace(/\s+/g, " ");
   }
 
   function unitOf(balance) {
@@ -720,12 +730,25 @@
     state.selectedProductId = productId(balance);
     $("#stockThresholdDialogTitle").textContent = productName(balance);
     $("#stockThresholdDialogMeta").textContent = `${locationName(state.selectedLocationId)} · ${product.productCode || "Kod yok"}`;
-    $("#stockThresholdCritical").value = String(balance.criticalThreshold ?? 0);
-    $("#stockThresholdOrder").value = String(balance.orderThreshold ?? 0);
-    $("#stockThresholdTarget").value = String(balance.targetLevel ?? 0);
-    const baseUnit = textValue(draft && draft.baseUnit, unitOf(balance));
-    const bulkUnit = textValue(draft && draft.bulkUnit, textValue(product.bulkUnit || product.caseUnit, ""));
-    const factor = draft && draft.factor !== undefined ? Number(draft.factor || 0) : Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
+    const currentBaseUnit = textValue(product.baseUnit || product.unit, "adet");
+    const currentBulkUnit = textValue(product.bulkUnit || product.caseUnit, "");
+    const currentFactor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
+    const currentDefaultMovementUnit = textValue(product.defaultMovementUnit, currentBaseUnit);
+    state.thresholdInitial = {
+      productId: productId(balance),
+      locationId: String(state.selectedLocationId),
+      baseUnit: currentBaseUnit,
+      bulkUnit: currentBulkUnit,
+      factor: Number.isFinite(currentFactor) ? currentFactor : 0,
+      allowDecimal: Boolean(product.allowDecimal),
+      defaultMovementUnit: currentDefaultMovementUnit
+    };
+    $("#stockThresholdCritical").value = String(draft && draft.criticalThreshold !== undefined ? draft.criticalThreshold : balance.criticalThreshold ?? 0);
+    $("#stockThresholdOrder").value = String(draft && draft.orderThreshold !== undefined ? draft.orderThreshold : balance.orderThreshold ?? 0);
+    $("#stockThresholdTarget").value = String(draft && draft.targetLevel !== undefined ? draft.targetLevel : balance.targetLevel ?? 0);
+    const baseUnit = textValue(draft && draft.baseUnit, currentBaseUnit);
+    const bulkUnit = textValue(draft && draft.bulkUnit, currentBulkUnit);
+    const factor = draft && draft.factor !== undefined ? Number(draft.factor || 0) : currentFactor;
     setSelectOptions($("#stockThresholdBaseUnit"), unitCatalogOptions("base", baseUnit), baseUnit);
     setSelectOptions($("#stockThresholdBulkUnit"), unitCatalogOptions("bulk", bulkUnit, true), bulkUnit);
     $("#stockThresholdFactor").value = String(factor || "");
@@ -1088,16 +1111,64 @@
     if (critical > order) throw new Error("Kritik eşik sipariş eşiğinden büyük olamaz.");
     if (!baseUnit || !Number.isFinite(factor) || factor < 0 || (bulkUnit && factor <= 0)) throw new Error("Birim dönüşümü geçersiz.");
     const product = productOf(balance);
-    return runOperation(`thresholds:${productId(balance)}`, $("#stockThresholdSubmit"), async () => {
-      const result = await api(`/api/admin/stock/inventory/${encodeURIComponent(productId(balance))}`, mutation("PATCH", {
-        locationId: state.selectedLocationId, criticalThreshold: critical, orderThreshold: order, targetLevel: target,
-        baseUnit, bulkUnit, unitsPerBulkUnit: factor, allowDecimal: Boolean(product.allowDecimal),
-        defaultMovementUnit: product.defaultMovementUnit || baseUnit
-      }, "admin-stock-thresholds"));
-      form.reset();
-      $("#stockThresholdDialog")?.close();
-      closeProductDrawer({ restoreFocus: false });
-      await reloadAfterMutation(result, "Depo eşikleri ve birim dönüşümü güncellendi.");
+    const productKey = productId(balance);
+    const initial = state.thresholdInitial
+      && state.thresholdInitial.productId === productKey
+      && state.thresholdInitial.locationId === String(state.selectedLocationId)
+      ? state.thresholdInitial
+      : {
+          baseUnit: textValue(product.baseUnit || product.unit, "adet"),
+          bulkUnit: textValue(product.bulkUnit || product.caseUnit, ""),
+          factor: Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0),
+          allowDecimal: Boolean(product.allowDecimal),
+          defaultMovementUnit: textValue(product.defaultMovementUnit, product.baseUnit || product.unit || "adet")
+        };
+    const payload = {
+      locationId: state.selectedLocationId,
+      criticalThreshold: critical,
+      orderThreshold: order,
+      targetLevel: target
+    };
+    const baseChanged = unitKey(baseUnit) !== unitKey(initial.baseUnit);
+    const bulkChanged = unitKey(bulkUnit) !== unitKey(initial.bulkUnit);
+    const factorChanged = Math.abs(Number(factor || 0) - Number(initial.factor || 0)) > 0.000001;
+    if (baseChanged) payload.baseUnit = baseUnit;
+    if (bulkChanged) payload.bulkUnit = bulkUnit;
+    if (factorChanged) payload.unitsPerBulkUnit = factor;
+    const nextAllowDecimal = Boolean(product.allowDecimal);
+    if (nextAllowDecimal !== Boolean(initial.allowDecimal)) payload.allowDecimal = nextAllowDecimal;
+    let nextDefaultMovementUnit = textValue(product.defaultMovementUnit, initial.baseUnit);
+    if (baseChanged && unitKey(nextDefaultMovementUnit) === unitKey(initial.baseUnit)) nextDefaultMovementUnit = baseUnit;
+    if (bulkChanged && unitKey(nextDefaultMovementUnit) === unitKey(initial.bulkUnit)) nextDefaultMovementUnit = bulkUnit || baseUnit;
+    if (![unitKey(baseUnit), unitKey(bulkUnit)].filter(Boolean).includes(unitKey(nextDefaultMovementUnit))) nextDefaultMovementUnit = baseUnit;
+    if (unitKey(nextDefaultMovementUnit) !== unitKey(initial.defaultMovementUnit)) payload.defaultMovementUnit = nextDefaultMovementUnit;
+    const retryDraft = {
+      criticalThreshold: critical,
+      orderThreshold: order,
+      targetLevel: target,
+      baseUnit,
+      bulkUnit,
+      factor
+    };
+    return runOperation(`thresholds:${productKey}`, $("#stockThresholdSubmit"), async () => {
+      try {
+        const result = await api(`/api/admin/stock/inventory/${encodeURIComponent(productKey)}`, mutation("PATCH", payload, "admin-stock-thresholds"));
+        $("#stockThresholdDialog")?.close();
+        state.thresholdInitial = null;
+        closeProductDrawer({ restoreFocus: false });
+        await reloadAfterMutation(result, "Depo eşikleri ve birim dönüşümü güncellendi.");
+      } catch (error) {
+        const revisionConflict = error && error.status === 409 && /başka bir işlemle güncellendi/i.test(error.message || "");
+        if (revisionConflict) {
+          state.stale = true;
+          await loadAll({ force: true, reloadLocations: true });
+          openThresholdDialog(productKey, retryDraft);
+          const message = "Stok verisi başka bir işlemle güncellendi. Güncel veriler yükleniyor; tekrar deneyin.";
+          $("#stockThresholdDialogMessage").textContent = message;
+          error.message = message;
+        }
+        throw error;
+      }
     });
   }
 

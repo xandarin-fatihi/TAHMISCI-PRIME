@@ -538,9 +538,10 @@ function registerStockLocationRoutes(deps) {
         if (Number(balance.criticalThreshold || 0) > Number(balance.orderThreshold || 0)) {
           throw fail("Kritik eşik sipariş eşiğinden büyük olamaz.");
         }
-        const currentBaseUnit = String(product.baseUnit || product.unit || "adet");
+        const currentBaseUnit = normalizeCatalogUnit(product.baseUnit || product.unit || "adet");
         const nextBaseUnit = body.baseUnit === undefined ? currentBaseUnit : normalizeCatalogUnit(body.baseUnit);
         if (!nextBaseUnit) throw fail("Temel birim boş olamaz.");
+        const baseUnitChanged = catalogUnitKey(nextBaseUnit) !== catalogUnitKey(currentBaseUnit);
         const baseCatalog = state.unitDefinitions && Array.isArray(state.unitDefinitions.base) ? state.unitDefinitions.base : [];
         const bulkCatalog = state.unitDefinitions && Array.isArray(state.unitDefinitions.bulk) ? state.unitDefinitions.bulk : [];
         if (!baseCatalog.some((unit) => catalogUnitKey(unit) === catalogUnitKey(nextBaseUnit))) {
@@ -548,7 +549,7 @@ function registerStockLocationRoutes(deps) {
         }
         const hasHistory = state.movements.some((movement) => String(movement.productId) === String(product.id));
         const hasBalance = state.balances.some((candidate) => String(candidate.productId) === String(product.id) && Number(candidate.quantity || 0) !== 0);
-        if (nextBaseUnit !== currentBaseUnit && (hasHistory || hasBalance)) {
+        if (baseUnitChanged && (hasHistory || hasBalance)) {
           throw fail("Hareket geçmişi veya bakiye bulunan ürünün temel birimi değiştirilemez. Toplu birim dönüşümünü düzenleyebilirsiniz.", 409);
         }
         if (body.baseUnit !== undefined) {
@@ -946,7 +947,7 @@ function assertExpectedStockRevision(data, body, operationType = "", operationId
   const expected = Number(body.expectedRevision);
   const current = Math.max(0, Number(data.revisions && data.revisions.stock || 0));
   if (!Number.isInteger(expected) || expected < 0) throw Object.assign(new Error("Beklenen stok revision geçersiz."), { status: 400 });
-  if (expected !== current) throw Object.assign(new Error("Stok verisi başka bir işlemle güncellendi. Yenileyip tekrar deneyin."), { status: 409 });
+  if (expected !== current) throw Object.assign(new Error("Stok verisi başka bir işlemle güncellendi. Güncel veriler yükleniyor; tekrar deneyin."), { status: 409 });
 }
 
 function appendStockAudit(data, actor, action, entityId, requestId, previous, next, timestamp) {
