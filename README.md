@@ -1,12 +1,15 @@
 # TAHMISCI PRIME
 
-Tahmisçi’nin QR menüsü, Yönetici paneli, Personel paneli ve Express API’sini tek çalışma alanında barındıran production kaynak deposudur. Kalıcı işletme verisi bu repoda tutulmaz; uygulama `DATA_FILE`, `MEDIA_DIR` ve `BACKUP_DIR` ile tanımlanan dış disk alanlarını kullanır.
+Tahmisçi’nin QR menüsü, kurumsal sitesi, Müdavim alanı, Yönetici, Personel ve Fatura panelleri ile Express API’sini tek çalışma alanında barındıran production kaynak deposudur. Kalıcı işletme verisi bu repoda tutulmaz; uygulama `DATA_FILE`, `MEDIA_DIR` ve `BACKUP_DIR` ile tanımlanan dış disk alanlarını kullanır.
 
 ## Uygulama girişleri
 
 - `/` — yayınlanmış dijital menü
+- `/site/` — Tahmisçi kurumsal sitesi
+- `/mudavim/` — e-posta doğrulamalı, backend oturumlu Müdavim hesabı
 - `/yonetici/` — Tahmisçi Yönetici Paneli
 - `/personel/` — Personel Paneli
+- `/fatura/` — Tahmisçi Fatura Paneli
 - `/panel/` — geriye uyumluluk için `/yonetici/` yönlendirmesi
 - `/api/health` — hassas veri içermeyen servis sağlık kontrolü
 
@@ -26,6 +29,18 @@ Teknik `/api/admin/**` rotaları ve `admin` rol anahtarı geriye uyumluluk için
 npm ci
 npm run dev:local
 ```
+
+Yerel adresler:
+
+- QR Menü: `http://localhost:6060/`
+- Site: `http://localhost:6060/site/`
+- Müdavim: `http://localhost:6060/mudavim/`
+- Yönetici: `http://localhost:6060/yonetici/`
+- Personel: `http://localhost:6060/personel/`
+- Fatura: `http://localhost:6060/fatura/`
+- Health: `http://localhost:6060/api/health`
+
+Müdavim kimliği e-posta ve parola ile backend üzerinde doğrulanır; ziyaret, seviye ve ödül motoru sonraki ürün fazına aittir.
 
 Yerel araçlar yalnız geliştirme içindir. `TAHMISCI_LOCAL_DEV` production ortamında kabul edilmez; production config doğrulaması lokal credential ve geçici veri yollarını reddeder.
 

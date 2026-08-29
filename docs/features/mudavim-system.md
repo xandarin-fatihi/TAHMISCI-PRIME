@@ -1,76 +1,21 @@
 # Tahmisçi Müdavim Sistemi
 
-Bu alan yayın öncesi UI prototipidir. Backend, database, gerçek SMS/OTP, Google auth veya API endpoint içermez.
+Müdavim alanı gerçek backend hesabı ve sunucu oturumu kullanır; tarayıcı depolaması kimlik veya oturum kaynağı değildir.
 
-## Amaç
+## Hesap ve giriş
 
-Tahmisçi müşterisinin dijital müdavim kartıyla ziyaretlerini takip etmesini ve 10 içecekte 1 tatlı hakkı kampanyasını net görmesini sağlamak.
+- Giriş e-posta ve parola ile yapılır.
+- Kayıt sırasında ad soyad, profil adı, e-posta, parola, doğum tarihi ve izin tercihleri alınır.
+- E-posta doğrulaması tamamlanana kadar hesap doğrulama bekleyen durumda kalır.
+- Doğrulama, parola sıfırlama ve oturum işlemleri ortak hesap güvenliği altyapısı üzerinden yürür.
+- Her geçerli e-posta alan adı kullanılabilir; teknik hesap kapsamları arasındaki mevcut benzersizlik kuralı korunur.
 
-## Girişsiz Landing
+## Veri kaynağı
 
-- `/mudavim` ilk açılışta kart/dashboard göstermez.
-- Ekran sade karşılama, fayda maddeleri ve `Giriş Yap` / `Kayıt Ol` çağrılarıyla açılır.
-- Sağdaki eski büyük kart kaldırıldı; kahve görseli yalnızca yumuşak hero atmosferi olarak kullanılır.
-- Girişsiz header: `Giriş Yap`, `Kayıt Ol`, `Kampanyalar`, `Siteye Dön`.
+Canonical kayıtlar backend store içindeki `mudavimAccounts` koleksiyonundadır. Yönetici panelindeki Müdavim üyeleri de aynı kaynaktan yalnız güvenli profil alanlarını okur; parola hash'i, doğrulama challenge'ı, session token veya başka güvenlik sırları istemciye gönderilmez.
 
-## Giriş Akışı
+## Mevcut ürün sınırı
 
-- Giriş yöntemi telefon numarası + şifredir.
-- `Beni hatırla`, `Şifremi unuttum?` ve Google ile devam UI seçenekleri bulunur.
-- Telefon ve şifre doluysa mock state giriş başarılı kabul edilir.
+Müdavim profil ve hesap ekranları gerçek hesap verisini gösterir. Ziyaret işlemleri, QR sadakat taraması, seviye, ödül kazanımı ve ödül kullanımı bu aşamada uygulanmış bir loyalty motoru değildir; veri yoksa arayüz “Henüz ziyaret kaydı yok” durumunu gösterir.
 
-## Kayıt Akışı
-
-1. Telefon numarası alınır.
-2. 6 haneli kod onay ekranı gösterilir.
-3. Şifre ve şifre tekrar alanları doğrulanır.
-4. Profil tamamlanır: ad soyad, profil adı, doğum tarihi, e-posta.
-5. KVKK onayı zorunlu, kampanya bildirimi opsiyoneldir.
-6. Başarı ekranından `Kartımı Gör` ile dashboard açılır.
-
-## Dashboard
-
-Giriş sonrası landing kapanır ve Müdavim paneli açılır:
-
-- Müdavim Kartım
-- QR / müşteri kodu
-- Ziyaret ilerlemesi
-- Aktif ödül
-- Ödüllerim
-- Kampanyalar
-- Geçmiş ziyaretler
-- Profil
-
-Kart dili nötr tutulur: kişi adı yerine `Müdavim Kartım`, `Gold Müdavim`, `THM-4821`, `Kasada kodunu okut` gibi ürün dili kullanılır.
-
-## Mock State
-
-Mock state şu alanları taşır:
-
-- `memberCode`
-- `memberLevel`
-- `visitCount`
-- `rewardTarget`
-- `activeReward`
-- `recentVisits`
-- `profile`
-- `campaigns`
-
-Gerçek veri yazılmaz; local UI state yalnızca sunum davranışı sağlar.
-
-## Scroll ve Header
-
-- Header 72-88px aralığında kompakt tutulur.
-- Modal kapalıyken body scroll açıktır.
-- Modal açıkken body scroll kilitlenir, kapanınca tekrar açılır.
-- Mobilde yatay taşma engellenir.
-
-## Backend Fazına Geçiş
-
-- Gerçek SMS OTP sağlayıcı entegrasyonu.
-- Telefon + şifre auth ve session yönetimi.
-- KVKK/onay kayıtları.
-- QR doğrulama ve kasada okutma akışı.
-- Admin panelde kampanya ve ödül kuralları yönetimi.
-- Admin panelde “Bugün doğum günü olan müdavimler” alanı.
-- Favori içecek alanı ve kampanya bildirim tercihleri.
+Telefonla giriş, SMS OTP ve localStorage tabanlı mock üyelik bu mimarinin parçası değildir.

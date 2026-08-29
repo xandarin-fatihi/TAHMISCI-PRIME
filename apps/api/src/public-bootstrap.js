@@ -125,6 +125,8 @@ function buildPublicSite(storeData) {
 
 function buildPublicMenu(storeData) {
   const bootstrap = buildPublicBootstrap(storeData);
+  const menu = { ...bootstrap.menu };
+  delete menu.products;
   return {
     schemaVersion: 2,
     version: bootstrap.version,
@@ -135,7 +137,7 @@ function buildPublicMenu(storeData) {
     revisions: bootstrap.revisions,
     updatedAt: bootstrap.updatedAt,
     pricing: bootstrap.pricing,
-    menu: bootstrap.menu
+    menu
   };
 }
 

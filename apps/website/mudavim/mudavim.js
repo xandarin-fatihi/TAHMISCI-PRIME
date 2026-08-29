@@ -221,7 +221,7 @@
     setText(elements.memberAvatar, initial);
     setText(elements.memberFullName, displayName);
     setText(elements.memberWelcomeName, displayName);
-    setText(elements.progressCount, String(loyalty.visitCount));
+    setText(elements.progressCount, loyalty.available ? String(loyalty.visitCount) : "—");
     setText(elements.rewardTarget, loyalty.available && loyalty.rewardTarget ? ` / ${loyalty.rewardTarget}` : "");
     setText(elements.visitSummaryLabel, loyalty.available ? "ziyaret tamamlandı" : "Henüz ziyaret kaydı yok");
     setText(elements.progressText, loyalty.available && loyalty.rewardTarget
@@ -229,9 +229,9 @@
       : "Sadakat geçmişi kullanıma açıldığında burada görünecek.");
     setText(elements.memberLevel, loyalty.level || "Henüz yok");
     setText(elements.centerMemberLevel, loyalty.level || "Henüz yok");
-    setText(elements.centerVisitCount, String(loyalty.visitCount));
+    setText(elements.centerVisitCount, loyalty.available ? String(loyalty.visitCount) : "—");
     setText(elements.centerRemaining, loyalty.available && loyalty.rewardTarget
-      ? `${Math.max(0, loyalty.rewardTarget - loyalty.visitCount)} ziyaret` : "Veri bekleniyor");
+      ? `${Math.max(0, loyalty.rewardTarget - loyalty.visitCount)} ziyaret` : "Henüz ziyaret kaydı yok");
     renderVisitSegments();
     renderVisitHistory();
     renderAnnouncements();

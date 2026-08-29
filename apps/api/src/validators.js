@@ -292,9 +292,6 @@ function validateSiteState(siteState) {
       return `siteState.${key} nesne olmali.`;
     }
   }
-  if (siteState.features?.customerAccountsEnabled !== undefined && typeof siteState.features.customerAccountsEnabled !== "boolean") {
-    return "siteState.features.customerAccountsEnabled boolean olmali.";
-  }
   if (siteState.features?.orderingEnabled !== undefined && typeof siteState.features.orderingEnabled !== "boolean") {
     return "siteState.features.orderingEnabled boolean olmali.";
   }

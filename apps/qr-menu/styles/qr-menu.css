@@ -38,9 +38,9 @@
   --menu-header-bg: color-mix(in srgb, var(--bg-color) 92%, transparent);
   --social-icon-color: var(--accent-color);
   --social-icon-size: 30px;
-  --title-font: "Tahmisci Poppins", Poppins, Arial, sans-serif;
-  --category-font: "Tahmisci Poppins", Poppins, Arial, sans-serif;
-  --product-font: "Tahmisci Poppins", Poppins, Arial, sans-serif;
+  --title-font: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
+  --category-font: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
+  --product-font: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   --menu-title-size: 36px;
   --category-title-size: 24px;
   --product-title-size: 13px;
@@ -78,7 +78,7 @@ body {
   overflow-x: hidden;
   background-color: var(--bg-color);
   color: var(--text-color);
-  font-family: "Tahmisci Poppins", Poppins, Arial, sans-serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   scroll-behavior: smooth;
   touch-action: manipulation;
 }
@@ -322,7 +322,7 @@ body.dark-mode .brand-logo {
 }
 
 .social-follow-text strong {
-  font-family: "Tahmisci Poppins", Poppins, Arial, sans-serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 0.86rem;
   font-weight: 700;
   line-height: 1.1;
@@ -450,7 +450,7 @@ body.dark-mode .social-channel-card .icon {
 }
 
 .feedback-channel-card strong {
-  font-family: "Tahmisci Poppins", Poppins, Arial, sans-serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 0.85rem;
   font-weight: 700;
   line-height: 1.1;
@@ -764,7 +764,7 @@ body.dark-mode .menu-page::before {
   justify-content: center;
   column-gap: 0.25em;
   color: var(--text-color);
-  font-family: "Tahmisci Poppins", Poppins, Arial, sans-serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: clamp(0.74rem, 2.15vw, 1.02rem);
   font-weight: 800;
   line-height: 1.12;
@@ -786,7 +786,7 @@ body.dark-mode .menu-page::before {
 }
 
 .menu-header-brand-name span:last-child {
-  font-family: "Tahmisci Poppins", Poppins, Arial, sans-serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 0.72em;
   letter-spacing: 0.04em;
 }

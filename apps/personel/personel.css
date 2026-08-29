@@ -82,7 +82,7 @@ textarea {
 .stock-card h2,
 .stock-dialog h2 {
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   letter-spacing: -0.04em;
 }
 
@@ -350,7 +350,7 @@ textarea {
 .stock-stat strong {
   display: block;
   margin: 2px 0;
-  font: 800 34px Georgia, serif;
+  font: 800 34px "Tahmisci Poppins", Poppins, system-ui, sans-serif;
 }
 
 .stock-filterbar {
@@ -440,7 +440,7 @@ textarea {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-family: Georgia, serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
 }
 
 .stock-count strong {
@@ -512,7 +512,7 @@ textarea {
   border-radius: 50%;
   background: linear-gradient(135deg, #683820, #32170d);
   color: #fff8ec;
-  font: 800 34px Georgia, serif;
+  font: 800 34px "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   overflow: hidden;
 }
 
@@ -697,7 +697,7 @@ textarea {
 
 .stock-catalog-brand h1 {
   margin: 0;
-  font: 700 clamp(34px, 4vw, 58px)/0.95 Georgia, "Times New Roman", serif;
+  font: 700 clamp(34px, 4vw, 58px)/0.95 "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   letter-spacing: -0.035em;
 }
 
@@ -715,7 +715,7 @@ textarea {
 }
 
 .stock-catalog-search > span {
-  font: 32px/1 Georgia, serif;
+  font: 32px/1 "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   transform: rotate(-20deg);
 }
 
@@ -1572,7 +1572,7 @@ textarea {
 }
 
 .stock-card-quantity strong {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: clamp(23px, 2vw, 30px);
   line-height: 1;
   text-align: right;
@@ -1803,7 +1803,7 @@ textarea {
 .workforce-stats b {
   margin: 3px 0 0;
   color: #2d160b;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 39px;
   font-weight: 600;
   line-height: 1;
@@ -1847,7 +1847,7 @@ textarea {
 .wf-card-title h2 {
   margin: 0;
   color: #32190d;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 25px;
   font-weight: 600;
 }
@@ -1955,7 +1955,7 @@ textarea {
   overflow: hidden;
   margin-top: 7px;
   color: #32190d;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: clamp(19px, 1.6vw, 24px);
   font-weight: 600;
   text-overflow: ellipsis;
@@ -2394,7 +2394,7 @@ textarea {
   overflow: hidden;
   margin: 7px 0 12px;
   color: #32190d;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 19px;
   line-height: 1.15;
   -webkit-box-orient: vertical;
@@ -2793,7 +2793,7 @@ textarea {
 .wf-day-card > b {
   overflow: hidden;
   max-width: 100%;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 15px;
   font-weight: 600;
   text-overflow: ellipsis;
@@ -2995,7 +2995,7 @@ textarea {
 .wf-request-row h3 {
   margin: 1px 0 4px;
   color: #402619;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 17px;
 }
 
@@ -3062,7 +3062,7 @@ textarea {
 .wf-state h2 {
   margin: 0;
   color: #513525;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 18px;
 }
 

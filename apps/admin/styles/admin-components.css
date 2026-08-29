@@ -169,7 +169,7 @@
 .global-preview-drawer__header h2 {
   margin: 4px 0 0;
   overflow: hidden;
-  font-family: var(--panel-font-display, Georgia, serif);
+  font-family: var(--panel-font-display, "Tahmisci Poppins", Poppins, system-ui, sans-serif);
   font-size: 21px;
   font-weight: 600;
   line-height: 1.12;
@@ -452,7 +452,7 @@
 }
 
 .live-preview-settings__heading strong {
-  font-family: var(--panel-font-display, Georgia, serif);
+  font-family: var(--panel-font-display, "Tahmisci Poppins", Poppins, system-ui, sans-serif);
   font-size: 18px;
   line-height: 1.15;
 }
@@ -840,7 +840,7 @@
 
 .pricing-dialog__head h2 {
   margin: 2px 0 0;
-  font-family: var(--panel-font-display, Georgia, serif);
+  font-family: var(--panel-font-display, "Tahmisci Poppins", Poppins, system-ui, sans-serif);
   font-size: 24px;
 }
 
@@ -1037,7 +1037,7 @@ html.is-pricing-modal-open body {
 
 .pricing-history-head h3 {
   color: var(--panel-ink, #2c1609);
-  font-family: var(--panel-font-display, Georgia, serif);
+  font-family: var(--panel-font-display, "Tahmisci Poppins", Poppins, system-ui, sans-serif);
   font-size: 18px;
 }
 
@@ -1916,7 +1916,7 @@ html.is-pricing-modal-open body {
 .stock-section-heading h4 {
   margin: 2px 0 4px;
   color: var(--panel-ink, #2c1609);
-  font: 700 18px/1.2 var(--panel-font-display, Georgia, serif);
+  font: 700 18px/1.2 var(--panel-font-display, "Tahmisci Poppins", Poppins, system-ui, sans-serif);
 }
 
 .stock-location-workspace__head p,
@@ -1995,7 +1995,7 @@ html.is-pricing-modal-open body {
 .stock-location-summary span,
 .stock-location-summary strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stock-location-summary span { color: var(--panel-muted, #806b5b); font: 600 11px/1.3 var(--panel-font-ui, sans-serif); }
-.stock-location-summary strong { margin-top: 4px; color: var(--panel-ink, #2c1609); font: 700 18px/1.2 var(--panel-font-display, Georgia, serif); }
+.stock-location-summary strong { margin-top: 4px; color: var(--panel-ink, #2c1609); font: 700 18px/1.2 var(--panel-font-display, "Tahmisci Poppins", Poppins, system-ui, sans-serif); }
 
 .stock-location-grid {
   display: grid;
@@ -2099,7 +2099,7 @@ html.is-pricing-modal-open body {
 .stock-location-product__identity strong { color: var(--panel-ink, #2c1609); font: 700 13px/1.3 var(--panel-font-ui, sans-serif); }
 .stock-location-product__identity span { margin-top: 3px; color: var(--panel-muted, #806b5b); font: 500 10px/1.25 var(--panel-font-ui, sans-serif); }
 .stock-location-product__quantity { grid-column: 1 / 2; display: flex; align-items: baseline; margin-top: 6px; }
-.stock-location-product__quantity strong { color: var(--panel-coffee, #5a2f1d); font: 750 28px/1.05 var(--panel-font-display, Georgia, serif); }
+.stock-location-product__quantity strong { color: var(--panel-coffee, #5a2f1d); font: 750 28px/1.05 var(--panel-font-display, "Tahmisci Poppins", Poppins, system-ui, sans-serif); }
 .stock-location-product__quantity span { margin-left: 6px; color: var(--panel-muted, #806b5b); font-size: 16px; }
 .stock-location-product > .stock-location-status { grid-column: 2; grid-row: 3; align-self: start; }
 .stock-location-product__conversion { grid-column: 1 / -1; margin: 0; color: var(--panel-muted, #806b5b); font: 500 11px/1.4 var(--panel-font-ui, sans-serif); }
@@ -2305,7 +2305,7 @@ html.is-pricing-modal-open body {
 .stock-count-dialog__shell { display: grid; max-height: calc(100dvh - 30px); grid-template-rows: auto auto minmax(0, 1fr) auto; }
 .stock-count-dialog header, .stock-count-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--panel-line, rgba(90, 47, 29, .16)); }
 .stock-count-dialog footer { justify-content: flex-end; border-top: 1px solid var(--panel-line, rgba(90, 47, 29, .16)); border-bottom: 0; }
-.stock-count-dialog h4 { margin: 2px 0; font: 700 21px/1.2 var(--panel-font-display, Georgia, serif); }
+.stock-count-dialog h4 { margin: 2px 0; font: 700 21px/1.2 var(--panel-font-display, "Tahmisci Poppins", Poppins, system-ui, sans-serif); }
 .stock-count-dialog header span, .stock-count-dialog__message { color: var(--panel-muted, #806b5b); font-size: 11px; }
 .stock-count-dialog__message:empty { display: none; }
 .stock-count-dialog__message { padding: 9px 16px; background: var(--panel-surface-soft, #f7ecdf); }

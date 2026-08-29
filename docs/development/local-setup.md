@@ -7,27 +7,21 @@ npm install
 npm run dev:local
 ```
 
-Adresler:
-- Site: `http://localhost:8080/`
-- Menü: `http://localhost:8080/#menu`
-- Admin giriş: `http://localhost:8080/login.html`
-- Yönetici paneli: `http://localhost:8080/yonetici/`
-- Personel: `http://localhost:8080/personel/`
-- Personel stok: `http://localhost:8080/personel/#stok`
-- Reçete: `http://localhost:8080/recete/`
-- QR menü: `http://localhost:8080/qr-menu/`
-- Health: `http://localhost:8080/api/health`
+## Yerel adresler
 
-Lokal veriler:
+- QR Menü: `http://localhost:6060/`
+- Site: `http://localhost:6060/site/`
+- Müdavim: `http://localhost:6060/mudavim/`
+- Yönetici: `http://localhost:6060/yonetici/`
+- Personel: `http://localhost:6060/personel/`
+- Fatura: `http://localhost:6060/fatura/`
+- Health: `http://localhost:6060/api/health`
+
+## Yerel veri
+
 - Store: `storage/local/local-dev-store.json`
 - Medya: `storage/media/local-dev/`
 
-Testler:
-
-```bash
-npm run check
-npm test
-npm run test:local
-```
+Lokal başlatma sırasında bir saatten eski ve aktif bir sürece ait olmayan `local-dev-store.json.*.tmp` dosyaları güvenli biçimde temizlenir; ana store dosyasına dokunulmaz.
 
 `npm run local:reset` yalnızca lokal store ve lokal medya hedeflerini siler; production verisine dokunmaz.

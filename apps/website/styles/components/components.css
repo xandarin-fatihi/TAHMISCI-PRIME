@@ -922,7 +922,7 @@
     --anasayfa-card-bg: var(--color-white);
     --anasayfa-card-radius: 20px;
     --anasayfa-shadow: 0 10px 30px rgba(46, 36, 24, 0.1);
-    --anasayfa-font: 'Montserrat', 'Arial', sans-serif;
+    --anasayfa-font: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
 }
 
 body.anasayfa {

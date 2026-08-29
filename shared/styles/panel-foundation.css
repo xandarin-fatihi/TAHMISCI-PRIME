@@ -25,7 +25,7 @@
 
 :root {
   --panel-font-ui: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
-  --panel-font-display: Georgia, "Times New Roman", serif;
+  --panel-font-display: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   --panel-canvas: #fbf6ee;
   --panel-surface: #fffaf3;
   --panel-surface-soft: #f7ecdf;

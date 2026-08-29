@@ -53,7 +53,6 @@ const DEFAULT_SITE_STATE = Object.freeze({
     supportedLanguages: ["tr", "en"]
   },
   features: {
-    customerAccountsEnabled: false,
     orderingEnabled: false
   },
   branding: {
@@ -268,7 +267,6 @@ function migrateSiteState(input) {
 function normalizeFeatures(value) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   return {
-    customerAccountsEnabled: source.customerAccountsEnabled === true,
     orderingEnabled: source.orderingEnabled === true
   };
 }

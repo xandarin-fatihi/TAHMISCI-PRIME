@@ -46,8 +46,6 @@
   };
 
   window.TahmisciPublicData = provider;
-  window.TAHMISCI_CUSTOMER_ACCOUNTS_ENABLED = false;
-  document.documentElement.dataset.customerAccounts = "disabled";
   applyBranding({});
   applyWatermark({});
   applyMotion({});

@@ -1807,18 +1807,22 @@
                 <span class="mudavim-step">2</span>
                 <div>
                   <h4>Üyeler</h4>
-                  <p>Kayıtlı müdavim müşterileri burada listelenecek.</p>
+                  <p>Backend üzerinde kayıtlı gerçek Müdavim hesapları.</p>
                 </div>
                 <span class="mudavim-accordion-chevron" aria-hidden="true"></span>
               </summary>
               <div class="mudavim-accordion-body">
-                <section class="mudavim-list-panel mudavim-members-placeholder">
+                <section class="mudavim-list-panel">
                   <div class="mudavim-panel-head">
                     <div>
                       <h4>Üyeler</h4>
-                      <span>Gerçek müdavim kayıtları bağlandığında burada listelenecek.</span>
+                      <span>İsim, profil adı veya e-posta ile arayın.</span>
                     </div>
                   </div>
+                  <label class="mudavim-member-search" for="mudavimSearch">
+                    <span class="sr-only">Müdavim üyesi ara</span>
+                    <input id="mudavimSearch" type="search" autocomplete="off" placeholder="Üye ara…">
+                  </label>
                   <div class="mudavim-customer-list" id="mudavimCustomerList"></div>
                 </section>
                 <aside class="mudavim-detail-panel" id="mudavimCustomerDetail" hidden></aside>
@@ -1829,23 +1833,23 @@
               <summary class="mudavim-accordion-head">
                 <span class="mudavim-step">3</span>
                 <div>
-                  <h4>Ödül Kuralları ve Kampanyalar</h4>
-                  <p>Ödül eşikleri, kullanım limitleri ve dönemsel kampanyalar.</p>
+                  <h4>Loyalty Modülü</h4>
+                  <p>Ziyaret ve ödül motoru ayrı aşamada etkinleştirilecektir.</p>
                 </div>
                 <span class="mudavim-accordion-chevron" aria-hidden="true"></span>
               </summary>
               <div class="mudavim-accordion-body mudavim-admin-grid">
                 <section class="mudavim-config-card">
                   <div class="mudavim-panel-head">
-                    <h4>Ödül kuralları</h4>
-                    <span>Aktif sadakat kuralları</span>
+                    <h4>Durum</h4>
+                    <span>Hesap sistemi etkin, loyalty işlemleri henüz kapalı.</span>
                   </div>
                   <div id="mudavimRewardRules"></div>
                 </section>
                 <section class="mudavim-config-card">
                   <div class="mudavim-panel-head">
-                    <h4>Kampanyalar</h4>
-                    <span>Müdavim kampanya akışı</span>
+                    <h4>Sonraki aşama</h4>
+                    <span>Ziyaret, ödül ve seviye işlemleri burada yönetilecektir.</span>
                   </div>
                   <div id="mudavimCampaigns"></div>
                 </section>
@@ -1856,8 +1860,8 @@
               <summary class="mudavim-accordion-head">
                 <span class="mudavim-step">4</span>
                 <div>
-                  <h4>Ayarlar</h4>
-                  <p>QR, müşteri ekranı metni ve seviye kuralı ayarları.</p>
+                  <h4>Hesap Durumu</h4>
+                  <p>E-posta doğrulama ve backend oturum altyapısı etkin durumdadır.</p>
                 </div>
                 <span class="mudavim-accordion-chevron" aria-hidden="true"></span>
               </summary>

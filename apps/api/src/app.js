@@ -490,6 +490,28 @@ app.get("/api/admin/me", requireAdminOrMainRequestOrigin, auth.requireAdmin, (re
   });
 });
 
+app.get("/api/admin/mudavim/members", requireAdminRequestOrigin, auth.requireAdmin, (req, res) => {
+  const data = req.storeSnapshot;
+  if (!data) return res.status(503).json({ ok: false, message: "Müdavim hesapları hazırlanamadı." });
+  const members = (Array.isArray(data.mudavimAccounts) ? data.mudavimAccounts : [])
+    .filter((account) => account && account.id)
+    .map((account) => ({
+      id: String(account.id),
+      fullName: String(account.fullName || ""),
+      alias: String(account.alias || ""),
+      email: String(account.emailNormalized || account.email || ""),
+      emailVerifiedAt: account.emailVerifiedAt || null,
+      status: String(account.status || "pending_email_verification"),
+      campaignConsent: account.campaignConsent === true,
+      birthDate: String(account.birthDate || ""),
+      createdAt: account.createdAt || null,
+      updatedAt: account.updatedAt || null
+    }))
+    .sort((left, right) => Date.parse(right.createdAt || 0) - Date.parse(left.createdAt || 0));
+  res.set("Cache-Control", "private, no-cache, must-revalidate");
+  return res.json({ ok: true, total: members.length, members });
+});
+
 app.get("/api/admin/summary", requireAdminRequestOrigin, auth.requireAdmin, (req, res) => {
   const data = req.storeSnapshot;
   if (!data) return res.status(503).json({ ok: false, message: "Yönetici özeti hazırlanamadı." });
@@ -532,6 +554,7 @@ app.get("/api/admin/summary", requireAdminRequestOrigin, auth.requireAdmin, (req
       criticalStock,
       pendingShipments,
       unreadNotifications,
+      mudavimMembers: (Array.isArray(data.mudavimAccounts) ? data.mudavimAccounts : []).length,
       categoryDistribution: categories.map((category) => ({
         id: String(category && category.id || ""),
         name: String(category && category.name || "Kategori"),

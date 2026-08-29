@@ -1,6 +1,8 @@
 "use strict";
 
 const { once } = require("events");
+const fs = require("fs/promises");
+const path = require("path");
 const {
   buildLocalEnvironment,
   getLocalCredentials,
@@ -20,12 +22,54 @@ main().catch((error) => {
 });
 
 async function main() {
+  await cleanupOrphanLocalStoreTemps();
   const { startServer } = require("../src/server");
   server = await startServer();
   if (!server.listening) await Promise.race([once(server, "listening"), once(server, "error").then(([error]) => Promise.reject(error))]);
   printLocalBanner();
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
+}
+
+async function cleanupOrphanLocalStoreTemps() {
+  const dataFile = getLocalPaths("dev").dataFile;
+  const directory = path.dirname(dataFile);
+  const baseName = path.basename(dataFile).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const temporaryFilePattern = new RegExp(`^${baseName}\\.(\\d+)\\.\\d+\\.tmp$`);
+  const staleBefore = Date.now() - (60 * 60 * 1000);
+
+  try {
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const match = entry.name.match(temporaryFilePattern);
+      if (!match) continue;
+      const ownerPid = Number(match[1]);
+      if (processIsActive(ownerPid)) continue;
+      const target = path.join(directory, entry.name);
+      try {
+        const stat = await fs.stat(target);
+        if (stat.mtimeMs > staleBefore) continue;
+        await fs.unlink(target);
+        console.log(`Eski lokal store geçici dosyası temizlendi: ${entry.name}`);
+      } catch (error) {
+        console.warn(`Lokal store geçici dosyası temizlenemedi (${entry.name}): ${error.message}`);
+      }
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") console.warn(`Lokal store geçici dosya kontrolü başarısız: ${error.message}`);
+  }
+}
+
+function processIsActive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error && error.code === "EPERM";
+  }
 }
 
 function printLocalBanner() {
