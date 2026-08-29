@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const { normalizeAppTarget, safeAppDeepLink } = require("../app-targets");
 const { migrateSiteState } = require("../site-state");
 const { migratePricingSystem } = require("../pricing");
 const { normalizeAdminDefaults } = require("../admin-defaults");
@@ -13,7 +14,7 @@ const {
   registryCodeForEntity
 } = require("./product-code-registry");
 
-const STORE_SCHEMA_VERSION = 19;
+const STORE_SCHEMA_VERSION = 20;
 const PROCUREMENT_SCHEMA_VERSION = 1;
 const FATURA_ROLES = new Set(["operasyon", "mal_kabul", "muhasebe", "satın_alma", "yönetici", "özel"]);
 const FATURA_CAPABILITIES = new Set([
@@ -33,7 +34,16 @@ const FATURA_CAPABILITIES = new Set([
   "documents.read",
   "documents.upload",
   "documents.archive",
-  "procurement.users.manage"
+  "procurement.users.manage",
+  "inventory.read",
+  "inventory.manage",
+  "inventory.movement.create",
+  "inventory.movement.reverse",
+  "inventory.transfer.create",
+  "inventory.transfer.approve",
+  "inventory.count.manage",
+  "inventory.location.manage",
+  "inventory.catalog.manage"
 ]);
 const DEFAULT_FATURA_CAPABILITIES = Object.freeze([
   "supplier.read",
@@ -77,6 +87,7 @@ function migrateStore(input) {
     stockState: normalizeStockState(source.stockState),
     stockUpdatedAt: source.stockUpdatedAt || null,
     recipeUsers: normalizeRecipeUsers(source.recipeUsers),
+    mudavimAccounts: normalizeMudavimAccounts(source.mudavimAccounts),
     recipeAssignments: normalizeArray(source.recipeAssignments),
     recipeActivity: normalizeArray(source.recipeActivity),
     authSessions: normalizeAuthSessions(source.authSessions),
@@ -126,6 +137,8 @@ function migrateStore(input) {
 
 function normalizeStoreRevisions(value, legacyPricingRevision) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const inventory = Math.max(0, Math.trunc(finiteNumber(source.inventory ?? source.stock, 0)));
+  const catalog = Math.max(0, Math.trunc(finiteNumber(source.catalog ?? source.dataImportCatalog, 0)));
   return {
     ...source,
     publish: Math.max(0, Math.trunc(finiteNumber(source.publish, 0))),
@@ -136,7 +149,13 @@ function normalizeStoreRevisions(value, legacyPricingRevision) {
     dataImportStock: Math.max(0, Math.trunc(finiteNumber(source.dataImportStock, 0))),
     catalogMigration: Math.max(0, Math.trunc(finiteNumber(source.catalogMigration, 0))),
     workforce: Math.max(0, Math.trunc(finiteNumber(source.workforce, 0))),
-    procurement: Math.max(0, Math.trunc(finiteNumber(source.procurement, 0)))
+    procurement: Math.max(0, Math.trunc(finiteNumber(source.procurement, 0))),
+    inventory,
+    shipment: Math.max(0, Math.trunc(finiteNumber(source.shipment ?? source.workforce, 0))),
+    catalog,
+    site: Math.max(0, Math.trunc(finiteNumber(source.site, 0))),
+    notification: Math.max(0, Math.trunc(finiteNumber(source.notification, 0))),
+    stock: Math.max(inventory, catalog, Math.max(0, Math.trunc(finiteNumber(source.stock, 0))))
   };
 }
 
@@ -197,7 +216,7 @@ function normalizeDataImportMappings(value) {
 function normalizePasswordResetChallenges(value) {
   return normalizeArray(value).map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return null;
-    const scope = ["admin", "personel"].includes(String(item.scope || "")) ? String(item.scope) : "";
+    const scope = ["admin", "personel", "mudavim"].includes(String(item.scope || "")) ? String(item.scope) : "";
     const id = String(item.id || "").trim().slice(0, 160);
     const emailHash = String(item.emailHash || "").trim().slice(0, 128);
     const codeHash = String(item.codeHash || "").trim().slice(0, 128);
@@ -223,7 +242,7 @@ function normalizePasswordResetChallenges(value) {
 function normalizeEmailVerificationChallenges(value) {
   return normalizeArray(value).map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return null;
-    const scope = ["admin", "personel"].includes(String(item.scope || "")) ? String(item.scope) : "";
+    const scope = ["admin", "personel", "mudavim"].includes(String(item.scope || "")) ? String(item.scope) : "";
     const id = String(item.id || "").trim().slice(0, 160);
     const targetUserId = String(item.targetUserId || "").trim().slice(0, 160);
     const destinationHash = String(item.destinationHash || "").trim().slice(0, 128);
@@ -255,7 +274,7 @@ function normalizeSecurityAudit(value) {
     return {
       id,
       action,
-      scope: ["admin", "personel"].includes(item.scope) ? item.scope : "",
+      scope: ["admin", "personel", "mudavim"].includes(item.scope) ? item.scope : "",
       accountId: String(item.accountId || "").slice(0, 160),
       result: String(item.result || "recorded").slice(0, 80),
       ipHash: String(item.ipHash || "").slice(0, 64),
@@ -271,6 +290,7 @@ function normalizeNotifications(value) {
     const recipientId = recipientRole === "manager" ? "manager" : String(item.recipientId || "").trim().slice(0, 160);
     const id = String(item.id || "").trim().slice(0, 180);
     if (!id || !recipientRole || !recipientId) return null;
+    const appTarget = normalizeAppTarget(item.appTarget, item.deepLink, recipientRole);
     return {
       ...item,
       id,
@@ -283,7 +303,8 @@ function normalizeNotifications(value) {
       severity: item.severity === "error" ? "critical" : ["info", "success", "warning", "critical"].includes(item.severity) ? item.severity : "info",
       entityType: String(item.entityType || "").trim().slice(0, 100),
       entityId: String(item.entityId || "").trim().slice(0, 180),
-      deepLink: normalizeNotificationDeepLink(item.deepLink),
+      deepLink: safeAppDeepLink(item.deepLink, appTarget),
+      appTarget,
       dedupeKey: String(item.dedupeKey || "").trim().slice(0, 240),
       metadata: normalizeNotificationMetadata(item.metadata),
       inAppVisible: item.inAppVisible !== false,
@@ -476,6 +497,8 @@ function normalizePushSubscriptions(value) {
       id: String(item.id || stableStockId("push-subscription", `${ownerRole}\u0000${ownerId}\u0000${endpoint}`)),
       ownerRole,
       ownerId,
+      appTarget: normalizeAppTarget(item.appId || item.appTarget, item.deepLink, ownerRole),
+      appId: normalizeAppTarget(item.appId || item.appTarget, item.deepLink, ownerRole),
       endpoint,
       subscription: {
         endpoint,
@@ -505,7 +528,7 @@ function normalizePushSubscriptions(value) {
   const byOwnerDevice = new Map();
   for (const item of normalized) {
     const identity = item.deviceId ? `device:${item.deviceId}` : `endpoint:${item.endpoint}`;
-    const key = `${item.ownerRole}\u0000${item.ownerId}\u0000${identity}`;
+    const key = `${item.ownerRole}\u0000${item.ownerId}\u0000${item.appTarget}\u0000${identity}`;
     const current = byOwnerDevice.get(key);
     if (!current || String(item.updatedAt || "") >= String(current.updatedAt || "")) byOwnerDevice.set(key, item);
   }
@@ -517,8 +540,9 @@ function normalizePushSubscriptions(value) {
       retained.push(item);
       continue;
     }
-    if (activeByEndpoint.has(item.endpoint)) continue;
-    activeByEndpoint.set(item.endpoint, item);
+    const endpointKey = `${item.appId || item.appTarget}\u0000${item.endpoint}`;
+    if (activeByEndpoint.has(endpointKey)) continue;
+    activeByEndpoint.set(endpointKey, item);
     retained.push(item);
   }
   return retained.slice(0, 5000);
@@ -651,11 +675,6 @@ const WINDOWS_1252_BYTES = Object.freeze({
   "’": 0x92, "“": 0x93, "”": 0x94, "•": 0x95, "–": 0x96, "—": 0x97, "˜": 0x98,
   "™": 0x99, "š": 0x9a, "›": 0x9b, "œ": 0x9c, "ž": 0x9e, "Ÿ": 0x9f
 });
-
-function normalizeNotificationDeepLink(value) {
-  const text = String(value || "").trim().slice(0, 500);
-  return text.startsWith("/") && !text.startsWith("//") ? text : "";
-}
 
 function normalizeStoredDate(value, fallback) {
   const text = String(value || "").trim();
@@ -886,6 +905,37 @@ function normalizeRecipeUsers(value) {
   }).filter(Boolean);
 }
 
+function normalizeMudavimAccounts(value) {
+  return normalizeArray(value).map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const accountData = { ...item };
+    for (const phoneField of [
+      "phone", "phoneNumber", "phoneNormalized", "pendingPhone", "phoneVerifiedAt",
+      "phoneVerificationVersion", "phoneOtp", "mobile", "gsm"
+    ]) delete accountData[phoneField];
+    const id = String(item.id || "").trim().slice(0, 160);
+    const fullName = String(item.fullName || item.name || "").trim().slice(0, 120);
+    if (!id || !fullName || !String(item.passwordHash || "")) return null;
+    const security = normalizeAccountSecurity(item);
+    const status = ["pending_email_verification", "active", "disabled"].includes(item.status)
+      ? item.status
+      : security.emailVerifiedAt ? "active" : "pending_email_verification";
+    return {
+      ...accountData,
+      ...security,
+      id,
+      passwordHash: String(item.passwordHash || ""),
+      fullName,
+      alias: String(item.alias || "").trim().slice(0, 60),
+      birthDate: /^\d{4}-\d{2}-\d{2}$/.test(String(item.birthDate || "")) ? String(item.birthDate) : "",
+      campaignConsent: item.campaignConsent === true,
+      createdAt: normalizeStoredDate(item.createdAt, new Date().toISOString()),
+      updatedAt: normalizeStoredDate(item.updatedAt || item.createdAt, new Date().toISOString()),
+      status
+    };
+  }).filter(Boolean).slice(-100000);
+}
+
 function clearLegacyUnverifiedPersonelAdminEmails(data) {
   const adminEmail = normalizeSecurityEmail(data && data.admin && (data.admin.emailNormalized || data.admin.email));
   if (!adminEmail) return;
@@ -953,16 +1003,16 @@ function normalizeSecurityEmail(value) {
 function normalizeAuthSessions(items) {
   return normalizeArray(items).map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return null;
-    const role = item.role === "admin" ? "admin" : item.role === "personel" ? "personel" : "";
+    const role = ["admin", "personel", "mudavim"].includes(item.role) ? item.role : "";
     const tokenHash = String(item.tokenHash || "").toLowerCase();
     if (!role || !/^[a-f0-9]{64}$/.test(tokenHash)) return null;
     return {
       id: String(item.id || `session-${crypto.randomUUID()}`),
       tokenHash,
       role,
-      userId: role === "personel" && item.userId ? String(item.userId) : null,
-      username: role === "personel" ? String(item.username || "") : "",
-      name: role === "personel" ? String(item.name || "") : "",
+      userId: ["personel", "mudavim"].includes(role) && item.userId ? String(item.userId) : null,
+      username: ["personel", "mudavim"].includes(role) ? String(item.username || "") : "",
+      name: ["personel", "mudavim"].includes(role) ? String(item.name || "") : "",
       createdAt: item.createdAt || new Date().toISOString(),
       revokedAt: item.revokedAt || null
     };

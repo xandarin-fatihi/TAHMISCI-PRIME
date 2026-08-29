@@ -24,7 +24,8 @@ function registerWorkforceRoutes(deps) {
     broadcastStockUpdate,
     queueStockThresholdNotifications,
     notificationService,
-    notifyProcurementChange
+    notifyProcurementChange,
+    publishGatewayEvent
   } = deps;
 
   const createId = (prefix) => `${prefix}-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
@@ -128,23 +129,28 @@ function registerWorkforceRoutes(deps) {
     }).slice(-WORKFORCE_IDEMPOTENCY_LIMIT);
   }
 
-  function recordProcurementShipmentAudit(data, req, shipment, requestId, stockMovementRef, timestamp) {
-    const actor = req.procurementActor;
+  function recordProcurementShipmentAudit(data, req, shipment, requestId, stockMovementRef, timestamp, action = "shipment.stock-approve") {
+    const actor = req.procurementActor || (req.admin ? {
+      type: "admin",
+      id: String(req.admin.userId || req.admin.sub || "admin"),
+      name: String(req.admin.name || req.admin.username || "Yönetici")
+    } : null);
     if (!actor || !actor.id) return 0;
     const procurement = data.procurement && typeof data.procurement === "object" && !Array.isArray(data.procurement)
       ? data.procurement
       : (data.procurement = {});
     const current = Math.max(0, Math.trunc(Number(procurement.revision || 0)));
     const expectedRaw = req.body && req.body.procurementExpectedRevision;
+    const hasExpected = expectedRaw !== undefined && expectedRaw !== null && expectedRaw !== "";
     const expected = Number(expectedRaw);
-    if (!Number.isInteger(expected) || expected < 0) throw fail("Geçerli procurement expectedRevision gerekli.", 400);
-    if (expected !== current) throw fail("Tahmisçi Fatura verisi başka bir işlemle güncellendi. Yenileyip tekrar deneyin.", 409);
+    if (req.procurementActor && (!hasExpected || !Number.isInteger(expected) || expected < 0)) throw fail("Geçerli procurement expectedRevision gerekli.", 400);
+    if (hasExpected && expected !== current) throw fail("Tahmisçi Fatura verisi başka bir işlemle güncellendi. Yenileyip tekrar deneyin.", 409);
     const revision = current + 1;
     procurement.version = Math.max(1, Math.trunc(Number(procurement.version || 0)));
     procurement.revision = revision;
     procurement.auditEvents = (Array.isArray(procurement.auditEvents) ? procurement.auditEvents : []).concat({
       id: createId("procurement-audit"),
-      action: "shipment.stock-approve",
+      action,
       entityType: "shipment",
       entityId: shipment.id,
       actorType: actor.type === "admin" ? "admin" : "personel",
@@ -152,11 +158,12 @@ function registerWorkforceRoutes(deps) {
       actorName: String(actor.name || actor.id),
       revision,
       requestId,
-      metadata: { stockMovementRef },
+      metadata: stockMovementRef ? { stockMovementRef } : {},
       createdAt: timestamp
     }).slice(-5000);
     data.revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
     data.revisions.procurement = revision;
+    data.revisions.shipment = Math.max(0, Number(data.revisions.shipment || 0)) + 1;
     return revision;
   }
 
@@ -182,6 +189,7 @@ function registerWorkforceRoutes(deps) {
     }).slice(-5000);
     data.revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
     data.revisions.procurement = revision;
+    data.revisions.shipment = Math.max(0, Number(data.revisions.shipment || 0)) + 1;
     return revision;
   }
 
@@ -279,6 +287,14 @@ function registerWorkforceRoutes(deps) {
         if (!client.res.writableEnded) writeWorkforceSse(client.res, "workforce", payload, revision);
       }
     }
+    if (typeof publishGatewayEvent === "function") publishGatewayEvent({
+      topic: "workforce",
+      type: "workforce.updated",
+      entityType: "workforce",
+      revision,
+      timestamp: payload.updatedAt,
+      targets: ["personel", "yonetici", "fatura"]
+    });
   }
 
   function writeWorkforceSse(res, event, payload, revision) {
@@ -1107,7 +1123,14 @@ function registerWorkforceRoutes(deps) {
           queueFaturaShipmentNotifications(data, pendingNotifications, shipment);
           const procurementRevision = recordProcurementShipmentReportedAudit(data, reporter, shipment, requestId, timestamp);
           const revision = touchWorkforceRevision(data);
-          response = { ok: true, requestId, revision, procurementRevision, shipment: publicShipment(shipment, stockState) };
+          response = {
+            ok: true,
+            requestId,
+            revision,
+            procurementRevision,
+            shipmentRevision: Number(data.revisions && data.revisions.shipment || 0),
+            shipment: publicShipment(shipment, stockState)
+          };
           recordIdempotent(data, "shipment_create", requestId, shipment.id, revision, { response });
           return data;
         });
@@ -1118,6 +1141,7 @@ function registerWorkforceRoutes(deps) {
             entityType: "shipment",
             entityId: shipment.id,
             revision: response && response.procurementRevision || 0,
+            shipmentRevision: response && response.shipmentRevision || 0,
             createdAt: shipment.createdAt
           });
         }
@@ -1211,8 +1235,25 @@ function registerWorkforceRoutes(deps) {
               dedupeKey: `shipment-rejected:${shipment.id}:${shipment.userId}`,
               metadata: { rejectionReason }
             }));
+            const procurementRevision = recordProcurementShipmentAudit(
+              data,
+              req,
+              shipment,
+              requestId,
+              "",
+              timestamp,
+              "shipment.reject"
+            );
             const revision = touchWorkforceRevision(data);
-            response = { ok: true, requestId, revision, shipment: publicShipment(shipment, normalizeStockState(data.stockState)), stockState: null };
+            response = {
+              ok: true,
+              requestId,
+              revision,
+              procurementRevision,
+              shipmentRevision: Number(data.revisions && data.revisions.shipment || 0),
+              shipment: publicShipment(shipment, normalizeStockState(data.stockState)),
+              stockState: null
+            };
             recordIdempotent(data, "shipment_reject", requestId, shipment.id, revision, { response });
             return data;
           }
@@ -1275,8 +1316,8 @@ function registerWorkforceRoutes(deps) {
           }
           data.stockUpdatedAt = timestamp;
           data.revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
-          data.revisions.stock = Math.max(0, Number(data.revisions.stock || 0)) + 1;
-          incrementPublishRevision(data);
+          data.revisions.inventory = Math.max(0, Number(data.revisions.inventory || 0)) + 1;
+          data.revisions.stock = Math.max(Number(data.revisions.stock || 0) + 1, data.revisions.inventory);
           updatedAt = timestamp;
           updatedStockState = stockState;
           activity(data, "shipment_approved", decisionActor, {
@@ -1307,6 +1348,7 @@ function registerWorkforceRoutes(deps) {
             stockState,
             publishRevision: data.revisions && data.revisions.publish || 0,
             procurementRevision,
+            shipmentRevision: Number(data.revisions && data.revisions.shipment || 0),
             updatedAt
           };
           recordIdempotent(data, "shipment_approve", requestId, shipment.id, revision, { response });
@@ -1315,7 +1357,12 @@ function registerWorkforceRoutes(deps) {
 
         updatedStockState = updatedStockState || (decision === "approve" ? normalizeStockState(saved.stockState) : null);
         if (decision === "approve" && typeof broadcastStockUpdate === "function") {
-          broadcastStockUpdate(updatedStockState, updatedAt || saved.stockUpdatedAt || shipment.stockAppliedAt);
+          broadcastStockUpdate(
+            updatedStockState,
+            updatedAt || saved.stockUpdatedAt || shipment.stockAppliedAt,
+            Number(saved.revisions && saved.revisions.inventory || 0),
+            "inventory"
+          );
         }
         publishNotifications(pendingNotifications);
         if (!idempotent && typeof notifyProcurementChange === "function") {
@@ -1324,6 +1371,7 @@ function registerWorkforceRoutes(deps) {
             entityType: "shipment",
             entityId: shipment.id,
             revision: response && response.procurementRevision || response && response.revision || 0,
+            shipmentRevision: response && response.shipmentRevision || 0,
             createdAt: shipment.updatedAt
           });
         }
@@ -2170,14 +2218,6 @@ function turkeyDateKey(value = new Date()) {
   }).formatToParts(value);
   const fields = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${fields.year}-${fields.month}-${fields.day}`;
-}
-
-function incrementPublishRevision(data) {
-  if (!data.revisions || typeof data.revisions !== "object" || Array.isArray(data.revisions)) {
-    data.revisions = { publish: 0, pricing: 0 };
-  }
-  data.revisions.publish = Number(data.revisions.publish || 0) + 1;
-  return data.revisions.publish;
 }
 
 module.exports = { registerWorkforceRoutes };

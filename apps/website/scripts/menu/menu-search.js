@@ -222,7 +222,7 @@
 
     function getCategoryPreviewImage(categoryId) {
         const product = getCategoryProducts(categoryId).find((item) => item && item.image);
-        return product?.image || "assets/brand/favicon.png";
+        return product?.image || "/assets/brand/favicon.png";
     }
 
     function syncFilterButton(categoryId) {
@@ -406,7 +406,7 @@
                                 spinner.style.display = 'none';
                             }
                             // Optionally set a placeholder image
-                            img.src = "assets/brand/favicon.png";
+                            img.src = "/assets/brand/favicon.png";
                             observer.unobserve(img);
                         };
 

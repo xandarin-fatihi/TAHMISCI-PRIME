@@ -21,7 +21,6 @@
   const STORAGE_KEY = "tahmisci.menu.state.v1";
   const SITE_STORAGE_KEY = "tahmisci.site.state.v1";
   const FEEDBACK_STORAGE_KEY = "tahmisci.feedback.items.v1";
-  const STOCK_STORAGE_KEY = "tahmisci.stock.state.v1";
   const RECIPE_STORAGE_KEY = "tahmisci.recipe.state.v1";
   const LEGACY_RECIPE_STORAGE_KEY = "tahmisRecipeMenuData";
   const BACKEND_URL_KEY = "tahmisci.backend.url";
@@ -70,8 +69,8 @@
   };
   const PANEL_MODULES = Object.freeze({
     menuOutput: false,
-    site: false,
-    mudavim: false
+    site: true,
+    mudavim: true
   });
   const DISABLED_PANEL_SECTIONS = new Set(
     Object.entries(PANEL_MODULES).filter(([, enabled]) => !enabled).map(([section]) => section)
@@ -79,7 +78,6 @@
   const SECTION_DESCRIPTIONS = {
     site: "Web sitenizde görünen tüm içerikleri yönetin. Değişikliklerinizi kaydedip yayınlayarak anında yayına alın.",
     dataCenter: "Menü, fiyat, reçete ve stok çalışma kitaplarını analiz edin; onaylanan taslağı atomik olarak kalıcı veriye uygulayın.",
-    stock: "Stok ürünlerini yönetin ve personelden gelen sevkiyatları inceleyip sonuçlandırın.",
     staffAccess: "Personel hesaplarını, yapılacakları, shift planlarını ve kayıtları yönetin.",
     mudavim: "Sadakat sistemi yönetimi ve müşteri etkileşimi"
   };
@@ -328,42 +326,29 @@
     channel: null,
     recipeChannel: null,
     siteChannel: null,
-    menuEventSource: null,
-    recipeEventSource: null,
-    siteEventSource: null,
-    feedbackEventSource: null,
-    notificationEventSource: null,
+    gatewayEventSource: null,
     notificationPollTimer: null,
     notificationReconnectTimer: null,
     notificationReconnectAttempt: 0,
+    gatewayEventIds: new Set(),
+    gatewayTopicRevisions: Object.create(null),
     requestPromises: new Map(),
     sectionLoadPromises: new Map(),
     modulePromises: new Map(),
     loadedScopes: new Set(),
-    scopeRevisions: { menu: 0, recipes: 0, stock: 0, workforce: 0 },
+    scopeRevisions: { menu: 0, recipes: 0, workforce: 0 },
     adminSummary: null,
-    previewRevisions: { menu: 0, recipes: 0, stock: 0, site: 0 },
+    previewRevisions: { menu: 0, recipes: 0, site: 0 },
     bound: false,
     mediaDbPromise: null,
     dirtyMenu: false,
     dirtyRecipes: false,
     dirtySite: false,
-    dirtyStock: false,
     saving: false,
     publishRevision: 0,
     saveStatus: "clean",
     pendingPublishVerification: null,
     renderTimer: null,
-    stock: null,
-    stockUpdatedAt: "",
-    stockQuery: "",
-    stockCategory: "all",
-    stockOnlyOrderNeeded: false,
-    stockEditorCategoryId: "",
-    stockEditorProductId: "",
-    selectedStockProductId: "",
-    stockAction: null,
-    stockActionSubmitting: false,
     recipeAccess: {
       users: [],
       assignments: [],
@@ -441,7 +426,6 @@
       return {
         menuState: state.data,
         recipeState: state.recipes,
-        stockState: state.stock,
         pricing: state.data && state.data.pricing || null,
         activeSection: state.activeSection
       };
@@ -450,7 +434,7 @@
       return state.activeSection;
     },
     previewRevision(section) {
-      const scope = section === "recipe" ? "recipes" : section === "stock" ? "stock" : section === "site" ? "site" : "menu";
+      const scope = section === "recipe" ? "recipes" : section === "site" ? "site" : "menu";
       return Number(state.previewRevisions[scope] || 0) + Number(state.scopeRevisions[scope] || 0);
     },
     selectedProduct() {
@@ -462,7 +446,6 @@
     },
     isScopeDirty(section) {
       if (section === "recipe") return state.dirtyRecipes;
-      if (section === "stock") return state.dirtyStock;
       if (["menu", "banner", "category", "product", "bulkPrice", "settings"].includes(section)) return state.dirtyMenu || state.dirtySite;
       return false;
     },
@@ -472,9 +455,6 @@
         state.recipes = normalizeRecipeData(cloneData(previewSnapshot.recipeState));
         state.dirtyRecipes = true;
         ensureRecipeSelection();
-      } else if (section === "stock" && previewSnapshot.stockState && typeof previewSnapshot.stockState === "object") {
-        state.stock = normalizeStockStateForAdmin(cloneData(previewSnapshot.stockState));
-        state.dirtyStock = true;
       } else if (previewSnapshot.menuState && typeof previewSnapshot.menuState === "object") {
         state.data = normalizeState(cloneData(previewSnapshot.menuState));
         state.dirtyMenu = true;
@@ -547,13 +527,6 @@
       "adminNotificationPush", "adminNotificationTest", "adminNotificationSavePreferences", "adminNotificationHealth",
       "adminNotificationClearArchive", "adminNotificationManageEmail", "adminNotificationDevices", "adminNotificationDevicesRefresh",
       "overviewGrid", "contentGrid", "categoryList", "productList", "saveState", "saveChangesButton", "panelThemeToggle", "addCategoryButton",
-      "stockCard", "stockSummaryGrid", "stockCategoryFilter", "stockCategoryChips", "stockSearch", "stockOnlyOrderNeeded", "stockProductList", "stockMovementList", "stockOrderSuggestions",
-      "stockEditorCategorySelect", "stockEditorProductSelect", "stockAddCategoryButton", "stockAddProductButton", "stockAddSupplierButton",
-      "stockEditorIncreaseButton", "stockEditorDecreaseButton", "stockDeleteProductButton", "stockDeleteCategoryButton", "stockEditorProductName",
-      "stockEditorCategoryName", "stockEditorQuantity", "stockEditorThreshold", "stockEditorCriticalThreshold", "stockEditorUnit",
-      "stockEditorBulkUnit", "stockEditorUnitFactor", "stockEditorSupplier", "stockEditorStatus", "stockEditorActive", "stockEditorNote",
-      "stockSuggestionCount", "stockSaveButton", "stockActionModal", "stockActionForm", "stockActionKicker", "stockActionTitle",
-      "stockActionProduct", "stockActionQuantity", "stockActionReason", "stockActionNote", "stockActionMessage",
       "menuOutputCard", "menuOutputTemplateName", "menuOutputCanvaLink", "menuOutputOpenCanva", "menuOutputSaveTemplate",
       "menuOutputUpdateTemplate", "menuOutputDuplicateTemplate", "menuOutputDeleteTemplate", "menuOutputSetDefaultTemplate",
       "menuOutputTemplateList", "menuOutputReset", "menuOutputExportPng", "menuOutputExportJpg", "menuOutputExportPdf",
@@ -721,7 +694,6 @@
       state.data = loadData();
       state.recipes = loadRecipeData();
       state.site = loadSiteData();
-      state.stock = loadStockData();
       ensureSelection();
       ensureRecipeSelection();
       setActiveSection(resolveInitialActiveSection(), { collapseSidebar: false, render: false });
@@ -1847,7 +1819,6 @@
       els.panelShell.style.display = "none";
     }
     closeAdminProfileMenu();
-    closeStockActionModal();
     closeDefaultChoiceModal();
     setSidebarCollapsed(true, { persist: false });
     if (els.loginScreen) {
@@ -1866,7 +1837,7 @@
   }
 
   function closeBackendEvents() {
-    ["menuEventSource", "recipeEventSource", "siteEventSource", "feedbackEventSource", "notificationEventSource"].forEach((key) => {
+    ["gatewayEventSource"].forEach((key) => {
       if (!state[key]) return;
       try {
         state[key].close();
@@ -1912,14 +1883,12 @@
   async function hydrateFromBackend() {
     if (!backendBaseUrl()) return;
 
-    const [menuResult, recipeResult, publishResult, defaultsResult] = await Promise.allSettled([
+    const [menuResult, recipeResult, publishResult, defaultsResult, siteResult] = await Promise.allSettled([
       backendRequest("/api/menu", { skipToken: true }),
       backendRequest("/api/recipes"),
       backendRequest("/api/admin/publish-state"),
-      backendRequest("/api/admin/defaults")
-      // PASIF_SITE_MODULU_BASLANGIC
-      // PASIF MODUL backendRequest("/api/site", { skipToken: true })
-      // PASIF_SITE_MODULU_BITIS
+      backendRequest("/api/admin/defaults"),
+      backendRequest("/api/site", { skipToken: true })
     ]);
 
     let changed = false;
@@ -1967,9 +1936,13 @@
       }
     }
 
-    // PASIF_SITE_MODULU_BASLANGIC
-    // PASIF MODUL: Site state yükleme akışı geçici olarak devre dışıdır.
-    // PASIF_SITE_MODULU_BITIS
+    if (siteResult.status === "fulfilled" && hasSiteContent(siteResult.value.siteState)) {
+      if (!state.dirtySite && !state.saving) {
+        state.site = normalizeSiteSettings(siteResult.value.siteState);
+        safeLocalSet(SITE_STORAGE_KEY, JSON.stringify(state.site));
+        changed = true;
+      }
+    }
 
     if (changed) {
       ensureSelection();
@@ -2009,7 +1982,6 @@
 
   function setupBackendEvents() {
     setupAdminNotificationRealtime();
-    syncSectionBackendEvents(state.activeSection);
   }
 
   function catalogScopeForSection(section) {
@@ -2019,26 +1991,8 @@
   }
 
   function syncSectionBackendEvents(section) {
-    const baseUrl = backendBaseUrl();
-    if (!baseUrl || !window.EventSource || !els.panelShell || els.panelShell.hidden) return;
-    const scope = catalogScopeForSection(section);
-    const config = {
-      menu: { key: "menuEventSource", path: "/api/menu/events", event: "menu" },
-      recipes: { key: "recipeEventSource", path: "/api/recipes/events", event: "recipes" }
-    }[scope];
-    ["menuEventSource", "recipeEventSource"].forEach((key) => {
-      if (!state[key] || config && key === config.key) return;
-      state[key].close();
-      state[key] = null;
-    });
-    if (!config || state[config.key]) return;
-    const source = new EventSource(`${baseUrl}${config.path}`, { withCredentials: true });
-    state[config.key] = source;
-    const handle = (event) => handleCatalogEvent(scope, event);
-    source.addEventListener("ready", handle);
-    source.addEventListener(config.event, handle);
-    source.addEventListener("message", handle);
-    // EventSource sunucunun `retry` yönergesiyle kontrollü biçimde yeniden bağlanır.
+    void section;
+    setupAdminNotificationRealtime();
   }
 
   function handleCatalogEvent(scope, event) {
@@ -2109,7 +2063,6 @@
     if (section === "overview") return ["adminSummary"];
     if (["menu", "banner", "category", "product", "bulkPrice", "menuOutput", "json", "settings"].includes(section)) return ["menu"];
     if (section === "recipe") return ["recipes"];
-    if (section === "stock") return [];
     if (section === "staffAccess") return ["staffAccess"];
     return [];
   }
@@ -2126,14 +2079,7 @@
       return loadScriptOnce("pricing", "scripts/pricing.js?v=20260815-performance");
     }
     if (section === "staffAccess") {
-      return loadScriptOnce("workforce", "scripts/workforce.js?v=20260816-stock-shipments");
-    }
-    if (section === "stock") {
-      // Güvenli geri dönüş bağlantıları korunur; aktif menü /fatura/?view=stock sahibine yönlenir.
-      return Promise.all([
-        loadScriptOnce("workforce", "scripts/workforce.js?v=20260827-performance"),
-        loadScriptOnce("stockLocations", "scripts/stock-locations.js?v=20260827-stock-owner-fallback")
-      ]);
+      return loadScriptOnce("workforce", "scripts/workforce.js?v=20260828-canonical-ownership");
     }
     if (section === "settings") {
       return Promise.all([
@@ -2168,7 +2114,6 @@
   function loadScriptOnce(key, source) {
     if (key === "pricing" && window.TahmisciPricing) return Promise.resolve(window.TahmisciPricing);
     if (key === "workforce" && window.__tahmisciWorkforceMounted) return Promise.resolve(true);
-    if (key === "stockLocations" && window.TahmisciStockLocations) return Promise.resolve(window.TahmisciStockLocations);
     if (key === "livePreview" && window.TahmisciLivePreview) return Promise.resolve(window.TahmisciLivePreview);
     if (key === "accountSecurity" && window.TahmisciAccountSecurity) return Promise.resolve(window.TahmisciAccountSecurity);
     if (state.modulePromises.has(key)) return state.modulePromises.get(key);
@@ -2222,8 +2167,6 @@
           ensureRecipeSelection();
         }
         state.scopeRevisions.recipes = responseRevision(result, "recipes");
-      } else if (scope === "stock") {
-        await hydrateStockFromBackend({ force: Boolean(options.force) });
       } else if (scope === "staffAccess") {
         await hydrateRecipeAccessFromBackend();
       }
@@ -2542,6 +2485,7 @@
 
   function setAdminNotificationUnreadCount(value) {
     const count = Math.max(0, Number(value || 0));
+    void window.TahmisciPWA?.updateBadge?.(count);
     state.notificationCenter.unreadCount = count;
     if (els.adminNotificationBadge) {
       els.adminNotificationBadge.hidden = count < 1;
@@ -2975,7 +2919,7 @@
   }
 
   function adminNotificationDeviceHeaders() {
-    return { "X-Tahmisci-Device-Id": adminNotificationDeviceId() };
+    return { "X-Tahmisci-Device-Id": adminNotificationDeviceId(), "X-Tahmisci-App-Id": "yonetici" };
   }
 
   async function loadAdminNotificationDevices(force = false) {
@@ -3223,21 +3167,21 @@
       startAdminNotificationPolling();
       return;
     }
-    if (state.notificationEventSource) return;
+    if (state.gatewayEventSource) return;
     try {
-      const source = new EventSource(`${baseUrl}${ADMIN_NOTIFICATION_API}/events`, { withCredentials: true });
-      state.notificationEventSource = source;
+      const source = new EventSource(`${baseUrl}/api/events?appId=yonetici`, { withCredentials: true });
+      state.gatewayEventSource = source;
       source.addEventListener("open", () => {
         state.notificationReconnectAttempt = 0;
         if (state.notificationReconnectTimer) window.clearTimeout(state.notificationReconnectTimer);
         state.notificationReconnectTimer = null;
         stopAdminNotificationPolling();
       });
-      source.addEventListener("notification", handleAdminNotificationEvent);
-      source.addEventListener("message", handleAdminNotificationEvent);
+      source.addEventListener("event", handleAdminGatewayEvent);
+      source.addEventListener("message", handleAdminGatewayEvent);
       source.addEventListener("error", () => {
         try { source.close(); } catch (_error) {}
-        if (state.notificationEventSource === source) state.notificationEventSource = null;
+        if (state.gatewayEventSource === source) state.gatewayEventSource = null;
         startAdminNotificationPolling();
         scheduleAdminNotificationReconnect();
       });
@@ -3257,12 +3201,44 @@
     }, delay);
   }
 
-  function handleAdminNotificationEvent(event) {
-    try {
-      const payload = JSON.parse(event.data || "{}");
-      if (payload.unreadCount !== undefined) setAdminNotificationUnreadCount(payload.unreadCount);
+  function handleAdminGatewayEvent(event) {
+    let payload;
+    try { payload = JSON.parse(event.data || "{}"); } catch (_error) { return; }
+    const eventId = String(payload.eventId || event.lastEventId || "");
+    if (eventId && state.gatewayEventIds.has(eventId)) return;
+    if (eventId) {
+      state.gatewayEventIds.add(eventId);
+      if (state.gatewayEventIds.size > 300) state.gatewayEventIds.delete(state.gatewayEventIds.values().next().value);
+    }
+    const topic = String(payload.topic || "system");
+    const revision = Math.max(0, Number(payload.revision || 0));
+    const previousRevision = Math.max(0, Number(state.gatewayTopicRevisions[topic] || 0));
+    if (revision && revision <= previousRevision) return;
+    if (revision) state.gatewayTopicRevisions[topic] = revision;
+
+    document.dispatchEvent(new CustomEvent("tahmisci:gateway-event", { detail: payload }));
+    if (topic === "notification") {
+      loadAdminNotificationUnreadCount().catch(() => {});
       if (state.notificationCenter.open) loadAdminNotifications().catch(() => {});
-    } catch (_error) {}
+      return;
+    }
+    if (topic === "catalog") {
+      const scope = String(payload.type || "").includes("recipe") ? "recipes" : "menu";
+      handleCatalogEvent(scope, { data: JSON.stringify({ ...payload, requiresRefetch: true }) });
+      return;
+    }
+    if (topic === "feedback" && state.activeSection === "feedback") {
+      refreshFeedbackInbox().catch(() => {});
+      return;
+    }
+    if (topic === "site" && state.activeSection === "site" && !state.dirtySite && !state.saving) {
+      backendRequest("/api/site", { skipToken: true, noDedupe: true }).then((result) => {
+        if (!hasSiteContent(result.siteState)) return;
+        state.site = normalizeSiteSettings(result.siteState);
+        safeLocalSet(SITE_STORAGE_KEY, JSON.stringify(state.site));
+        renderActiveSection("site");
+      }).catch(() => {});
+    }
   }
 
   function startAdminNotificationPolling() {
@@ -3297,14 +3273,13 @@
   }
 
   function hasPendingChanges() {
-    return state.dirtyMenu || state.dirtyRecipes || state.dirtySite || state.dirtyStock;
+    return state.dirtyMenu || state.dirtyRecipes || state.dirtySite;
   }
 
   function markDirty(scope, message) {
     if (scope === "menu") state.dirtyMenu = true;
     if (scope === "recipes") state.dirtyRecipes = true;
     if (scope === "site") state.dirtySite = true;
-    if (scope === "stock") state.dirtyStock = true;
     const previewScope = scope === "recipe" ? "recipes" : scope;
     if (Object.prototype.hasOwnProperty.call(state.previewRevisions, previewScope)) {
       state.previewRevisions[previewScope] = Number(state.previewRevisions[previewScope] || 0) + 1;
@@ -3564,7 +3539,6 @@
       changes.recipeCatalog = cloneData(state.recipeCatalog);
     }
     if (state.dirtySite) changes.siteState = cloneData(state.site);
-    if (state.dirtyStock) changes.stockState = normalizeStockStateForAdmin(cloneData(state.stock));
     Object.keys(changes).forEach((key) => { fingerprints[key] = JSON.stringify(changes[key]); });
     return {
       changes,
@@ -3572,7 +3546,6 @@
       previewSnapshot: {
         menuState: cloneData(state.data),
         recipeState: cloneData(state.recipes),
-        stockState: cloneData(state.stock),
         pricing: cloneData(state.data && state.data.pricing || null)
       }
     };
@@ -3598,10 +3571,6 @@
     if (snapshot.changes.siteState && snapshot.fingerprints.siteState === JSON.stringify(state.site)) {
       safeLocalSet(SITE_STORAGE_KEY, JSON.stringify(snapshot.changes.siteState));
     }
-    if (snapshot.changes.stockState
-      && snapshot.fingerprints.stockState === JSON.stringify(normalizeStockStateForAdmin(state.stock))) {
-      safeLocalSet(STOCK_STORAGE_KEY, JSON.stringify(snapshot.changes.stockState));
-    }
   }
 
   function clearPublishedScopes(snapshot) {
@@ -3609,7 +3578,6 @@
     if (snapshot.fingerprints.recipeState === JSON.stringify(state.recipes)
       && snapshot.fingerprints.recipeCatalog === JSON.stringify(state.recipeCatalog)) state.dirtyRecipes = false;
     if (snapshot.fingerprints.siteState === JSON.stringify(state.site)) state.dirtySite = false;
-    if (snapshot.fingerprints.stockState === JSON.stringify(normalizeStockStateForAdmin(state.stock))) state.dirtyStock = false;
   }
 
   function createRequestId(prefix) {
@@ -3649,9 +3617,6 @@
   }
 
   async function saveSiteToBackend() {
-    // PASIF_SITE_MODULU_BASLANGIC
-    if (DISABLED_PANEL_SECTIONS.has("site")) return;
-    // PASIF_SITE_MODULU_BITIS
     const result = await backendRequest("/api/site", {
       method: "PUT",
       body: { siteState: state.site }
@@ -4088,9 +4053,6 @@
     if (active === "recipe") ensureRecipeSelection();
     if (active === "overview") renderStats();
     else if (active === "bulkPrice") renderBulkPriceTools();
-    else if (active === "stock") {
-      // Kaynak ve olay bağlantısı güvenli geri dönüş için korunur; normal kullanım Fatura sahibine yönlenir.
-    }
     else if (["menu", "banner", "category", "product"].includes(active)) {
       renderLists();
       renderForms();
@@ -4145,7 +4107,7 @@
       section.hidden = section.dataset.sectionPanel !== activeSection;
     });
 
-    if (els.contentGrid) els.contentGrid.hidden = ["overview", "bulkPrice", "dataCenter", "stock"].includes(activeSection);
+    if (els.contentGrid) els.contentGrid.hidden = ["overview", "bulkPrice", "dataCenter"].includes(activeSection);
     if (els.panelShell) els.panelShell.dataset.activeSection = activeSection;
     if (els.contentGrid) els.contentGrid.classList.add("is-wide");
     if (els.workspaceTitle) els.workspaceTitle.textContent = SECTION_TITLES[activeSection];
@@ -4381,776 +4343,6 @@
     if (window.TahmisciPricing && typeof window.TahmisciPricing.renderBulk === "function") {
       window.TahmisciPricing.renderBulk();
     }
-  }
-
-  function loadStockData() {
-    return normalizeStockStateForAdmin(null);
-  }
-
-  async function hydrateStockFromBackend(options = {}) {
-    if (!backendBaseUrl()) return;
-    try {
-      const result = await backendRequest("/api/stock", { noDedupe: Boolean(options.force) });
-      state.stock = normalizeStockStateForAdmin(result.stockState);
-      state.stockUpdatedAt = result.updatedAt || state.stock.updatedAt || "";
-      state.scopeRevisions.stock = responseRevision(result, "stock");
-      state.loadedScopes.add("stock");
-      safeLocalSet(STOCK_STORAGE_KEY, JSON.stringify(state.stock));
-      if (state.activeSection === "stock") renderStockPanel();
-      updateSaveControls("Stok güncel");
-      window.clearTimeout(hydrateStockFromBackend.timer);
-      hydrateStockFromBackend.timer = window.setTimeout(updateSaveControls, 1200);
-    } catch (error) {
-      console.warn("Stok verisi alınamadı:", error);
-      renderStockPanel();
-    }
-  }
-
-  async function saveStockToBackend(options) {
-    const silent = Boolean(options && options.silent);
-    state.stock = normalizeStockStateForAdmin(state.stock);
-    if (!backendBaseUrl()) {
-      throw new Error("Stok değişikliklerini kaydetmek için backend bağlantısı gerekli.");
-    }
-    const result = await backendRequest("/api/admin/stock", {
-      method: "PUT",
-      body: { stockState: state.stock }
-    });
-    syncPublishRevision(result);
-    state.stock = normalizeStockStateForAdmin(result.stockState);
-    state.stockUpdatedAt = result.updatedAt || state.stockUpdatedAt;
-    state.dirtyStock = false;
-    safeLocalSet(STOCK_STORAGE_KEY, JSON.stringify(state.stock));
-    renderStockPanel();
-    if (!silent) {
-      updateSaveControls("Stok kaydedildi");
-      window.setTimeout(updateSaveControls, 1200);
-    }
-  }
-
-  function renderStockPanel() {
-    state.stock = normalizeStockStateForAdmin(state.stock);
-    renderStockEditor();
-    renderStockSummary();
-    renderStockCategoryFilter();
-    renderStockProducts();
-    renderStockMovements();
-    renderStockOrderSuggestions();
-  }
-
-  function selectedStockEditorCategory() {
-    return state.stock && Array.isArray(state.stock.categories)
-      ? state.stock.categories.find((category) => category.id === state.stockEditorCategoryId) || null
-      : null;
-  }
-
-  function selectedStockEditorProduct() {
-    return state.stock && Array.isArray(state.stock.products)
-      ? state.stock.products.find((product) => product.id === state.stockEditorProductId) || null
-      : null;
-  }
-
-  function renderStockEditor() {
-    if (!els.stockEditorCategorySelect || !els.stockEditorProductSelect) return;
-    const categories = stockCategories();
-    if (!categories.some((category) => category.id === state.stockEditorCategoryId)) {
-      state.stockEditorCategoryId = categories[0] ? categories[0].id : "";
-    }
-    const products = stockProducts().filter((product) => product.categoryId === state.stockEditorCategoryId);
-    if (!products.some((product) => product.id === state.stockEditorProductId)) {
-      state.stockEditorProductId = products[0] ? products[0].id : "";
-    }
-    els.stockEditorCategorySelect.innerHTML = categories.length
-      ? categories.map((category) => `<option value="${escapeAttribute(category.id)}">${escapeHTML(category.name)}</option>`).join("")
-      : `<option value="">Kategori yok</option>`;
-    els.stockEditorCategorySelect.value = state.stockEditorCategoryId;
-    els.stockEditorProductSelect.innerHTML = products.length
-      ? products.map((product) => `<option value="${escapeAttribute(product.id)}">${escapeHTML(product.name)}</option>`).join("")
-      : `<option value="">Bu kategoride ürün yok</option>`;
-    els.stockEditorProductSelect.value = state.stockEditorProductId;
-
-    const category = selectedStockEditorCategory();
-    const product = selectedStockEditorProduct();
-    const definitions = state.stock && state.stock.unitDefinitions || { base: [], bulk: [] };
-    const baseUnits = Array.isArray(definitions.base) ? definitions.base.slice() : [];
-    const bulkUnits = Array.isArray(definitions.bulk) ? definitions.bulk.slice() : [];
-    const selectedBaseUnit = product ? stockUnitText(product.baseUnit || product.unit, "adet").toLocaleLowerCase("tr-TR") : "";
-    const selectedBulkUnit = product ? stockUnitText(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR") : "";
-    if (selectedBaseUnit && !baseUnits.includes(selectedBaseUnit)) baseUnits.push(selectedBaseUnit);
-    if (selectedBulkUnit && !bulkUnits.includes(selectedBulkUnit)) bulkUnits.push(selectedBulkUnit);
-    if (els.stockEditorUnit) {
-      els.stockEditorUnit.innerHTML = baseUnits.length
-        ? baseUnits.map((unit) => `<option value="${escapeAttribute(unit)}">${escapeHTML(unit)}</option>`).join("")
-        : `<option value="">Önce Birim Ayarları'ndan temel birim ekleyin</option>`;
-    }
-    if (els.stockEditorBulkUnit) {
-      els.stockEditorBulkUnit.innerHTML = `<option value="">Toplu birim yok</option>${bulkUnits.map((unit) => `<option value="${escapeAttribute(unit)}">${escapeHTML(unit)}</option>`).join("")}`;
-    }
-    els.stockEditorCategoryName.value = category ? category.name : "";
-    els.stockEditorProductName.value = product ? product.name : "";
-    if (els.stockEditorUnit) els.stockEditorUnit.value = selectedBaseUnit;
-    if (els.stockEditorBulkUnit) els.stockEditorBulkUnit.value = selectedBulkUnit;
-    if (els.stockEditorUnitFactor) els.stockEditorUnitFactor.value = product ? String(Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0) || "") : "";
-    if (els.stockEditorSupplier) els.stockEditorSupplier.value = product ? product.supplier || "" : "";
-    if (els.stockEditorNote) els.stockEditorNote.value = product ? product.note || "" : "";
-    if (els.stockEditorActive) els.stockEditorActive.checked = Boolean(product && product.active !== false);
-
-    const productFields = [els.stockEditorProductName, els.stockEditorUnit, els.stockEditorBulkUnit, els.stockEditorUnitFactor, els.stockEditorSupplier, els.stockEditorActive, els.stockEditorNote];
-    productFields.forEach((field) => { if (field) field.disabled = !product; });
-    if (els.stockEditorUnitFactor) els.stockEditorUnitFactor.disabled = !product || !selectedBulkUnit;
-    if (els.stockEditorCategoryName) els.stockEditorCategoryName.disabled = !category;
-    if (els.stockAddProductButton) els.stockAddProductButton.disabled = !category;
-    if (els.stockAddSupplierButton) els.stockAddSupplierButton.disabled = !product;
-    if (els.stockEditorIncreaseButton) els.stockEditorIncreaseButton.disabled = !product;
-    if (els.stockEditorDecreaseButton) els.stockEditorDecreaseButton.disabled = !product;
-    if (els.stockDeleteProductButton) els.stockDeleteProductButton.disabled = !product;
-    if (els.stockDeleteCategoryButton) els.stockDeleteCategoryButton.disabled = !category;
-    if (els.stockEditorStatus) {
-      const status = product ? stockProductStatus(product) : { key: "check", label: "Ürün seçilmedi" };
-      els.stockEditorStatus.className = `stock-badge is-${status.key}`;
-      els.stockEditorStatus.textContent = status.label;
-    }
-  }
-
-  function stockCatalogDialog(options = {}) {
-    let dialog = document.getElementById("stockCatalogOperationDialog");
-    if (!dialog) {
-      dialog = document.createElement("dialog");
-      dialog.id = "stockCatalogOperationDialog";
-      dialog.className = "stock-admin-dialog";
-      dialog.innerHTML = `<form class="stock-admin-dialog__shell" novalidate><header><div><p class="eyebrow">Stok Kataloğu</p><h4 data-stock-catalog-title></h4></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-catalog-cancel aria-label="Pencereyi kapat">×</button></header><div class="stock-admin-dialog__body stock-location-form"><p data-stock-catalog-message></p><label data-stock-catalog-field><span data-stock-catalog-label></span><input data-stock-catalog-input type="text" maxlength="120"></label><p class="stock-admin-dialog__message" data-stock-catalog-error role="alert"></p></div><footer><button class="ui-button ui-button--secondary" type="button" data-stock-catalog-cancel>Vazgeç</button><button class="ui-button ui-button--primary" type="submit" data-stock-catalog-submit>Kaydet</button></footer></form>`;
-      document.body.appendChild(dialog);
-    }
-    const form = dialog.querySelector("form");
-    const input = dialog.querySelector("[data-stock-catalog-input]");
-    const field = dialog.querySelector("[data-stock-catalog-field]");
-    const error = dialog.querySelector("[data-stock-catalog-error]");
-    dialog.querySelector("[data-stock-catalog-title]").textContent = options.title || "Stok işlemi";
-    dialog.querySelector("[data-stock-catalog-message]").textContent = options.message || "";
-    dialog.querySelector("[data-stock-catalog-label]").textContent = options.label || "Değer";
-    field.hidden = options.confirmOnly === true;
-    input.value = options.value || "";
-    input.required = options.confirmOnly !== true;
-    error.textContent = "";
-    const submit = dialog.querySelector("[data-stock-catalog-submit]");
-    submit.textContent = options.confirmLabel || "Kaydet";
-    submit.classList.toggle("ui-button--danger", options.danger === true);
-    submit.classList.toggle("ui-button--primary", options.danger !== true);
-    dialog.returnValue = "cancel";
-    return new Promise((resolve) => {
-      const cancel = () => { dialog.returnValue = "cancel"; dialog.close(); };
-      dialog.querySelectorAll("[data-stock-catalog-cancel]").forEach((button) => { button.onclick = cancel; });
-      form.onsubmit = (event) => {
-        event.preventDefault();
-        const value = input.value.trim();
-        if (!options.confirmOnly && !value) { error.textContent = "Bu alan boş bırakılamaz."; input.focus(); return; }
-        dialog.close("confirm");
-      };
-      dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm" ? (options.confirmOnly ? true : input.value.trim()) : options.confirmOnly ? false : ""), { once: true });
-      dialog.showModal();
-      window.setTimeout(() => (options.confirmOnly ? submit : input).focus(), 0);
-    });
-  }
-
-  async function addStockCategory() {
-    const name = await stockCatalogDialog({ title: "Yeni stok kategorisi", label: "Kategori adı", value: "Yeni Kategori", confirmLabel: "Kategoriyi Ekle" });
-    if (!name) return;
-    const duplicate = stockCategories().find((category) => normalizeText(category.name) === normalizeText(name));
-    if (duplicate) {
-      state.stockEditorCategoryId = duplicate.id;
-      state.stockEditorProductId = "";
-      renderStockEditor();
-      return;
-    }
-    const category = { id: `${makeId("stock-category", name)}-${Date.now()}`, name, order: state.stock.categories.length, active: true };
-    state.stock.categories.push(category);
-    state.stockEditorCategoryId = category.id;
-    state.stockEditorProductId = "";
-    markDirty("stock", "Yeni stok kategorisi eklendi");
-    renderStockPanel();
-  }
-
-  async function addStockProduct() {
-    const category = selectedStockEditorCategory();
-    if (!category) return;
-    const name = await stockCatalogDialog({ title: "Yeni stok ürünü", message: category.name, label: "Ürün adı", value: "Yeni Stok Ürünü", confirmLabel: "Ürünü Ekle" });
-    if (!name) return;
-    const defaultBaseUnit = state.stock && state.stock.unitDefinitions && state.stock.unitDefinitions.base && state.stock.unitDefinitions.base[0] || "adet";
-    const product = {
-      id: `${makeId("stock-product", name)}-${Date.now()}`,
-      categoryId: category.id,
-      name,
-      supplier: "",
-      unit: defaultBaseUnit,
-      baseUnit: defaultBaseUnit,
-      bulkUnit: "",
-      unitsPerBulkUnit: 0,
-      stockQuantity: 0,
-      stockQuantityText: "0",
-      orderThreshold: 0,
-      orderThresholdText: "0",
-      criticalThreshold: 0,
-      imageUrl: "",
-      note: "",
-      active: true,
-      order: state.stock.products.length,
-      updatedAt: new Date().toISOString()
-    };
-    state.stock.products.push(product);
-    state.stockEditorProductId = product.id;
-    markDirty("stock", "Yeni stok ürünü eklendi");
-    renderStockPanel();
-  }
-
-  async function addStockSupplier() {
-    const product = selectedStockEditorProduct();
-    if (!product) return;
-    const supplier = await stockCatalogDialog({ title: "Tedarikçi bilgisi", message: product.name, label: "Tedarikçi adı", value: product.supplier || "", confirmLabel: "Tedarikçiyi Kaydet" });
-    if (!supplier) return;
-    product.supplier = supplier;
-    product.updatedAt = new Date().toISOString();
-    markDirty("stock", "Tedarikçi güncellendi");
-    renderStockPanel();
-  }
-
-  async function deleteStockEditorProduct() {
-    const product = selectedStockEditorProduct();
-    if (!product || !await stockCatalogDialog({ title: "Stok ürününü sil", message: `“${product.name}” katalogdan kaldırılacak.`, confirmOnly: true, confirmLabel: "Ürünü Sil", danger: true })) return;
-    state.stock.products = state.stock.products.filter((item) => item.id !== product.id);
-    state.stockEditorProductId = "";
-    markDirty("stock", "Stok ürünü silindi");
-    renderStockPanel();
-  }
-
-  async function deleteStockEditorCategory() {
-    const category = selectedStockEditorCategory();
-    if (!category) return;
-    const count = stockProducts().filter((product) => product.categoryId === category.id).length;
-    const message = count
-      ? `"${category.name}" kategorisi ve içindeki ${count} stok ürünü silinecek. Devam edilsin mi?`
-      : `"${category.name}" kategorisini silmek istiyor musunuz?`;
-    if (!await stockCatalogDialog({ title: "Stok kategorisini sil", message, confirmOnly: true, confirmLabel: "Kategoriyi Sil", danger: true })) return;
-    state.stock.categories = state.stock.categories.filter((item) => item.id !== category.id);
-    state.stock.products = state.stock.products.filter((item) => item.categoryId !== category.id);
-    state.stockEditorCategoryId = "";
-    state.stockEditorProductId = "";
-    markDirty("stock", "Stok kategorisi silindi");
-    renderStockPanel();
-  }
-
-  function updateStockEditorFromFields() {
-    const category = selectedStockEditorCategory();
-    const product = selectedStockEditorProduct();
-    if (category && els.stockEditorCategoryName) category.name = els.stockEditorCategoryName.value.trim() || category.name;
-    if (product) {
-      product.name = els.stockEditorProductName.value.trim() || product.name;
-      product.unit = els.stockEditorUnit ? els.stockEditorUnit.value.trim() || "adet" : product.unit;
-      product.baseUnit = product.unit;
-      product.bulkUnit = els.stockEditorBulkUnit ? els.stockEditorBulkUnit.value.trim() : product.bulkUnit;
-      product.caseUnit = product.bulkUnit;
-      product.unitsPerBulkUnit = product.bulkUnit && els.stockEditorUnitFactor ? Math.max(0, Number(els.stockEditorUnitFactor.value || 0)) : 0;
-      product.unitsPerCase = product.unitsPerBulkUnit;
-      product.defaultMovementUnit = product.baseUnit;
-      product.allowedUnits = Array.from(new Set([product.baseUnit, product.bulkUnit].filter(Boolean)));
-      product.supplier = els.stockEditorSupplier ? els.stockEditorSupplier.value.trim() : product.supplier;
-      product.note = els.stockEditorNote ? els.stockEditorNote.value.trim() : product.note;
-      product.active = els.stockEditorActive ? els.stockEditorActive.checked : product.active;
-      product.updatedAt = new Date().toISOString();
-    }
-    markDirty("stock", "Stok & Sevkiyat değişiklikleri kaydedilmeyi bekliyor");
-    renderStockPanel();
-  }
-
-  function renderStockSummary() {
-    if (!els.stockSummaryGrid) return;
-    const products = stockProducts();
-    const outOfStock = products.filter((product) => stockProductStatus(product).key === "out").length;
-    const criticalStock = products.filter((product) => {
-      const quantity = stockNumber(product.stockQuantity);
-      const threshold = stockNumber(product.orderThreshold);
-      return quantity > 0 && threshold > 0 && quantity <= threshold;
-    }).length;
-    const approachingThreshold = products.filter((product) => {
-      const quantity = stockNumber(product.stockQuantity);
-      const threshold = stockNumber(product.orderThreshold);
-      return threshold > 0 && quantity > threshold && quantity <= threshold * 1.25;
-    }).length;
-    const cards = [
-      ["Toplam Ürün", products.length, "Tüm kategoriler"],
-      ["Kritik Stok", criticalStock, "Acil aksiyon gerekli"],
-      ["Sipariş Eşiğine Yaklaşan", approachingThreshold, "Yakın takipte"],
-      ["Tükendi", outOfStock, "Stok bulunmuyor"]
-    ];
-    els.stockSummaryGrid.innerHTML = cards.map(([label, value, text]) => `
-      <article class="stock-summary-card">
-        <span class="stock-summary-icon" aria-hidden="true"></span>
-        <div><p>${escapeHTML(label)}</p><strong>${escapeHTML(value)}</strong><small>${escapeHTML(text)}</small></div>
-      </article>
-    `).join("");
-  }
-
-  function renderStockCategoryFilter() {
-    if (!els.stockCategoryFilter) return;
-    const current = state.stockCategory || els.stockCategoryFilter.value || "all";
-    els.stockCategoryFilter.innerHTML = [
-      `<option value="all">Tüm kategoriler</option>`,
-      ...stockCategories().map((category) => `<option value="${escapeAttribute(category.id)}">${escapeHTML(category.name)}</option>`)
-    ].join("");
-    els.stockCategoryFilter.value = current === "all" || stockCategories().some((category) => category.id === current) ? current : "all";
-    state.stockCategory = els.stockCategoryFilter.value;
-    if (els.stockCategoryChips) {
-      const items = [{ id: "all", name: "Tümü" }, ...stockCategories()];
-      els.stockCategoryChips.innerHTML = items.map((category) => `
-        <button type="button" data-stock-category="${escapeAttribute(category.id)}" class="${state.stockCategory === category.id ? "is-active" : ""}">
-          ${escapeHTML(category.name)}
-        </button>
-      `).join("");
-    }
-    if (els.stockOnlyOrderNeeded) els.stockOnlyOrderNeeded.checked = Boolean(state.stockOnlyOrderNeeded);
-  }
-
-  function renderStockProducts() {
-    if (!els.stockProductList) return;
-    const categories = stockCategoryMap();
-    const products = filteredStockProducts();
-    if (!products.length) {
-      els.stockProductList.innerHTML = `<div class="stock-empty">Stok ürünü bulunamadı. Yeni katalog aktarımı için Excel Veri Merkezi'ni kullanın.</div>`;
-      return;
-    }
-    els.stockProductList.innerHTML = `
-      <div class="stock-table" role="table" aria-label="Stok ürünleri">
-        <div class="stock-row stock-row-head" role="row">
-          <span>Ürün Adı</span><span>Kategori</span><span>Ürün Adedi</span><span>Sipariş Eşiği</span><span>Durum</span><span>İşlemler</span>
-        </div>
-        ${products.map((product) => {
-          const category = categories.get(product.categoryId);
-          const status = stockProductStatus(product);
-          const selected = state.selectedStockProductId === product.id;
-          const productMovements = stockMovements().filter((movement) => movement.productId === product.id).slice(0, 5);
-          return `
-            <div class="stock-row${selected ? " is-selected" : ""}" role="row" data-stock-product-id="${escapeAttribute(product.id)}">
-              <strong>${escapeHTML(product.name)}</strong>
-              <span>${escapeHTML(category ? category.name : "Genel")}</span>
-              <span><input class="stock-inline-input" data-stock-field="stockQuantityText" value="${escapeAttribute(stockDisplayValue(product, "stockQuantity"))}" aria-label="${escapeAttribute(product.name)} ürün adedi"></span>
-              <span><input class="stock-inline-input" data-stock-field="orderThresholdText" value="${escapeAttribute(stockDisplayValue(product, "orderThreshold"))}" aria-label="${escapeAttribute(product.name)} sipariş eşiği"></span>
-              <span><em class="stock-badge is-${status.key}">${escapeHTML(status.label)}</em></span>
-              <span class="stock-row-actions">
-                <button type="button" class="stock-edit-action ui-button ui-button--secondary ui-button--icon" data-stock-action="save-inline" aria-label="${escapeAttribute(product.name)} stok değerlerini kaydet">✎</button>
-                <details class="stock-actions-menu">
-                  <summary aria-label="${escapeAttribute(product.name)} diğer işlemler">•••</summary>
-                  <div>
-                    <button type="button" class="ui-button ui-button--secondary ui-button--sm" data-stock-action="stock_in">Stok Ekle</button>
-                    <button type="button" class="ui-button ui-button--secondary ui-button--sm" data-stock-action="stock_out">Eksilt</button>
-                    <button type="button" class="ui-button ui-button--secondary ui-button--sm" data-stock-action="waste">Sarf</button>
-                    <button type="button" class="ui-button ui-button--secondary ui-button--sm" data-stock-action="detail">Detay</button>
-                    <button type="button" class="is-danger ui-button ui-button--danger ui-button--sm" data-stock-action="delete">Sil</button>
-                  </div>
-                </details>
-              </span>
-            </div>
-            ${selected ? `<div class="stock-detail-row">${renderStockProductDetail(product, productMovements)}</div>` : ""}
-          `;
-        }).join("")}
-      </div>
-    `;
-  }
-
-  function renderStockProductDetail(product, movements) {
-    return `
-      <div class="stock-detail-card">
-        <div><strong>${escapeHTML(product.name)}</strong><p>${escapeHTML(product.note || "Not eklenmedi.")}</p></div>
-        <div class="stock-detail-movements">
-          ${movements.length ? movements.map((movement) => `
-            <span>${escapeHTML(stockMovementTypeText(movement.type))} · ${escapeHTML(formatStockNumber(movement.quantity))} ${escapeHTML(stockUnitText(movement.unit || product.unit, "adet"))} · ${escapeHTML(formatStockDate(movement.createdAt))}</span>
-          `).join("") : `<span>Henüz hareket yok.</span>`}
-        </div>
-      </div>
-    `;
-  }
-
-  function renderStockMovements() {
-    if (!els.stockMovementList) return;
-    const movements = stockMovements().slice(0, 40);
-    els.stockMovementList.innerHTML = movements.length
-      ? movements.map((movement) => `
-        <article class="stock-movement-item">
-          <strong>${escapeHTML(movement.productName || "Stok ürünü")}</strong>
-          <span>${escapeHTML(stockMovementTypeText(movement.type))} · ${escapeHTML(formatStockNumber(movement.quantity))} ${escapeHTML(stockUnitText(movement.unit, ""))}</span>
-          <time>${escapeHTML(formatStockDate(movement.createdAt))}</time>
-        </article>
-      `).join("")
-      : `<div class="stock-empty">Henüz stok hareketi yok.</div>`;
-  }
-
-  function renderStockOrderSuggestions() {
-    if (!els.stockOrderSuggestions) return;
-    const suggestions = stockOrderSuggestions();
-    if (els.stockSuggestionCount) els.stockSuggestionCount.textContent = String(suggestions.length);
-    els.stockOrderSuggestions.innerHTML = suggestions.length
-      ? suggestions.map((product) => {
-        const status = stockProductStatus(product);
-        const suggested = Math.max(0, stockNumber(product.orderThreshold) - stockNumber(product.stockQuantity));
-        return `
-          <button class="stock-suggestion" type="button" data-stock-suggestion="${escapeAttribute(product.id)}">
-            <strong>${escapeHTML(product.name)}</strong>
-            <span>Önerilen: ${escapeHTML(formatStockNumber(suggested))} ${escapeHTML(stockUnitText(product.unit || product.baseUnit, "adet"))}</span>
-            <em class="stock-badge is-${status.key}">${escapeHTML(status.label)}</em>
-          </button>
-        `;
-      }).join("")
-      : `<div class="stock-empty">Sipariş önerisi yok.</div>`;
-  }
-
-  async function handleStockProductClick(event) {
-    const actionButton = event.target.closest("[data-stock-action]");
-    const row = event.target.closest("[data-stock-product-id]");
-    if (!actionButton || !row) return;
-    const productId = row.dataset.stockProductId;
-    const action = actionButton.dataset.stockAction;
-    const product = state.stock.products.find((item) => item.id === productId);
-    if (!product) return;
-    if (action === "save-inline") {
-      const quantityText = String(row.querySelector('[data-stock-field="stockQuantityText"]')?.value || "").trim();
-      const thresholdText = String(row.querySelector('[data-stock-field="orderThresholdText"]')?.value || "").trim();
-      product.stockQuantityText = quantityText;
-      product.orderThresholdText = thresholdText;
-      const quantity = stockNumberOrNull(quantityText);
-      const threshold = stockNumberOrNull(thresholdText);
-      if (quantity !== null) product.stockQuantity = quantity;
-      if (threshold !== null) product.orderThreshold = threshold;
-      product.updatedAt = new Date().toISOString();
-      state.dirtyStock = true;
-      try {
-        await saveStockToBackend();
-      } catch (error) {
-        updateSaveControls(error.message || "Stok ürünü kaydedilemedi");
-      }
-      return;
-    }
-    if (action === "delete") {
-      if (!await stockCatalogDialog({ title: "Stok kaydını sil", message: `“${product.name}” stok kaydı silinecek.`, confirmOnly: true, confirmLabel: "Kaydı Sil", danger: true })) return;
-      state.stock.products = state.stock.products.filter((item) => item.id !== productId);
-      state.dirtyStock = true;
-      try {
-        await saveStockToBackend();
-      } catch (error) {
-        updateSaveControls(error.message || "Stok ürünü silinemedi");
-      }
-      return;
-    }
-    if (action === "detail") {
-      state.selectedStockProductId = state.selectedStockProductId === productId ? "" : productId;
-      renderStockPanel();
-      return;
-    }
-    openStockActionModal(productId, action);
-  }
-
-  function handleStockSuggestionClick(event) {
-    const item = event.target.closest("[data-stock-suggestion]");
-    if (!item) return;
-    state.selectedStockProductId = item.dataset.stockSuggestion;
-    renderStockPanel();
-    const row = els.stockProductList && els.stockProductList.querySelector(`[data-stock-product-id="${CSS.escape(state.selectedStockProductId)}"]`);
-    if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
-  }
-
-  function openStockActionModal(productId, action) {
-    const product = stockProducts().find((item) => item.id === productId);
-    if (!product || !els.stockActionModal) return;
-    state.stockAction = { productId, productCode: String(product.productCode || ""), type: action };
-    const label = stockMovementTypeText(action);
-    if (els.stockActionKicker) els.stockActionKicker.textContent = label;
-    if (els.stockActionTitle) els.stockActionTitle.textContent = label;
-    if (els.stockActionProduct) els.stockActionProduct.textContent = `${product.name} · Mevcut stok: ${formatStockNumber(product.stockQuantity)} ${stockUnitText(product.unit || product.baseUnit, "adet")}`;
-    if (els.stockActionQuantity) els.stockActionQuantity.value = "";
-    if (els.stockActionReason) els.stockActionReason.value = label;
-    if (els.stockActionNote) els.stockActionNote.value = "";
-    if (els.stockActionMessage) els.stockActionMessage.textContent = "";
-    els.stockActionModal.hidden = false;
-    syncAdminModalLock();
-    window.setTimeout(() => els.stockActionQuantity && els.stockActionQuantity.focus(), 40);
-  }
-
-  function closeStockActionModal() {
-    state.stockAction = null;
-    if (els.stockActionModal) els.stockActionModal.hidden = true;
-    syncAdminModalLock();
-  }
-
-  function syncAdminModalLock() {
-    const modalOpen = [els.stockActionModal, els.defaultChoiceModal]
-      .some((modal) => modal && !modal.hidden);
-    document.documentElement.classList.toggle("is-panel-modal-open", modalOpen);
-  }
-
-  async function submitStockAction(event) {
-    event.preventDefault();
-    if (!state.stockAction || state.stockActionSubmitting) return;
-    const movement = {
-      productId: state.stockAction.productId,
-      productCode: state.stockAction.productCode || "",
-      stockProductCode: state.stockAction.productCode || "",
-      type: state.stockAction.type,
-      quantity: Number(els.stockActionQuantity && els.stockActionQuantity.value || 0),
-      reason: els.stockActionReason ? els.stockActionReason.value.trim() : "",
-      note: els.stockActionNote ? els.stockActionNote.value.trim() : ""
-    };
-    const operationKey = `stock-movement:${movement.productId}:${movement.type}`;
-    const submitButton = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
-    if (els.stockActionMessage) els.stockActionMessage.textContent = "";
-    try {
-      if (!Number.isFinite(movement.quantity) || movement.quantity <= 0) throw new Error("Geçerli bir miktar girin.");
-      state.stockActionSubmitting = true;
-      const executeMovement = async () => {
-        if (backendBaseUrl()) {
-          const result = await backendRequest("/api/stock/movements", { method: "POST", body: { movement } });
-          syncPublishRevision(result);
-          state.stock = normalizeStockStateForAdmin(result.stockState);
-          state.stockUpdatedAt = result.updatedAt || "";
-          return result;
-        }
-        const result = applyLocalStockMovement(state.stock, movement);
-        state.stock = result.stock;
-        state.dirtyStock = true;
-        return result;
-      };
-      const coordinator = window.TahmisciOperations;
-      if (coordinator && typeof coordinator.run === "function") {
-        await coordinator.run(operationKey, executeMovement, {
-          button: submitButton,
-          busyText: "Kaydediliyor…",
-          classification: window.TahmisciOperationClasses && window.TahmisciOperationClasses.IMMEDIATE || "immediate-operation"
-        });
-      } else {
-        await executeMovement();
-      }
-      safeLocalSet(STOCK_STORAGE_KEY, JSON.stringify(state.stock));
-      closeStockActionModal();
-      renderStockPanel();
-      updateSaveControls("Stok hareketi kaydedildi");
-    } catch (error) {
-      if (els.stockActionMessage) els.stockActionMessage.textContent = error.message || "Stok işlemi kaydedilemedi.";
-    } finally {
-      state.stockActionSubmitting = false;
-    }
-  }
-
-  function applyLocalStockMovement(stock, movement) {
-    const next = normalizeStockStateForAdmin(stock);
-    const product = next.products.find((item) => item.id === movement.productId);
-    if (!product) throw new Error("Stok ürünü bulunamadı.");
-    const current = stockNumber(product.stockQuantity);
-    const quantity = stockNumber(movement.quantity);
-    const nextQuantity = movement.type === "stock_in" ? current + quantity : current - quantity;
-    if (nextQuantity < 0) throw new Error("Stok miktarı eksiye düşemez.");
-    product.stockQuantity = roundStockQuantity(nextQuantity);
-    const createdAt = new Date().toISOString();
-    const record = {
-      id: `local-${Date.now()}`,
-      productId: product.id,
-      stockProductId: product.id,
-      productCode: String(product.productCode || movement.productCode || ""),
-      stockProductCode: String(product.productCode || movement.stockProductCode || movement.productCode || ""),
-      productName: product.name,
-      categoryId: product.categoryId,
-      type: movement.type,
-      quantity,
-      unit: stockUnitText(product.unit || product.baseUnit, "adet"),
-      reason: movement.reason || stockMovementTypeText(movement.type),
-      note: movement.note || "",
-      actor: { type: "admin", name: "Yönetici" },
-      createdAt
-    };
-    next.movements = [record, ...next.movements].slice(0, 1000);
-    next.updatedAt = createdAt;
-    return { stock: next, movement: record };
-  }
-
-  function normalizeStockStateForAdmin(value) {
-    const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-    const categories = Array.isArray(source.categories) ? source.categories.map((category, index) => ({
-      ...category,
-      id: String(category.id || makeId("stock-category", category.name || index)),
-      name: String(category.name || "Genel"),
-      order: Number.isFinite(Number(category.order)) ? Number(category.order) : index,
-      active: category.active !== false
-    })) : defaultStockCategories();
-    const validCategoryId = new Set(categories.map((category) => category.id));
-    const fallbackCategoryId = categories[0] ? categories[0].id : "stock-category-general";
-    const products = Array.isArray(source.products) ? source.products.map((product, index) => {
-      const baseUnit = stockUnitText(product.baseUnit || product.unit, "adet").toLocaleLowerCase("tr-TR");
-      const bulkUnit = stockUnitText(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR");
-      const unitsPerBulkUnit = Math.max(0, roundStockQuantity(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0));
-      return {
-        ...product,
-        id: String(product.id || makeId("stock-product", `${product.name || index}`)),
-        categoryId: validCategoryId.has(product.categoryId) ? product.categoryId : fallbackCategoryId,
-        name: String(product.name || "Stok ürünü"),
-        supplier: String(product.supplier || product.brand || ""),
-        unit: baseUnit,
-        baseUnit,
-        bulkUnit,
-        caseUnit: bulkUnit,
-        unitsPerBulkUnit,
-        unitsPerCase: unitsPerBulkUnit,
-        stockQuantity: roundStockQuantity(product.stockQuantity),
-        stockQuantityText: String(product.stockQuantityText ?? product.stockQuantity ?? ""),
-        orderThreshold: roundStockQuantity(product.orderThreshold),
-        orderThresholdText: String(product.orderThresholdText ?? product.orderThreshold ?? ""),
-        criticalThreshold: roundStockQuantity(product.criticalThreshold),
-        imageUrl: String(product.imageUrl || ""),
-        note: String(product.note || ""),
-        active: product.active !== false,
-        order: Number.isFinite(Number(product.order)) ? Number(product.order) : index,
-        updatedAt: String(product.updatedAt || source.updatedAt || "")
-      };
-    }) : defaultStockProducts();
-    const cleanUnits = (items) => Array.from(new Set((Array.isArray(items) ? items : []).map((item) => stockUnitText(item, "").toLocaleLowerCase("tr-TR")).filter(Boolean)));
-    const sourceDefinitions = source.unitDefinitions && typeof source.unitDefinitions === "object" ? source.unitDefinitions : {};
-    const baseUnits = cleanUnits(sourceDefinitions.base || sourceDefinitions.baseUnits);
-    const bulkUnits = cleanUnits(sourceDefinitions.bulk || sourceDefinitions.bulkUnits);
-    if (!source.unitDefinitions) {
-      ["adet", "şişe", "litre", "ml", "kg", "gr", "metre"].forEach((unit) => { if (!baseUnits.includes(unit)) baseUnits.push(unit); });
-      ["koli", "kasa", "paket", "kutu", "çuval"].forEach((unit) => { if (!bulkUnits.includes(unit)) bulkUnits.push(unit); });
-    }
-    products.forEach((product) => {
-      if (product.baseUnit && !baseUnits.includes(product.baseUnit)) baseUnits.push(product.baseUnit);
-      if (product.bulkUnit && !bulkUnits.includes(product.bulkUnit)) bulkUnits.push(product.bulkUnit);
-    });
-    return {
-      schemaVersion: Number(source.schemaVersion || 1),
-      unitDefinitions: { base: baseUnits, bulk: bulkUnits, updatedAt: sourceDefinitions.updatedAt || null, updatedBy: sourceDefinitions.updatedBy || "" },
-      categories,
-      products,
-      movements: Array.isArray(source.movements) ? source.movements.map(normalizeStockMovementForAdmin).filter(Boolean) : [],
-      updatedAt: String(source.updatedAt || "")
-    };
-  }
-
-  function normalizeStockMovementForAdmin(movement) {
-    if (!movement || typeof movement !== "object") return null;
-    return {
-      ...movement,
-      id: String(movement.id || `movement-${Date.now()}`),
-      productId: String(movement.productId || ""),
-      productName: String(movement.productName || ""),
-      categoryId: String(movement.categoryId || ""),
-      type: String(movement.type || ""),
-      quantity: roundStockQuantity(movement.quantity),
-      unit: stockUnitText(movement.unit, ""),
-      reason: String(movement.reason || ""),
-      note: String(movement.note || ""),
-      actor: movement.actor && typeof movement.actor === "object" ? movement.actor : {},
-      createdAt: String(movement.createdAt || "")
-    };
-  }
-
-  function defaultStockCategories() {
-    return [];
-  }
-
-  function defaultStockProducts() {
-    return [];
-  }
-
-  function stockCategories() {
-    return normalizeStockStateForAdmin(state.stock).categories.slice().sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
-  }
-
-  function stockProducts() {
-    return normalizeStockStateForAdmin(state.stock).products.slice().sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
-  }
-
-  function stockMovements() {
-    return normalizeStockStateForAdmin(state.stock).movements.slice().sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0));
-  }
-
-  function stockCategoryMap() {
-    return new Map(stockCategories().map((category) => [category.id, category]));
-  }
-
-  function filteredStockProducts() {
-    const categoryId = state.stockCategory || "all";
-    const query = normalizeText(state.stockQuery || "");
-    return stockProducts().filter((product) => {
-      if (categoryId !== "all" && product.categoryId !== categoryId) return false;
-      if (state.stockOnlyOrderNeeded && !["order", "out"].includes(stockProductStatus(product).key)) return false;
-      if (!query) return true;
-      return normalizeText(`${product.name} ${product.supplier} ${stockUnitText(product.unit || product.baseUnit, "")}`).includes(query);
-    });
-  }
-
-  function stockOrderSuggestions() {
-    return stockProducts().filter((product) => ["order", "out"].includes(stockProductStatus(product).key));
-  }
-
-  function stockProductStatus(product) {
-    const current = stockNumberOrNull(stockDisplayValue(product, "stockQuantity"));
-    const order = stockNumberOrNull(stockDisplayValue(product, "orderThreshold"));
-    if (current === null || order === null) return { key: "check", label: "Kontrol Gerekli" };
-    if (current === 0) return { key: "out", label: "Tükendi" };
-    if (current <= order) return { key: "order", label: "Sipariş Ver" };
-    return { key: "ok", label: "Yeterli" };
-  }
-
-  function stockDisplayValue(product, field) {
-    const textField = field === "stockQuantity" ? "stockQuantityText" : "orderThresholdText";
-    const text = String((product && product[textField]) ?? "").trim();
-    if (text) return text;
-    const value = product && product[field];
-    return Number.isFinite(Number(value)) ? formatStockNumber(value) : "";
-  }
-
-  function stockNumber(value) {
-    if (value && typeof value === "object") {
-      const nested = value.quantity ?? value.value ?? value.amount ?? value.baseQuantity;
-      if (nested !== undefined && nested !== value) return stockNumber(nested);
-    }
-    if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-    const numberValue = Number(String(value ?? "").replace(/[^\d.,-]/g, "").replace(",", "."));
-    return Number.isFinite(numberValue) ? numberValue : 0;
-  }
-
-  function stockUnitText(value, fallback = "adet") {
-    if (value && typeof value === "object") {
-      const nested = value.unit ?? value.code ?? value.name ?? value.label ?? value.value;
-      return nested === undefined || nested === null ? fallback : String(nested).trim() || fallback;
-    }
-    return value === undefined || value === null ? fallback : String(value).trim() || fallback;
-  }
-
-  function stockNumberOrNull(value) {
-    if (value && typeof value === "object") {
-      const nested = value.quantity ?? value.value ?? value.amount ?? value.baseQuantity;
-      if (nested !== undefined && nested !== value) return stockNumberOrNull(nested);
-    }
-    const match = String(value ?? "").replace(",", ".").match(/-?\d+(?:\.\d+)?/);
-    if (!match) return null;
-    const number = Number(match[0]);
-    return Number.isFinite(number) ? number : null;
-  }
-
-  function roundStockQuantity(value) {
-    return Math.round(stockNumber(value) * 1000) / 1000;
-  }
-
-  function formatStockNumber(value) {
-    return new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 2 }).format(stockNumber(value));
-  }
-
-  function formatStockDate(value) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "Tarih yok";
-    return new Intl.DateTimeFormat("tr-TR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(date);
-  }
-
-  function stockMovementTypeText(type) {
-    return {
-      stock_in: "Stok Ekle",
-      stock_out: "Eksilt",
-      waste: "Sarf"
-    }[type] || "Stok işlemi";
   }
 
   function renderMudavimPanel() {
@@ -9049,7 +8241,7 @@
       center.analysis = Object.assign({}, analysis, { canApply: false, applied: true, appliedDomains: applicableDomains });
       center.message = `${dataImportDomainListLabel(applicableDomains)} kalıcı veriye uygulandı${blockedDomains.length ? `; ${dataImportDomainListLabel(blockedDomains)} uygulanmadı` : ""}${result.operationId ? ` · İşlem ${result.operationId}` : ""}.`;
       center.messageType = "success";
-      await Promise.all([hydrateFromBackend(), hydrateStockFromBackend()]);
+      await hydrateFromBackend();
       await loadDataImportHistory(true);
     } catch (error) {
       const staleAnalysis = error.status === 409 && /revizyon|analizden sonra|yeniden analiz/i.test(String(error.message || ""));
@@ -9119,7 +8311,7 @@
       center.analysis = null;
       center.message = "Excel aktarımı backend tarafından güvenli biçimde geri alındı.";
       center.messageType = "success";
-      await Promise.all([hydrateFromBackend(), hydrateStockFromBackend()]);
+      await hydrateFromBackend();
       await loadDataImportHistory(true);
     } catch (error) {
       center.message = error.status === 409

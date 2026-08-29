@@ -7,7 +7,7 @@
     "scripts/menu/menu-catalog.js?v=20260827-performance",
     "scripts/menu/menu-filter.js?v=20260827-performance",
     "scripts/menu/menu-categories.js?v=20260827-performance",
-    "scripts/menu/menu-search.js?v=20260827-performance"
+    "scripts/menu/menu-search.js?v=20260829-assets"
   ];
 
   function loadScript(source, options = {}) {

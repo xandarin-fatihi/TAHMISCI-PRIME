@@ -151,12 +151,13 @@
     }
 
     function resolveHeroMediaUrl(source) {
-        let mediaUrl = String(source || '').trim();
-        if (mediaUrl && !/^https?:\/\//i.test(mediaUrl)) {
-            const base = getHeroBasePath();
-            mediaUrl = (base ? base + '/' : '') + mediaUrl.replace(/^\//, '');
-        }
-        return mediaUrl;
+        const mediaUrl = String(source || '').trim();
+        if (!mediaUrl) return '';
+        if (/^https?:\/\//i.test(mediaUrl)) return mediaUrl;
+        if (/^(?:\/assets\/|\/media\/)/i.test(mediaUrl)) return mediaUrl;
+        if (/^(?:data:image\/|blob:)/i.test(mediaUrl)) return mediaUrl;
+        const base = getHeroBasePath() || '/site';
+        return `${base.replace(/\/$/, '')}/${mediaUrl.replace(/^\.\//, '').replace(/^\//, '')}`;
     }
 
     function createSlideElement(slide, index) {

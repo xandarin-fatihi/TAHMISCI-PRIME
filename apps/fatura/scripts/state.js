@@ -4,29 +4,73 @@ export const CAPABILITIES = {
   receiptApprove: "receipt.approve", receiptReject: "receipt.reject", accountingRead: "accounting.read",
   accountingPost: "accounting.post", accountingReverse: "accounting.reverse", paymentCreate: "payment.create",
   paymentReverse: "payment.reverse", documentsRead: "documents.read", documentsUpload: "documents.upload",
-  documentsArchive: "documents.archive", users: "procurement.users.manage"
+  documentsArchive: "documents.archive", users: "procurement.users.manage",
+  inventoryRead: "inventory.read", inventoryManage: "inventory.manage",
+  inventoryMovementCreate: "inventory.movement.create", inventoryMovementReverse: "inventory.movement.reverse",
+  inventoryTransferCreate: "inventory.transfer.create", inventoryTransferApprove: "inventory.transfer.approve",
+  inventoryCountManage: "inventory.count.manage", inventoryLocationManage: "inventory.location.manage",
+  inventoryCatalogManage: "inventory.catalog.manage"
 };
 
 export const state = {
-  context: null, revision: 0, workforceRevision: 0, activeView: "dashboard", loaded: new Map(), eventSource: null, notificationEventSource: null,
+  context: null, revision: 0, workforceRevision: 0, activeView: "dashboard", loaded: new Map(), eventSource: null,
   suppliers: [], productLinks: [], shipments: [], documents: [], ledgerEntries: [], payments: [], users: [], auditEvents: [],
   notifications: [], unreadCount: 0,
   dashboard: null, settings: null, accessTemplates: [], sectionDefinitions: [], filters: Object.create(null), detail: null,
-  stockRevision: 0, stockLocations: [], stockUnitDefinitions: { base: [], bulk: [] }, stockBalances: [], stockSummary: {},
-  stockTransfers: [], stockMovements: [], stockCounts: [], selectedStockLocationId: "", selectedStockProductId: "",
-  stockLoaded: false, stockStale: true, stockLoadPromise: null
+  revisions: { procurement: 0, workforce: 0, stock: 0, inventory: 0, shipment: 0, catalog: 0, notification: 0 },
+  stock: {
+    revision: 0, inventoryRevision: 0, catalogRevision: 0,
+    locations: [], personnel: [], unitDefinitions: { base: [], bulk: [] }, selectedLocationId: "",
+    balances: [], summary: {}, transfers: [], movements: [], counts: [], activeCount: null,
+    secondaryLoaded: false, secondaryLoadPromise: null, secondaryLocationId: "", selectedCategory: "all",
+    selectedProductId: "", viewMode: "overview", drawerReturnFocus: null, inventoryController: null,
+    loadSequence: 0, updatedAt: "", loaded: false, stale: true, loadPromise: null, busyKeys: new Set(),
+    bound: false, boundWorkspace: null, confirmResolver: null, thresholdInitial: null, catalogStock: null,
+    catalogLoaded: false, catalogLoading: false, catalogCategoryId: "", catalogProductId: "", catalogBusy: false,
+    appliedIntentKey: "", activeAccordion: "management", planning: null, planningStale: true,
+    planningError: "", planningLoadPromise: null
+  },
+  productAnalysis: {
+    products: [], selectedProductId: "", detail: null, query: "", range: "30d",
+    resultsOpen: false, loaded: false, loading: false, productsStale: true, detailStale: true
+  }
 };
 
 export function has(capability) {
   const actor = state.context && state.context.actor;
-  return Boolean(actor && (actor.type === "admin" || (actor.capabilities || []).includes(capability)));
+  return Boolean(actor && (actor.capabilities || []).includes(capability));
 }
 
-export function updateRevision(payload) {
+export function updateRevision(payload, domain = "procurement") {
   const revision = Number(payload && payload.revision);
   const workforceRevision = Number(payload && payload.workforceRevision);
-  if (Number.isFinite(revision) && revision >= 0) state.revision = revision;
-  if (Number.isFinite(workforceRevision) && workforceRevision >= 0) state.workforceRevision = workforceRevision;
+  const inventoryRevision = Number(payload && payload.inventoryRevision);
+  const catalogRevision = Number(payload && payload.catalogRevision);
+  const supplied = payload && payload.revisions && typeof payload.revisions === "object" ? payload.revisions : {};
+  for (const key of ["procurement", "workforce", "stock", "inventory", "shipment", "catalog", "notification"]) {
+    const next = Number(supplied[key]);
+    if (Number.isFinite(next) && next >= 0) state.revisions[key] = Math.max(state.revisions[key] || 0, next);
+  }
+  if (Number.isFinite(revision) && revision >= 0) {
+    state.revisions[domain] = Math.max(state.revisions[domain] || 0, revision);
+    if (domain === "procurement") state.revision = state.revisions.procurement;
+    if (domain === "stock") state.stock.revision = state.revisions.stock;
+  }
+  if (Number.isFinite(workforceRevision) && workforceRevision >= 0) {
+    state.revisions.workforce = Math.max(state.revisions.workforce || 0, workforceRevision);
+    state.workforceRevision = state.revisions.workforce;
+  }
+  if (Number.isFinite(inventoryRevision) && inventoryRevision >= 0) {
+    state.revisions.inventory = Math.max(state.revisions.inventory || 0, inventoryRevision);
+  }
+  if (Number.isFinite(catalogRevision) && catalogRevision >= 0) {
+    state.revisions.catalog = Math.max(state.revisions.catalog || 0, catalogRevision);
+  }
+  state.revision = Math.max(state.revision || 0, state.revisions.procurement || 0);
+  state.workforceRevision = Math.max(state.workforceRevision || 0, state.revisions.workforce || 0);
+  state.stock.inventoryRevision = Math.max(state.stock.inventoryRevision || 0, state.revisions.inventory || 0);
+  state.stock.catalogRevision = Math.max(state.stock.catalogRevision || 0, state.revisions.catalog || 0);
+  state.stock.revision = state.stock.inventoryRevision;
 }
 
 export function invalidate(scopes = []) {
@@ -90,9 +134,9 @@ export function icon(name) {
     documents: '<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5M8 12h8M8 16h6"/>',
     ledger: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M16 14h2"/>',
     users: '<circle cx="9" cy="8" r="3"/><path d="M3 21v-2a6 6 0 0 1 12 0v2M17 11a4 4 0 0 1 4 4v2"/>',
-    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/>'
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/>',
-    stock: '<path d="m4 7 8-4 8 4-8 4z"/><path d="m4 7 8 4 8-4v10l-8 4-8-4zM12 11v10"/>'
+    stock: '<path d="m4 7 8-4 8 4-8 4z"/><path d="m4 7 8 4 8-4v10l-8 4-8-4zM12 11v10"/>',
+    productAnalysis: '<circle cx="9" cy="9" r="5"/><path d="m13 13 4 4M15 20h6M18 17v6M4 20h7"/>'
   };
   return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.dashboard}</svg>`;
 }

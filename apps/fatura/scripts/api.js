@@ -40,6 +40,12 @@ async function execute(url, method, options) {
     if (options.expectedRevision !== undefined && options.expectedRevision !== null) {
       headers.set("X-Expected-Revision", String(options.expectedRevision));
     }
+    if (options.expectedInventoryRevision !== undefined && options.expectedInventoryRevision !== null) {
+      headers.set("X-Expected-Inventory-Revision", String(options.expectedInventoryRevision));
+    }
+    if (options.expectedCatalogRevision !== undefined && options.expectedCatalogRevision !== null) {
+      headers.set("X-Expected-Catalog-Revision", String(options.expectedCatalogRevision));
+    }
   }
   let response;
   try {

@@ -188,6 +188,8 @@ function registerDataImportRoutes(options) {
         const publishRevisionBefore = Number(data.revisions && data.revisions.publish || 0);
         const pricingRevisionBefore = Number(data.revisions && data.revisions.pricing || 0);
         const stockRevisionBefore = Number(data.revisions && data.revisions.stock || 0);
+        const catalogRevisionBefore = Number(data.revisions && data.revisions.catalog || 0);
+        const inventoryRevisionBefore = Number(data.revisions && data.revisions.inventory || 0);
         const beforeFingerprint = catalogFingerprint(data, appliedScopes);
         const beforeProductCodeFingerprint = productCodeFingerprint(data, appliedScopes);
         applyPlan(data, draft.plan, appliedScopes);
@@ -199,7 +201,7 @@ function registerDataImportRoutes(options) {
         bumpDomainRevisions(data, selectedDomains);
         data.revisions.publish = Number(data.revisions.publish || 0) + 1;
         if (appliedScopes.includes("pricing")) data.revisions.pricing = Number(data.revisions.pricing || 0) + 1;
-        if (appliedScopes.includes("stock")) data.revisions.stock = stockRevisionBefore + 1;
+        bumpCanonicalRevisions(data, appliedScopes);
         if (appliedScopes.includes("menu") || appliedScopes.includes("pricing")) data.menuUpdatedAt = now;
         if (appliedScopes.includes("pricing")) data.pricingUpdatedAt = now;
         if (appliedScopes.includes("recipes")) data.recipeUpdatedAt = now;
@@ -210,10 +212,12 @@ function registerDataImportRoutes(options) {
           scopes: appliedScopes, domains: selectedDomains, report: selectedDomainReport(draft, selectedDomains), changeCount: selectedDomainChanges(draft, selectedDomains).length,
           importScope: appliedScopes, fingerprintVersion: 3,
           revisionBefore, revisionAfter: data.revisions.dataImport,
-          publishRevisionBefore, pricingRevisionBefore, stockRevisionBefore,
+          publishRevisionBefore, pricingRevisionBefore, stockRevisionBefore, catalogRevisionBefore, inventoryRevisionBefore,
           publishRevisionAfter: data.revisions.publish,
           pricingRevisionAfter: data.revisions.pricing,
           stockRevisionAfter: Number(data.revisions.stock || 0),
+          catalogRevisionAfter: Number(data.revisions.catalog || 0),
+          inventoryRevisionAfter: Number(data.revisions.inventory || 0),
           domainRevisionsBefore: draft.expectedDomainRevisions || {},
           domainRevisionsAfter: domainRevisionSnapshot(data, selectedDomains),
           expectedReadbackFingerprint,
@@ -233,6 +237,7 @@ function registerDataImportRoutes(options) {
           ok: true, operationId, analysisId, revision: data.revisions.dataImport,
           publishRevision: data.revisions.publish, pricingRevision: data.revisions.pricing,
           stockRevision: Number(data.revisions.stock || 0),
+          catalogRevision: Number(data.revisions.catalog || 0), inventoryRevision: Number(data.revisions.inventory || 0),
           changedScopes: appliedScopes, changedDomains: selectedDomains, report: selectedDomainReport(draft, selectedDomains), changedCount: selectedDomainChanges(draft, selectedDomains).length,
           canUndo: true, validationStatus: "pending", updatedAt: now
         };
@@ -276,6 +281,8 @@ function registerDataImportRoutes(options) {
             data.revisions.publish = Number(committedHistory.publishRevisionBefore || 0);
             data.revisions.pricing = Number(committedHistory.pricingRevisionBefore || 0);
             if ((response.changedScopes || []).includes("stock")) data.revisions.stock = Number(committedHistory.stockRevisionBefore || 0);
+            data.revisions.catalog = Number(committedHistory.catalogRevisionBefore || 0);
+            data.revisions.inventory = Number(committedHistory.inventoryRevisionBefore || 0);
             restoreDomainRevisionSnapshot(data, committedHistory.domainRevisionsBefore, response.changedDomains);
             let failed = findImportHistory(data, response.operationId);
             if (!failed) {
@@ -387,7 +394,7 @@ function registerDataImportRoutes(options) {
         bumpDomainRevisions(data, sourceDomains);
         data.revisions.publish = Number(data.revisions.publish || 0) + 1;
         if (source.scopes.includes("pricing")) data.revisions.pricing = Number(data.revisions.pricing || 0) + 1;
-        if (source.scopes.includes("stock")) data.revisions.stock = Number(data.revisions.stock || 0) + 1;
+        bumpCanonicalRevisions(data, source.scopes);
         if (source.scopes.includes("menu") || source.scopes.includes("pricing")) data.menuUpdatedAt = now;
         if (source.scopes.includes("pricing")) data.pricingUpdatedAt = now;
         if (source.scopes.includes("recipes")) data.recipeUpdatedAt = now;
@@ -402,7 +409,18 @@ function registerDataImportRoutes(options) {
           afterFingerprint: "", afterProductCodeFingerprint: "", validationStatus: "pending"
         };
         data.dataImportHistory = data.dataImportHistory.concat(undoHistory).slice(-100);
-        response = { ok: true, operationId: undoOperationId, sourceOperationId: source.id, revision: data.revisions.dataImport, publishRevision: data.revisions.publish, changedScopes: source.scopes, changedDomains: sourceDomains, updatedAt: now };
+        response = {
+          ok: true,
+          operationId: undoOperationId,
+          sourceOperationId: source.id,
+          revision: data.revisions.dataImport,
+          publishRevision: data.revisions.publish,
+          catalogRevision: Number(data.revisions.catalog || 0),
+          inventoryRevision: Number(data.revisions.inventory || 0),
+          changedScopes: source.scopes,
+          changedDomains: sourceDomains,
+          updatedAt: now
+        };
         await rememberIdempotency(data, scope, requestId, response, now, coldStore);
         return data;
       });
@@ -558,9 +576,9 @@ function stampImportedMetadata(data, operationId, now, scopes) {
 
 function broadcastImport(data, scopes, updatedAt, options) {
   const set = new Set(scopes || []);
-  if ((set.has("menu") || set.has("pricing")) && typeof options.broadcastMenuUpdate === "function") options.broadcastMenuUpdate(serializeLegacyMenuState(data.menuState, data.pricing), updatedAt, data.pricing, data.revisions.pricing);
-  if (set.has("recipes") && typeof options.broadcastRecipeUpdate === "function") options.broadcastRecipeUpdate(data.recipeState, updatedAt, data.recipeCatalog || []);
-  if (set.has("stock") && typeof options.broadcastStockUpdate === "function") options.broadcastStockUpdate(data.stockState, updatedAt);
+  if ((set.has("menu") || set.has("pricing")) && typeof options.broadcastMenuUpdate === "function") options.broadcastMenuUpdate(serializeLegacyMenuState(data.menuState, data.pricing), updatedAt, data.pricing, data.revisions.pricing, data.revisions.catalog);
+  if (set.has("recipes") && typeof options.broadcastRecipeUpdate === "function") options.broadcastRecipeUpdate(data.recipeState, updatedAt, data.recipeCatalog || [], data.revisions.catalog);
+  if (set.has("stock") && typeof options.broadcastStockUpdate === "function") options.broadcastStockUpdate(data.stockState, updatedAt, data.revisions.inventory, "inventory");
   if ((set.has("menu") || set.has("pricing")) && typeof options.broadcastPublicUpdate === "function") options.broadcastPublicUpdate(data, "data-import");
 }
 
@@ -802,6 +820,18 @@ function bumpDomainRevisions(data, domains) {
   for (const domain of normalizeImportDomains(domains)) {
     const key = domainRevisionKey(domain);
     data.revisions[key] = Math.max(0, Number(data.revisions[key] || 0)) + 1;
+  }
+}
+
+function bumpCanonicalRevisions(data, scopes) {
+  data.revisions = data.revisions || {};
+  const selected = new Set(Array.isArray(scopes) ? scopes : []);
+  if (["menu", "pricing", "recipes", "stock"].some((scope) => selected.has(scope))) {
+    data.revisions.catalog = Math.max(0, Number(data.revisions.catalog || 0)) + 1;
+  }
+  if (selected.has("stock")) {
+    data.revisions.inventory = Math.max(0, Number(data.revisions.inventory || 0)) + 1;
+    data.revisions.stock = Math.max(Number(data.revisions.stock || 0) + 1, data.revisions.inventory);
   }
 }
 

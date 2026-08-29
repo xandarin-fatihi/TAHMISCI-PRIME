@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const { APP_ROOTS, normalizeAppTarget } = require("./app-targets");
 const {
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_SEVERITIES,
@@ -175,8 +176,9 @@ function registerNotificationRoutes(options) {
         const owner = recipientFromRequest(req, role);
         const data = req.storeSnapshot || await store.read();
         const currentDeviceId = normalizedDeviceId(req.get("x-tahmisci-device-id"));
+        const appTarget = requestPushAppTarget(req, owner);
         const devices = (data.pushSubscriptions || [])
-          .filter((item) => pushSubscriptionMatches(item, owner) && !item.revokedAt)
+          .filter((item) => pushSubscriptionMatches(item, owner, appTarget) && !item.revokedAt)
           .sort((a, b) => String(b.lastSeenAt || b.updatedAt || "").localeCompare(String(a.lastSeenAt || a.updatedAt || "")))
           .map((item) => publicPushDevice(item, currentDeviceId));
         noStore(res).json({ ok: true, devices, subscriptions: devices });
@@ -189,6 +191,7 @@ function registerNotificationRoutes(options) {
         const subscription = validatePushSubscription(req.body && (req.body.subscription || req.body));
         const deviceId = normalizedDeviceId(req.body && req.body.deviceId || req.get("x-tahmisci-device-id"));
         const deviceName = normalizedDeviceName(req.body && req.body.deviceName, req.get("user-agent"));
+        const appTarget = requestPushAppTarget(req, owner);
         let saved = null;
         await store.update((data) => {
           data.pushSubscriptions = Array.isArray(data.pushSubscriptions) ? data.pushSubscriptions : [];
@@ -199,15 +202,16 @@ function registerNotificationRoutes(options) {
             error.status = 409;
             throw error;
           }
-          const currentByDevice = deviceId && data.pushSubscriptions.find((item) => pushSubscriptionMatches(item, owner)
+          const currentByDevice = deviceId && data.pushSubscriptions.find((item) => pushSubscriptionMatches(item, owner, appTarget)
             && item.deviceId === deviceId);
-          const currentByEndpoint = data.pushSubscriptions.find((item) => pushSubscriptionMatches(item, owner)
+          const currentByEndpoint = data.pushSubscriptions.find((item) => pushSubscriptionMatches(item, owner, appTarget)
             && item.endpoint === subscription.endpoint);
           const current = currentByDevice || currentByEndpoint;
           const timestamp = new Date().toISOString();
           const superseded = new Set();
           for (const item of data.pushSubscriptions) {
             if (!item || item === current || !pushSubscriptionMatches(item, owner)) continue;
+            if (pushSubscriptionAppTarget(item) !== appTarget) continue;
             if (item.endpoint === subscription.endpoint || deviceId && item.deviceId === deviceId) superseded.add(item);
           }
           if (superseded.size) {
@@ -223,6 +227,8 @@ function registerNotificationRoutes(options) {
             id: current && current.id || `push-subscription-${crypto.randomUUID()}`,
             ownerRole: owner.role,
             ownerId: owner.id,
+            appTarget,
+            appId: appTarget,
             endpoint: subscription.endpoint,
             subscription,
             keys: subscription.keys,
@@ -249,11 +255,12 @@ function registerNotificationRoutes(options) {
       try {
         const owner = recipientFromRequest(req, role);
         const endpoint = String(req.body && req.body.endpoint || "").trim();
+        const appTarget = requestPushAppTarget(req, owner);
         if (!endpoint) throw badRequest("Push aboneliği endpoint bilgisi gerekli.");
         let removed = 0;
         await store.update((data) => {
           const timestamp = new Date().toISOString();
-          const matches = (data.pushSubscriptions || []).filter((item) => pushSubscriptionMatches(item, owner)
+          const matches = (data.pushSubscriptions || []).filter((item) => pushSubscriptionMatches(item, owner, appTarget)
             && item.endpoint === endpoint && !item.revokedAt);
           for (const item of matches) {
             item.revokedAt = timestamp;
@@ -271,10 +278,11 @@ function registerNotificationRoutes(options) {
       try {
         const owner = recipientFromRequest(req, role);
         const subscriptionId = validateId(req.params.id, "Cihaz kimliği");
+        const appTarget = requestPushAppTarget(req, owner);
         let removed = 0;
         await store.update((data) => {
           const owned = (data.pushSubscriptions || []).find((item) => item && item.id === subscriptionId
-            && pushSubscriptionMatches(item, owner) && !item.revokedAt);
+            && pushSubscriptionMatches(item, owner, appTarget) && !item.revokedAt);
           if (!owned) throw notFound("Bağlı cihaz bulunamadı.");
           const timestamp = new Date().toISOString();
           owned.revokedAt = timestamp;
@@ -295,12 +303,13 @@ function registerNotificationRoutes(options) {
             throw httpError(503, "Telefon bildirimleri sunucuda henüz etkinleştirilmemiş.");
           }
           const owner = recipientFromRequest(req, role);
+          const appTarget = requestPushAppTarget(req, owner);
           const requestedSubscriptionId = String(req.body && req.body.subscriptionId || "").trim();
           if (requestedSubscriptionId) validateId(requestedSubscriptionId, "Cihaz kimliği");
           const requestedDeviceId = normalizedDeviceId(req.body && req.body.deviceId || req.get("x-tahmisci-device-id"));
           const data = req.storeSnapshot || await store.read();
           const subscriptions = (data.pushSubscriptions || [])
-            .filter((item) => pushSubscriptionMatches(item, owner) && !item.disabledAt && !item.revokedAt)
+            .filter((item) => pushSubscriptionMatches(item, owner, appTarget) && !item.disabledAt && !item.revokedAt)
             .sort((left, right) => String(right.lastSeenAt || right.updatedAt || right.createdAt || "")
               .localeCompare(String(left.lastSeenAt || left.updatedAt || left.createdAt || "")));
           const subscription = requestedSubscriptionId
@@ -319,7 +328,8 @@ function registerNotificationRoutes(options) {
             title: "Tahmisçi test bildirimi",
             body: "Telefon bildirimleri bu cihazda çalışıyor.",
             severity: "success",
-            deepLink: "/personel/#notifications"
+            deepLink: appTarget === "personel" ? "/personel/#notifications" : APP_ROOTS[appTarget],
+            appTarget
           };
           try {
             await pushService.sendNotificationPush(notification, subscription.subscription || subscription);
@@ -546,6 +556,7 @@ function publicNotification(item) {
     entityType: item.entityType || "",
     entityId: item.entityId || "",
     deepLink: item.deepLink || "",
+    appTarget: item.appTarget || "",
     metadata: item.metadata || {},
     createdAt: item.createdAt,
     updatedAt: item.updatedAt || item.createdAt,
@@ -565,11 +576,29 @@ function notificationCapabilities(pushService, preferences = {}) {
   };
 }
 
-function pushSubscriptionMatches(item, owner) {
+function pushSubscriptionMatches(item, owner, appTarget = "") {
   if (!item || !owner) return false;
   const role = normalizeRole(item.ownerRole || item.recipientRole);
   const id = role === "manager" ? "manager" : String(item.ownerId || item.recipientId || "");
-  return role === owner.role && id === owner.id;
+  return role === owner.role && id === owner.id
+    && (!appTarget || pushSubscriptionAppTarget(item) === appTarget);
+}
+
+function requestPushAppTarget(req, owner) {
+  const body = req && req.body && typeof req.body === "object" ? req.body : {};
+  return normalizeAppTarget(
+    body.appId || body.appTarget || req.get("x-tahmisci-app-id") || req.get("x-tahmisci-app-target"),
+    "",
+    owner && owner.role
+  );
+}
+
+function pushSubscriptionAppTarget(item) {
+  return normalizeAppTarget(
+    item && (item.appId || item.appTarget),
+    "",
+    normalizeRole(item && (item.ownerRole || item.recipientRole))
+  );
 }
 
 function normalizedDeviceId(value) {
@@ -596,6 +625,8 @@ function publicPushDevice(item, currentDeviceId, options = {}) {
     deviceId,
     deviceName,
     name: deviceName,
+    appTarget: pushSubscriptionAppTarget(item),
+    appId: pushSubscriptionAppTarget(item),
     createdAt: item && item.createdAt || null,
     updatedAt: item && item.updatedAt || null,
     lastSeenAt: item && (item.lastSeenAt || item.updatedAt || item.createdAt) || null,

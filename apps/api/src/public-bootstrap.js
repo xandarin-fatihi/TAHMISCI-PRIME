@@ -105,6 +105,60 @@ function buildPublicBootstrap(storeData) {
   };
 }
 
+function buildPublicSite(storeData) {
+  const data = storeData && typeof storeData === "object" ? storeData : {};
+  const siteState = migrateSiteState(data.siteState);
+  delete siteState.mudavim;
+  const revisions = publicRevisions(data.revisions);
+  const updatedAt = data.siteUpdatedAt || data.publishUpdatedAt || null;
+  const version = publicVersion({ updatedAt, siteRevision: revisions.site || 0, publishRevision: revisions.publish, siteState });
+  return {
+    schemaVersion: 1,
+    version,
+    revision: revisions.publish,
+    publishRevision: revisions.publish,
+    revisions,
+    updatedAt,
+    siteState
+  };
+}
+
+function buildPublicMenu(storeData) {
+  const bootstrap = buildPublicBootstrap(storeData);
+  return {
+    schemaVersion: 2,
+    version: bootstrap.version,
+    revision: bootstrap.revision,
+    publishRevision: bootstrap.publishRevision,
+    pricingRevision: bootstrap.pricingRevision,
+    catalogRevision: bootstrap.catalogRevision,
+    revisions: bootstrap.revisions,
+    updatedAt: bootstrap.updatedAt,
+    pricing: bootstrap.pricing,
+    menu: bootstrap.menu
+  };
+}
+
+function buildPublicMudavim(storeData) {
+  const data = storeData && typeof storeData === "object" ? storeData : {};
+  const siteState = migrateSiteState(data.siteState);
+  const mudavim = publicMudavim(siteState.mudavim);
+  const revisions = publicRevisions(data.revisions);
+  const updatedAt = data.siteUpdatedAt || data.publishUpdatedAt || null;
+  return {
+    schemaVersion: 1,
+    version: publicVersion({ updatedAt, publishRevision: revisions.publish, mudavim }),
+    revision: revisions.publish,
+    revisions,
+    updatedAt,
+    mudavim
+  };
+}
+
+function publicVersion(value) {
+  return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
+}
+
 function publicMudavim(value) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   return {
@@ -376,7 +430,8 @@ function publicRevisions(value) {
     publish: nonNegativeInteger(source.publish),
     pricing: nonNegativeInteger(source.pricing),
     catalog: nonNegativeInteger(source.dataImportCatalog),
-    dataImport: nonNegativeInteger(source.dataImport)
+    dataImport: nonNegativeInteger(source.dataImport),
+    site: nonNegativeInteger(source.site)
   };
 }
 
@@ -429,5 +484,8 @@ function numberOr(value, fallback) {
 
 module.exports = {
   buildPublicBootstrap,
+  buildPublicMenu,
+  buildPublicMudavim,
+  buildPublicSite,
   resolvePublicContent
 };

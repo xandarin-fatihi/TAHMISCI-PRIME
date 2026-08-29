@@ -5,7 +5,8 @@ import { renderProductLinks, renderSuppliers } from "./suppliers.js";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
 import { documentFormBody, renderDocuments } from "./documents.js";
 import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderSettingsAudit, renderUsers, userAccessFormBody } from "./accounting.js";
-import { applyStockIntent, connectStockEvents, disconnectStockEvents, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260827-stock-restore";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260829-stock-analytics";
+import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260829-product-analysis";
 
 const app = document.getElementById("faturaApp");
 const shell = document.getElementById("shell");
@@ -20,7 +21,8 @@ const notificationDrawer = document.getElementById("notificationDrawer");
 const notificationScrim = document.getElementById("notificationScrim");
 const viewDefinitions = [
   { id: "dashboard", label: "Genel Bakış", description: "Tedarik ve cari süreçlerin güncel özeti.", capability: CAPABILITIES.read },
-  { id: "stock", label: "Stok & Sevkiyat", description: "Depoları, stok bakiyelerini, birimleri, transferleri, sayımları ve sevkiyatları yönetin.", adminOnly: true },
+  { id: "stock", label: "Stok & Sevkiyat", description: "Depoları, stok bakiyelerini, birimleri, transferleri, sayımları ve sevkiyatları yönetin.", capability: CAPABILITIES.inventoryRead },
+  { id: "productAnalysis", label: "Ürün Analizi", description: "Ürün bazlı fiyat, alım, tüketim ve stok planlama analizi.", all: [CAPABILITIES.inventoryRead, CAPABILITIES.read] },
   { id: "shipments", label: "Mal Kabul", description: "Personel sevkiyatları, stok onayı ve muhasebe durumları.", any: [CAPABILITIES.read,CAPABILITIES.receiptCreate,CAPABILITIES.receiptApprove,CAPABILITIES.accountingRead] },
   { id: "suppliers", label: "Tedarikçiler", description: "Tedarikçi kartları, vadeler ve hesap bakiyeleri.", any: [CAPABILITIES.supplierRead,CAPABILITIES.supplierManage] },
   { id: "links", label: "Ürün Eşleşmeleri", description: "Tedarikçi ürünlerini canonical stok kataloğuna bağlayın.", capability: CAPABILITIES.links },
@@ -38,6 +40,8 @@ let currentObjectUrl = "";
 let deferredInstallPrompt = null;
 const loadVersions = new Map();
 const pendingEventScopes = new Set();
+const handledGatewayEventIds = new Set();
+const gatewayTopicRevisions = new Map();
 const EVENT_SCOPES = {
   shipment: ["shipments", "stock", "dashboard"],
   supplier: ["suppliers", "dashboard"],
@@ -71,6 +75,15 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !notificationDrawer.hidden) closeNotifications();
   if (event.key === "Escape" && !profileMenu.hidden) closeProfileMenu();
 });
+document.addEventListener("tahmisci:fatura:navigate", async (event) => {
+  const detail = event.detail && typeof event.detail === "object" ? event.detail : {};
+  if (!detail.view || !visibleViews.some((view) => view.id === detail.view)) return;
+  if (detail.productId) {
+    const url = new URL(location.href); url.searchParams.set("view", detail.view); url.searchParams.set("productId", detail.productId); history.replaceState({}, "", url);
+  }
+  await setView(detail.view, { preserveQuery: Boolean(detail.productId) });
+  if (detail.action === "new-shipment" && detail.view === "shipments") openShipmentForm();
+});
 
 async function bootstrap() {
   updateNetworkState();
@@ -79,6 +92,7 @@ async function bootstrap() {
     await resolveContext();
     showShell();
     await loadNotifications(true).catch(() => null);
+    registerFaturaPwaNotificationIntro();
     if (!visibleViews.length) return showAccessDenied();
     await activateInitialView();
     connectEvents();
@@ -100,6 +114,7 @@ function showAuth(message = "") {
   stopEvents();
   disconnectStockEvents();
   resetStockState();
+  resetProductAnalysisState();
   shell.hidden = true;
   authView.hidden = false;
   app.dataset.status = "auth";
@@ -136,12 +151,11 @@ function capabilitySummary(actor) {
 }
 
 function canSeeView(view) {
-  const actor = state.context && state.context.actor;
-  if (view.adminOnly) return Boolean(actor && actor.type === "admin");
   const sections = state.context && state.context.access && state.context.access.sections;
   if (Array.isArray(sections)) return sections.includes(view.id);
+  if (Array.isArray(view.all) && !view.all.every(has)) return false;
   if (view.capability) return has(view.capability);
-  return (view.any || []).some(has);
+  return !(view.any || []).length || (view.any || []).some(has);
 }
 
 function renderNav() {
@@ -164,6 +178,12 @@ async function setView(viewId, options = {}) {
   if (!view) return;
   if (state.activeView === "stock" && viewId !== "stock") disconnectStockEvents();
   state.activeView = viewId;
+  if (options.syncUrl !== false) {
+    const url = new URL(location.href);
+    url.searchParams.set("view", viewId);
+    if (viewId !== "productAnalysis" && !options.preserveQuery) url.searchParams.delete("productId");
+    history.replaceState({}, "", url);
+  }
   safeLocalStorageSet("tahmisci:fatura:view", viewId);
   renderNav();
   document.getElementById("pageTitle").textContent = view.label;
@@ -181,29 +201,34 @@ async function setView(viewId, options = {}) {
 
 async function loadView(view, force = false) {
   const loader = {
-    dashboard: () => Promise.all([loadDashboard(force), loadSuppliers(force), loadShipments(force)]),
-    shipments: () => Promise.all([loadSuppliers(force), loadShipments(force)]),
+    dashboard: () => Promise.all([loadDashboard(force), loadSuppliers(force), loadShipments(force), loadStockReferences(force)]),
+    shipments: () => Promise.all([loadSuppliers(force), loadShipments(force), loadStockReferences(force)]),
     suppliers: () => loadSuppliers(force),
-    links: () => Promise.all([loadSuppliers(force), loadProductLinks(force)]),
+    links: () => Promise.all([loadSuppliers(force), loadProductLinks(force), loadStockReferences(force)]),
     documents: () => Promise.all([loadSuppliers(force), loadShipments(force), loadDocuments(force)]),
     ledger: () => Promise.all([loadSuppliers(force), loadLedger(force)]),
     users: () => loadUsers(force),
     stock: async () => {
-      await loadShipments(force);
+      if ([CAPABILITIES.read, CAPABILITIES.receiptCreate, CAPABILITIES.receiptApprove, CAPABILITIES.receiptReject, CAPABILITIES.accountingRead].some(has)) {
+        await loadShipments(force);
+      } else {
+        state.shipments = [];
+      }
       await loadStockView({ force });
     },
+    productAnalysis: () => loadProductAnalysis({ force, productId: new URL(location.href).searchParams.get("productId") || state.productAnalysis.selectedProductId }),
     settings: () => Promise.all([loadSettings(force), has(CAPABILITIES.accountingRead) || has(CAPABILITIES.users) ? loadAudit(force) : null])
   }[view];
   if (loader) await loader();
 }
 
-async function cachedLoad(key, fetcher, assign, force) {
+async function cachedLoad(key, fetcher, assign, force, revisionDomain = "procurement") {
   if (!force && state.loaded.has(key)) return state.loaded.get(key);
   const version = (loadVersions.get(key) || 0) + 1;
   loadVersions.set(key, version);
   const promise = Promise.resolve().then(fetcher).then((payload) => {
     if (loadVersions.get(key) !== version) return payload;
-    updateRevision(payload);
+    updateRevision(payload, revisionDomain);
     assign(payload);
     return payload;
   }).catch((error) => { if (loadVersions.get(key) === version) state.loaded.delete(key); throw error; });
@@ -212,6 +237,11 @@ async function cachedLoad(key, fetcher, assign, force) {
 }
 const loadDashboard = (force) => cachedLoad("dashboard", () => api("/dashboard"), (p) => { state.dashboard = p.dashboard || {}; }, force);
 const loadSuppliers = (force) => cachedLoad("suppliers", () => api("/suppliers?active=all"), (p) => { state.suppliers = p.suppliers || []; }, force);
+const loadStockReferences = (force) => cachedLoad("stock-references", () => api("/stock/references"), (p) => {
+  state.context = state.context || {};
+  state.context.stockProducts = Array.isArray(p.stockProducts) ? p.stockProducts : [];
+  state.context.stockLocations = Array.isArray(p.stockLocations) ? p.stockLocations : [];
+}, force, "catalog");
 const loadProductLinks = (force) => cachedLoad("links", () => api("/product-links?active=all"), (p) => { state.productLinks = p.productLinks || []; }, force);
 const loadShipments = (force) => cachedLoad("shipments", () => api("/shipments"), (p) => { state.shipments = p.shipments || []; }, force);
 const loadDocuments = (force) => cachedLoad("documents", () => api("/documents"), (p) => { state.documents = p.documents || []; }, force);
@@ -226,12 +256,72 @@ function loadingSkeleton(label) {
 
 function renderActiveView() {
   if (state.activeView === "stock") return;
+  if (state.activeView === "productAnalysis") {
+    content.innerHTML = renderProductAnalysis();
+    bindProductAnalysisInteractions();
+    return;
+  }
   const renderer = { dashboard: renderDashboard, shipments: renderShipments, suppliers: renderSuppliers, links: renderProductLinks, documents: renderDocuments, ledger: renderLedger, users: renderUsers, settings: renderSettingsAudit }[state.activeView];
   content.innerHTML = renderer ? renderer() : '<div class="empty-state"><p>Bu bölüm kullanılamıyor.</p></div>';
 }
 
 function notificationApiRoot() {
   return state.context && state.context.actor && state.context.actor.type === "admin" ? "/api/admin/notifications" : "/api/notifications";
+}
+
+function registerFaturaPwaNotificationIntro() {
+  if (!window.TahmisciPWA?.registerNotificationPrompt || !("Notification" in window) || !("PushManager" in window)) return;
+  window.TahmisciPWA.registerNotificationPrompt({
+    canShow: () => Boolean(state.context && state.context.actor),
+    onEnable: enableFaturaPush
+  });
+}
+
+async function enableFaturaPush() {
+  const preferencesResult = await api(`${notificationApiRoot()}/preferences`, { dedupe: false });
+  const publicKey = String(preferencesResult.capabilities && preferencesResult.capabilities.vapidPublicKey || "").trim();
+  if (!publicKey) throw new Error("Anlık bildirim sunucu anahtarı tanımlı değil.");
+  const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("Anlık bildirim izni verilmedi.");
+  const registration = await window.TahmisciPWA.ensureServiceWorker();
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodeBase64Url(publicKey) });
+  }
+  const deviceId = faturaNotificationDeviceId();
+  const headers = { "X-Tahmisci-Device-Id": deviceId, "X-Tahmisci-App-Id": "fatura", "X-Tahmisci-App-Target": "fatura" };
+  await api(`${notificationApiRoot()}/push-subscriptions`, {
+    method: "POST",
+    headers,
+    body: { subscription: subscription.toJSON(), deviceId, deviceName: faturaNotificationDeviceName(), appId: "fatura", appTarget: "fatura" }
+  });
+  await api(`${notificationApiRoot()}/preferences`, {
+    method: "PATCH",
+    body: { pushEnabled: true, channels: { push: true } }
+  });
+  return true;
+}
+
+function faturaNotificationDeviceId() {
+  const key = "tahmisci:fatura:notification-device-id";
+  let value = "";
+  try { value = localStorage.getItem(key) || ""; } catch (_error) {}
+  if (!value) {
+    value = requestId("fatura-device");
+    try { localStorage.setItem(key, value); } catch (_error) {}
+  }
+  return value;
+}
+
+function faturaNotificationDeviceName() {
+  const platform = String(navigator.userAgentData?.platform || navigator.platform || "Tarayıcı").slice(0, 60);
+  return `${platform} · ${window.matchMedia("(display-mode: standalone)").matches ? "Fatura PWA" : "Fatura Web"}`;
+}
+
+function decodeBase64Url(valueText) {
+  const padding = "=".repeat((4 - valueText.length % 4) % 4);
+  const raw = atob((valueText + padding).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 }
 
 async function loadNotifications(force = false) {
@@ -245,6 +335,7 @@ async function loadNotifications(force = false) {
 
 function renderNotificationState() {
   const count = Math.max(0, Number(state.unreadCount || 0));
+  void window.TahmisciPWA?.updateBadge?.(count);
   const badge = document.getElementById("notificationCount");
   badge.textContent = count > 99 ? "99+" : String(count);
   badge.hidden = count === 0;
@@ -670,44 +761,42 @@ function connectEvents(){
   stopEvents();
   const actor=state.context&&state.context.actor;
   if(!actor)return;
-  connectNotificationEvents();
-  if(actor.type!=="admin"&&!(actor.capabilities||[]).length)return;
-  const source=new EventSource("/api/procurement/v1/events",{withCredentials:true});
+  if(!window.EventSource)return;
+  const source=new EventSource("/api/events?appId=fatura",{withCredentials:true});
   state.eventSource=source;
-  source.addEventListener("procurement",(message)=>{
-    let event={};try{event=JSON.parse(message.data||"{}");}catch(_error){}
-    const scopes=EVENT_SCOPES[String(event.entityType||"")]||["dashboard"];
-    scopes.forEach((scope)=>pendingEventScopes.add(scope));
-    window.clearTimeout(eventRefreshTimer);
-    eventRefreshTimer=window.setTimeout(flushEventScopes,180);
-  });
+  source.addEventListener("event",handleGatewayEvent);
   source.onopen=()=>{document.getElementById("liveState").classList.remove("is-offline");};
   source.onerror=()=>{document.getElementById("liveState").classList.add("is-offline");};
 }
-function connectNotificationEvents(){
-  if(!window.EventSource||state.notificationEventSource)return;
-  const source=new EventSource(`${notificationApiRoot()}/events`,{withCredentials:true});
-  state.notificationEventSource=source;
-  source.addEventListener("ready",handleNotificationEvent);
-  source.addEventListener("notification",handleNotificationEvent);
-  source.onopen=()=>{document.getElementById("liveState").classList.remove("is-offline");};
-  // Sunucunun `retry: 5000` talimatı aynı bağlantıyı kontrollü biçimde yeniden kurar.
-  source.onerror=()=>{document.getElementById("liveState").classList.add("is-offline");};
-}
-function handleNotificationEvent(message){
-  let payload={};try{payload=JSON.parse(message.data||"{}");}catch(_error){return;}
-  if(Number.isSafeInteger(Number(payload.unreadCount)))state.unreadCount=Math.max(0,Number(payload.unreadCount));
-  const incoming=payload.notification;
-  if(incoming&&incoming.id){
-    const index=state.notifications.findIndex((item)=>item.id===incoming.id);
-    if(index>=0)state.notifications.splice(index,1,incoming);else state.notifications.unshift(incoming);
-    state.notifications=state.notifications.slice(0,40);
+function handleGatewayEvent(message){
+  let event={};try{event=JSON.parse(message.data||"{}");}catch(_error){return;}
+  const eventId=String(event.eventId||message.lastEventId||"");
+  if(eventId&&handledGatewayEventIds.has(eventId))return;
+  if(eventId){handledGatewayEventIds.add(eventId);if(handledGatewayEventIds.size>300)handledGatewayEventIds.delete(handledGatewayEventIds.values().next().value);}
+  const topic=String(event.topic||"system");
+  const revision=Math.max(0,Number(event.revision||0));
+  const prior=Math.max(0,Number(gatewayTopicRevisions.get(topic)||0));
+  if(revision>0&&prior>0&&revision<=prior)return;
+  if(revision>0)gatewayTopicRevisions.set(topic,revision);
+  if(topic==="system")return;
+  handleProductAnalysisGatewayEvent(event);
+  if(topic==="notification"){
+    state.loaded.delete("notifications");
+    window.clearTimeout(notificationTimer);
+    notificationTimer=window.setTimeout(()=>loadNotifications(true).catch(()=>null),120);
+    return;
   }
-  renderNotificationState();
-  if(!payload.requiresRefetch)return;
-  state.loaded.delete("notifications");
-  window.clearTimeout(notificationTimer);
-  notificationTimer=window.setTimeout(()=>loadNotifications(true).catch(()=>null),120);
+  if(topic==="inventory"||topic==="catalog"){
+    handleStockGatewayEvent(event);
+    if(topic==="catalog")state.loaded.delete("stock-references");
+    return;
+  }
+  const scopes=topic==="shipment"||topic==="workforce"
+    ? ["shipments","dashboard","stock"]
+    : EVENT_SCOPES[String(event.entityType||"")]||["dashboard"];
+  scopes.forEach((scope)=>pendingEventScopes.add(scope));
+  window.clearTimeout(eventRefreshTimer);
+  eventRefreshTimer=window.setTimeout(flushEventScopes,180);
 }
 async function flushEventScopes(){
   const scopes=[...pendingEventScopes];pendingEventScopes.clear();
@@ -727,7 +816,7 @@ async function flushEventScopes(){
   if(!state.activeView||!visibleViews.some((view)=>view.id===state.activeView)){state.activeView=visibleViews[0]&&visibleViews[0].id||"";}
   if(state.activeView&&(priorView!==state.activeView||scopes.includes(state.activeView)))await setView(state.activeView,{force:true});
 }
-function stopEvents(){window.clearTimeout(eventRefreshTimer);window.clearTimeout(notificationTimer);pendingEventScopes.clear();disconnectStockEvents();if(state.eventSource){state.eventSource.close();state.eventSource=null;}if(state.notificationEventSource){state.notificationEventSource.close();state.notificationEventSource=null;}}
+function stopEvents(){window.clearTimeout(eventRefreshTimer);window.clearTimeout(notificationTimer);pendingEventScopes.clear();if(state.eventSource){state.eventSource.close();state.eventSource=null;}}
 function updateNetworkState(){const element=document.getElementById("liveState");if(!element)return;element.classList.toggle("is-offline",!navigator.onLine);element.lastChild.textContent=navigator.onLine?" Güncel":" Çevrimdışı";}
 function handleViewError(error){if(error instanceof ApiError&&[401,403].includes(error.status)){if(error.status===401)return showAuth("Oturumunuz sona erdi. Lütfen yeniden giriş yapın.");}content.innerHTML=`<div class="error-state"><div><h2>Veriler alınamadı</h2><p>${escapeHtml(error.message||"Beklenmeyen hata")}</p><button class="ui-button ui-button--secondary" data-view-target="${escapeHtml(state.activeView)}">Yeniden dene</button></div></div>`;}
 function toast(message,error=false){const element=document.getElementById("toast");element.textContent=message;element.classList.toggle("is-error",error);element.classList.add("is-visible");window.clearTimeout(toastTimer);toastTimer=window.setTimeout(()=>element.classList.remove("is-visible"),3600);}

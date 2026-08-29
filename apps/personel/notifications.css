@@ -1,15 +1,4 @@
 /* Personel bildirim merkezi ve kanal tercihleri. */
-.personel-dashboard .workspace-head {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.personel-head-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.personel-notification-trigger,
 .personel-notification-close {
   position: relative;
   display: inline-grid;
@@ -27,19 +16,16 @@
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
-.personel-notification-trigger:hover,
 .personel-notification-close:hover {
   border-color: rgba(90, 47, 29, .32);
   box-shadow: var(--panel-shadow);
   transform: translateY(-1px);
 }
 
-.personel-notification-trigger:active,
 .personel-notification-close:active {
   transform: none;
 }
 
-.personel-notification-trigger:focus-visible,
 .personel-notification-close:focus-visible,
 .personel-notification-filters button:focus-visible,
 .personel-notification-views button:focus-visible,
@@ -48,7 +34,6 @@
   outline-offset: 2px;
 }
 
-.personel-notification-trigger svg,
 .personel-notification-close svg {
   width: 20px;
   height: 20px;
@@ -713,9 +698,6 @@ body.is-personel-notification-open {
     justify-content: flex-end;
   }
 
-  .personel-dashboard .workspace-head {
-    grid-template-columns: minmax(0, 1fr) 40px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

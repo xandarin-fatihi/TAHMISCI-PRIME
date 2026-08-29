@@ -7,7 +7,7 @@
     "apps/api"
   ],
   "scripts": {
-    "dev:local": "node ./apps/api/scripts/local-dev.js",
+    "dev:local": "node --watch ./apps/api/scripts/local-dev.js",
     "local:reset": "node ./apps/api/scripts/local-reset.js",
     "test:local": "node ./apps/api/scripts/local-smoke-test.js",
     "notifications:generate-vapid": "npm --workspace tahmisci-menu-backend run notifications:generate-vapid",

@@ -301,7 +301,7 @@ function createFileStore(filePath, options = {}) {
     const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
     try {
       await fs.writeFile(tmpPath, serialized, "utf8");
-      await fs.rename(tmpPath, filePath);
+      await renameWithTransientRetry(tmpPath, filePath);
       metrics.diskWriteCount += 1;
       recordDuration("durableWriteMs", "lastDurableWriteMs", performance.now() - startedAt);
     } catch (error) {
@@ -319,8 +319,27 @@ function createFileStore(filePath, options = {}) {
     const backupPath = path.join(backupRoot, `${new Date().toISOString().replace(/[:.]/g, "-")}-${safeLabel}.json`);
     const tmpPath = `${backupPath}.${process.pid}.tmp`;
     await fs.mkdir(backupRoot, { recursive: true });
-    await fs.writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
-    await fs.rename(tmpPath, backupPath);
+    try {
+      await fs.writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+      await renameWithTransientRetry(tmpPath, backupPath);
+    } catch (error) {
+      try { await fs.unlink(tmpPath); } catch (_cleanupError) { /* best effort */ }
+      throw error;
+    }
+  }
+
+  async function renameWithTransientRetry(sourcePath, targetPath) {
+    const delays = [25, 50, 100, 200, 400];
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await fs.rename(sourcePath, targetPath);
+        return;
+      } catch (error) {
+        const transient = error && ["EPERM", "EBUSY", "EACCES"].includes(error.code);
+        if (!transient || attempt >= delays.length) throw error;
+        await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+      }
+    }
   }
 
   function createSnapshotContext(data, stat, timings = {}) {
@@ -437,11 +456,13 @@ function defaultStore(passwordHash, recipePasswordHash) {
     recipeCatalog: [],
     recipeLinkReview: [],
     recipeUsers: [],
+    mudavimAccounts: [],
     deletedRecipeUsers: [],
     recipeAssignments: [],
     recipeActivity: [],
     authSessions: [],
     passwordResetChallenges: [],
+    emailVerificationChallenges: [],
     notifications: [],
     notificationPreferences: [],
     notificationOutbox: [],

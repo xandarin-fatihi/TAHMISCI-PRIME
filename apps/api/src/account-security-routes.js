@@ -3,7 +3,7 @@
 const crypto = require("crypto");
 
 const PUBLIC_RESET_MESSAGE = "Bilgiler kayıtlarımızla eşleşiyorsa doğrulama kodu gönderildi.";
-const ACCOUNT_SCOPES = new Set(["admin", "personel"]);
+const ACCOUNT_SCOPES = new Set(["admin", "personel", "mudavim"]);
 
 function registerAccountSecurityRoutes(options) {
   const {
@@ -32,7 +32,9 @@ function registerAccountSecurityRoutes(options) {
       return res.status(400).json({ ok: false, message: "Hesap kapsamı giriş ekranıyla eşleşmiyor." });
     }
     req.accountScope = scope;
-    return scope === "admin" ? auth.requireAdmin(req, res, next) : auth.requireActivePersonel(req, res, next);
+    if (scope === "admin") return auth.requireAdmin(req, res, next);
+    if (scope === "personel") return auth.requireActivePersonel(req, res, next);
+    return auth.requireMudavim(req, res, next);
   };
 
   const securityHandler = async (req, res, next) => {
@@ -150,7 +152,7 @@ function registerAccountSecurityRoutes(options) {
           to: destination,
           code,
           purpose: "email_verification",
-          accountLabel: req.accountScope === "admin" ? "Yönetici hesabı" : "Personel hesabı",
+          accountLabel: req.accountScope === "admin" ? "Yönetici hesabı" : req.accountScope === "personel" ? "Personel hesabı" : "Müdavim hesabı",
           ttlMinutes: config.emailVerificationTtlMinutes
         });
       } catch (error) {
@@ -185,7 +187,7 @@ function registerAccountSecurityRoutes(options) {
         const accountId = accountIdentity(req.accountScope, account);
         const challenge = (Array.isArray(data.emailVerificationChallenges) ? data.emailVerificationChallenges : [])
           .find((item) => item && item.id === challengeId);
-        if (!challenge || challenge.usedAt || challenge.revokedAt || challenge.scope !== req.accountScope
+        if (!challenge || challenge.usedAt || challenge.revokedAt || challenge.purpose !== "email_verification" || challenge.scope !== req.accountScope
           || String(challenge.targetUserId || "") !== accountId) return data;
         if (Date.parse(challenge.expiresAt || 0) <= Date.now()) {
           challenge.revokedAt = now;
@@ -247,12 +249,13 @@ function registerAccountSecurityRoutes(options) {
         return data;
       });
       if (req.accountScope === "admin") auth.clearAdminCookie(res);
-      else auth.clearRecipeCookie(res);
+      else if (req.accountScope === "personel") auth.clearRecipeCookie(res);
+      else auth.clearMudavimCookie(res);
       res.set("Cache-Control", "no-store");
       return res.json({
         ok: true,
         message: "Tüm cihazlardaki oturumlar ve bildirim bağlantıları kapatıldı.",
-        redirectTo: req.accountScope === "admin" ? "/yonetici/" : "/personel/"
+        redirectTo: req.accountScope === "admin" ? "/yonetici/" : req.accountScope === "personel" ? "/personel/" : "/mudavim/"
       });
     } catch (error) {
       return next(error);
@@ -328,7 +331,7 @@ function registerAccountSecurityRoutes(options) {
             to: destination,
             code,
             purpose: "password_reset",
-            accountLabel: scope === "admin" ? "Yönetici hesabı" : "Personel hesabı",
+            accountLabel: scope === "admin" ? "Yönetici hesabı" : scope === "personel" ? "Personel hesabı" : "Müdavim hesabı",
             ttlMinutes: config.passwordResetCodeTtlMinutes
           });
         } catch (error) {
@@ -397,14 +400,15 @@ function registerAccountSecurityRoutes(options) {
         appendSecurityAudit(data, req, { action: "password_reset_completed", scope, accountId: accountIdentity(scope, target.account), result: "success", createdAt: now }, config);
         outcome = {
           status: 200,
-          message: scope === "admin" ? "Yönetici parolası güncellendi." : "Personel parolası güncellendi.",
-          redirectTo: scope === "admin" ? "/login.html" : "/personel/"
+          message: scope === "admin" ? "Yönetici parolası güncellendi." : scope === "personel" ? "Personel parolası güncellendi." : "Müdavim parolası güncellendi.",
+          redirectTo: scope === "admin" ? "/login.html" : scope === "personel" ? "/personel/" : "/mudavim/"
         };
         return data;
       });
       if (outcome.status !== 200) return res.status(outcome.status).json({ ok: false, message: outcome.message });
       if (scope === "admin") auth.clearAdminCookie(res);
-      else auth.clearRecipeCookie(res);
+      else if (scope === "personel") auth.clearRecipeCookie(res);
+      else auth.clearMudavimCookie(res);
       return res.json({ ok: true, message: outcome.message, redirectTo: outcome.redirectTo });
     } catch (error) {
       return next(error);
@@ -415,6 +419,236 @@ function registerAccountSecurityRoutes(options) {
   app.post("/api/account/password-reset/admin/confirm", requireRequestOrigin, confirmLimiter, resetConfirm("admin"));
   app.post("/api/account/password-reset/personel/request", requireRequestOrigin, requestLimiter, resetRequest("personel"));
   app.post("/api/account/password-reset/personel/confirm", requireRequestOrigin, confirmLimiter, resetConfirm("personel"));
+  app.post("/api/account/password-reset/mudavim/request", requireRequestOrigin, requestLimiter, resetRequest("mudavim"));
+  app.post("/api/account/password-reset/mudavim/confirm", requireRequestOrigin, confirmLimiter, resetConfirm("mudavim"));
+
+  app.post("/api/mudavim/register", requireRequestOrigin, requestLimiter, async (req, res, next) => {
+    try {
+      if (!mailConfigured(config, mailService)) {
+        return res.status(503).json({ ok: false, message: "E-posta gönderimi henüz yapılandırılmamış." });
+      }
+      const fullName = String(req.body && req.body.fullName || "").trim().replace(/\s+/g, " ").slice(0, 120);
+      const email = normalizeAccountEmail(req.body && req.body.email);
+      const password = String(req.body && req.body.password || "");
+      const passwordConfirm = String(req.body && req.body.passwordConfirm || "");
+      if (fullName.length < 2) return res.status(400).json({ ok: false, message: "Ad soyad alanını doldurun." });
+      if (!isEmailLike(email)) return res.status(400).json({ ok: false, message: "Geçerli bir e-posta adresi girin." });
+      if (password !== passwordConfirm) return res.status(400).json({ ok: false, message: "Şifreler eşleşmiyor." });
+      if (req.body && req.body.termsAccepted !== true) return res.status(400).json({ ok: false, message: "Üyelik koşulları ve KVKK onayı gerekli." });
+      const passwordError = validatePassword(password);
+      if (passwordError) return res.status(400).json({ ok: false, message: passwordError });
+
+      const snapshot = await store.read();
+      const existingPending = (Array.isArray(snapshot.mudavimAccounts) ? snapshot.mudavimAccounts : [])
+        .find((item) => item && normalizeAccountEmail(item.emailNormalized || item.email) === email
+          && !item.emailVerifiedAt && item.status === "pending_email_verification");
+      const accountId = existingPending ? String(existingPending.id) : `mudavim-${crypto.randomUUID()}`;
+      if (!existingPending) assertUniqueEmail(snapshot, "mudavim", email, accountId);
+      const activeChallenge = latestActiveChallenge(snapshot.emailVerificationChallenges, {
+        purpose: "email_verification", scope: "mudavim", targetUserId: accountId
+      });
+      const resendMs = config.emailVerificationResendSeconds * 1000;
+      if (activeChallenge && Date.now() - Date.parse(activeChallenge.createdAt || 0) < resendMs) {
+        const retryAfterSeconds = Math.max(1, Math.ceil((resendMs - (Date.now() - Date.parse(activeChallenge.createdAt))) / 1000));
+        res.set("Retry-After", String(retryAfterSeconds));
+        return res.status(429).json({ ok: false, retryAfterSeconds, message: `Yeni kod için ${retryAfterSeconds} saniye bekleyin.` });
+      }
+
+      const passwordHash = await bcrypt.hash(password, config.bcryptRounds);
+      const challengeId = `verify-${crypto.randomUUID()}`;
+      const code = securityCode(config);
+      const createdAt = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + config.emailVerificationTtlMinutes * 60 * 1000).toISOString();
+      let version = 1;
+      await store.update((data) => {
+        data.mudavimAccounts = Array.isArray(data.mudavimAccounts) ? data.mudavimAccounts : [];
+        let account = data.mudavimAccounts.find((item) => item && String(item.id || "") === accountId);
+        if (!account) {
+          assertUniqueEmail(data, "mudavim", email, accountId);
+          account = { id: accountId, createdAt };
+          data.mudavimAccounts.push(account);
+        } else if (account.emailVerifiedAt || account.status !== "pending_email_verification") {
+          throw httpError(409, "Bu e-posta adresi başka bir hesapta kullanılıyor.");
+        }
+        assertUniqueEmail(data, "mudavim", email, accountId);
+        account.email = email;
+        account.emailNormalized = email;
+        account.pendingEmail = "";
+        account.emailVerifiedAt = null;
+        account.emailVerificationRequired = true;
+        account.emailVerificationVersion = Math.max(0, Number(account.emailVerificationVersion || 0)) + 1;
+        account.passwordHash = passwordHash;
+        account.fullName = fullName;
+        account.alias = String(req.body && req.body.alias || fullName.split(" ")[0] || "Müdavim").trim().slice(0, 60);
+        account.birthDate = "";
+        account.campaignConsent = req.body && req.body.campaignConsent === true;
+        account.status = "pending_email_verification";
+        account.updatedAt = createdAt;
+        version = account.emailVerificationVersion;
+        revokeEmailChallenges(data, "mudavim", accountId, createdAt);
+        data.emailVerificationChallenges = (Array.isArray(data.emailVerificationChallenges) ? data.emailVerificationChallenges : []).concat({
+          id: challengeId,
+          purpose: "email_verification",
+          scope: "mudavim",
+          targetUserId: accountId,
+          destinationHash: hashEmail(email, config),
+          codeHash: hashChallengeCode({ challengeId, purpose: "email_verification", scope: "mudavim", targetUserId: accountId, version, code }, config),
+          accountVersion: version,
+          attempts: 0,
+          expiresAt,
+          createdAt,
+          usedAt: null,
+          revokedAt: null
+        }).slice(-500);
+        appendSecurityAudit(data, req, { action: "mudavim_registered", scope: "mudavim", accountId, result: "pending_email_verification", createdAt }, config);
+        return data;
+      });
+
+      try {
+        await sendSecurityCode(mailService, config, {
+          to: email,
+          code,
+          purpose: "email_verification",
+          accountLabel: "Müdavim hesabı",
+          ttlMinutes: config.emailVerificationTtlMinutes
+        });
+      } catch (_error) {
+        await revokeChallengeAfterDeliveryFailure(store, "emailVerificationChallenges", challengeId, req, config, "mudavim_verification_delivery_failed");
+        return res.status(503).json({ ok: false, message: "Doğrulama e-postası gönderilemedi." });
+      }
+      return res.status(existingPending ? 200 : 201).json({
+        ok: true,
+        challengeId,
+        expiresAt,
+        maskedEmail: maskEmail(email),
+        message: "Altı haneli doğrulama kodu e-posta adresinize gönderildi."
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.post("/api/mudavim/register/confirm", requireRequestOrigin, confirmLimiter, async (req, res, next) => {
+    try {
+      const challengeId = String(req.body && req.body.challengeId || "").trim();
+      const code = String(req.body && req.body.code || "").replace(/\D/g, "");
+      if (!/^verify-[a-f0-9-]{36}$/i.test(challengeId) || !/^\d{6}$/.test(code)) {
+        return res.status(400).json({ ok: false, message: "Doğrulama bilgileri geçersiz." });
+      }
+      let outcome = { status: 400, message: "Doğrulama bilgileri geçersiz." };
+      await store.update((data) => {
+        const now = new Date().toISOString();
+        const challenge = (Array.isArray(data.emailVerificationChallenges) ? data.emailVerificationChallenges : [])
+          .find((item) => item && item.id === challengeId && item.purpose === "email_verification" && item.scope === "mudavim");
+        if (!challenge || challenge.usedAt || challenge.revokedAt) return data;
+        const account = (Array.isArray(data.mudavimAccounts) ? data.mudavimAccounts : [])
+          .find((item) => item && String(item.id || "") === String(challenge.targetUserId || ""));
+        if (!account || Date.parse(challenge.expiresAt || 0) <= Date.now()) {
+          challenge.revokedAt = now;
+          outcome = { status: 400, message: "Doğrulama kodunun süresi doldu. Yeni kod isteyin." };
+          return data;
+        }
+        challenge.attempts = Number(challenge.attempts || 0) + 1;
+        if (challenge.attempts > config.emailVerificationMaxAttempts) {
+          challenge.revokedAt = now;
+          outcome = { status: 429, message: "Çok fazla hatalı deneme yapıldı." };
+          return data;
+        }
+        const version = Math.max(0, Number(account.emailVerificationVersion || 0));
+        const expected = hashChallengeCode({ challengeId, purpose: "email_verification", scope: "mudavim", targetUserId: account.id, version, code }, config);
+        const email = normalizeAccountEmail(account.emailNormalized || account.email);
+        if (!safeEqual(challenge.codeHash, expected) || challenge.destinationHash !== hashEmail(email, config)
+          || Number(challenge.accountVersion || 0) !== version) {
+          outcome = { status: 401, message: "Doğrulama kodu hatalı." };
+          return data;
+        }
+        assertUniqueEmail(data, "mudavim", email, account.id);
+        account.email = email;
+        account.emailNormalized = email;
+        account.emailVerifiedAt = now;
+        account.emailVerificationRequired = false;
+        account.pendingEmail = "";
+        account.status = "active";
+        account.updatedAt = now;
+        challenge.usedAt = now;
+        appendSecurityAudit(data, req, { action: "email_verified", scope: "mudavim", accountId: account.id, result: "success", createdAt: now }, config);
+        outcome = { status: 200, message: "E-posta doğrulandı. Şimdi giriş yapabilirsiniz." };
+        return data;
+      });
+      return res.status(outcome.status).json({ ok: outcome.status === 200, message: outcome.message });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.post("/api/mudavim/login", requireRequestOrigin, confirmLimiter, async (req, res, next) => {
+    try {
+      const email = normalizeAccountEmail(req.body && req.body.email);
+      const password = String(req.body && req.body.password || "");
+      const data = await store.read();
+      const account = (Array.isArray(data.mudavimAccounts) ? data.mudavimAccounts : [])
+        .find((item) => item && normalizeAccountEmail(item.emailNormalized || item.email) === email);
+      const valid = Boolean(account && account.passwordHash) && await bcrypt.compare(password, account.passwordHash);
+      if (!valid) return res.status(401).json({ ok: false, message: "E-posta veya şifre hatalı." });
+      if (account.status !== "active" || !account.emailVerifiedAt) {
+        return res.status(403).json({ ok: false, code: "EMAIL_VERIFICATION_REQUIRED", message: "Giriş için önce e-posta adresinizi doğrulayın." });
+      }
+      const session = await auth.createMudavimSession({ id: account.id, username: account.emailNormalized, name: account.fullName });
+      auth.attachMudavimCookie(res, session.token);
+      res.set("Cache-Control", "no-store");
+      return res.json({ ok: true, member: publicMudavimAccount(account), loyalty: emptyLoyalty() });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.get("/api/mudavim/me", auth.requireMudavim, async (req, res, next) => {
+    try {
+      const data = await requestStore(req, store);
+      const account = resolveAuthenticatedAccount(data, req, "mudavim");
+      res.set("Cache-Control", "no-store");
+      return res.json({ ok: true, member: publicMudavimAccount(account), loyalty: emptyLoyalty() });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.patch("/api/mudavim/profile", requireRequestOrigin, auth.requireMudavim, async (req, res, next) => {
+    try {
+      const fullName = String(req.body && req.body.fullName || "").trim().replace(/\s+/g, " ").slice(0, 120);
+      const alias = String(req.body && req.body.alias || "").trim().slice(0, 60);
+      const birthDate = String(req.body && req.body.birthDate || "").trim();
+      if (fullName.length < 2 || alias.length < 2) return res.status(400).json({ ok: false, message: "Ad soyad ve profil adı gerekli." });
+      if (birthDate && !/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return res.status(400).json({ ok: false, message: "Doğum tarihi geçersiz." });
+      let member = null;
+      await store.update((data) => {
+        const account = resolveAuthenticatedAccount(data, req, "mudavim");
+        if (!account) throw httpError(404, "Hesap bulunamadı.");
+        account.fullName = fullName;
+        account.alias = alias;
+        account.birthDate = birthDate;
+        account.campaignConsent = req.body && req.body.campaignConsent === true;
+        account.updatedAt = new Date().toISOString();
+        member = publicMudavimAccount(account);
+        appendSecurityAudit(data, req, { action: "mudavim_profile_updated", scope: "mudavim", accountId: account.id, result: "success", createdAt: account.updatedAt }, config);
+        return data;
+      });
+      return res.json({ ok: true, member, message: "Profil güncellendi." });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.post("/api/mudavim/logout", requireRequestOrigin, auth.requireMudavim, async (req, res, next) => {
+    try {
+      await auth.revokeRequestSession(req, ["mudavim"]);
+      auth.clearMudavimCookie(res);
+      res.set("Cache-Control", "no-store");
+      return res.json({ ok: true });
+    } catch (error) {
+      return next(error);
+    }
+  });
 
   // Geriye uyumlu Yönetici yolu kaynak kapsamını sunucu tarafında kilitler.
   app.post("/api/admin/password-reset/request", requireRequestOrigin, requestLimiter, resetRequest("admin"));
@@ -451,6 +685,11 @@ async function requestStore(req, store) {
 
 function resolveAuthenticatedAccount(data, req, scope) {
   if (scope === "admin") return data && data.admin || null;
+  if (scope === "mudavim") {
+    const userId = String(req.mudavimUser && req.mudavimUser.id || req.mudavim && req.mudavim.userId || "").trim();
+    return (Array.isArray(data && data.mudavimAccounts) ? data.mudavimAccounts : [])
+      .find((user) => user && String(user.id || "") === userId && user.status === "active") || null;
+  }
   const userId = String(req.recipeUser && req.recipeUser.id || req.recipe && req.recipe.userId || "").trim();
   if (!userId) return null;
   return (Array.isArray(data && data.recipeUsers) ? data.recipeUsers : [])
@@ -467,11 +706,13 @@ function resolveResetAccount(data, scope, identifier, config) {
     if (emergency && normalizeIdentifier(emergency) === identifier) return { account, destination: emergency, emergency: true };
     return null;
   }
-  const users = Array.isArray(data && data.recipeUsers) ? data.recipeUsers : [];
+  const users = scope === "mudavim"
+    ? (Array.isArray(data && data.mudavimAccounts) ? data.mudavimAccounts : [])
+    : (Array.isArray(data && data.recipeUsers) ? data.recipeUsers : []);
   const account = users.find((user) => {
-    if (!user || user.active === false || !String(user.id || "").trim()) return false;
+    if (!user || user.active === false || user.status === "disabled" || !String(user.id || "").trim()) return false;
     const verified = verifiedAccountEmail(user);
-    return normalizeIdentifier(user.username) === identifier || (verified && normalizeIdentifier(verified) === identifier);
+    return (scope !== "mudavim" && normalizeIdentifier(user.username) === identifier) || (verified && normalizeIdentifier(verified) === identifier);
   });
   const destination = account && verifiedAccountEmail(account);
   if (account && destination) return { account, destination, passwordField: "passwordHash", updatedAtField: "updatedAt" };
@@ -486,8 +727,11 @@ function resolveChallengeAccount(data, scope, accountId, config) {
     return destination ? { account, destination, passwordField: "passwordHash", updatedAtField: "updatedAt" } : null;
   }
   if (!String(accountId || "").trim()) return null;
-  const account = (Array.isArray(data && data.recipeUsers) ? data.recipeUsers : [])
-    .find((user) => user && user.active !== false && String(user.id || "") === String(accountId || ""));
+  const users = scope === "mudavim"
+    ? (Array.isArray(data && data.mudavimAccounts) ? data.mudavimAccounts : [])
+    : (Array.isArray(data && data.recipeUsers) ? data.recipeUsers : []);
+  const account = users.find((user) => user && user.active !== false && user.status !== "disabled"
+    && String(user.id || "") === String(accountId || ""));
   const destination = account && verifiedAccountEmail(account);
   return account && destination ? { account, destination, passwordField: "passwordHash", updatedAtField: "updatedAt" } : null;
 }
@@ -580,11 +824,15 @@ function assignUnverifiedAccountEmail(data, scope, account, rawEmail, now = new 
 }
 
 function assertUniqueEmail(data, scope, email, accountId) {
-  const accounts = scope === "admin" ? [data.admin] : (Array.isArray(data.recipeUsers) ? data.recipeUsers : []);
-  const duplicate = accounts.some((account) => {
-    if (!account || accountIdentity(scope, account) === accountId) return false;
-    return [account.emailNormalized, account.email, account.pendingEmail]
-      .some((value) => normalizeAccountEmail(value) === email);
+  const accounts = [
+    { scope: "admin", account: data.admin },
+    ...(Array.isArray(data.recipeUsers) ? data.recipeUsers : []).map((account) => ({ scope: "personel", account })),
+    ...(Array.isArray(data.mudavimAccounts) ? data.mudavimAccounts : []).map((account) => ({ scope: "mudavim", account }))
+  ];
+  const duplicate = accounts.some((entry) => {
+    const account = entry.account;
+    if (!account || (entry.scope === scope && accountIdentity(scope, account) === accountId)) return false;
+    return [account.emailNormalized, account.email, account.pendingEmail].some((value) => normalizeAccountEmail(value) === email);
   });
   if (duplicate) throw httpError(409, "Bu e-posta adresi başka bir hesapta kullanılıyor.");
 }
@@ -619,6 +867,7 @@ function latestActiveChallenge(items, match) {
 }
 
 function syncVerifiedNotificationEmail(data, scope, accountId, email, updatedAt) {
+  if (scope === "mudavim") return;
   const ownerRole = scope === "admin" ? "manager" : "personnel";
   const ownerId = scope === "admin" ? "manager" : accountId;
   const preference = (Array.isArray(data.notificationPreferences) ? data.notificationPreferences : [])
@@ -630,13 +879,14 @@ function syncVerifiedNotificationEmail(data, scope, accountId, email, updatedAt)
 }
 
 function revokeAccountSessionsAndPush(data, scope, accountId, now) {
-  if (scope === "personel" && !String(accountId || "").trim()) return;
+  if (["personel", "mudavim"].includes(scope) && !String(accountId || "").trim()) return;
   data.authSessions = (Array.isArray(data.authSessions) ? data.authSessions : []).map((session) => {
     const matches = scope === "admin"
       ? session && session.role === "admin"
-      : session && session.role === "personel" && String(session.userId || "") === accountId;
+      : session && session.role === scope && String(session.userId || "") === accountId;
     return matches && !session.revokedAt ? { ...session, revokedAt: now } : session;
   });
+  if (scope === "mudavim") return;
   const ownerRole = scope === "admin" ? "manager" : "personnel";
   const ownerId = scope === "admin" ? "manager" : accountId;
   data.pushSubscriptions = (Array.isArray(data.pushSubscriptions) ? data.pushSubscriptions : []).map((item) => {
@@ -671,6 +921,27 @@ async function revokeChallengeAfterDeliveryFailure(store, collection, challengeI
     appendSecurityAudit(data, req, { action, scope: challenge && challenge.scope, accountId: challenge && challenge.targetUserId, result: "failed", createdAt: now }, config);
     return data;
   });
+}
+
+function publicMudavimAccount(account) {
+  const source = account && typeof account === "object" ? account : {};
+  return {
+    id: String(source.id || ""),
+    email: normalizeAccountEmail(source.emailNormalized || source.email),
+    pendingEmail: normalizeAccountEmail(source.pendingEmail),
+    emailVerifiedAt: source.emailVerifiedAt || null,
+    fullName: String(source.fullName || ""),
+    alias: String(source.alias || ""),
+    birthDate: String(source.birthDate || ""),
+    campaignConsent: source.campaignConsent === true,
+    status: String(source.status || "pending_email_verification"),
+    createdAt: source.createdAt || null,
+    updatedAt: source.updatedAt || null
+  };
+}
+
+function emptyLoyalty() {
+  return { visitCount: 0, rewardTarget: 0, level: "", recentVisits: [], rewards: [], available: false };
 }
 
 function publicResetResponse(challengeId, scope, config) {

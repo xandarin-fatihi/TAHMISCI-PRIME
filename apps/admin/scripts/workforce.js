@@ -27,10 +27,7 @@
   };
 
   const state = {
-    data: { users: [], tasks: [], shipments: [], shiftRequests: [], shiftPlans: [] },
-    stock: { products: [] },
-    tab: "shipments",
-    selectedShipmentId: "",
+    data: { users: [], tasks: [], shiftRequests: [], shiftPlans: [] },
     selectedTaskId: "",
     weekStart: mondayOf(new Date()),
     draftPlans: null,
@@ -38,7 +35,6 @@
     selectedUsers: new Set(),
     targetType: "all",
     taskView: "all",
-    shipmentView: "onay_bekliyor",
     taskItems: ["", ""],
     taskDraft: { title: "", description: "", priority: "normal", dueDate: "", dueTime: "", managerNote: "" },
     workforceRevision: 0,
@@ -46,18 +42,11 @@
     loaded: false,
     stale: true,
     loadPromise: null,
-    eventSource: null,
-    reconnectTimer: null,
-    reconnectAttempt: 0,
+    gatewayBound: false,
     mounted: false,
     clientId: requestId("admin-workforce-events"),
     taskFormDirty: false,
     busy: false,
-    stockLocations: [],
-    stockLocationsPromise: null,
-    shipmentDestinations: Object.create(null),
-    shipmentInventory: new Map(),
-    shipmentInventoryPromises: new Map(),
     templates: {
       morning: { startTime: "08:00", endTime: "16:00" },
       evening: { startTime: "16:00", endTime: "00:00" },
@@ -231,7 +220,6 @@
     state.data = {
       users: workforce.users || [],
       tasks: workforce.tasks || [],
-      shipments: workforce.shipments || [],
       shiftRequests: workforce.shiftRequests || [],
       shiftPlans: workforce.shiftPlans || [],
       shiftPlanRevisions: workforce.shiftPlanRevisions || [],
@@ -243,31 +231,6 @@
     if (workforce.shiftSettings) {
       state.templates.morning = { ...state.templates.morning, ...(workforce.shiftSettings.morning || {}) };
       state.templates.evening = { ...state.templates.evening, ...(workforce.shiftSettings.evening || {}) };
-    }
-    if (workforce.stockState) state.stock = workforce.stockState;
-    else {
-      let bridgedStock = null;
-      try {
-        const snapshot = window.TahmisciAdminBridge && typeof window.TahmisciAdminBridge.snapshot === "function"
-          ? window.TahmisciAdminBridge.snapshot()
-          : null;
-        if (snapshot && snapshot.stockState && Array.isArray(snapshot.stockState.products) && snapshot.stockState.products.length) {
-          bridgedStock = snapshot.stockState;
-        }
-      } catch (_error) {}
-      if (bridgedStock) {
-        state.stock = bridgedStock;
-      } else {
-        try {
-          const stock = await api("/api/stock");
-          state.stock = stock.stockState || state.stock;
-        } catch (_error) {
-          state.stock = { products: [] };
-        }
-      }
-    }
-    if (!state.selectedShipmentId) {
-      state.selectedShipmentId = (state.data.shipments.find((item) => item.status === "onay_bekliyor") || state.data.shipments[0] || {}).id || "";
     }
     const persistedDrafts = state.data.shiftPlans.filter((plan) =>
       plan.weekStart === state.weekStart && plan.status === "draft"
@@ -639,231 +602,8 @@
     }
   }
 
-  function stockProduct(productId) {
-    return (state.stock.products || []).find((item) => String(item.id) === String(productId)) || {};
-  }
-
-  async function ensureStockLocations() {
-    const stockLocations = window.TahmisciStockLocations;
-    if (stockLocations && typeof stockLocations.locations === "function") {
-      const cached = stockLocations.locations();
-      if (cached.length) {
-        state.stockLocations = cached;
-        return cached;
-      }
-    }
-    if (state.stockLocationsPromise) return state.stockLocationsPromise;
-    state.stockLocationsPromise = (async () => {
-      if (stockLocations && typeof stockLocations.ensureLoaded === "function") {
-        state.stockLocations = await stockLocations.ensureLoaded();
-      } else {
-        const result = await api("/api/admin/stock/locations");
-        state.stockLocations = Array.isArray(result.locations) ? result.locations : [];
-      }
-      return state.stockLocations;
-    })().finally(() => { state.stockLocationsPromise = null; });
-    return state.stockLocationsPromise;
-  }
-
-  function shipmentDestinationId(shipment) {
-    return String(state.shipmentDestinations[shipment.id] || shipment.destinationLocationId || "");
-  }
-
-  function shipmentDestinationName(shipment) {
-    if (shipment.destinationLocation && shipment.destinationLocation.name) return shipment.destinationLocation.name;
-    const id = shipmentDestinationId(shipment);
-    return (state.stockLocations.find((location) => String(location.id) === id) || {}).name || "Hedef depo seçilmedi";
-  }
-
-  async function ensureShipmentInventory(locationId, force = false) {
-    const id = String(locationId || "");
-    if (!id) return null;
-    if (!force && state.shipmentInventory.has(id)) return state.shipmentInventory.get(id);
-    if (state.shipmentInventoryPromises.has(id)) return state.shipmentInventoryPromises.get(id);
-    const promise = api(`/api/admin/stock/inventory?locationId=${encodeURIComponent(id)}`)
-      .then((result) => {
-        const map = new Map();
-        (Array.isArray(result.balances) ? result.balances : []).forEach((balance) => {
-          const product = balance.product || {};
-          const productId = String(balance.productId || product.id || "");
-          if (productId) map.set(productId, balance);
-        });
-        state.shipmentInventory.set(id, map);
-        return map;
-      })
-      .finally(() => state.shipmentInventoryPromises.delete(id));
-    state.shipmentInventoryPromises.set(id, promise);
-    return promise;
-  }
-
   function operationHost(kind) {
-    return kind === "shipments"
-      ? $("#workforceShipmentsPanel")
-      : $("#workforceShiftsPanel");
-  }
-
-  function shipmentLineValues(line, destinationId = "") {
-    const product = stockProduct(line.productId);
-    const destinationBalance = destinationId && state.shipmentInventory.get(String(destinationId))?.get(String(line.productId));
-    const current = Number(destinationBalance?.quantity ?? line.currentStock ?? line.currentQuantity ?? product.stockQuantity ?? product.quantity ?? 0);
-    const conversion = Number(line.conversionFactor || 1);
-    const increment = Number(line.baseQuantity ?? line.baseAmount ?? Number(line.quantity || 0) * conversion);
-    const expected = Number(line.expectedStock ?? current + increment);
-    return { product, current, increment, expected };
-  }
-
-  function renderShipments() {
-    const host = operationHost("shipments");
-    if (!host) return;
-    const allShipments = [...(state.data.shipments || [])].sort((a, b) => {
-      if ((a.status === "onay_bekliyor") !== (b.status === "onay_bekliyor")) return a.status === "onay_bekliyor" ? -1 : 1;
-      return Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0);
-    });
-    const shipments = state.shipmentView === "all"
-      ? allShipments
-      : allShipments.filter((shipment) => shipment.status === state.shipmentView);
-    const selected = shipments.find((item) => String(item.id) === String(state.selectedShipmentId)) || shipments[0];
-    if (selected) state.selectedShipmentId = selected.id;
-    const pending = allShipments.filter((item) => item.status === "onay_bekliyor").length;
-    const approvedToday = allShipments.filter((item) => item.status === "onaylandı" && isoDate(item.approvedAt || "") === isoDate(new Date())).length;
-    host.innerHTML = `
-      <div class="workforce-rule">${icon("info")}<div><strong>İş kuralı: Gönderilen tüm sevkiyatlar ONAY BEKLİYOR durumundadır.</strong><span>“Onayla ve Stoğa Ekle” işleminden önce stoklara yansımaz.</span></div></div>
-      <div class="workforce-operation-stats">
-        <article>${icon("clock")}<div><span>Bekleyen</span><strong>${pending}</strong><small>Onay bekleyen sevkiyat</small></div></article>
-        <article>${icon("check")}<div><span>Bugün onaylanan</span><strong>${approvedToday}</strong><small>Bugün stoğa eklenen</small></div></article>
-        <article>${icon("package")}<div><span>Stok etkisi</span><strong>${pending ? "Bekliyor" : "Güncel"}</strong><small>Onaylanana kadar geçerli değil</small></div></article>
-      </div>
-      <div class="workforce-shipment-layout">
-        <section class="workforce-shipment-list">
-          <div class="workforce-list-heading"><div><p class="eyebrow">Gelen Bildirimler</p><h3>Sevkiyatlar</h3></div><span>${shipments.length} kayıt</span></div>
-          <div class="workforce-task-view-tabs" role="tablist" aria-label="Sevkiyat filtresi">
-            ${[["onay_bekliyor", "Onay bekliyor"], ["onaylandı", "Onaylandı"], ["reddedildi", "Reddedildi"], ["all", "Tümü"]].map(([value, label]) => `<button class="${state.shipmentView === value ? "is-active" : ""}" type="button" data-shipment-view="${value}">${label}</button>`).join("")}
-          </div>
-          <div>
-            ${shipments.length ? shipments.map((shipment) => {
-              const summary = (shipment.items || []).slice(0, 2).map((item) => `${item.name}: ${item.quantity} ${item.unit}`).join(" · ");
-              return `<button class="workforce-shipment-card ${String(shipment.id) === String(state.selectedShipmentId) ? "is-selected" : ""}" type="button" data-shipment="${esc(shipment.id)}">
-                <span class="workforce-avatar">${esc(initials(shipment.userName))}</span>
-                <span><strong>${esc(shipment.userName || "Personel")}</strong><small>${esc(dateTime(shipment.createdAt))}</small><b>${(shipment.items || []).length} ürün · ${esc(shipmentDestinationName(shipment))}</b><em>${esc(summary || "Ürün bilgisi yok")}</em></span>
-                <i class="workforce-status is-${esc(shipment.status)}">${esc(statusLabel(shipment.status))}</i>
-              </button>`;
-            }).join("") : `<div class="workforce-empty">${icon("package")}<h4>Sevkiyat bildirimi yok</h4><p>Personel bildirimleri burada görünecek.</p></div>`}
-          </div>
-        </section>
-        <section class="workforce-shipment-detail" id="workforceShipmentDetail"></section>
-      </div>
-    `;
-    if (selected) renderShipmentDetail(selected);
-    else $("#workforceShipmentDetail").innerHTML = `<div class="workforce-empty">${icon("package")}<h4>Detay seçilmedi</h4><p>İncelemek için soldan bir sevkiyat seçin.</p></div>`;
-    $$("[data-shipment]", host).forEach((button) => button.addEventListener("click", () => {
-      state.selectedShipmentId = button.dataset.shipment;
-      renderShipments();
-    }));
-    $$("[data-shipment-view]", host).forEach((button) => button.addEventListener("click", () => {
-      state.shipmentView = button.dataset.shipmentView;
-      state.selectedShipmentId = "";
-      renderShipments();
-    }));
-  }
-
-  function renderShipmentDetail(shipment) {
-    const host = $("#workforceShipmentDetail");
-    if (!host) return;
-    const pending = shipment.status === "onay_bekliyor";
-    const destinationId = shipmentDestinationId(shipment);
-    const activeLocations = state.stockLocations.filter((location) => location.active !== false);
-    if (destinationId && !state.shipmentInventory.has(destinationId) && !state.shipmentInventoryPromises.has(destinationId)) {
-      ensureShipmentInventory(destinationId).then(() => {
-        if (String(state.selectedShipmentId) === String(shipment.id)) renderShipmentDetail(shipment);
-      }).catch((error) => showMessage(error.message, "error"));
-    }
-    host.innerHTML = `
-      <div class="workforce-detail-head">
-        <div><p class="eyebrow">Sevkiyat Detayı</p><h3>${esc(shipment.userName || "Personel")}</h3><span>${esc(dateTime(shipment.createdAt))}</span></div>
-        <em class="workforce-status is-${esc(shipment.status)}">${esc(statusLabel(shipment.status))}</em>
-      </div>
-      <label class="workforce-field workforce-shipment-destination"><span>Stoğun ekleneceği depo <small>(zorunlu)</small></span>
-        <select id="workforceShipmentDestination" ${pending ? "" : "disabled"}>
-          <option value="">Hedef depo seçin</option>
-          ${activeLocations.map((location) => `<option value="${esc(location.id)}"${String(location.id) === destinationId ? " selected" : ""}>${esc(location.name)} (${esc(location.code || location.type)})</option>`).join("")}
-        </select>
-        <small>Onay, yalnız seçilen deponun bakiyesini atomik olarak artırır.</small>
-      </label>
-      <div class="workforce-shipment-table">
-        <div class="workforce-shipment-table-head"><span>Ürün</span><span>Mevcut Stok</span><span>Bildirilen</span><span>Onay Sonrası</span></div>
-        ${(shipment.items || []).map((line) => {
-          const values = shipmentLineValues(line, destinationId);
-          const baseUnit = line.currentStockUnit || line.baseUnit || values.product.unit || line.unit || "";
-          return `<div class="workforce-shipment-table-row">
-            <span><strong>${esc(line.name || values.product.name || "Ürün")}</strong><small>${esc(line.category || values.product.category || "Kategori yok")}</small></span>
-            <span>${esc(values.current)} ${esc(baseUnit)}</span>
-            <span><b>+${esc(line.quantity)} ${esc(line.unit)}</b></span>
-            <span><strong>${esc(values.expected)} ${esc(baseUnit)}</strong></span>
-          </div>`;
-        }).join("")}
-      </div>
-      ${pending ? `<div class="workforce-stock-warning">${icon("info")} Stok henüz güncellenmedi. ${destinationId ? `${esc(shipmentDestinationName(shipment))} seçildi; onay anında bakiye yeniden doğrulanacak.` : "Onaydan önce hedef depo seçilmelidir."}</div>` : ""}
-      <label class="workforce-field"><span>Yönetici notu <small>(reddetmede zorunlu)</small></span><textarea id="workforceShipmentNote" maxlength="250" rows="4" ${pending ? "" : "disabled"} placeholder="Kararınıza ilişkin kısa bir not ekleyin...">${esc(shipment.adminNote || shipment.rejectionReason || "")}</textarea></label>
-      ${pending ? `<div class="workforce-stock-warning">${icon("info")} Bu sevkiyat bütün kalemleriyle tek atomik işlem olarak onaylanır; kısmi onay uygulanmaz.</div>` : ""}
-      ${pending ? `<div class="workforce-decision-actions">
-        <button class="workforce-reject-button ui-button ui-button--danger" type="button" data-shipment-decision="reject" data-workforce-action data-operation-class="immediate-operation">Reddet</button>
-        <button class="workforce-primary-button ui-button ui-button--primary" type="button" data-shipment-decision="approve" data-workforce-action data-operation-class="immediate-operation">${icon("check")} Onayla ve Stoğa Ekle</button>
-      </div>` : `<div class="workforce-decision-summary">${icon("check")} Bu sevkiyat ${esc(statusLabel(shipment.status).toLocaleLowerCase("tr-TR"))}. ${shipment.approvedAt ? esc(dateTime(shipment.approvedAt)) : shipment.rejectedAt ? esc(dateTime(shipment.rejectedAt)) : ""}</div>`}
-    `;
-    $("#workforceShipmentDestination", host)?.addEventListener("change", (event) => {
-      const nextId = event.currentTarget.value;
-      state.shipmentDestinations[shipment.id] = nextId;
-      if (!nextId) {
-        renderShipmentDetail(shipment);
-        return;
-      }
-      event.currentTarget.disabled = true;
-      ensureShipmentInventory(nextId).then(() => renderShipmentDetail(shipment)).catch((error) => {
-        showMessage(error.message, "error");
-        renderShipmentDetail(shipment);
-      });
-    });
-    $$("[data-shipment-decision]", host).forEach((button) => button.addEventListener("click", () => decideShipment(shipment.id, button.dataset.shipmentDecision)));
-  }
-
-  function decideShipment(id, decision) {
-    const button = $(`[data-shipment-decision="${CSS.escape(decision)}"]`);
-    return runImmediateOperation(`shipment-${decision}:${id}`, button, () => executeShipmentDecision(id, decision));
-  }
-
-  async function executeShipmentDecision(id, decision) {
-    const note = $("#workforceShipmentNote")?.value.trim() || "";
-    const shipment = (state.data.shipments || []).find((item) => String(item.id) === String(id));
-    const destinationLocationId = shipment ? shipmentDestinationId(shipment) : "";
-    if (decision === "approve" && !destinationLocationId) {
-      showMessage("Sevkiyatı onaylamadan önce stoğun ekleneceği depoyu seçin.", "error");
-      $("#workforceShipmentDestination")?.focus();
-      return operationSkipped("validation");
-    }
-    if (decision === "reject" && !note) {
-      showMessage("Sevkiyatı reddetmek için neden yazın.", "error");
-      $("#workforceShipmentNote")?.focus();
-      return operationSkipped("validation");
-    }
-    try {
-      setBusy(true);
-      acceptMutationResult(await api(`/api/admin/workforce/shipments/${encodeURIComponent(id)}/${decision}`, mutationOptions("POST", {
-        note,
-        rejectionReason: decision === "reject" ? note : "",
-        destinationLocationId: decision === "approve" ? destinationLocationId : undefined
-      }, `shipment-${decision}-${id}`)));
-      if (decision === "approve") {
-        state.shipmentInventory.delete(destinationLocationId);
-        document.dispatchEvent(new CustomEvent("tahmisci:stock-updated", { detail: { source: "shipment-approval", shipmentId: id } }));
-      }
-      await refresh("shipments");
-      showMessage(decision === "approve" ? "Sevkiyat onaylandı ve stok güncellendi." : "Sevkiyat reddedildi.");
-    } catch (error) {
-      showMessage(error.message, "error");
-      throw error;
-    } finally {
-      setBusy(false);
-    }
+    return kind === "shifts" ? $("#workforceShiftsPanel") : null;
   }
 
   function weekDates() {
@@ -1182,24 +922,21 @@
       throw error;
     }
     if (refreshTokens.get(refreshKey) !== refreshToken) return;
-    if (section !== "shipments") renderOverview();
+    renderOverview();
     if (section === "tasks") renderTasks();
     else if (section === "shifts") {
       renderShifts();
-    } else if (section === "shipments") {
-      renderShipments();
     } else if (section === "staffAccess") {
       renderTasks();
       renderShifts();
     } else {
       renderTasks();
-      renderShipments();
       renderShifts();
     }
   }
 
   function syncLivePreview(section) {
-    const previewSection = { shipments: "shipment", shifts: "shift", tasks: "tasks" }[section] || "staffAccess";
+    const previewSection = { shifts: "shift", tasks: "tasks" }[section] || "staffAccess";
     activePreviewSection = previewSection;
     if (!window.TahmisciLivePreview || typeof window.TahmisciLivePreview.updateSection !== "function") return;
     window.TahmisciLivePreview.updateSection(previewSection);
@@ -1250,7 +987,7 @@
   async function mount(section) {
     const activeSection = section || (window.TahmisciAdminBridge && window.TahmisciAdminBridge.activeSection());
     if (!isWorkforceOwnerSection(activeSection)) return;
-    if (!$("#workforceTasksPanel") && !operationHost("shipments") && !operationHost("shifts")) return;
+    if (!$("#workforceTasksPanel") && !operationHost("shifts")) return;
     if (state.mounted) {
       connectWorkforceEvents();
       return refresh(activeWorkforceSection(activeSection), { force: state.stale });
@@ -1263,65 +1000,31 @@
       await refresh(activeWorkforceSection(activeSection), { force: true });
     } catch (error) {
       const activeModule = activeWorkforceSection(activeSection);
-      const target = activeModule === "shipments"
-        ? operationHost("shipments")
-        : activeModule === "shifts"
-          ? operationHost("shifts")
-          : $("#workforceTasksPanel");
+      const target = activeModule === "shifts" ? operationHost("shifts") : $("#workforceTasksPanel");
       if (target) target.innerHTML = `<div class="workforce-empty"><h4>Veriler yüklenemedi</h4><p>${esc(error.message)}</p><button class="workforce-line-button ui-button ui-button--secondary" type="button" data-retry-workforce>Tekrar Dene</button></div>`;
       $("[data-retry-workforce]", target || document)?.addEventListener("click", () => refresh(activeModule, { force: true }).catch(() => {}), { once: true });
     }
   }
 
   function connectWorkforceEvents() {
-    if (state.eventSource || !window.EventSource || document.hidden) return;
-    const query = new URLSearchParams({ clientId: state.clientId });
-    const source = new EventSource(`/api/admin/workforce/events?${query.toString()}`, { withCredentials: true });
-    state.eventSource = source;
-    source.addEventListener("open", () => { state.reconnectAttempt = 0; });
-    const handle = (event) => {
-      let payload;
-      try { payload = JSON.parse(event.data || "{}"); } catch (_error) { return; }
-      const revision = Number(payload.revision || 0);
-      if (event.type === "ready" && !payload.requiresRefetch) {
-        state.workforceRevision = Math.max(state.workforceRevision, revision);
-        return;
-      }
-      if (revision <= state.workforceRevision && !payload.requiresRefetch) return;
-      state.workforceRevision = Math.max(state.workforceRevision, revision);
-      state.stale = true;
-      const section = window.TahmisciAdminBridge && window.TahmisciAdminBridge.activeSection();
-      if (!isWorkforceOwnerSection(section) || state.busy || document.activeElement?.closest(".workforce-panel")) return;
-      refresh(activeWorkforceSection(section), { force: true }).catch(() => {});
-    };
-    source.addEventListener("ready", handle);
-    source.addEventListener("workforce", handle);
-    source.addEventListener("message", handle);
-    source.addEventListener("error", () => {
-      if (state.eventSource === source) state.eventSource = null;
-      try { source.close(); } catch (_error) {}
-      scheduleWorkforceReconnect();
-    });
+    if (state.gatewayBound) return;
+    state.gatewayBound = true;
+    document.addEventListener("tahmisci:gateway-event", handleWorkforceGatewayEvent);
   }
 
-  function scheduleWorkforceReconnect() {
-    if (state.reconnectTimer || document.hidden) return;
-    const delay = Math.min(30000, 5000 * (2 ** Math.min(state.reconnectAttempt, 3)));
-    state.reconnectAttempt += 1;
-    state.reconnectTimer = window.setTimeout(() => {
-      state.reconnectTimer = null;
-      const section = window.TahmisciAdminBridge && window.TahmisciAdminBridge.activeSection();
-      if (isWorkforceOwnerSection(section)) connectWorkforceEvents();
-    }, delay);
+  function handleWorkforceGatewayEvent(event) {
+    const payload = event && event.detail || {};
+    if (payload.topic !== "workforce" && payload.topic !== "shipment") return;
+    const revision = Number(payload.revision || 0);
+    if (revision && revision <= state.workforceRevision) return;
+    state.workforceRevision = Math.max(state.workforceRevision, revision);
+    state.stale = true;
+    const section = window.TahmisciAdminBridge && window.TahmisciAdminBridge.activeSection();
+    if (!isWorkforceOwnerSection(section) || state.busy || document.activeElement?.closest(".workforce-panel")) return;
+    refresh(activeWorkforceSection(section), { force: true }).catch(() => {});
   }
 
   function disconnectWorkforceEvents() {
-    if (state.eventSource) {
-      try { state.eventSource.close(); } catch (_error) {}
-      state.eventSource = null;
-    }
-    if (state.reconnectTimer) window.clearTimeout(state.reconnectTimer);
-    state.reconnectTimer = null;
     state.stale = true;
   }
 

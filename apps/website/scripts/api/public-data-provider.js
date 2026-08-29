@@ -1,7 +1,8 @@
 (function () {
   "use strict";
 
-  const API_URL = "/api/public/bootstrap";
+  const SITE_API_URL = "/api/public/site";
+  const MENU_API_URL = "/api/public/menu";
   const EVENTS_URL = "/api/public/events";
   const DEFAULT_NAVIGATION = [
     { id: "home", label: { tr: "Ana Sayfa", en: "Home" }, url: "#top", icon: "fas fa-house", visible: true, order: 0 },
@@ -20,7 +21,12 @@
   };
   const state = {
     bootstrap: null,
+    sitePayload: null,
+    menuPayload: null,
     eventSource: null,
+    loadPromise: null,
+    menuLoadPromise: null,
+    revision: 0,
     reconnectTimer: null,
     reconnectDelay: 3000,
     stopped: false
@@ -30,6 +36,7 @@
     ready: null,
     load,
     retry: load,
+    loadMenu,
     getBootstrap: () => state.bootstrap,
     getCategories: () => mapCatalog(state.bootstrap).categories,
     getProducts: () => mapCatalog(state.bootstrap).products,
@@ -40,21 +47,32 @@
 
   window.TahmisciPublicData = provider;
   window.TAHMISCI_CUSTOMER_ACCOUNTS_ENABLED = false;
-  applyFeatureFlags({});
+  document.documentElement.dataset.customerAccounts = "disabled";
   applyBranding({});
   applyWatermark({});
   applyMotion({});
   applyHeader({ header: { visible: true, contactVisible: true, navigation: DEFAULT_NAVIGATION } }, "fallback");
   provider.ready = load();
+  setupMenuLazyLoad();
 
   async function load() {
+    if (state.loadPromise) return state.loadPromise;
+    state.loadPromise = loadSite();
+    try {
+      return await state.loadPromise;
+    } finally {
+      state.loadPromise = null;
+    }
+  }
+
+  async function loadSite() {
     hideError();
     try {
-      const response = await fetch(API_URL, { headers: { Accept: "application/json" }, cache: "no-store" });
+      const response = await fetch(SITE_API_URL, { headers: { Accept: "application/json" }, cache: "no-store" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
-      if (!payload.ok || !payload.siteState || !payload.menu) throw new Error("Eksik bootstrap verisi");
-      applyBootstrap(payload, "initial");
+      if (!payload.ok || !payload.siteState) throw new Error("Eksik site verisi");
+      applySitePayload(payload, state.sitePayload ? "event" : "initial");
       connectEvents();
       return payload;
     } catch (error) {
@@ -64,50 +82,92 @@
     }
   }
 
-  function applyBootstrap(payload, reason) {
-    if (!payload || !payload.siteState || !payload.menu) return;
-    state.bootstrap = payload;
-    const mapped = mapCatalog(payload);
-    window.MenuCategories = mapped.categories;
-    window.MenuProducts = mapped.products;
-    window.TahmisciCatalog = { categories: mapped.categories, products: mapped.products, source: "public-bootstrap" };
-    applyFeatureFlags(payload.siteState);
+  async function loadMenu() {
+    if (state.menuLoadPromise) return state.menuLoadPromise;
+    state.menuLoadPromise = (async () => {
+      try {
+        const response = await fetch(MENU_API_URL, { headers: { Accept: "application/json" }, cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        if (!payload.ok || !payload.menu) throw new Error("Eksik menü verisi");
+        applyMenuPayload(payload, state.menuPayload ? "event" : "lazy");
+        return payload;
+      } catch (error) {
+        showError();
+        document.dispatchEvent(new CustomEvent("publicMenuError", { detail: { error } }));
+        return null;
+      } finally {
+        state.menuLoadPromise = null;
+      }
+    })();
+    return state.menuLoadPromise;
+  }
+
+  function setupMenuLazyLoad() {
+    const start = () => void loadMenu();
+    const menu = document.getElementById("menu");
+    if (window.location.hash === "#menu") start();
+    document.addEventListener("click", (event) => {
+      if (event.target.closest('a[href="#menu"]')) start();
+    });
+    if (!menu || !window.IntersectionObserver) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      observer.disconnect();
+      start();
+    }, { rootMargin: "500px 0px" });
+    observer.observe(menu);
+  }
+
+  function combinedPayload() {
+    return {
+      ...(state.sitePayload || {}),
+      ...(state.menuPayload || {}),
+      siteState: state.sitePayload && state.sitePayload.siteState || {},
+      menu: state.menuPayload && state.menuPayload.menu || null
+    };
+  }
+
+  function applySitePayload(payload, reason) {
+    state.sitePayload = payload;
+    state.revision = Math.max(state.revision, Number(payload && (payload.publishRevision ?? payload.revision) || 0));
+    state.bootstrap = combinedPayload();
+    const products = state.menuPayload ? mapCatalog(state.bootstrap).products : [];
     applyBranding(payload.siteState);
     applyWatermark(payload.siteState);
     applyMotion(payload.siteState);
     applyHeader(payload.siteState, reason);
-    applyHero(payload.siteState, mapped.products);
-    applySiteContent(payload.siteState, payload.menu);
+    applyHero(payload.siteState, products);
+    applySiteContent(payload.siteState, state.menuPayload && state.menuPayload.menu);
     hideError();
-    const eventName = reason === "initial" ? "publicBootstrapLoaded" : "publicBootstrapUpdated";
-    window.dispatchEvent(new CustomEvent(eventName, { detail: { payload, reason } }));
+    window.dispatchEvent(new CustomEvent(reason === "initial" ? "publicBootstrapLoaded" : "publicBootstrapUpdated", {
+      detail: { payload: state.bootstrap, reason, scope: "site" }
+    }));
+  }
+
+  function applyMenuPayload(payload, reason) {
+    state.menuPayload = payload;
+    state.revision = Math.max(state.revision, Number(payload && (payload.publishRevision ?? payload.revision) || 0));
+    state.bootstrap = combinedPayload();
+    const mapped = mapCatalog(state.bootstrap);
+    window.MenuCategories = mapped.categories;
+    window.MenuProducts = mapped.products;
+    window.TahmisciCatalog = { categories: mapped.categories, products: mapped.products, source: "public-menu" };
+    if (state.sitePayload) {
+      applyHero(state.sitePayload.siteState, mapped.products);
+      applySiteContent(state.sitePayload.siteState, payload.menu);
+    }
+    hideError();
+    window.dispatchEvent(new CustomEvent("publicBootstrapUpdated", {
+      detail: { payload: state.bootstrap, reason, scope: "menu" }
+    }));
     document.dispatchEvent(new CustomEvent("menuProductsLoaded", { detail: { products: mapped.products } }));
   }
 
-  function applyFeatureFlags(siteState) {
-    const enabled = siteState?.features?.customerAccountsEnabled === true;
-    window.TAHMISCI_CUSTOMER_ACCOUNTS_ENABLED = enabled;
-    document.documentElement.dataset.customerAccounts = enabled ? "enabled" : "disabled";
-    if (enabled) return;
-    [
-      "#authButtons",
-      "#authLinks",
-      "#userLinks",
-      "#userMenu",
-      "#mobileAuth",
-      "#mobileUserWelcome",
-      "#mobileCartBtn",
-      ".mobile-nav-auth",
-      ".mobile-nav-account-content",
-      "#loginModal",
-      "#registerModal",
-      "#legalDocModal"
-    ].forEach((selector) => {
-      document.querySelectorAll(selector).forEach((element) => {
-        element.hidden = true;
-        element.setAttribute("aria-hidden", "true");
-      });
-    });
+  function applyBootstrap(payload, reason) {
+    if (!payload || !payload.siteState || !payload.menu) return;
+    applySitePayload({ ...payload, menu: undefined, pricing: undefined }, reason || "event");
+    applyMenuPayload({ ...payload, siteState: undefined }, reason || "event");
   }
 
   function applyBranding(siteState) {
@@ -182,11 +242,29 @@
     clearTimeout(state.reconnectTimer);
     const source = new EventSource(EVENTS_URL);
     state.eventSource = source;
+    source.addEventListener("ready", (event) => {
+      try {
+        const payload = JSON.parse(event.data || "{}");
+        const revision = Number(payload.revision || 0);
+        const hasNewerRevision = revision > state.revision;
+        state.revision = Math.max(state.revision, revision);
+        if (payload.requiresRefetch && (hasNewerRevision || !state.sitePayload)) {
+          void load();
+          if (state.menuPayload && hasNewerRevision) void loadMenu();
+        }
+      } catch (_error) {}
+    });
     source.addEventListener("bootstrap", (event) => {
       try {
         const payload = JSON.parse(event.data || "{}");
         state.reconnectDelay = 3000;
-        applyBootstrap(payload, payload.reason || "event");
+        const revision = Number(payload.revision || 0);
+        if (revision && revision <= state.revision && payload.requiresRefetch) return;
+        state.revision = Math.max(state.revision, revision);
+        if (payload.requiresRefetch || !payload.siteState || !payload.menu) {
+          void load();
+          if (state.menuPayload) void loadMenu();
+        } else applyBootstrap(payload, payload.reason || "event");
       } catch (error) {
         console.error("Canlı site verisi okunamadı:", error);
       }
@@ -744,8 +822,10 @@
   }
 
   window.addEventListener("languageChanged", () => {
-    if (state.bootstrap) applyBootstrap(state.bootstrap, "language");
-    else applyHeader({ header: { visible: true, contactVisible: true, navigation: DEFAULT_NAVIGATION } }, "fallback");
+    if (state.sitePayload) {
+      applySitePayload(state.sitePayload, "language");
+      if (state.menuPayload) applyMenuPayload(state.menuPayload, "language");
+    } else applyHeader({ header: { visible: true, contactVisible: true, navigation: DEFAULT_NAVIGATION } }, "fallback");
   });
   window.addEventListener("scroll", updateActiveHeaderLink, { passive: true });
   window.addEventListener("hashchange", updateActiveHeaderLink);

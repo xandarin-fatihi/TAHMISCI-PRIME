@@ -6,11 +6,9 @@
   <meta name="description" content="Tahmisçi Müdavim dijital sadakat kartı.">
   <title>Tahmisçi Müdavim</title>
   <link rel="icon" type="image/png" href="/assets/brand/favicon.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-  <link rel="stylesheet" href="/mudavim/mudavim.css?v=20260719-announcements1">
+  <link rel="stylesheet" href="/shared/styles/account-security.css?v=20260829-mudavim">
+  <link rel="stylesheet" href="/mudavim/mudavim.css?v=20260829-email-account">
 </head>
 <body class="is-guest">
   <header class="mudavim-header">
@@ -20,7 +18,7 @@
     <nav class="mudavim-nav" aria-label="Müdavim bağlantıları">
       <a href="#features" data-guest-nav>Kampanyalar</a>
       <button type="button" data-auth-open="login" data-guest-nav>Giriş Yap</button>
-      <button class="mudavim-nav__register" type="button" data-auth-open="register-phone" data-guest-nav>Kayıt Ol</button>
+      <button class="mudavim-nav__register" type="button" data-auth-open="register" data-guest-nav>Kayıt Ol</button>
     </nav>
   </header>
 
@@ -89,16 +87,16 @@
           <aside class="member-column member-column--summary" aria-label="Müdavim özeti">
             <article class="member-panel-card visit-summary-card">
               <div class="member-card-label"><i class="far fa-calendar-check" aria-hidden="true"></i><span>Ziyaretlerim</span></div>
-              <strong class="visit-summary-count"><span id="progressCount">6</span> / <span id="rewardTarget">10</span></strong>
-              <p>ziyaret tamamlandı</p>
+              <strong class="visit-summary-count"><span id="progressCount">0</span><span id="rewardTarget"></span></strong>
+              <p id="visitSummaryLabel">Henüz ziyaret kaydı yok</p>
               <div class="visit-segments" id="visitSegments" aria-label="Ziyaret ilerlemesi"></div>
-              <small id="progressText">Bir sonraki ödüle 4 ziyaret kaldı.</small>
+              <small id="progressText">Sadakat geçmişi kullanıma açıldığında burada görünecek.</small>
             </article>
 
             <article class="member-panel-card tier-summary-card">
               <div class="member-card-label"><i class="fas fa-medal" aria-hidden="true"></i><span>Üyelik Derecem</span></div>
               <div class="tier-track" id="tierTrack" aria-label="Üyelik derecesi"></div>
-              <span class="tier-current"><i class="fas fa-star" aria-hidden="true"></i>Mevcut Derecen: <strong id="memberLevel">Gold</strong></span>
+              <span class="tier-current"><i class="fas fa-star" aria-hidden="true"></i>Mevcut Derecen: <strong id="memberLevel">Henüz yok</strong></span>
             </article>
           </aside>
 
@@ -109,9 +107,9 @@
               <h2>Hoş Geldin,<span id="memberWelcomeName">Müdavim</span></h2>
               <p>Duyurular ve geçmiş ziyaretlerini üst menüden görüntüleyebilirsin.</p>
               <div class="member-center-summaries">
-                <article><i class="fas fa-medal" aria-hidden="true"></i><span>Mevcut Derecen</span><strong id="centerMemberLevel">Gold</strong></article>
-                <article><i class="far fa-calendar-check" aria-hidden="true"></i><span>Toplam Ziyaret</span><strong id="centerVisitCount">6</strong></article>
-                <article><i class="far fa-flag" aria-hidden="true"></i><span>Sonraki Adım</span><strong id="centerRemaining">4 ziyaret</strong></article>
+                <article><i class="fas fa-medal" aria-hidden="true"></i><span>Mevcut Derecen</span><strong id="centerMemberLevel">Henüz yok</strong></article>
+                <article><i class="far fa-calendar-check" aria-hidden="true"></i><span>Toplam Ziyaret</span><strong id="centerVisitCount">0</strong></article>
+                <article><i class="far fa-flag" aria-hidden="true"></i><span>Sonraki Adım</span><strong id="centerRemaining">Veri bekleniyor</strong></article>
               </div>
             </div>
 
@@ -157,48 +155,25 @@
             </button>
           </header>
 
-          <form class="member-profile-form" id="memberProfileForm">
+          <div class="member-profile-form" id="memberProfileForm">
             <div class="member-profile-scroll">
               <div class="member-profile-primary">
-                <div class="member-profile-photo">
-                  <span class="member-profile-photo__preview" aria-hidden="true">
-                    <img id="memberProfilePhotoPreview" alt="" hidden>
-                    <strong id="memberProfilePhotoInitials">M</strong>
-                    <i class="fas fa-camera"></i>
-                  </span>
-                  <label class="member-profile-photo__button" for="memberProfilePhoto">Fotoğraf Yükle</label>
-                  <input id="memberProfilePhoto" type="file" accept="image/jpeg,image/png" hidden>
-                  <small id="memberProfilePhotoHelp">JPG veya PNG · En fazla 5 MB</small>
-                </div>
-
                 <div class="member-profile-fields">
-                  <label>
-                    <span>Ad</span>
-                    <input id="memberProfileFirstName" type="text" autocomplete="given-name" placeholder="Adınız" maxlength="60">
-                  </label>
-                  <label>
-                    <span>Soyad</span>
-                    <input id="memberProfileLastName" type="text" autocomplete="family-name" placeholder="Soyadınız" maxlength="60">
-                  </label>
+                  <label><span>Ad Soyad</span><input id="memberProfileFullName" type="text" autocomplete="name" placeholder="Ad Soyad" maxlength="120" required></label>
+                  <label><span>Profil adı</span><input id="memberProfileAlias" type="text" autocomplete="nickname" placeholder="Profil adı" maxlength="60" required></label>
                   <label class="member-profile-fields__wide">
                     <span>Doğum Tarihi</span>
-                    <span class="member-profile-input-icon"><i class="far fa-calendar" aria-hidden="true"></i><input id="memberProfileBirthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="GG / AA / YYYY" maxlength="10"></span>
+                    <span class="member-profile-input-icon"><i class="far fa-calendar" aria-hidden="true"></i><input id="memberProfileBirthDate" type="date" autocomplete="bday"></span>
                   </label>
                 </div>
               </div>
 
-              <section class="member-profile-section" aria-labelledby="memberContactTitle">
-                <h3 id="memberContactTitle">İletişim Bilgileri</h3>
-                <div class="member-profile-contact">
-                  <label>
-                    <i class="fas fa-phone" aria-hidden="true"></i>
-                    <span><strong>Telefon Numarası</strong><input id="memberProfilePhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="05xx xxx xx xx" maxlength="24"></span>
-                  </label>
-                  <label>
-                    <i class="far fa-envelope" aria-hidden="true"></i>
-                    <span><strong>E-posta <small>(isteğe bağlı)</small></strong><input id="memberProfileEmail" type="email" autocomplete="email" placeholder="E-posta adresiniz" maxlength="120"></span>
-                  </label>
-                </div>
+              <section class="member-profile-section account-security-card" aria-labelledby="memberContactTitle" data-account-security data-account-scope="mudavim">
+                <div class="account-security-card__head"><div><h3 id="memberContactTitle">E-posta Güvenliği</h3><p>Hesap ve parola işlemleri doğrulanmış e-posta üzerinden yürür.</p></div><span class="account-security-state" data-account-email-state>Doğrulanmadı</span></div>
+                <form class="account-security-form" data-account-email-form novalidate><label><span>E-posta</span><input data-account-email type="email" autocomplete="email" maxlength="254" required></label><button class="mudavim-auth-cta" type="submit">E-postayı kaydet</button></form>
+                <div class="account-security-verification" data-account-verification><div><strong data-account-verification-title>E-postanı doğrula</strong><p data-account-verification-copy></p></div><button type="button" data-account-email-send>Doğrulama kodu gönder</button><form data-account-email-confirm-form hidden><label><span>Altı haneli kod</span><input data-account-email-code type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label><button type="submit">E-postayı doğrula</button></form></div>
+                <div class="account-security-meta"><span><small>Etkin adres</small><strong data-account-current-email>Henüz eklenmedi</strong></span><span><small>Son şifre yenileme</small><strong data-account-password-reset>Bilgi yok</strong></span></div>
+                <p class="account-security-message" data-account-security-message role="status" aria-live="polite"></p>
               </section>
 
               <section class="member-profile-section" aria-labelledby="memberPreferencesTitle">
@@ -207,12 +182,7 @@
                   <label>
                     <i class="far fa-bell" aria-hidden="true"></i>
                     <span><strong>Duyuru Bildirimleri</strong><small>Yeni duyurulardan haberdar ol.</small></span>
-                    <input id="memberProfileAnnouncements" type="checkbox" role="switch">
-                  </label>
-                  <label>
-                    <i class="fas fa-cake-candles" aria-hidden="true"></i>
-                    <span><strong>Doğum Günü Sürprizi</strong><small>Doğum gününe özel avantajları al.</small></span>
-                    <input id="memberProfileBirthday" type="checkbox" role="switch">
+                    <input id="memberProfileCampaignConsent" type="checkbox" role="switch">
                   </label>
                 </div>
               </section>
@@ -220,11 +190,11 @@
               <section class="member-profile-section member-profile-security" aria-labelledby="memberSecurityTitle">
                 <h3 id="memberSecurityTitle">Güvenlik</h3>
                 <div class="member-profile-security__actions">
-                  <a href="/password-reset/">
+                  <button type="button" data-profile-password-reset>
                     <i class="fas fa-lock" aria-hidden="true"></i>
                     <span><strong>Şifreyi Değiştir</strong><small>Hesap şifrenizi güvenle güncelleyin.</small></span>
                     <i class="fas fa-chevron-right" aria-hidden="true"></i>
-                  </a>
+                  </button>
                   <button class="member-profile-logout" type="button" data-logout>
                     <i class="fas fa-right-from-bracket" aria-hidden="true"></i>
                     <span><strong>Çıkış Yap</strong><small>Oturumu güvenle kapat.</small></span>
@@ -236,9 +206,9 @@
             <footer class="member-profile-actions">
               <output id="memberProfileStatus" aria-live="polite"></output>
               <button class="member-profile-cancel" type="button" data-profile-close>İptal</button>
-              <button class="member-profile-save" type="submit">Kaydet</button>
+              <button class="member-profile-save" id="memberProfileSave" type="button">Kaydet</button>
             </footer>
-          </form>
+          </div>
         </section>
       </div>
     </section>
@@ -250,13 +220,13 @@
         <i class="fas fa-xmark" aria-hidden="true"></i>
       </button>
 
-      <form class="mudavim-auth-card" data-auth-step="login">
+      <form class="mudavim-auth-card" data-auth-step="login" novalidate>
         <p class="eyebrow">Tahmisçi Müdavim</p>
         <h2 id="mudavimAuthTitle">Giriş Yap</h2>
         <p>Hesabına giriş yap, kartını ve ödül ilerlemeni gör.</p>
         <label class="mudavim-auth-input">
-          <span>Telefon numarası</span>
-          <input id="loginPhone" type="tel" inputmode="tel" autocomplete="username" placeholder="05xx xxx xx xx" required>
+          <span>E-posta</span>
+          <input id="loginEmail" type="email" autocomplete="email" placeholder="ornek@email.com" maxlength="254" required>
         </label>
         <label class="mudavim-auth-input">
           <span>Şifre</span>
@@ -270,124 +240,59 @@
           <button type="button" class="mudavim-auth-link" data-auth-open="forgot">Şifremi unuttum</button>
         </div>
         <button class="mudavim-auth-cta" type="submit">Giriş Yap</button>
-        <button class="mudavim-auth-social" type="button" data-auth-open="google">
-          <i class="fab fa-google" aria-hidden="true"></i>
-          Google ile Devam Et
-        </button>
-        <button class="mudavim-auth-link" type="button" data-auth-open="register-phone">Hesabın yok mu? Kayıt Ol</button>
+        <p class="auth-error" data-auth-message role="status" aria-live="polite"></p>
+        <button class="mudavim-auth-link" type="button" data-auth-open="register">Hesabın yok mu? Kayıt Ol</button>
       </form>
 
-      <div class="mudavim-auth-card" data-auth-step="forgot" hidden>
+      <form class="mudavim-auth-card" data-auth-step="forgot" hidden novalidate>
         <button class="mudavim-auth-back" type="button" data-auth-open="login">Geri</button>
         <h2>Şifre Sıfırlama</h2>
-        <p>Telefon numaranla şifre yenileme adımını başlatabilirsin.</p>
-        <button class="mudavim-auth-cta" type="button" data-auth-open="login">Girişe Dön</button>
-      </div>
+        <p>Doğrulama kodunu hesabındaki e-posta adresine gönderelim.</p>
+        <label class="mudavim-auth-input"><span>E-posta</span><input id="forgotEmail" type="email" autocomplete="email" maxlength="254" required></label>
+        <p class="auth-error" data-auth-message role="status" aria-live="polite"></p>
+        <button class="mudavim-auth-cta" type="submit">Kod Gönder</button>
+      </form>
 
-      <form class="mudavim-auth-card" data-auth-step="register-phone" hidden>
+      <form class="mudavim-auth-card" data-auth-step="register" hidden novalidate>
         <button class="mudavim-auth-back" type="button" data-auth-open="login">Geri</button>
-        <h2>Telefon Numaranı Gir</h2>
-        <p>Bu numara Müdavim Kartın için kullanılacak.</p>
-        <label class="mudavim-auth-input">
-          <span>Telefon</span>
-          <input id="registerPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="05xx xxx xx xx" required>
-        </label>
-        <button class="mudavim-auth-cta" type="submit">Kodu Gönder</button>
+        <h2>Müdavim Hesabı Oluştur</h2>
+        <label class="mudavim-auth-input"><span>Ad Soyad</span><input id="registerName" type="text" autocomplete="name" maxlength="120" required></label>
+        <label class="mudavim-auth-input"><span>E-posta</span><input id="registerEmail" type="email" autocomplete="email" maxlength="254" required></label>
+        <label class="mudavim-auth-input"><span>Şifre</span><input id="registerPassword" type="password" autocomplete="new-password" maxlength="72" required></label>
+        <label class="mudavim-auth-input"><span>Şifre tekrar</span><input id="registerPasswordConfirm" type="password" autocomplete="new-password" maxlength="72" required></label>
+        <label class="mudavim-auth-check"><input id="registerTerms" type="checkbox" required><span>Üyelik koşullarını ve KVKK bilgilendirmesini okudum.</span></label>
+        <label class="mudavim-auth-check"><input id="registerCampaigns" type="checkbox"><span>Tahmisçi duyuru ve kampanyalarını almak istiyorum.</span></label>
+        <p class="auth-error" data-auth-message role="status" aria-live="polite"></p>
+        <button class="mudavim-auth-cta" type="submit">Hesabı Oluştur ve Kod Gönder</button>
       </form>
 
-      <form class="mudavim-auth-card" data-auth-step="register-otp" hidden>
-        <h2>Kodu Onayla</h2>
-        <p>Telefonuna gelen 6 haneli kodu gir.</p>
-        <div class="mudavim-otp" data-otp-group="register" aria-label="6 haneli kayıt doğrulama kodu">
-          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 1">
-          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 2">
-          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 3">
-          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 4">
-          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 5">
-          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 6">
-        </div>
+      <form class="mudavim-auth-card" data-auth-step="verify-email" hidden novalidate>
+        <h2>E-postanı Doğrula</h2><p>Altı haneli kod e-posta adresine gönderildi.</p>
+        <label class="mudavim-auth-input"><span>Doğrulama kodu</span><input id="registerVerificationCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
+        <p class="auth-error" data-auth-message role="status" aria-live="polite"></p>
+        <button class="mudavim-auth-cta" type="submit">E-postayı Doğrula</button>
+      </form>
+
+      <form class="mudavim-auth-card" data-auth-step="verify-reset" hidden novalidate>
+        <h2>Doğrulama Kodunu Gir</h2><p>Altı haneli kod e-posta adresine gönderildi.</p>
+        <label class="mudavim-auth-input"><span>Doğrulama kodu</span><input id="resetVerificationCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
+        <p class="auth-error" data-auth-message role="status" aria-live="polite"></p>
         <button class="mudavim-auth-cta" type="submit">Devam Et</button>
       </form>
 
-      <form class="mudavim-auth-card" data-auth-step="register-password" hidden>
-        <h2>Şifre Oluştur</h2>
-        <p class="auth-hint">En az 6 karakter. Tekrar şifre eşleşmeli.</p>
-        <label class="mudavim-auth-input">
-          <span>Şifre</span>
-          <input id="registerPassword" type="password" autocomplete="new-password" placeholder="En az 6 karakter" required>
-        </label>
-        <label class="mudavim-auth-input">
-          <span>Şifre tekrar</span>
-          <input id="registerPasswordConfirm" type="password" autocomplete="new-password" placeholder="Şifreni tekrar yaz" required>
-        </label>
-        <p class="auth-error" id="passwordError" hidden>Şifreler eşleşmeli ve en az 6 karakter olmalı.</p>
-        <button class="mudavim-auth-cta" type="submit">Devam Et</button>
-      </form>
-
-      <form class="mudavim-auth-card" data-auth-step="register-profile" hidden>
-        <h2>Profilini Tamamla</h2>
-        <p>Hesap bilgilerini tamamlayarak kişisel alanını oluşturabilirsin.</p>
-        <label class="mudavim-auth-input">
-          <span>Ad Soyad</span>
-          <input id="registerName" type="text" autocomplete="name" placeholder="Ad Soyad" required>
-        </label>
-        <label class="mudavim-auth-input">
-          <span>Profil adı</span>
-          <input id="registerAlias" type="text" placeholder="Profil adı" required>
-        </label>
-        <label class="mudavim-auth-input">
-          <span>Doğum tarihi</span>
-          <input id="registerBirthDate" type="date" required>
-        </label>
-        <label class="mudavim-auth-input">
-          <span>E-posta <em>isteğe bağlı</em></span>
-          <input id="registerEmail" type="email" autocomplete="email" placeholder="mail@ornek.com">
-        </label>
-        <label class="mudavim-auth-check">
-          <input id="registerTerms" type="checkbox" required>
-          <span>Üyelik koşullarını ve KVKK bilgilendirmesini okudum.</span>
-        </label>
-        <label class="mudavim-auth-check">
-          <input id="registerCampaigns" type="checkbox">
-          <span>Tahmisçi duyurularını almak istiyorum.</span>
-        </label>
-        <button class="mudavim-auth-cta" type="submit">Müdavim Kartımı Oluştur</button>
-      </form>
-
-      <form class="mudavim-auth-card" data-auth-step="phone" hidden>
-        <button class="mudavim-auth-back" type="button" data-auth-open="login">Geri</button>
-        <h2>Telefonla Devam Et</h2>
-        <p>Bu numara Müdavim Kartınla eşleşir.</p>
-        <label class="mudavim-auth-input">
-          <span>Telefon</span>
-          <input id="mudavimPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="05xx xxx xx xx" required>
-        </label>
-        <button class="mudavim-auth-cta" type="submit">Kodu Gönder</button>
-      </form>
-
-      <form class="mudavim-auth-card" data-auth-step="otp" hidden>
-        <h2>Kodu Onayla</h2>
-        <p>Telefonuna gelen 6 haneli kodu gir.</p>
-        <div class="mudavim-otp" data-otp-group="login" aria-label="6 haneli doğrulama kodu">
-          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 1">
-          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 2">
-          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 3">
-          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 4">
-          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 5">
-          <input type="text" inputmode="numeric" maxlength="1" aria-label="Kod 6">
-        </div>
-        <button class="mudavim-auth-cta" type="submit">Devam Et</button>
-        <div class="mudavim-auth-inline">
-          <button type="button" data-auth-open="phone">Numarayı değiştir</button>
-          <button type="button" data-auth-resend>Kodu tekrar gönder</button>
-        </div>
+      <form class="mudavim-auth-card" data-auth-step="new-password" hidden novalidate>
+        <h2>Yeni Şifre Oluştur</h2>
+        <label class="mudavim-auth-input"><span>Yeni şifre</span><input id="resetNewPassword" type="password" autocomplete="new-password" maxlength="72" required></label>
+        <label class="mudavim-auth-input"><span>Yeni şifre tekrar</span><input id="resetNewPasswordConfirm" type="password" autocomplete="new-password" maxlength="72" required></label>
+        <p class="auth-error" data-auth-message role="status" aria-live="polite"></p>
+        <button class="mudavim-auth-cta" type="submit">Şifreyi Güncelle</button>
       </form>
 
       <div class="mudavim-auth-card" data-auth-step="success" hidden>
         <p class="eyebrow">Kartım hazır</p>
         <h2>Müdavim Kartın Hazır</h2>
         <div class="mudavim-auth-success">
-          <span id="authSuccessCode">THM-4821</span>
+          <span id="authSuccessCode">E-posta doğrulandı</span>
           <div class="mudavim-auth-qr" aria-label="QR placeholder">
             <i></i><i></i><i></i><i></i><i></i>
             <i></i><i></i><i></i><i></i><i></i>
@@ -395,14 +300,15 @@
             <i></i><i></i><i></i><i></i><i></i>
             <i></i><i></i><i></i><i></i><i></i>
           </div>
-          <b id="authSuccessProgress">0 ziyaret</b>
-          <p>İlk ziyaretini kasada kodunu okutarak kaydet.</p>
+          <b id="authSuccessProgress">Hesabın aktif</b>
+          <p>Giriş yaparak Müdavim alanına ulaşabilirsin.</p>
         </div>
-        <button class="mudavim-auth-cta" type="button" data-auth-finish>Kartımı Gör</button>
+        <button class="mudavim-auth-cta" type="button" data-auth-finish>Giriş Yap</button>
       </div>
     </section>
   </div>
 
-  <script src="/mudavim/mudavim.js?v=20260719-announcements1"></script>
+  <script src="/shared/scripts/account-security.js?v=20260829-mudavim"></script>
+  <script src="/mudavim/mudavim.js?v=20260829-email-account"></script>
 </body>
 </html>

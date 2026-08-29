@@ -868,7 +868,6 @@ document.addEventListener("DOMContentLoaded", function () {
         modal.classList.remove("active");
         if (
             !document.querySelector(".selection-modal-overlay.active") &&
-            !document.querySelector(".auth-modal-overlay.active") &&
             !document.querySelector(".product-modal-overlay.active")
         ) {
             setBodyLock(false);

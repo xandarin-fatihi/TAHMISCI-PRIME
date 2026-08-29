@@ -360,12 +360,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // PWA Service Worker
+    const serviceWorkerHost = String(window.location.hostname || '').toLowerCase();
+    const isLocalServiceWorkerHost = serviceWorkerHost === 'localhost' || serviceWorkerHost.endsWith('.localhost') || serviceWorkerHost === '127.0.0.1' || serviceWorkerHost === '[::1]' || serviceWorkerHost === '::1';
     const shouldRegisterServiceWorker =
         'serviceWorker' in navigator &&
-        window.location.protocol === 'https:';
+        (window.location.protocol === 'https:' || isLocalServiceWorkerHost);
     if (shouldRegisterServiceWorker) {
-        const base = (typeof getSiteRoot === 'function' ? getSiteRoot() : (window.getSiteRoot && window.getSiteRoot())) || '';
-        navigator.serviceWorker.register(base + '/sw.js', { scope: base + '/' }).catch(function () { });
+        navigator.serviceWorker.register('/site/sw.js', { scope: '/site/', updateViaCache: 'none' }).catch(function () { });
     }
 
     // Şube bazlı popup (panelden, yep_popups)

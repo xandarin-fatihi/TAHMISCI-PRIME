@@ -23,7 +23,8 @@ const { normalizeProductCode } = require("./store/product-code-registry");
 const stockService = require("./stock-service");
 const { registerStockLocationRoutes } = require("./stock-location-routes");
 const { registerWorkforceRoutes } = require("./workforce-routes");
-const { registerProcurementRoutes } = require("./procurement-routes");
+const { registerProcurementRoutes, resolveActorFromRequest } = require("./procurement-routes");
+const { hasCapability: hasProcurementCapability } = require("./procurement-service");
 const { createProcurementDocumentService } = require("./procurement-documents");
 const { createProcurementImageProcessor } = require("./procurement-image-processor");
 const { registerPublishRoutes } = require("./publish-routes");
@@ -46,11 +47,10 @@ const { createMailService } = require("./mail-service");
 const { createPushService } = require("./push-service");
 const { retiredExcelImportHandler } = require("./retired-excel-import");
 const { migratePricingSystem, serializeLegacyMenuState } = require("./pricing");
-const { buildPublicBootstrap } = require("./public-bootstrap");
+const { buildPublicBootstrap, buildPublicMenu, buildPublicMudavim, buildPublicSite } = require("./public-bootstrap");
 const {
   validateMenuProductCodes,
-  validateRecipeProductCodes,
-  validateStockProductCodes
+  validateRecipeProductCodes
 } = require("./store/product-code-registry");
 const { migrateSiteState } = require("./site-state");
 const simpleXlsx = require("./simple-xlsx");
@@ -84,6 +84,7 @@ const siteSseClients = new Set();
 const publicSseClients = new Set();
 const feedbackSseClients = new Set();
 const stockSseClients = new Set();
+const authenticatedEventClients = new Set();
 const SSE_RETRY_MS = 5000;
 const SSE_HEARTBEAT_MS = 25000;
 const SSE_HISTORY_LIMIT = 64;
@@ -187,7 +188,9 @@ app.use(cors({
   allowedHeaders: [
     "Content-Type", "Authorization", "Idempotency-Key", "X-Request-ID", "X-Manager-Key",
     "X-File-Name", "X-Media-Kind", "X-Document-Type", "X-Supplier-Id", "X-Shipment-Ids",
-    "X-Shipment-Item-Ids", "X-Document-Number", "X-Document-Date", "X-Expected-Revision"
+    "X-Shipment-Item-Ids", "X-Document-Number", "X-Document-Date", "X-Expected-Revision",
+    "X-Expected-Inventory-Revision", "X-Expected-Catalog-Revision",
+    "X-Tahmisci-Device-Id", "X-Tahmisci-App-Id", "X-Tahmisci-App-Target"
   ],
   credentials: true
 }));
@@ -300,10 +303,11 @@ registerPublishRoutes({
       serializeLegacyMenuState(nextStore.menuState, nextStore.pricing),
       result.updatedAt,
       nextStore.pricing,
-      nextStore.revisions && nextStore.revisions.pricing
+      nextStore.revisions && nextStore.revisions.pricing,
+      nextStore.revisions && nextStore.revisions.catalog
     );
-    if (scopes.has("recipes")) broadcastRecipeUpdate(nextStore.recipeState, result.updatedAt, nextStore.recipeCatalog);
-    if (scopes.has("stock")) broadcastStockUpdate(nextStore.stockState, result.updatedAt);
+    if (scopes.has("recipes")) broadcastRecipeUpdate(nextStore.recipeState, result.updatedAt, nextStore.recipeCatalog, nextStore.revisions && nextStore.revisions.catalog);
+    if (scopes.has("site")) broadcastSiteUpdate(nextStore.siteState, result.updatedAt, nextStore.revisions && nextStore.revisions.site);
     if (scopes.has("menu") || scopes.has("recipes") || scopes.has("site")) broadcastPublicUpdate(nextStore, "publish");
   }
 });
@@ -320,17 +324,7 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
 
-// PASIF_SITE_MODULU_BASLANGIC
-const disabledModuleResponse = (_req, res) => res.status(410).json({
-  ok: false,
-  message: "Bu modül geçici olarak pasiftir."
-});
-app.use("/api/public/events", disabledModuleResponse);
-app.use("/api/site", disabledModuleResponse);
-app.use("/api/admin/site", disabledModuleResponse);
-// PASIF_SITE_MODULU_BITIS
-
-// Public menu bootstrap stays active even while the separate website editor module is disabled.
+// Public site and menu bootstrap share the same published read model.
 app.get("/api/public/bootstrap", async (req, res, next) => {
   try {
     const data = await store.read();
@@ -348,6 +342,29 @@ app.get("/api/public/bootstrap", async (req, res, next) => {
     next(error);
   }
 });
+
+registerPublicProjection("/api/public/site", "public-site", buildPublicSite);
+registerPublicProjection("/api/public/menu", "public-menu", buildPublicMenu);
+registerPublicProjection("/api/public/mudavim", "public-mudavim", buildPublicMudavim);
+
+function registerPublicProjection(route, entityName, projector) {
+  app.get(route, async (req, res, next) => {
+    try {
+      const data = await store.read();
+      const payload = { ok: true, ...projector(data) };
+      const entityTag = catalogEntityTag(entityName, payload);
+      res.set({
+        "Cache-Control": "public, max-age=0, must-revalidate",
+        "ETag": entityTag,
+        "Vary": "Accept-Language"
+      });
+      if (requestEntityTagMatches(req, entityTag)) return res.status(304).end();
+      return res.json(payload);
+    } catch (error) {
+      return next(error);
+    }
+  });
+}
 
 app.get("/api/public/preview-config", (req, res) => {
   res.set("Cache-Control", "no-store");
@@ -379,32 +396,22 @@ app.post("/api/public/preview-session", async (req, res, next) => {
   }
 });
 
-// PASIF_SITE_MODULU_BASLANGIC
-// PASIF MODUL: Yalnızca site SSE kaynağı ileride yeniden etkinleştirilmek üzere korunur.
-if (false) {
 app.get("/api/public/events", async (req, res, next) => {
   try {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no"
-    });
-    res.write("retry: 5000\n\n");
     const data = await store.read();
-    sendSse(res, "bootstrap", { reason: "connected", ...buildPublicBootstrap(data) });
-    const client = { res, heartbeat: setInterval(() => res.write(": keepalive\n\n"), 25000) };
-    publicSseClients.add(client);
-    req.on("close", () => {
-      clearInterval(client.heartbeat);
-      publicSseClients.delete(client);
-    });
+    openRevisionStream(req, res, publicSseClients, "public", data);
   } catch (error) {
     next(error);
   }
 });
-}
-// PASIF_SITE_MODULU_BITIS
+
+app.get("/api/events", requireAdminOrMainRequestOrigin, requireAuthenticatedEventSession, async (req, res, next) => {
+  try {
+    openAuthenticatedEventStream(req, res);
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.post("/api/admin/login", requireAdminOrMainRequestOrigin, loginLimiter, async (req, res, next) => {
   try {
@@ -657,7 +664,6 @@ app.put("/api/recipe/profile", requireAdminOrMainRequestOrigin, auth.requireActi
 
     const userId = String(req.recipeUser.id || "").trim();
     const name = String(req.body && req.body.name || "").trim().slice(0, 80);
-    const phone = String(req.body && req.body.phone || "").trim().slice(0, 40);
     const avatarUrl = String(req.body && req.body.avatarUrl || "").trim().slice(0, 500);
     const bio = String(req.body && req.body.bio || "").trim().slice(0, 240);
     const now = new Date().toISOString();
@@ -671,7 +677,6 @@ app.put("/api/recipe/profile", requireAdminOrMainRequestOrigin, auth.requireActi
         throw error;
       }
       user.name = name || user.name || user.username;
-      user.phone = phone;
       user.avatarUrl = avatarUrl;
       user.bio = bio;
       user.updatedAt = now;
@@ -1594,19 +1599,21 @@ app.put("/api/menu", requireAdminRequestOrigin, auth.requireAdmin, async (req, r
         data.revisions.pricing = Number(data.revisions.pricing || 0) + 1;
         data.pricingUpdatedAt = updatedAt;
       }
+      data.revisions.catalog = Math.max(0, Number(data.revisions.catalog || 0)) + 1;
       incrementPublishRevision(data);
       data.menuUpdatedAt = updatedAt;
       return data;
     });
 
     const publicMenuState = serializeLegacyMenuState(nextStore.menuState, nextStore.pricing);
-    broadcastMenuUpdate(publicMenuState, updatedAt, nextStore.pricing, nextStore.revisions.pricing);
+    broadcastMenuUpdate(publicMenuState, updatedAt, nextStore.pricing, nextStore.revisions.pricing, nextStore.revisions.catalog);
     broadcastPublicUpdate(nextStore, "menu");
     res.json({
       ok: true,
       menuState: publicMenuState,
       pricing: nextStore.pricing,
       revision: nextStore.revisions.pricing,
+      catalogRevision: nextStore.revisions.catalog,
       publishRevision: nextStore.revisions.publish,
       recipeLinkReview: nextStore.recipeLinkReview,
       updatedAt
@@ -1730,18 +1737,20 @@ app.put("/api/recipes", requireAdminRequestOrigin, auth.requireAdmin, async (req
       markManualRecipeStatusChanges(data.recipeState, recipeState);
       data.recipeState = recipeState;
       data.recipeCatalog = recipeCatalog;
+      data.revisions.catalog = Math.max(0, Number(data.revisions.catalog || 0)) + 1;
       incrementPublishRevision(data);
       data.recipeUpdatedAt = updatedAt;
       return data;
     });
 
-    broadcastRecipeUpdate(nextStore.recipeState, updatedAt, nextStore.recipeCatalog);
+    broadcastRecipeUpdate(nextStore.recipeState, updatedAt, nextStore.recipeCatalog, nextStore.revisions.catalog);
     broadcastPublicUpdate(nextStore, "recipes");
     res.json({
       ok: true,
       recipeState: nextStore.recipeState,
       recipeCatalog: nextStore.recipeCatalog,
       recipeLinkReview: nextStore.recipeLinkReview,
+      catalogRevision: nextStore.revisions.catalog,
       publishRevision: nextStore.revisions.publish,
       updatedAt
     });
@@ -1838,7 +1847,7 @@ app.get("/api/feedback/events", requireAdminRequestOrigin, auth.requireAdmin, as
   }
 });
 
-app.get("/api/stock", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (req, res, next) => {
+app.get("/api/stock", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, requireNonPreviewRecipeSession, async (req, res, next) => {
   try {
     const data = req.storeSnapshot || await store.read();
     const fullState = normalizeStockState(data.stockState);
@@ -1847,7 +1856,15 @@ app.get("/api/stock", requireAdminOrMainRequestOrigin, auth.requireRecipe, requi
     res.json({
       ok: true,
       stockState,
-      revision: resolveScopeRevision(data, "stock"),
+      revision: currentInventoryRevision(data),
+      inventoryRevision: currentInventoryRevision(data),
+      catalogRevision: currentCatalogRevision(data),
+      stockRevision: currentStockRevision(data),
+      revisions: {
+        inventory: currentInventoryRevision(data),
+        catalog: currentCatalogRevision(data),
+        stock: currentStockRevision(data)
+      },
       publishRevision: data.revisions && data.revisions.publish || 0,
       updatedAt: data.stockUpdatedAt || null
     });
@@ -1856,7 +1873,7 @@ app.get("/api/stock", requireAdminOrMainRequestOrigin, auth.requireRecipe, requi
   }
 });
 
-app.get("/api/stock/events", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (req, res, next) => {
+app.get("/api/stock/events", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, requireNonPreviewRecipeSession, async (req, res, next) => {
   try {
     const data = req.storeSnapshot || await store.read();
     openRevisionStream(req, res, stockSseClients, "stock", data);
@@ -1865,79 +1882,12 @@ app.get("/api/stock/events", requireAdminOrMainRequestOrigin, auth.requireRecipe
   }
 });
 
-app.put("/api/admin/stock", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
-  try {
-    const rawStockState = req.body && req.body.stockState;
-    const productCodeError = validateStockProductCodes(rawStockState);
-    const unitCatalogError = validateStockUnitCatalog(rawStockState);
-    const submittedState = normalizeStockState(rawStockState);
-    const error = productCodeError || unitCatalogError || validateStockStateForApi(submittedState);
-    if (error) return res.status(400).json({ ok: false, message: error });
-
-    const updatedAt = new Date().toISOString();
-    const pendingNotifications = [];
-    const nextStore = await store.update((data) => {
-      const previousStockState = normalizeStockState(data.stockState);
-      const previousProducts = new Map(previousStockState.products.map((product) => [String(product.id), product]));
-      const submittedProductIds = new Set(submittedState.products.map((product) => String(product.id)));
-      const historyProductIds = new Set(previousStockState.movements.map((movement) => String(movement.productId || "")));
-      const stockedProductIds = new Set(previousStockState.balances.filter((balance) => Number(balance.quantity || 0) !== 0).map((balance) => String(balance.productId || "")));
-      for (const product of submittedState.products) {
-        const previous = previousProducts.get(String(product.id));
-        if (!previous) continue;
-        const oldBaseUnit = String(previous.baseUnit || previous.unit || "adet").trim().toLocaleLowerCase("tr-TR");
-        const nextBaseUnit = String(product.baseUnit || product.unit || "adet").trim().toLocaleLowerCase("tr-TR");
-        const hasHistory = historyProductIds.has(String(product.id));
-        const hasBalance = stockedProductIds.has(String(product.id));
-        if (oldBaseUnit !== nextBaseUnit && (hasHistory || hasBalance)) {
-          throw Object.assign(new Error(`“${product.name || product.productName || "Ürün"}” için hareket veya bakiye varken temel birim değiştirilemez.`), { status: 409 });
-        }
-      }
-      // Var olan ürünlerin depo bakiyeleri yalnız stok servisi üzerinden değişir.
-      // Geriye uyumlu tam katalog isteğiyle ilk kez eklenen bir ürün ise gönderilen
-      // başlangıç miktarını yalnız varsayılan Kafe Deposu bakiyesi olarak bir kez alır.
-      const preservedBalances = previousStockState.balances
-        .filter((balance) => submittedProductIds.has(String(balance.productId || "")));
-      const initialBalances = submittedState.balances
-        .filter((balance) => !previousProducts.has(String(balance.productId || "")));
-      const stockState = normalizeStockState({
-        ...submittedState,
-        unitDefinitions: rawStockState && rawStockState.unitDefinitions
-          ? submittedState.unitDefinitions
-          : previousStockState.unitDefinitions,
-        locations: previousStockState.locations,
-        balances: preservedBalances.concat(initialBalances),
-        movements: previousStockState.movements,
-        transfers: previousStockState.transfers,
-        counts: previousStockState.counts,
-        operationKeys: previousStockState.operationKeys,
-        locationMigrationVersion: 1
-      });
-      markManualStockStatusChanges(previousStockState, stockState);
-      data.stockState = stockState;
-      queueStockThresholdNotifications(data, pendingNotifications, previousStockState, stockState, {
-        operationId: `stock-save:${updatedAt}`,
-        updatedAt
-      });
-      data.revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
-      data.revisions.stock = Number(data.revisions.stock || 0) + 1;
-      incrementPublishRevision(data);
-      data.stockUpdatedAt = updatedAt;
-      return data;
-    });
-
-    broadcastStockUpdate(nextStore.stockState, updatedAt);
-    publishAppNotifications(pendingNotifications);
-    res.json({
-      ok: true,
-      stockState: normalizeStockState(nextStore.stockState),
-      revision: resolveScopeRevision(nextStore, "stock"),
-      publishRevision: nextStore.revisions.publish,
-      updatedAt
-    });
-  } catch (error) {
-    next(error);
-  }
+app.put("/api/admin/stock", requireAdminRequestOrigin, auth.requireAdmin, (_req, res) => {
+  res.status(410).json({
+    ok: false,
+    code: "STOCK_BULK_REPLACE_RETIRED",
+    message: "Toplu stok üzerine yazma kaldırıldı; granular stok işlemlerini kullanın."
+  });
 });
 
 app.post("/api/admin/stock/import-excel", requireAdminRequestOrigin, auth.requireAdmin, retiredExcelImportHandler);
@@ -1962,8 +1912,11 @@ app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireAc
       movement = result.movement;
       idempotent = result.idempotent === true;
       if (idempotent) return context.noChange;
-      const expectedRevision = movementInput.expectedRevision ?? (req.body && req.body.expectedRevision);
-      const currentRevision = Math.max(0, Number(data.revisions && data.revisions.stock || 0));
+      const expectedRevision = movementInput.expectedInventoryRevision
+        ?? (req.body && req.body.expectedInventoryRevision)
+        ?? movementInput.expectedRevision
+        ?? (req.body && req.body.expectedRevision);
+      const currentRevision = currentInventoryRevision(data);
       if (!Number.isInteger(Number(expectedRevision)) || Number(expectedRevision) !== currentRevision) {
         const error = new Error("Stok verisi değişti. Güncel bakiyeyi alıp işlemi yeniden deneyin.");
         error.status = 409;
@@ -1975,7 +1928,8 @@ app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireAc
         updatedAt
       });
       data.revisions = data.revisions && typeof data.revisions === "object" ? data.revisions : {};
-      data.revisions.stock = Number(data.revisions.stock || 0) + 1;
+      data.revisions.inventory = Math.max(0, Number(data.revisions.inventory || 0)) + 1;
+      data.revisions.stock = Math.max(Number(data.revisions.stock || 0) + 1, data.revisions.inventory);
       data.recipeActivity = (Array.isArray(data.recipeActivity) ? data.recipeActivity : []).concat({
         id: `stock-audit-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
         type: "stock.movement.create", action: "stock.movement.create",
@@ -1983,12 +1937,16 @@ app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireAc
         entityType: "stock_movement", entityId: String(movement && movement.id || ""),
         requestId: operationId, createdAt: updatedAt
       }).slice(-5000);
-      incrementPublishRevision(data);
       data.stockUpdatedAt = updatedAt;
       return data;
     });
 
-    if (!idempotent) broadcastStockUpdate(stockState || nextStore.stockState, updatedAt);
+    if (!idempotent) broadcastStockUpdate(
+      stockState || nextStore.stockState,
+      updatedAt,
+      Number(nextStore.revisions && nextStore.revisions.inventory || 0),
+      "inventory"
+    );
     publishAppNotifications(pendingNotifications);
     res.status(idempotent ? 200 : 201).json({
       ok: true,
@@ -1997,7 +1955,15 @@ app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireAc
         : stockStateForPersonnel(stockState || normalizeStockState(nextStore.stockState), actor),
       movement,
       idempotent,
-      revision: resolveScopeRevision(nextStore, "stock"),
+      revision: currentInventoryRevision(nextStore),
+      inventoryRevision: currentInventoryRevision(nextStore),
+      catalogRevision: currentCatalogRevision(nextStore),
+      stockRevision: currentStockRevision(nextStore),
+      revisions: {
+        inventory: currentInventoryRevision(nextStore),
+        catalog: currentCatalogRevision(nextStore),
+        stock: currentStockRevision(nextStore)
+      },
       publishRevision: nextStore.revisions.publish,
       updatedAt
     });
@@ -2013,7 +1979,8 @@ registerStockLocationRoutes({
   requireAdminRequestOrigin,
   requireAdminOrMainRequestOrigin,
   broadcastStockUpdate,
-  incrementPublishRevision,
+  resolveProcurementActor: (req) => resolveActorFromRequest(req, store),
+  hasProcurementCapability,
   notificationService,
   queueStockThresholdNotifications
 });
@@ -2025,6 +1992,7 @@ const workforceRuntime = registerWorkforceRoutes({
   broadcastStockUpdate,
   queueStockThresholdNotifications,
   notificationService,
+  publishGatewayEvent: publishAuthenticatedEvent,
   notifyProcurementChange(event) {
     if (procurementRuntime && procurementRuntime.service) procurementRuntime.service.publishExternalEvent(event);
   }
@@ -2042,6 +2010,31 @@ procurementRuntime = registerProcurementRoutes({
   requireRequestOrigin: requireAdminOrMainRequestOrigin,
   riskOperationLimiter: importOperationLimiter
 });
+
+if (procurementRuntime && procurementRuntime.service && typeof procurementRuntime.service.subscribe === "function") {
+  procurementRuntime.service.subscribe((event) => publishAuthenticatedEvent({
+    topic: event && event.entityType === "shipment" ? "shipment" : "procurement",
+    type: event && event.type || "procurement.updated",
+    entityType: event && event.entityType || "procurement",
+    entityId: event && event.entityId || "",
+    revision: event && event.entityType === "shipment"
+      ? event && (event.shipmentRevision || event.revision) || 0
+      : event && event.revision || 0,
+    timestamp: event && event.createdAt,
+    targets: ["fatura", "yonetici"]
+  }));
+}
+
+notificationService.subscribeNotificationEvents((notification) => publishAuthenticatedEvent({
+  topic: "notification",
+  type: "notification.updated",
+  entityType: notification && notification.entityType || "notification",
+  entityId: notification && (notification.entityId || notification.id) || "",
+  revision: notification && notification.revision || 0,
+  actorId: "system",
+  timestamp: notification && notification.updatedAt || notification && notification.createdAt,
+  targets: [notification && notification.appTarget || (notification && notification.recipientRole === "manager" ? "yonetici" : "personel")]
+}));
 
 registerNotificationRoutes({
   app,
@@ -2085,9 +2078,6 @@ registerCatalogCleanupRoutes({
   broadcastPublicUpdate
 });
 
-// PASIF_SITE_MODULU_BASLANGIC
-// PASIF MODUL: Site state, revision ve SSE route kaynakları korunarak devre dışı bırakıldı.
-if (false) {
 app.get("/api/site", async (_req, res, next) => {
   try {
     const data = await store.read();
@@ -2118,12 +2108,14 @@ app.put("/api/site", requireAdminRequestOrigin, auth.requireAdmin, async (req, r
       }
       data.siteState = siteState;
       data.siteUpdatedAt = updatedAt;
+      data.revisions = data.revisions && typeof data.revisions === "object" && !Array.isArray(data.revisions) ? data.revisions : {};
+      data.revisions.site = Math.max(0, Number(data.revisions.site || 0)) + 1;
       return data;
     });
 
-    broadcastSiteUpdate(nextStore.siteState, updatedAt);
+    broadcastSiteUpdate(nextStore.siteState, updatedAt, nextStore.revisions && nextStore.revisions.site);
     broadcastPublicUpdate(nextStore, "site");
-    res.json({ ok: true, siteState: nextStore.siteState, updatedAt });
+    res.json({ ok: true, siteState: nextStore.siteState, revision: nextStore.revisions && nextStore.revisions.site || 0, updatedAt });
   } catch (error) {
     next(error);
   }
@@ -2186,17 +2178,17 @@ app.post("/api/admin/site/revisions/:id/restore", requireAdminRequestOrigin, aut
       restored = migrateSiteState(revision.siteState);
       data.siteState = restored;
       data.siteUpdatedAt = updatedAt;
+      data.revisions = data.revisions && typeof data.revisions === "object" && !Array.isArray(data.revisions) ? data.revisions : {};
+      data.revisions.site = Math.max(0, Number(data.revisions.site || 0)) + 1;
       return data;
     });
-    broadcastSiteUpdate(restored, updatedAt);
+    broadcastSiteUpdate(restored, updatedAt, nextStore.revisions && nextStore.revisions.site);
     broadcastPublicUpdate(nextStore, "site");
-    res.json({ ok: true, siteState: restored, updatedAt });
+    res.json({ ok: true, siteState: restored, revision: nextStore.revisions && nextStore.revisions.site || 0, updatedAt });
   } catch (error) {
     next(error);
   }
 });
-}
-// PASIF_SITE_MODULU_BITIS
 
 app.use("/admin-password", requireAdminHost, express.static(path.join(config.backendRoot, "public"), {
   ...staticOptions,
@@ -2241,28 +2233,15 @@ app.get("/", (req, res, next) => {
   });
 });
 
-// PASIF_SITE_MODULU_BASLANGIC
-app.use("/site", requireMainHost, (_req, res) => res.status(410).type("text/plain").send("Site modülü geçici olarak pasiftir."));
-// PASIF MODUL app.get("/site", requireMainHost, (_req, res) => res.redirect(301, "/"));
-// PASIF MODUL app.get("/site/", requireMainHost, (_req, res) => res.redirect(301, "/"));
-// PASIF_SITE_MODULU_BITIS
-
-// PASIF_MUDAVIM_MODULU_BASLANGIC
-app.use("/mudavim", requireMainHost, (_req, res) => res.status(410).type("text/plain").send("Müdavim modülü geçici olarak pasiftir."));
-// PASIF MODUL app.use("/mudavim", requireMainHost, express.static(mudavimRoot, {
-// PASIF MODUL   ...staticOptions,
-// PASIF MODUL   index: "index.html"
-// PASIF MODUL }));
-// PASIF_MUDAVIM_MODULU_BITIS
+app.get(/^\/site$/, requireMainHost, (_req, res) => res.redirect(301, "/site/"));
+app.use("/site/", requireMainHost, express.static(siteRoot, { ...staticOptions, index: "index.html" }));
+app.use("/mudavim", requireMainHost, express.static(mudavimRoot, { ...staticOptions, index: "index.html" }));
 
 app.use("/assets", requireKnownHost, express.static(assetsRoot, staticOptions));
 app.use("/shared", requireKnownHost, express.static(sharedRoot, staticOptions));
-// PASIF_SITE_MODULU_BASLANGIC
-app.use(["/styles", "/scripts", "/sw.js"], requireMainHost, (_req, res) => res.status(410).end());
-// PASIF MODUL app.use("/styles", requireMainHost, express.static(path.join(siteRoot, "styles"), staticOptions));
-// PASIF MODUL app.use("/scripts", requireMainHost, express.static(path.join(siteRoot, "scripts"), staticOptions));
-// PASIF MODUL app.get("/sw.js", requireMainHost, sendSiteFile("sw.js"));
-// PASIF_SITE_MODULU_BITIS
+app.use("/styles", requireMainHost, express.static(path.join(siteRoot, "styles"), staticOptions));
+app.use("/scripts", requireMainHost, express.static(path.join(siteRoot, "scripts"), staticOptions));
+app.get("/sw.js", requireMainHost, sendSiteFile("sw.js"));
 
 app.use("/qr-menu", requireMainHost, express.static(qrMenuRoot, {
   ...staticOptions,
@@ -2366,7 +2345,17 @@ async function prepareRuntime() {
 async function startServer() {
   await prepareRuntime();
   return app.listen(config.port, () => {
-    console.log(`Tahmisci backend listening on port ${config.port}`);
+    const origin = `http://localhost:${config.port}`;
+    console.log([
+      "Tahmisci backend hazır:",
+      `QR Menü   : ${origin}/`,
+      `Site      : ${origin}/site/`,
+      `Müdavim   : ${origin}/mudavim/`,
+      `Yönetici  : ${origin}/yonetici/`,
+      `Personel  : ${origin}/personel/`,
+      `Fatura    : ${origin}/fatura/`,
+      `Health    : ${origin}/api/health`
+    ].join("\n"));
   });
 }
 
@@ -2419,7 +2408,7 @@ function installGracefulShutdown(server) {
 }
 
 function closeSseClients() {
-  for (const clients of [sseClients, recipeSseClients, siteSseClients, publicSseClients, feedbackSseClients, stockSseClients]) {
+  for (const clients of [sseClients, recipeSseClients, siteSseClients, publicSseClients, feedbackSseClients, stockSseClients, authenticatedEventClients]) {
     for (const client of clients) {
       if (client && client.heartbeat) clearInterval(client.heartbeat);
       try { if (client && client.res && !client.res.writableEnded) client.res.end(); } catch (_error) {}
@@ -2527,6 +2516,43 @@ async function requireActiveRecipeUser(req, res, next) {
   } catch (error) {
     return next(error);
   }
+}
+
+function requireNonPreviewRecipeSession(req, res, next) {
+  if (req.recipe && req.recipe.role === "preview") {
+    return res.status(403).json({ ok: false, message: "Önizleme oturumu bu özel veri akışına erişemez." });
+  }
+  return next();
+}
+
+function requireAuthenticatedEventSession(req, res, next) {
+  const appId = String(req.query && (req.query.appId || req.query.appTarget) || "")
+    .trim()
+    .toLocaleLowerCase("tr-TR");
+  if (!new Set(["yonetici", "personel", "fatura"]).has(appId)) {
+    return res.status(400).json({ ok: false, message: "Geçerli uygulama hedefi gerekli." });
+  }
+  req.requestedEventAppId = appId;
+  if (appId === "yonetici") return auth.requireAdmin(req, res, next);
+  if (appId === "personel") return auth.requireActivePersonel(req, res, next);
+  return auth.requireRecipe(req, res, (recipeError) => {
+    if (recipeError) return next(recipeError);
+    return requireActiveRecipeUser(req, res, (activeError) => {
+      if (activeError) return next(activeError);
+      return requireNonPreviewRecipeSession(req, res, (previewError) => {
+        if (previewError) return next(previewError);
+        const payload = req.recipe || req.admin || {};
+        if (payload.role === "admin") return next();
+        const user = req.recipeUser || {};
+        const allowed = user.faturaAccessEnabled !== false
+          && Array.isArray(user.faturaCapabilities)
+          && user.faturaCapabilities.length > 0;
+        return allowed
+          ? next()
+          : res.status(403).json({ ok: false, message: "Tahmisçi Fatura erişim yetkisi gerekli." });
+      });
+    });
+  });
 }
 
 function isConfiguredAdminHost(req) {
@@ -3301,41 +3327,6 @@ function applyStockImportField(product, field, value, changes) {
   changes.push(stockFieldLabel(field));
 }
 
-function validateStockStateForApi(stockState) {
-  if (!stockState || typeof stockState !== "object" || Array.isArray(stockState)) return "Geçersiz stok verisi.";
-  if (!Array.isArray(stockState.categories) || !Array.isArray(stockState.products)) return "Stok kategorileri ve ürünleri zorunludur.";
-  if (stockState.categories.length > 300) return "Kategori sayısı çok yüksek.";
-  if (stockState.products.length > 5000) return "Ürün sayısı çok yüksek.";
-  for (const product of stockState.products) {
-    if (!String(product && (product.name || product.productName) || "").trim()) return "Ürün adı boş olamaz.";
-    for (const field of ["stockQuantity", "orderThreshold", "criticalThreshold"]) {
-      const value = Number(product[field] || 0);
-      if (!Number.isFinite(value) || value < 0) return "Stok miktarı ve eşikler negatif olamaz.";
-    }
-    const bulkUnit = String(product.bulkUnit || product.caseUnit || "").trim();
-    const factor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
-    if (bulkUnit && (!Number.isFinite(factor) || factor <= 0)) return "Toplu birim kullanılan üründe Toplu Birim İçeriği sıfırdan büyük olmalıdır.";
-    if (!bulkUnit && factor < 0) return "Toplu Birim İçeriği negatif olamaz.";
-  }
-  return "";
-}
-
-function validateStockUnitCatalog(stockState) {
-  const definitions = stockState && stockState.unitDefinitions;
-  if (!definitions || typeof definitions !== "object" || Array.isArray(definitions)) return "";
-  const key = (value) => String(value || "").trim().toLocaleLowerCase("tr-TR").normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i").replace(/\s+/g, " ");
-  const base = new Set((Array.isArray(definitions.base) ? definitions.base : []).map(key).filter(Boolean));
-  const bulk = new Set((Array.isArray(definitions.bulk) ? definitions.bulk : []).map(key).filter(Boolean));
-  for (const product of Array.isArray(stockState.products) ? stockState.products : []) {
-    const baseUnit = key(product && (product.baseUnit || product.unit));
-    const bulkUnit = key(product && (product.bulkUnit || product.caseUnit));
-    if (baseUnit && !base.has(baseUnit)) return `“${product.name || product.productName || "Ürün"}” temel birimi merkezi katalogda bulunamadı.`;
-    if (bulkUnit && !bulk.has(bulkUnit)) return `“${product.name || product.productName || "Ürün"}” toplu birimi merkezi katalogda bulunamadı.`;
-  }
-  return "";
-}
-
 function stockActorFromRequest(req) {
   if (req.recipe && req.recipe.role === "admin") {
     return { type: "admin", id: req.recipe.sub || "admin", name: "Yönetici" };
@@ -3713,8 +3704,16 @@ function cloneJson(value) {
   return JSON.parse(JSON.stringify(value || {}));
 }
 
-function broadcastMenuUpdate(_menuState, updatedAt, _pricing, revision) {
+function broadcastMenuUpdate(_menuState, updatedAt, _pricing, revision, catalogRevision = 0) {
   broadcastScopeInvalidation(sseClients, "menu", "menu", { updatedAt, revision });
+  publishAuthenticatedEvent({
+    topic: "catalog",
+    type: "menu.updated",
+    entityType: "menu",
+    revision: Math.max(0, Number(catalogRevision || revision || 0)),
+    timestamp: updatedAt,
+    targets: ["yonetici"]
+  });
 }
 
 function menuPricingFingerprint(menuState, pricing) {
@@ -3790,39 +3789,6 @@ function markManualRecipeStatusChanges(previousState, nextState) {
   }
 }
 
-function markManualStockStatusChanges(previousState, nextState) {
-  const previousCategories = new Map((previousState && previousState.categories || []).map((category) => [String(category.id), category]));
-  const previous = new Map((previousState && previousState.products || []).map((product) => [String(product.id), product]));
-  for (const category of nextState && nextState.categories || []) {
-    const oldCategory = previousCategories.get(String(category.id));
-    if (!oldCategory) {
-      category.sourceType = "manual";
-      category.sourceWorkbook = "";
-      category.sourcePresent = true;
-      category.statusSource = "manual";
-      category.manualActive = category.active !== false;
-    } else if (oldCategory.active !== category.active) {
-      category.statusSource = "manual";
-      category.manualActive = category.active !== false;
-      if (!category.sourceType) category.sourceType = "manual";
-    }
-  }
-  for (const product of nextState && nextState.products || []) {
-    const oldProduct = previous.get(String(product.id));
-    if (!oldProduct) {
-      product.sourceType = "manual";
-      product.sourceWorkbook = "";
-      product.sourcePresent = true;
-      product.statusSource = "manual";
-      product.manualActive = product.active !== false;
-    } else if (oldProduct.active !== product.active) {
-      product.statusSource = "manual";
-      product.manualActive = product.active !== false;
-      if (!product.sourceType) product.sourceType = "manual";
-    }
-  }
-}
-
 function incrementPublishRevision(data) {
   if (!data.revisions || typeof data.revisions !== "object" || Array.isArray(data.revisions)) {
     data.revisions = { publish: 0, pricing: 0 };
@@ -3831,8 +3797,9 @@ function incrementPublishRevision(data) {
   return data.revisions.publish;
 }
 
-function broadcastRecipeUpdate(_recipeState, updatedAt, _recipeCatalog = []) {
+function broadcastRecipeUpdate(_recipeState, updatedAt, _recipeCatalog = [], revision = 0) {
   broadcastScopeInvalidation(recipeSseClients, "recipes", "recipes", { updatedAt });
+  publishAuthenticatedEvent({ topic: "catalog", type: "recipe.updated", entityType: "recipe", revision, timestamp: updatedAt, targets: ["personel", "yonetici"] });
 }
 
 function closeRecipeClientsForUser(userId) {
@@ -3856,18 +3823,20 @@ function closeRecipeClientsForUser(userId) {
   }
 }
 
-function broadcastSiteUpdate(siteState, updatedAt) {
+function broadcastSiteUpdate(siteState, updatedAt, revision = 0) {
   const payload = { siteState, updatedAt };
   for (const client of siteSseClients) {
     sendSse(client.res, "site", payload);
   }
+  publishAuthenticatedEvent({ topic: "site", type: "site.updated", entityType: "site", revision, timestamp: updatedAt, targets: ["yonetici"] });
 }
 
 function broadcastPublicUpdate(data, reason) {
-  const payload = { reason, ...buildPublicBootstrap(data) };
-  for (const client of publicSseClients) {
-    sendSse(client.res, "bootstrap", payload);
-  }
+  broadcastScopeInvalidation(publicSseClients, "public", "bootstrap", {
+    revision: resolveScopeRevision(data, "public"),
+    action: reason || "invalidate",
+    updatedAt: data && (data.siteUpdatedAt || data.menuUpdatedAt) || new Date().toISOString()
+  });
 }
 
 function broadcastFeedbackUpdate(feedbackItems, updatedAt) {
@@ -3875,10 +3844,22 @@ function broadcastFeedbackUpdate(feedbackItems, updatedAt) {
   for (const client of feedbackSseClients) {
     sendSse(client.res, "feedback", payload);
   }
+  publishAuthenticatedEvent({ topic: "feedback", type: "feedback.updated", entityType: "feedback", timestamp: updatedAt, targets: ["yonetici"] });
 }
 
-function broadcastStockUpdate(_stockState, updatedAt) {
-  broadcastScopeInvalidation(stockSseClients, "stock", "stock", { updatedAt });
+function broadcastStockUpdate(_stockState, updatedAt, revision = 0, domain = "inventory") {
+  const invalidation = broadcastScopeInvalidation(stockSseClients, "stock", "stock", { updatedAt, revision });
+  const topic = domain === "catalog" ? "catalog" : "inventory";
+  const eventRevision = Math.max(0, Number(revision || invalidation.revision));
+  publishAuthenticatedEvent({
+    eventId: `${topic}:${eventRevision}`,
+    topic,
+    type: `${topic}.updated`,
+    entityType: topic,
+    revision: eventRevision,
+    timestamp: updatedAt,
+    targets: ["fatura", "personel", "yonetici"]
+  });
 }
 
 function queueAppNotification(data, pending, input) {
@@ -3998,6 +3979,62 @@ function sendSse(res, event, payload, options = {}) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
+function openAuthenticatedEventStream(req, res) {
+  const payload = req.recipe || req.admin || {};
+  const role = String(payload.role || payload.sessionRole || "personel").toLocaleLowerCase("tr-TR");
+  const appId = String(req.requestedEventAppId || "personel");
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+    "Content-Encoding": "identity"
+  });
+  if (res.socket) res.socket.setTimeout(0);
+  res.write(`retry: ${SSE_RETRY_MS}\n\n`);
+  const ready = canonicalEventEnvelope({ topic: "system", type: "system.ready", entityType: "session", targets: [appId] });
+  sendSse(res, "event", ready, { id: ready.eventId });
+  const client = {
+    res,
+    appId,
+    actorId: String(payload.userId || payload.sub || role),
+    heartbeat: setInterval(() => {
+      if (!res.writableEnded) res.write(`: heartbeat ${Date.now()}\n\n`);
+    }, SSE_HEARTBEAT_MS)
+  };
+  if (typeof client.heartbeat.unref === "function") client.heartbeat.unref();
+  authenticatedEventClients.add(client);
+  req.once("close", () => closeRevisionClient(client, authenticatedEventClients, false));
+}
+
+function canonicalEventEnvelope(input = {}) {
+  const targets = Array.from(new Set((Array.isArray(input.targets) ? input.targets : [])
+    .map((item) => String(item || "").trim().toLocaleLowerCase("tr-TR"))
+    .filter((item) => ["yonetici", "personel", "fatura", "mudavim", "public"].includes(item))));
+  const revision = Math.max(0, Math.trunc(Number(input.revision || 0)));
+  return {
+    eventId: String(input.eventId || `evt-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`),
+    topic: String(input.topic || "system").slice(0, 60),
+    type: String(input.type || "system.updated").slice(0, 120),
+    entityType: String(input.entityType || "").slice(0, 100),
+    entityId: String(input.entityId || "").slice(0, 180),
+    revision,
+    actorId: String(input.actorId || "").slice(0, 180),
+    timestamp: input.timestamp || new Date().toISOString(),
+    targets
+  };
+}
+
+function publishAuthenticatedEvent(input = {}) {
+  const envelope = canonicalEventEnvelope(input);
+  for (const client of authenticatedEventClients) {
+    if (!client || !client.res || client.res.writableEnded) continue;
+    if (envelope.targets.length && !envelope.targets.includes(client.appId)) continue;
+    sendSse(client.res, "event", envelope, { id: envelope.eventId });
+  }
+  return envelope;
+}
+
 function openRevisionStream(req, res, clients, scope, data, clientData = {}) {
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
@@ -4012,7 +4049,15 @@ function openRevisionStream(req, res, clients, scope, data, clientData = {}) {
   const revision = seedScopeRevision(scope, resolveScopeRevision(data, scope));
   const lastEventId = parseLastEventId(req);
   sendSse(res, "ready", {
+    eventId: `${scope}:${revision}`,
+    topic: scope === "public" ? "site" : scope === "stock" ? "inventory" : scope === "menu" || scope === "recipes" ? "catalog" : scope,
+    type: `${scope}.ready`,
+    entityType: scope,
+    entityId: "",
     revision,
+    actorId: "",
+    timestamp: new Date().toISOString(),
+    targets: scope === "public" ? ["public", "mudavim"] : [],
     scope,
     action: "ready",
     requiresRefetch: lastEventId > 0 && lastEventId < revision
@@ -4043,7 +4088,15 @@ function openRevisionStream(req, res, clients, scope, data, clientData = {}) {
 function broadcastScopeInvalidation(clients, scope, event, options = {}) {
   const revision = nextScopeRevision(scope, options.revision || Date.parse(options.updatedAt || ""));
   const payload = {
+    eventId: `${scope}:${revision}`,
+    topic: scope === "public" ? "site" : scope === "stock" ? "inventory" : scope === "menu" || scope === "recipes" ? "catalog" : scope,
+    type: `${scope}.${options.action || "invalidate"}`,
+    entityType: scope,
+    entityId: "",
     revision,
+    actorId: String(options.actorId || ""),
+    timestamp: options.updatedAt || new Date().toISOString(),
+    targets: scope === "public" ? ["public", "mudavim"] : [],
     scope,
     action: options.action || "invalidate",
     changedIds: Array.isArray(options.changedIds) ? options.changedIds.slice(0, 50).map((id) => String(id).slice(0, 120)) : [],
@@ -4066,7 +4119,7 @@ function buildMenuApiPayload(data) {
     pricing: data.pricing,
     revision: Math.max(0, Number(revisions.pricing || 0)),
     publishRevision: Math.max(0, Number(revisions.publish || 0)),
-    catalogRevision: Math.max(0, Number(revisions.dataImportCatalog || 0)),
+    catalogRevision: Math.max(0, Number(revisions.catalog || revisions.dataImportCatalog || 0)),
     dataImportRevision: Math.max(0, Number(revisions.dataImport || 0)),
     streamRevision: resolveScopeRevision(data, "menu"),
     updatedAt: latestIsoTimestamp(data.menuUpdatedAt, data.pricingUpdatedAt)
@@ -4102,6 +4155,7 @@ function resolveScopeRevision(data, scope) {
     menu: data && data.menuUpdatedAt,
     recipes: data && data.recipeUpdatedAt,
     stock: data && data.stockUpdatedAt,
+    public: data && (data.siteUpdatedAt || data.menuUpdatedAt),
     feedback: data && data.feedbackUpdatedAt
   }[scope];
   const timestamp = Date.parse(updatedAt || "");
@@ -4110,6 +4164,21 @@ function resolveScopeRevision(data, scope) {
   if (scope === "workforce") return Math.max(0, Number(revisions.workforce || 0));
   if (scope === "menu") return Math.max(0, Number(revisions.publish || 0), Number(revisions.pricing || 0));
   return Math.max(0, Number(revisions.publish || 0));
+}
+
+function currentStockRevision(data) {
+  const revisions = data && data.revisions || {};
+  return Math.max(0, Number(revisions.stock || 0));
+}
+
+function currentInventoryRevision(data) {
+  const revisions = data && data.revisions || {};
+  return Math.max(0, Number(revisions.inventory || 0));
+}
+
+function currentCatalogRevision(data) {
+  const revisions = data && data.revisions || {};
+  return Math.max(0, Number(revisions.catalog || 0));
 }
 
 function seedScopeRevision(scope, revision) {
@@ -4186,7 +4255,6 @@ function publicRecipeUser(user) {
     id: user.id,
     name: user.name || user.username,
     username: user.username,
-    phone: user.phone || "",
     avatarUrl: user.avatarUrl || "",
     bio: user.bio || "",
     active: user.active !== false,

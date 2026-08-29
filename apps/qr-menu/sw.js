@@ -19,8 +19,8 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
     "/assets/brand/logo-primary.png"
   ],
   staticPrefixes: ["/qr-menu/", "/shared/", "/assets/"],
-  neverCachePrefixes: ["/api/", "/yonetici/", "/panel/", "/personel/", "/fatura/"],
-  excludedNavigationPrefixes: ["/yonetici/", "/panel/", "/personel/", "/fatura/", "/api/", "/recipe/"],
-  excludedClientPrefixes: ["/yonetici/", "/panel/", "/personel/", "/fatura/", "/recipe/"]
+  neverCachePrefixes: ["/api/", "/yonetici/", "/panel/", "/personel/", "/fatura/", "/site/", "/mudavim/"],
+  excludedNavigationPrefixes: ["/yonetici/", "/panel/", "/personel/", "/fatura/", "/site/", "/mudavim/", "/api/", "/recipe/"],
+  excludedClientPrefixes: ["/yonetici/", "/panel/", "/personel/", "/fatura/", "/site/", "/mudavim/", "/recipe/"]
 });
 importScripts("/shared/scripts/pwa-sw-runtime.js");

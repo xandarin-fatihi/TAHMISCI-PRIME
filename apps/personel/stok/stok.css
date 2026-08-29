@@ -19,7 +19,7 @@
 body {
   min-height: 100svh;
   margin: 0;
-  font-family: Manrope, Inter, Arial, sans-serif;
+  font-family: var(--panel-font-ui, "Tahmisci Poppins", Poppins, system-ui, sans-serif);
   color: var(--espresso);
   background:
     radial-gradient(circle at 18% 0%, rgba(255, 250, 242, 0.9), transparent 34%),

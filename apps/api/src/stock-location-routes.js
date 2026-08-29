@@ -14,13 +14,57 @@ function registerStockLocationRoutes(deps) {
     requireAdminRequestOrigin,
     requireAdminOrMainRequestOrigin,
     broadcastStockUpdate,
-    incrementPublishRevision,
+    resolveProcurementActor,
+    hasProcurementCapability,
     notificationService,
     queueStockThresholdNotifications
   } = deps;
 
   const fail = (message, status = 400) => Object.assign(new Error(message), { status });
   const nowIso = () => new Date().toISOString();
+  const registerAdminStockRoute = (method, suffix, ...handlers) => {
+    // Legacy Yönetici yolu yalnız compatibility adapter'dır; iki yol da aynı
+    // handler ve stok domain servisini kullanır.
+    app[method](`/api/admin/stock${suffix}`, ...handlers);
+    const businessHandler = handlers[handlers.length - 1];
+    app[method](`/api/procurement/v1/stock${suffix}`,
+      requireAdminOrMainRequestOrigin,
+      auth.requireRecipe,
+      attachProcurementActor,
+      requireCanonicalCapability(stockCapability(method, suffix)),
+      businessHandler);
+  };
+
+  async function attachProcurementActor(req, res, next) {
+    try {
+      const actor = typeof resolveProcurementActor === "function" ? await resolveProcurementActor(req) : null;
+      if (!actor) return res.status(401).json({ ok: false, message: "Tahmisçi Fatura oturumu gerekli." });
+      req.procurementActor = actor;
+      return next();
+    } catch (error) { return next(error); }
+  }
+
+  function requireCanonicalCapability(capability) {
+    return (req, res, next) => {
+      const allowed = typeof hasProcurementCapability === "function"
+        ? hasProcurementCapability(req.procurementActor, capability)
+        : req.procurementActor && req.procurementActor.type === "admin";
+      return allowed ? next() : res.status(403).json({ ok: false, message: "Bu stok işlemi için yetkiniz yok.", capability });
+    };
+  }
+
+  function stockCapability(method, suffix) {
+    const verb = String(method || "get").toLowerCase();
+    if (verb === "get") return "inventory.read";
+    if (suffix.startsWith("/catalog") || suffix.startsWith("/unit-definitions")) return "inventory.catalog.manage";
+    if (suffix.startsWith("/locations")) return "inventory.location.manage";
+    if (suffix.startsWith("/counts")) return "inventory.count.manage";
+    if (suffix.startsWith("/transfers") && (suffix.includes("/approve") || suffix.includes("/reject"))) return "inventory.transfer.approve";
+    if (suffix.startsWith("/transfers")) return "inventory.transfer.create";
+    if (suffix.startsWith("/movements") && suffix.includes("/reverse")) return "inventory.movement.reverse";
+    if (suffix.startsWith("/movements")) return "inventory.movement.create";
+    return "inventory.manage";
+  }
 
   function requestId(req, required = false) {
     const value = String(
@@ -49,6 +93,24 @@ function registerStockLocationRoutes(deps) {
   }
 
   function adminActor(req) {
+    const procurementActor = req.procurementActor;
+    if (procurementActor && procurementActor.id) {
+      return {
+        type: procurementActor.type === "admin" ? "admin" : "personel",
+        id: String(procurementActor.id),
+        name: String(procurementActor.name || procurementActor.id),
+        branchId: String(procurementActor.branchId || "main"),
+        stockLocationId: String(procurementActor.stockLocationId || ""),
+        inventoryManage: Boolean(typeof hasProcurementCapability === "function"
+          && hasProcurementCapability(procurementActor, "inventory.manage")),
+        inventoryTransfer: Boolean(typeof hasProcurementCapability === "function"
+          && hasProcurementCapability(procurementActor, "inventory.transfer.create")),
+        inventoryScope: procurementActor.type === "admin"
+          || typeof hasProcurementCapability === "function" && hasProcurementCapability(procurementActor, "inventory.manage")
+          ? "all"
+          : "assigned"
+      };
+    }
     return {
       type: "admin",
       id: String(req.admin && (req.admin.userId || req.admin.sub) || "admin"),
@@ -68,18 +130,47 @@ function registerStockLocationRoutes(deps) {
   }
 
   function stockRevision(data) {
-    return Math.max(0, Number(data && data.revisions && data.revisions.stock || 0));
+    const revisions = data && data.revisions || {};
+    return Math.max(0, Number(revisions.stock || 0));
   }
 
-  function persistStockMutation(data, stockState, timestamp) {
+  function domainRevision(data, domain) {
+    const revisions = data && data.revisions || {};
+    return Math.max(0, Number(revisions[domain] || 0));
+  }
+
+  function canonicalRevisionPayload(data, primaryDomain = "inventory") {
+    const inventoryRevision = domainRevision(data, "inventory");
+    const catalogRevision = domainRevision(data, "catalog");
+    return {
+      revision: primaryDomain === "catalog" ? catalogRevision : inventoryRevision,
+      inventoryRevision,
+      catalogRevision,
+      revisions: { inventory: inventoryRevision, catalog: catalogRevision, stock: stockRevision(data) }
+    };
+  }
+
+  function persistStockMutation(data, stockState, timestamp, domains = "inventory") {
     data.stockState = normalizeStockState(stockState);
     data.stockUpdatedAt = timestamp;
     data.revisions = data.revisions && typeof data.revisions === "object" && !Array.isArray(data.revisions)
       ? data.revisions
       : {};
-    data.revisions.stock = stockRevision(data) + 1;
-    if (typeof incrementPublishRevision === "function") incrementPublishRevision(data);
+    const keys = [...new Set((Array.isArray(domains) ? domains : [domains])
+      .map((domain) => domain === "catalog" ? "catalog" : "inventory"))];
+    for (const key of keys) data.revisions[key] = Math.max(0, Number(data.revisions[key] || 0)) + 1;
+    data.revisions.stock = Math.max(
+      Number(data.revisions.stock || 0) + 1,
+      Number(data.revisions.inventory || 0),
+      Number(data.revisions.catalog || 0)
+    );
     return data.stockState;
+  }
+
+  function requireActorCapability(req, capability) {
+    if (!req.procurementActor) return;
+    if (typeof hasProcurementCapability === "function" && hasProcurementCapability(req.procurementActor, capability)) return;
+    throw fail("Bu stok işlemi için yetkiniz yok.", 403);
   }
 
   function publishNotifications(pending) {
@@ -95,7 +186,7 @@ function registerStockLocationRoutes(deps) {
 
   function publicLocations(stockState, actor) {
     const locations = stockService.getLocations(stockState);
-    if (!actor || actor.type === "admin") return locations;
+    if (!actor || actor.type === "admin" || actor.inventoryManage === true || actor.inventoryScope === "all") return locations;
     const ownId = stockService.actorLocationId(stockState, actor);
     return locations.filter((location) => location.id === ownId);
   }
@@ -149,7 +240,7 @@ function registerStockLocationRoutes(deps) {
         : inventory.balances,
       summary: inventory.summary,
       unitDefinitions: state.unitDefinitions,
-      revision: stockRevision(data),
+      ...canonicalRevisionPayload(data, "inventory"),
       publishRevision: Number(data.revisions && data.revisions.publish || 0),
       updatedAt: data.stockUpdatedAt || state.updatedAt || null
     };
@@ -228,7 +319,281 @@ function registerStockLocationRoutes(deps) {
     };
   }
 
-  app.get("/api/admin/stock/locations", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  function catalogText(value, max = 180) {
+    return String(value || "").trim().replace(/\s+/g, " ").slice(0, max);
+  }
+
+  function catalogIdentity(value) {
+    return catalogText(value, 240).toLocaleLowerCase("tr-TR").normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i").replace(/[^a-z0-9]+/g, " ").trim();
+  }
+
+  function validateCatalogProduct(state, body, current = null) {
+    const name = catalogText(body.name || body.productName || current && (current.name || current.productName));
+    const categoryId = catalogText(body.categoryId || current && current.categoryId);
+    const category = state.categories.find((item) => String(item.id) === categoryId);
+    if (!name) throw fail("Ürün adı zorunludur.", 422);
+    if (!category) throw fail("Stok kategorisi bulunamadı.", 404);
+    const productCode = catalogText(body.productCode !== undefined ? body.productCode : current && current.productCode, 80).toLocaleUpperCase("tr-TR");
+    if (productCode && state.products.some((item) => item !== current
+      && String(item.productCode || "").toLocaleUpperCase("tr-TR") === productCode)) {
+      throw fail("Bu stok ürün kodu zaten kullanılıyor.", 409);
+    }
+    const baseUnit = normalizeCatalogUnit(body.baseUnit !== undefined ? body.baseUnit : current && (current.baseUnit || current.unit) || "adet");
+    const bulkUnit = normalizeCatalogUnit(body.bulkUnit !== undefined ? body.bulkUnit : body.caseUnit !== undefined ? body.caseUnit : current && (current.bulkUnit || current.caseUnit) || "");
+    const factorValue = body.unitsPerBulkUnit !== undefined ? body.unitsPerBulkUnit
+      : body.unitsPerCase !== undefined ? body.unitsPerCase
+        : current && (current.unitsPerBulkUnit ?? current.unitsPerCase) || 0;
+    const factor = Math.round(Number(factorValue) * 1000) / 1000;
+    if (!baseUnit) throw fail("Temel birim zorunludur.", 422);
+    if (!Number.isFinite(factor) || factor < 0 || (bulkUnit && factor <= 0)) {
+      throw fail("Toplu birim dönüşümü geçersiz.", 422);
+    }
+    const definitions = state.unitDefinitions || { base: [], bulk: [] };
+    if (!(definitions.base || []).some((unit) => catalogUnitKey(unit) === catalogUnitKey(baseUnit))) {
+      throw fail("Temel birim Birim Merkezi kataloğunda bulunmalıdır.", 422);
+    }
+    if (bulkUnit && !(definitions.bulk || []).some((unit) => catalogUnitKey(unit) === catalogUnitKey(bulkUnit))) {
+      throw fail("Toplu birim Birim Merkezi kataloğunda bulunmalıdır.", 422);
+    }
+    return { name, category, categoryId, productCode, baseUnit, bulkUnit, factor };
+  }
+
+  registerAdminStockRoute("get", "/catalog", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+    try {
+      const data = req.storeSnapshot || await store.read();
+      const state = normalizeStockState(data.stockState);
+      res.json({
+        ok: true,
+        stockState: state,
+        unitDefinitions: state.unitDefinitions,
+        ...canonicalRevisionPayload(data, "catalog"),
+        updatedAt: data.stockUpdatedAt || state.updatedAt || null
+      });
+    } catch (error) { next(error); }
+  });
+
+  registerAdminStockRoute("get", "/unit-definitions", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+    try {
+      const data = req.storeSnapshot || await store.read();
+      const state = normalizeStockState(data.stockState);
+      res.json({ ok: true, unitDefinitions: state.unitDefinitions, ...canonicalRevisionPayload(data, "catalog"), updatedAt: data.stockUpdatedAt || state.updatedAt || null });
+    } catch (error) { next(error); }
+  });
+
+  registerAdminStockRoute("post", "/catalog/categories", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+    try {
+      const body = req.body || {};
+      const operationId = requestId(req, true);
+      const timestamp = nowIso();
+      const name = catalogText(body.name, 120);
+      if (!name) throw fail("Kategori adı zorunludur.", 422);
+      let category;
+      let idempotent = false;
+      const saved = await store.update((data, context) => {
+        const state = normalizeStockState(data.stockState);
+        const replay = routeOperation(state, "catalog_category_create", operationId);
+        if (replay) {
+          category = state.categories.find((item) => String(item.id) === String(replay.value && replay.value.categoryId));
+          idempotent = true;
+          return context.noChange;
+        }
+        assertExpectedDomainRevision(data, body, "catalog", "catalog_category_create", operationId);
+        if (state.categories.some((item) => catalogIdentity(item.name) === catalogIdentity(name))) {
+          throw fail("Bu stok kategorisi zaten var.", 409);
+        }
+        category = {
+          id: `stock-category-${crypto.randomUUID()}`,
+          name,
+          active: body.active !== false,
+          order: state.categories.length,
+          sourceType: "manual",
+          statusSource: "manual",
+          sourcePresent: true,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        };
+        state.categories.push(category);
+        rememberRouteOperation(state, "catalog_category_create", operationId, { categoryId: category.id }, timestamp);
+        persistStockMutation(data, state, timestamp, "catalog");
+        appendStockAudit(data, adminActor(req), "stock.catalog.category.create", category.id, operationId, null, category, timestamp);
+        return data;
+      });
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "catalog"), "catalog");
+      res.status(idempotent ? 200 : 201).json({ ok: true, category, entityId: category && category.id, idempotent, ...canonicalRevisionPayload(saved, "catalog"), updatedAt: saved.stockUpdatedAt || timestamp });
+    } catch (error) { next(error); }
+  });
+
+  registerAdminStockRoute("patch", "/catalog/categories/:id", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+    try {
+      const body = req.body || {};
+      const operationId = requestId(req, true);
+      const timestamp = nowIso();
+      let category;
+      let idempotent = false;
+      const saved = await store.update((data, context) => {
+        const state = normalizeStockState(data.stockState);
+        const replay = routeOperation(state, "catalog_category_update", operationId);
+        if (replay) {
+          category = state.categories.find((item) => String(item.id) === String(req.params.id));
+          idempotent = true;
+          return context.noChange;
+        }
+        assertExpectedDomainRevision(data, body, "catalog", "catalog_category_update", operationId);
+        category = state.categories.find((item) => String(item.id) === String(req.params.id));
+        if (!category) throw fail("Stok kategorisi bulunamadı.", 404);
+        const previous = { ...category };
+        const name = body.name === undefined ? category.name : catalogText(body.name, 120);
+        if (!name) throw fail("Kategori adı zorunludur.", 422);
+        if (state.categories.some((item) => item !== category && catalogIdentity(item.name) === catalogIdentity(name))) {
+          throw fail("Bu stok kategorisi zaten var.", 409);
+        }
+        category.name = name;
+        if (body.active !== undefined) category.active = body.active !== false;
+        category.statusSource = "manual";
+        category.sourceType = category.sourceType || "manual";
+        category.updatedAt = timestamp;
+        for (const product of state.products.filter((item) => String(item.categoryId) === String(category.id))) {
+          product.category = name;
+          product.updatedAt = timestamp;
+        }
+        rememberRouteOperation(state, "catalog_category_update", operationId, { categoryId: category.id }, timestamp);
+        persistStockMutation(data, state, timestamp, "catalog");
+        appendStockAudit(data, adminActor(req), "stock.catalog.category.update", category.id, operationId, previous, category, timestamp);
+        return data;
+      });
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "catalog"), "catalog");
+      res.json({ ok: true, category, entityId: category && category.id, idempotent, ...canonicalRevisionPayload(saved, "catalog"), updatedAt: saved.stockUpdatedAt || timestamp });
+    } catch (error) { next(error); }
+  });
+
+  registerAdminStockRoute("post", "/catalog/products", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+    try {
+      const body = req.body || {};
+      const operationId = requestId(req, true);
+      const timestamp = nowIso();
+      let product;
+      let idempotent = false;
+      const saved = await store.update((data, context) => {
+        const state = normalizeStockState(data.stockState);
+        const replay = routeOperation(state, "catalog_product_create", operationId);
+        if (replay) {
+          product = state.products.find((item) => String(item.id) === String(replay.value && replay.value.productId));
+          idempotent = true;
+          return context.noChange;
+        }
+        assertExpectedDomainRevision(data, body, "catalog", "catalog_product_create", operationId);
+        const values = validateCatalogProduct(state, body);
+        if (state.products.some((item) => String(item.categoryId) === values.categoryId
+          && catalogIdentity(item.name || item.productName) === catalogIdentity(values.name))) {
+          throw fail("Bu stok ürünü kategoride zaten var.", 409);
+        }
+        const supplier = catalogText(body.supplier !== undefined ? body.supplier : body.brand, 160);
+        product = {
+          id: `stock-product-${crypto.randomUUID()}`,
+          name: values.name,
+          productName: values.name,
+          categoryId: values.categoryId,
+          category: values.category.name,
+          productCode: values.productCode,
+          baseUnit: values.baseUnit,
+          unit: values.baseUnit,
+          bulkUnit: values.bulkUnit,
+          caseUnit: values.bulkUnit,
+          unitsPerBulkUnit: values.factor,
+          unitsPerCase: values.factor,
+          defaultMovementUnit: normalizeCatalogUnit(body.defaultMovementUnit) || values.baseUnit,
+          allowDecimal: body.allowDecimal === undefined
+            ? ["kg", "gr", "litre", "ml"].includes(values.baseUnit)
+            : body.allowDecimal === true,
+          supplier,
+          brand: supplier,
+          note: catalogText(body.note, 500),
+          imageUrl: catalogText(body.imageUrl !== undefined ? body.imageUrl : body.image, 2048),
+          active: body.active !== false,
+          sourceType: "manual",
+          statusSource: "manual",
+          sourcePresent: true,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        };
+        state.products.push(product);
+        const normalized = normalizeStockState(state);
+        product = normalized.products.find((item) => String(item.id) === String(product.id));
+        rememberRouteOperation(normalized, "catalog_product_create", operationId, { productId: product.id }, timestamp);
+        persistStockMutation(data, normalized, timestamp, "catalog");
+        appendStockAudit(data, adminActor(req), "stock.catalog.product.create", product.id, operationId, null, product, timestamp);
+        return data;
+      });
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "catalog"), "catalog");
+      res.status(idempotent ? 200 : 201).json({ ok: true, product, entityId: product && product.id, idempotent, ...canonicalRevisionPayload(saved, "catalog"), updatedAt: saved.stockUpdatedAt || timestamp });
+    } catch (error) { next(error); }
+  });
+
+  registerAdminStockRoute("patch", "/catalog/products/:id", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+    try {
+      const body = req.body || {};
+      const operationId = requestId(req, true);
+      const timestamp = nowIso();
+      let product;
+      let idempotent = false;
+      const saved = await store.update((data, context) => {
+        const state = normalizeStockState(data.stockState);
+        const replay = routeOperation(state, "catalog_product_update", operationId);
+        if (replay) {
+          product = state.products.find((item) => String(item.id) === String(req.params.id));
+          idempotent = true;
+          return context.noChange;
+        }
+        assertExpectedDomainRevision(data, body, "catalog", "catalog_product_update", operationId);
+        product = state.products.find((item) => String(item.id) === String(req.params.id));
+        if (!product) throw fail("Stok ürünü bulunamadı.", 404);
+        const previous = { ...product };
+        const values = validateCatalogProduct(state, body, product);
+        const baseChanged = catalogUnitKey(values.baseUnit) !== catalogUnitKey(product.baseUnit || product.unit);
+        if (baseChanged && (state.movements.some((item) => String(item.productId) === String(product.id))
+          || state.balances.some((item) => String(item.productId) === String(product.id) && Number(item.quantity || 0) !== 0))) {
+          throw fail("Hareket geçmişi veya bakiye bulunan ürünün temel birimi değiştirilemez.", 409);
+        }
+        product.name = values.name;
+        product.productName = values.name;
+        product.categoryId = values.categoryId;
+        product.category = values.category.name;
+        product.productCode = values.productCode;
+        product.baseUnit = values.baseUnit;
+        product.unit = values.baseUnit;
+        product.bulkUnit = values.bulkUnit;
+        product.caseUnit = values.bulkUnit;
+        product.unitsPerBulkUnit = values.factor;
+        product.unitsPerCase = values.factor;
+        if (body.supplier !== undefined || body.brand !== undefined) {
+          const supplier = catalogText(body.supplier !== undefined ? body.supplier : body.brand, 160);
+          product.supplier = supplier;
+          product.brand = supplier;
+        }
+        if (body.note !== undefined) product.note = catalogText(body.note, 500);
+        if (body.imageUrl !== undefined || body.image !== undefined) {
+          product.imageUrl = catalogText(body.imageUrl !== undefined ? body.imageUrl : body.image, 2048);
+        }
+        if (body.allowDecimal !== undefined) product.allowDecimal = body.allowDecimal === true;
+        product.active = body.active === undefined ? product.active !== false : body.active !== false;
+        product.statusSource = "manual";
+        product.updatedAt = timestamp;
+        product.defaultMovementUnit = normalizeCatalogUnit(
+          body.defaultMovementUnit !== undefined ? body.defaultMovementUnit : product.defaultMovementUnit
+        ) || values.baseUnit;
+        if (!stockService.allowedProductUnits(product).includes(product.defaultMovementUnit)) product.defaultMovementUnit = values.baseUnit;
+        rememberRouteOperation(state, "catalog_product_update", operationId, { productId: product.id }, timestamp);
+        persistStockMutation(data, state, timestamp, "catalog");
+        appendStockAudit(data, adminActor(req), "stock.catalog.product.update", product.id, operationId, previous, product, timestamp);
+        return data;
+      });
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "catalog"), "catalog");
+      res.json({ ok: true, product, entityId: product && product.id, idempotent, ...canonicalRevisionPayload(saved, "catalog"), updatedAt: saved.stockUpdatedAt || timestamp });
+    } catch (error) { next(error); }
+  });
+
+  registerAdminStockRoute("get", "/locations", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const data = req.storeSnapshot || await store.read();
       const state = normalizeStockState(data.stockState);
@@ -237,13 +602,13 @@ function registerStockLocationRoutes(deps) {
         locations: locationsForAdmin(data, state),
         personnel: personnelForLocations(data),
         unitDefinitions: state.unitDefinitions,
-        revision: stockRevision(data),
+        ...canonicalRevisionPayload(data, "inventory"),
         updatedAt: data.stockUpdatedAt || state.updatedAt || null
       });
     } catch (error) { next(error); }
   });
 
-  app.post("/api/admin/stock/unit-definitions", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  registerAdminStockRoute("post", "/unit-definitions", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const body = req.body || {};
       const action = String(body.action || "add").trim();
@@ -267,7 +632,7 @@ function registerStockLocationRoutes(deps) {
           idempotent = true;
           return context.noChange;
         }
-        assertExpectedStockRevision(data, body, `unit_catalog_${action}`, operationId);
+        assertExpectedDomainRevision(data, body, "catalog", `unit_catalog_${action}`, operationId);
         const definitions = state.unitDefinitions && typeof state.unitDefinitions === "object"
           ? state.unitDefinitions
           : { base: [], bulk: [] };
@@ -303,16 +668,16 @@ function registerStockLocationRoutes(deps) {
         definitions.updatedBy = adminActor(req).id;
         state.unitDefinitions = definitions;
         rememberRouteOperation(state, `unit_catalog_${action}`, operationId, { action, kind, signature: operationSignature }, timestamp);
-        unitDefinitions = persistStockMutation(data, state, timestamp).unitDefinitions;
+        unitDefinitions = persistStockMutation(data, state, timestamp, "catalog").unitDefinitions;
         appendStockAudit(data, adminActor(req), `stock.unit_catalog.${action}`, kind, operationId, null, { unitDefinitions }, timestamp);
         return data;
       });
-      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp);
-      res.json({ ok: true, unitDefinitions: unitDefinitions || normalizeStockState(saved.stockState).unitDefinitions, usage, idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "catalog"), "catalog");
+      res.json({ ok: true, unitDefinitions: unitDefinitions || normalizeStockState(saved.stockState).unitDefinitions, usage, idempotent, ...canonicalRevisionPayload(saved, "catalog"), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
 
-  app.post("/api/admin/stock/locations", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  registerAdminStockRoute("post", "/locations", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const body = req.body || {};
       const name = String(body.name || "").trim().slice(0, 120);
@@ -335,7 +700,7 @@ function registerStockLocationRoutes(deps) {
           idempotent = true;
           return context.noChange;
         }
-        assertExpectedStockRevision(data, body, "location_create", operationId);
+        assertExpectedDomainRevision(data, body, "inventory", "location_create", operationId);
         if (state.locations.some((item) => item.code === code)) throw fail("Bu depo kodu zaten kullanılıyor.", 409);
         location = {
           id: uniqueLocationId(state, code),
@@ -360,13 +725,13 @@ function registerStockLocationRoutes(deps) {
         appendStockAudit(data, adminActor(req), "stock.location.create", location.id, operationId, null, location, timestamp);
         return data;
       });
-      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp);
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
       const stockState = normalizeStockState(saved.stockState);
-      res.status(idempotent ? 200 : 201).json({ ok: true, location, locations: locationsForAdmin(saved, stockState), personnel: personnelForLocations(saved), stockState, idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
+      res.status(idempotent ? 200 : 201).json({ ok: true, location, locations: locationsForAdmin(saved, stockState), personnel: personnelForLocations(saved), stockState, idempotent, ...canonicalRevisionPayload(saved, "inventory"), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
 
-  app.patch("/api/admin/stock/locations/:id", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  registerAdminStockRoute("patch", "/locations/:id", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const body = req.body || {};
       const operationId = requestId(req, true);
@@ -384,7 +749,7 @@ function registerStockLocationRoutes(deps) {
           idempotent = true;
           return context.noChange;
         }
-        assertExpectedStockRevision(data, body, "location_update", operationId);
+        assertExpectedDomainRevision(data, body, "inventory", "location_update", operationId);
         const state = replayState;
         location = state.locations.find((item) => String(item.id) === String(req.params.id));
         if (!location) throw fail("Stok lokasyonu bulunamadı.", 404);
@@ -441,14 +806,14 @@ function registerStockLocationRoutes(deps) {
         appendStockAudit(data, adminActor(req), "stock.location.update", location.id, operationId, previous, location, timestamp);
         return data;
       });
-      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp);
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
       const stockState = normalizeStockState(saved.stockState);
       location = stockState.locations.find((item) => item.id === location.id);
-      res.json({ ok: true, location, locations: locationsForAdmin(saved, stockState), personnel: personnelForLocations(saved), stockState, idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
+      res.json({ ok: true, location, locations: locationsForAdmin(saved, stockState), personnel: personnelForLocations(saved), stockState, idempotent, ...canonicalRevisionPayload(saved, "inventory"), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
 
-  app.delete("/api/admin/stock/locations/:id", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  registerAdminStockRoute("delete", "/locations/:id", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const body = req.body || {};
       const operationId = requestId(req, true);
@@ -466,7 +831,7 @@ function registerStockLocationRoutes(deps) {
           idempotent = true;
           return context.noChange;
         }
-        assertExpectedStockRevision(data, body, "location_deactivate", operationId);
+        assertExpectedDomainRevision(data, body, "inventory", "location_deactivate", operationId);
         const state = replayState;
         location = state.locations.find((item) => String(item.id) === String(req.params.id));
         if (!location) throw fail("Stok lokasyonu bulunamadı.", 404);
@@ -484,13 +849,13 @@ function registerStockLocationRoutes(deps) {
         appendStockAudit(data, adminActor(req), "stock.location.deactivate", location.id, operationId, previous, location, timestamp);
         return data;
       });
-      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp);
+      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
       const state = normalizeStockState(saved.stockState);
-      res.json({ ok: true, location: state.locations.find((item) => item.id === location.id), locations: locationsForAdmin(saved, state), idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
+      res.json({ ok: true, location: state.locations.find((item) => item.id === location.id), locations: locationsForAdmin(saved, state), idempotent, ...canonicalRevisionPayload(saved, "inventory"), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
 
-  app.get("/api/admin/stock/inventory", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  registerAdminStockRoute("get", "/inventory", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const data = req.storeSnapshot || await store.read();
       const state = normalizeStockState(data.stockState);
@@ -499,9 +864,12 @@ function registerStockLocationRoutes(deps) {
     } catch (error) { next(error); }
   });
 
-  app.patch("/api/admin/stock/inventory/:productId", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  registerAdminStockRoute("patch", "/inventory/:productId", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const body = req.body || {};
+      const updatesCatalog = ["baseUnit", "bulkUnit", "unitsPerBulkUnit", "unitsPerCase", "allowDecimal", "defaultMovementUnit"]
+        .some((field) => Object.prototype.hasOwnProperty.call(body, field));
+      if (updatesCatalog) requireActorCapability(req, "inventory.catalog.manage");
       const operationId = requestId(req, true);
       const locationId = String(body.locationId || "").trim();
       if (!locationId) throw fail("Depo seçimi zorunludur.");
@@ -521,7 +889,8 @@ function registerStockLocationRoutes(deps) {
           idempotent = true;
           return context.noChange;
         }
-        assertExpectedStockRevision(data, body, "inventory_threshold_update", operationId);
+        assertExpectedDomainRevision(data, body, "inventory", "inventory_threshold_update", operationId);
+        if (updatesCatalog) assertExpectedDomainRevision(data, body, "catalog", "inventory_threshold_update", operationId);
         const state = replayState;
         const location = stockService.getLocation(state, locationId);
         const product = state.products.find((item) => String(item.id) === String(req.params.productId));
@@ -578,28 +947,31 @@ function registerStockLocationRoutes(deps) {
         balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
         product.updatedAt = timestamp;
         rememberRouteOperation(state, "inventory_threshold_update", operationId, { locationId: location.id, productId: product.id }, timestamp);
-        persistStockMutation(data, state, timestamp);
+        persistStockMutation(data, state, timestamp, updatesCatalog ? ["inventory", "catalog"] : "inventory");
         appendStockAudit(data, adminActor(req), "stock.inventory.settings", `${location.id}:${product.id}`, operationId, previous, { balance, product }, timestamp);
         return data;
       });
-      if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp);
+      if (!idempotent) {
+        broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
+        if (updatesCatalog) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "catalog"), "catalog");
+      }
       const payload = locationPayload(saved, locationId, adminActor(req));
       res.json({ ...payload, balance: payload.balances.find((item) => item.productId === req.params.productId) || balance, idempotent });
     } catch (error) { next(error); }
   });
 
-  app.get("/api/admin/stock/counts", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  registerAdminStockRoute("get", "/counts", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const data = req.storeSnapshot || await store.read();
       const state = normalizeStockState(data.stockState);
-      res.json({ ok: true, counts: stockService.serializeCounts(state, req.query || {}), locations: stockService.getLocations(state, { includeInactive: true }), revision: stockRevision(data), updatedAt: data.stockUpdatedAt || state.updatedAt || null });
+      res.json({ ok: true, counts: stockService.serializeCounts(state, req.query || {}), locations: stockService.getLocations(state, { includeInactive: true }), ...canonicalRevisionPayload(data, "inventory"), updatedAt: data.stockUpdatedAt || state.updatedAt || null });
     } catch (error) { next(error); }
   });
 
-  app.post("/api/admin/stock/counts", requireAdminRequestOrigin, auth.requireAdmin, countMutationHandler("start"));
-  app.patch("/api/admin/stock/counts/:id", requireAdminRequestOrigin, auth.requireAdmin, countMutationHandler("update"));
-  app.post("/api/admin/stock/counts/:id/approve", requireAdminRequestOrigin, auth.requireAdmin, countMutationHandler("approve"));
-  app.post("/api/admin/stock/counts/:id/cancel", requireAdminRequestOrigin, auth.requireAdmin, countMutationHandler("cancel"));
+  registerAdminStockRoute("post", "/counts", requireAdminRequestOrigin, auth.requireAdmin, countMutationHandler("start"));
+  registerAdminStockRoute("patch", "/counts/:id", requireAdminRequestOrigin, auth.requireAdmin, countMutationHandler("update"));
+  registerAdminStockRoute("post", "/counts/:id/approve", requireAdminRequestOrigin, auth.requireAdmin, countMutationHandler("approve"));
+  registerAdminStockRoute("post", "/counts/:id/cancel", requireAdminRequestOrigin, auth.requireAdmin, countMutationHandler("cancel"));
 
   function countMutationHandler(action) {
     return async (req, res, next) => {
@@ -611,7 +983,7 @@ function registerStockLocationRoutes(deps) {
         const pendingNotifications = [];
         let result;
         const saved = await store.update((data, context) => {
-          assertExpectedStockRevision(data, body, `count_${action}`, operationId);
+          assertExpectedDomainRevision(data, body, "inventory", `count_${action}`, operationId);
           const previousState = normalizeStockState(data.stockState);
           if (action === "start") result = stockService.startStockCount(previousState, { ...body, requestId: operationId }, actor, { now: timestamp });
           else if (action === "update") result = stockService.updateStockCount(previousState, req.params.id, { ...body, requestId: operationId }, actor, { now: timestamp });
@@ -625,14 +997,14 @@ function registerStockLocationRoutes(deps) {
           appendStockAudit(data, actor, `stock.count.${action}`, result.count && result.count.id || req.params.id, operationId, null, result.count, timestamp);
           return data;
         });
-        if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp);
+        if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
         publishNotifications(pendingNotifications);
-        res.status(action === "start" && !result.idempotent ? 201 : 200).json({ ok: true, count: result.count, movements: result.movements || [], idempotent: result.idempotent, stockState: normalizeStockState(saved.stockState), revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
+        res.status(action === "start" && !result.idempotent ? 201 : 200).json({ ok: true, count: result.count, movements: result.movements || [], idempotent: result.idempotent, stockState: normalizeStockState(saved.stockState), ...canonicalRevisionPayload(saved, "inventory"), updatedAt: saved.stockUpdatedAt || timestamp });
       } catch (error) { next(error); }
     };
   }
 
-  app.get("/api/admin/stock/movements", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  registerAdminStockRoute("get", "/movements", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const data = req.storeSnapshot || await store.read();
       const state = normalizeStockState(data.stockState);
@@ -640,13 +1012,13 @@ function registerStockLocationRoutes(deps) {
         ok: true,
         movements: stockService.serializeMovements(state, req.query || {}),
         locations: stockService.getLocations(state, { includeInactive: true }),
-        revision: stockRevision(data),
+        ...canonicalRevisionPayload(data, "inventory"),
         updatedAt: data.stockUpdatedAt || state.updatedAt || null
       });
     } catch (error) { next(error); }
   });
 
-  app.post("/api/admin/stock/movements", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  registerAdminStockRoute("post", "/movements", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const body = req.body && (req.body.movement || req.body) || {};
       const operationId = requestId(req, true);
@@ -654,7 +1026,7 @@ function registerStockLocationRoutes(deps) {
       const pendingNotifications = [];
       let result;
       const saved = await store.update((data, context) => {
-        assertExpectedStockRevision(data, body, "movement", operationId);
+        assertExpectedDomainRevision(data, body, "inventory", "movement", operationId);
         const previousStockState = normalizeStockState(data.stockState);
         result = stockService.applyStockMovement(previousStockState, { ...body, requestId: operationId }, adminActor(req), { now: timestamp });
         // Retried HTTP requests must return the original movement without a
@@ -667,34 +1039,35 @@ function registerStockLocationRoutes(deps) {
         appendStockAudit(data, adminActor(req), "stock.movement.apply", result.movement && result.movement.id, operationId, null, result.movement, timestamp);
         return data;
       });
-      if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp);
+      if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
       publishNotifications(pendingNotifications);
       const inventory = stockService.getLocationInventory(saved.stockState, String(body.locationId || result.movement && result.movement.locationId || ""));
-      res.status(result.idempotent ? 200 : 201).json({ ok: true, movement: result.movement, stockState: normalizeStockState(saved.stockState), inventory: { location: inventory.location, balances: inventory.balances, summary: inventory.summary }, idempotent: result.idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
+      res.status(result.idempotent ? 200 : 201).json({ ok: true, movement: result.movement, stockState: normalizeStockState(saved.stockState), inventory: { location: inventory.location, balances: inventory.balances, summary: inventory.summary }, idempotent: result.idempotent, ...canonicalRevisionPayload(saved, "inventory"), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
 
-  app.get("/api/admin/stock/transfers", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  registerAdminStockRoute("get", "/transfers", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const data = req.storeSnapshot || await store.read();
       const state = normalizeStockState(data.stockState);
       const status = String(req.query.status || "").trim();
       let transfers = stockService.serializeTransfers(state, req.query || {});
       if (status) transfers = transfers.filter((transfer) => transfer.status === status);
-      res.json({ ok: true, transfers, locations: stockService.getLocations(state, { includeInactive: true }), revision: stockRevision(data), updatedAt: data.stockUpdatedAt || state.updatedAt || null });
+      res.json({ ok: true, transfers, locations: stockService.getLocations(state, { includeInactive: true }), ...canonicalRevisionPayload(data, "inventory"), updatedAt: data.stockUpdatedAt || state.updatedAt || null });
     } catch (error) { next(error); }
   });
 
-  app.post("/api/admin/stock/transfers", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  registerAdminStockRoute("post", "/transfers", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const body = req.body || {};
+      if (body.approveNow === true || body.directApply === true) requireActorCapability(req, "inventory.transfer.approve");
       const operationId = requestId(req, true);
       const timestamp = nowIso();
       const actor = adminActor(req);
       const pendingNotifications = [];
       let result;
       const saved = await store.update((data, context) => {
-        assertExpectedStockRevision(data, body, "transfer_create", operationId);
+        assertExpectedDomainRevision(data, body, "inventory", "transfer_create", operationId);
         const previousStockState = normalizeStockState(data.stockState);
         const created = stockService.createTransferRequest(previousStockState, { ...body, requestId: operationId }, actor, { now: timestamp });
         result = created;
@@ -709,15 +1082,15 @@ function registerStockLocationRoutes(deps) {
         appendStockAudit(data, actor, body.approveNow === true || body.directApply === true ? "stock.transfer.direct" : "stock.transfer.request", result.transfer && result.transfer.id, operationId, null, result.transfer, timestamp);
         return data;
       });
-      if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp);
+      if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
       publishNotifications(pendingNotifications);
-      res.status(result.idempotent ? 200 : 201).json({ ok: true, transfer: result.transfer, stockState: normalizeStockState(saved.stockState), idempotent: result.idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
+      res.status(result.idempotent ? 200 : 201).json({ ok: true, transfer: result.transfer, stockState: normalizeStockState(saved.stockState), idempotent: result.idempotent, ...canonicalRevisionPayload(saved, "inventory"), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
 
-  app.post("/api/admin/stock/transfers/:id/approve", requireAdminRequestOrigin, auth.requireAdmin, transferDecisionHandler("approve"));
-  app.post("/api/admin/stock/transfers/:id/reject", requireAdminRequestOrigin, auth.requireAdmin, transferDecisionHandler("reject"));
-  app.post("/api/admin/stock/transfers/:id/cancel", requireAdminRequestOrigin, auth.requireAdmin, transferDecisionHandler("cancel"));
+  registerAdminStockRoute("post", "/transfers/:id/approve", requireAdminRequestOrigin, auth.requireAdmin, transferDecisionHandler("approve"));
+  registerAdminStockRoute("post", "/transfers/:id/reject", requireAdminRequestOrigin, auth.requireAdmin, transferDecisionHandler("reject"));
+  registerAdminStockRoute("post", "/transfers/:id/cancel", requireAdminRequestOrigin, auth.requireAdmin, transferDecisionHandler("cancel"));
 
   function transferDecisionHandler(decision) {
     return async (req, res, next) => {
@@ -729,7 +1102,7 @@ function registerStockLocationRoutes(deps) {
         const pendingNotifications = [];
         let result;
         const saved = await store.update((data, context) => {
-          assertExpectedStockRevision(data, body, `transfer_${decision}`, operationId);
+          assertExpectedDomainRevision(data, body, "inventory", `transfer_${decision}`, operationId);
           const previousStockState = normalizeStockState(data.stockState);
           result = decision === "approve"
             ? stockService.approveTransfer(previousStockState, req.params.id, { ...body, requestId: operationId }, actor, { now: timestamp })
@@ -759,14 +1132,14 @@ function registerStockLocationRoutes(deps) {
           });
           return data;
         });
-        if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp);
+        if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
         publishNotifications(pendingNotifications);
-        res.json({ ok: true, transfer: result.transfer, stockState: normalizeStockState(saved.stockState), idempotent: result.idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
+        res.json({ ok: true, transfer: result.transfer, stockState: normalizeStockState(saved.stockState), idempotent: result.idempotent, ...canonicalRevisionPayload(saved, "inventory"), updatedAt: saved.stockUpdatedAt || timestamp });
       } catch (error) { next(error); }
     };
   }
 
-  app.post("/api/admin/stock/movements/:id/reverse", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  registerAdminStockRoute("post", "/movements/:id/reverse", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const body = req.body || {};
       const operationId = requestId(req, true);
@@ -775,7 +1148,7 @@ function registerStockLocationRoutes(deps) {
       const pendingNotifications = [];
       let result;
       const saved = await store.update((data, context) => {
-        assertExpectedStockRevision(data, body, "movement_reverse", operationId);
+        assertExpectedDomainRevision(data, body, "inventory", "movement_reverse", operationId);
         const previousStockState = normalizeStockState(data.stockState);
         result = stockService.reverseMovement(previousStockState, req.params.id, { ...body, requestId: operationId }, actor, { now: timestamp });
         if (result.idempotent) return context.noChange;
@@ -786,9 +1159,9 @@ function registerStockLocationRoutes(deps) {
         appendStockAudit(data, actor, "stock.movement.reverse", req.params.id, operationId, null, { movementIds: result.movements.map((item) => item.id) }, timestamp);
         return data;
       });
-      if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp);
+      if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
       publishNotifications(pendingNotifications);
-      res.json({ ok: true, movements: result.movements, stockState: normalizeStockState(saved.stockState), idempotent: result.idempotent, revision: stockRevision(saved), updatedAt: saved.stockUpdatedAt || timestamp });
+      res.json({ ok: true, movements: result.movements, stockState: normalizeStockState(saved.stockState), idempotent: result.idempotent, ...canonicalRevisionPayload(saved, "inventory"), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
 
@@ -826,7 +1199,7 @@ function registerStockLocationRoutes(deps) {
         ok: true,
         location: stockService.getLocation(state, locationId),
         movements,
-        revision: stockRevision(data),
+        ...canonicalRevisionPayload(data, "inventory"),
         updatedAt: data.stockUpdatedAt || state.updatedAt || null
       });
     } catch (error) { next(error); }
@@ -842,7 +1215,7 @@ function registerStockLocationRoutes(deps) {
       let result;
       let locationId;
       const saved = await store.update((data, context) => {
-        assertExpectedStockRevision(data, body, "movement_reverse", operationId);
+        assertExpectedDomainRevision(data, body, "inventory", "movement_reverse", operationId);
         const previousStockState = normalizeStockState(data.stockState);
         locationId = stockService.actorLocationId(previousStockState, actor);
         result = stockService.reverseMovement(previousStockState, req.params.id, { ...body, requestId: operationId }, actor, { now: timestamp });
@@ -854,7 +1227,7 @@ function registerStockLocationRoutes(deps) {
         appendStockAudit(data, actor, "stock.movement.reverse", req.params.id, operationId, null, { movementIds: result.movements.map((item) => item.id) }, timestamp);
         return data;
       });
-      if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp);
+      if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
       publishNotifications(pendingNotifications);
       const inventory = stockService.getLocationInventory(saved.stockState, locationId);
       res.json({
@@ -866,7 +1239,7 @@ function registerStockLocationRoutes(deps) {
           summary: inventory.summary
         },
         idempotent: result.idempotent,
-        revision: stockRevision(saved),
+        ...canonicalRevisionPayload(saved, "inventory"),
         updatedAt: saved.stockUpdatedAt || timestamp
       });
     } catch (error) { next(error); }
@@ -935,19 +1308,21 @@ function assignPersonnelToLocation(data, state, locationId, personnelIds, previo
   }
 }
 
-function assertExpectedStockRevision(data, body, operationType = "", operationId = "") {
+function assertExpectedDomainRevision(data, body, domain, operationType = "", operationId = "") {
   const operationKey = operationType && operationId ? `${operationType}:${operationId}` : "";
   const operationKeys = data && data.stockState && Array.isArray(data.stockState.operationKeys)
     ? data.stockState.operationKeys
     : [];
   if (operationKey && operationKeys.some((item) => item && item.key === operationKey)) return;
-  if (!body || body.expectedRevision === undefined || body.expectedRevision === null || body.expectedRevision === "") {
-    throw Object.assign(new Error("Beklenen stok revision zorunludur."), { status: 400 });
+  const field = domain === "catalog" ? "expectedCatalogRevision" : "expectedInventoryRevision";
+  const rawExpected = body && body[field] !== undefined ? body[field] : body && body.expectedRevision;
+  if (rawExpected === undefined || rawExpected === null || rawExpected === "") {
+    throw Object.assign(new Error(`Beklenen ${domain} revision zorunludur.`), { status: 400 });
   }
-  const expected = Number(body.expectedRevision);
-  const current = Math.max(0, Number(data.revisions && data.revisions.stock || 0));
-  if (!Number.isInteger(expected) || expected < 0) throw Object.assign(new Error("Beklenen stok revision geçersiz."), { status: 400 });
-  if (expected !== current) throw Object.assign(new Error("Stok verisi başka bir işlemle güncellendi. Güncel veriler yükleniyor; tekrar deneyin."), { status: 409 });
+  const expected = Number(rawExpected);
+  const current = Math.max(0, Number(data.revisions && data.revisions[domain] || 0));
+  if (!Number.isInteger(expected) || expected < 0) throw Object.assign(new Error(`Beklenen ${domain} revision geçersiz.`), { status: 400 });
+  if (expected !== current) throw Object.assign(new Error(`${domain === "catalog" ? "Stok kataloğu" : "Envanter"} başka bir işlemle güncellendi. Güncel veriler yükleniyor; tekrar deneyin.`), { status: 409 });
 }
 
 function appendStockAudit(data, actor, action, entityId, requestId, previous, next, timestamp) {

@@ -5,7 +5,7 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 
 const COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;
-const SESSION_ROLES = new Set(["admin", "personel"]);
+const SESSION_ROLES = new Set(["admin", "personel", "mudavim"]);
 const PREVIEW_MODES = new Set(["menu", "recipe", "stock", "tasks", "shipment", "shift", "personel"]);
 const PREVIEW_TTL_SECONDS = 5 * 60;
 const PREVIEW_COOKIE_NAME = "tahmisci_preview_session";
@@ -21,6 +21,10 @@ function createAuthMiddleware(config, store) {
 
   async function createRecipeSession(user) {
     return createSession({ role: "personel", user });
+  }
+
+  async function createMudavimSession(user) {
+    return createSession({ role: "mudavim", user });
   }
 
   async function createSession({ role, user }) {
@@ -149,6 +153,28 @@ function createAuthMiddleware(config, store) {
     }
   }
 
+  async function requireMudavim(req, res, next) {
+    try {
+      const resolved = await resolveRequestSession(req, ["mudavim"], [mudavimCookieToken(req)]);
+      if (!resolved) return res.status(401).json({ ok: false, message: "Müdavim oturumu gerekli." });
+      const userId = String(resolved.payload && resolved.payload.userId || "").trim();
+      const context = await resolveStoreSnapshot(req);
+      const user = (Array.isArray(context.data.mudavimAccounts) ? context.data.mudavimAccounts : [])
+        .find((item) => item && String(item.id || "") === userId);
+      if (!user || user.status !== "active" || !user.emailVerifiedAt) {
+        await revokeRequestSession(req, ["mudavim"]);
+        clearMudavimCookie(res);
+        return res.status(403).json({ ok: false, message: "Doğrulanmış aktif Müdavim hesabı gerekli." });
+      }
+      setRequestSession(req, resolved, "mudavim");
+      req.mudavimUser = user;
+      attachStoreTiming(req, res);
+      return next();
+    } catch (error) {
+      return next(error);
+    }
+  }
+
   async function requirePersonelOrPreview(req, res, next) {
     try {
       const previewPayload = await verifyPreviewRequest(req);
@@ -201,12 +227,20 @@ function createAuthMiddleware(config, store) {
     res.cookie(config.recipeCookieName, token, persistentCookieOptions(config));
   }
 
+  function attachMudavimCookie(res, token) {
+    res.cookie(config.mudavimCookieName, token, persistentCookieOptions(config));
+  }
+
   function clearAdminCookie(res) {
     res.clearCookie(config.adminCookieName, clearCookieOptions(config));
   }
 
   function clearRecipeCookie(res) {
     res.clearCookie(config.recipeCookieName, clearCookieOptions(config));
+  }
+
+  function clearMudavimCookie(res) {
+    res.clearCookie(config.mudavimCookieName, clearCookieOptions(config));
   }
 
   async function verifyRequest(req) {
@@ -227,7 +261,7 @@ function createAuthMiddleware(config, store) {
   }
 
   async function sessionInfoFromToken(token) {
-    const resolved = await resolveToken(token, ["admin", "personel"], await resolveStoreSnapshot());
+    const resolved = await resolveToken(token, ["admin", "personel", "mudavim"], await resolveStoreSnapshot());
     return resolved ? sessionInfoFromPayload(resolved.payload) : emptySessionInfo();
   }
 
@@ -277,12 +311,13 @@ function createAuthMiddleware(config, store) {
     };
   }
 
-  async function revokeRequestSession(req, roles = ["admin", "personel"]) {
+  async function revokeRequestSession(req, roles = ["admin", "personel", "mudavim"]) {
     const allowedRoles = new Set(roles);
     const tokens = uniqueTokens([
       bearerToken(req),
       cookieToken(req),
-      recipeCookieToken(req)
+      recipeCookieToken(req),
+      mudavimCookieToken(req)
     ]);
     if (!tokens.length) return 0;
 
@@ -309,6 +344,10 @@ function createAuthMiddleware(config, store) {
   async function revokeUserSessions(userId) {
     const normalizedUserId = String(userId || "");
     return revokeMatchingSessions((session) => session.role === "personel" && String(session.userId || "") === normalizedUserId);
+  }
+
+  async function revokeMudavimSessions(userId) {
+    return revokeMatchingSessions((session) => session.role === "mudavim" && String(session.userId || "") === String(userId || ""));
   }
 
   async function revokeMatchingSessions(predicate) {
@@ -392,6 +431,7 @@ function createAuthMiddleware(config, store) {
     req.authToken = resolved.token;
     if (target === "admin") req.admin = resolved.payload;
     if (target === "recipe") req.recipe = resolved.payload;
+    if (target === "mudavim") req.mudavim = resolved.payload;
   }
 
   async function resolveStoreSnapshot(req) {
@@ -432,22 +472,32 @@ function createAuthMiddleware(config, store) {
     return cookies[config.recipeCookieName] || "";
   }
 
+  function mudavimCookieToken(req) {
+    const cookies = parseCookieHeader(req.header("Cookie") || "");
+    return cookies[config.mudavimCookieName] || "";
+  }
+
   return {
     attachAdminCookie,
+    attachMudavimCookie,
     attachRecipeCookie,
     clearAdminCookie,
+    clearMudavimCookie,
     clearRecipeCookie,
     createAdminSession,
+    createMudavimSession,
     createRecipeSession,
     redirectIfAdmin,
     requireAdmin,
     requireAdminPage,
     requireActivePersonel,
+    requireMudavim,
     requirePersonel: requireActivePersonel,
     requirePersonelOrPreview,
     requireRecipe,
     revokeRequestSession,
     revokeRoleSessions,
+    revokeMudavimSessions,
     revokeUserSessions,
     sessionInfoFromPayload,
     sessionInfoFromToken,
@@ -460,14 +510,15 @@ function createAuthMiddleware(config, store) {
 
 function payloadFromSession(session) {
   const personel = session.role === "personel";
+  const mudavim = session.role === "mudavim";
   return {
-    sub: personel ? String(session.userId || "recipe") : "admin",
-    role: personel ? "recipe" : "admin",
+    sub: personel ? String(session.userId || "recipe") : mudavim ? String(session.userId || "mudavim") : "admin",
+    role: personel ? "recipe" : mudavim ? "mudavim" : "admin",
     sessionRole: session.role,
     sessionId: session.id,
-    userId: personel && session.userId ? String(session.userId) : undefined,
-    username: personel ? String(session.username || "") : undefined,
-    name: personel ? String(session.name || "") : undefined,
+    userId: (personel || mudavim) && session.userId ? String(session.userId) : undefined,
+    username: (personel || mudavim) ? String(session.username || "") : undefined,
+    name: (personel || mudavim) ? String(session.name || "") : undefined,
     createdAt: session.createdAt || null
   };
 }

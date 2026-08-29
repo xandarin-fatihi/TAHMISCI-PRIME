@@ -16,7 +16,7 @@ html {
 }
 
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
     font-weight: 400;
     line-height: 1.6;
     color: #2B2A28;
@@ -222,8 +222,8 @@ a:focus:not(:focus-visible) {
     /* ========== TYPOGRAPHY ========== */
 
     /* Font Families */
-    --font-primary: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --font-heading: 'Poppins', 'Inter', sans-serif;
+    --font-primary: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
+    --font-heading: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
     --font-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', monospace;
 
     /* Font Sizes */
@@ -1953,7 +1953,7 @@ body.dark-mode .toast-close:hover {
 }
 
 .brand-name {
-    font-family: 'Poppins', sans-serif;
+    font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
     font-size: 1.5rem;
     font-weight: 700;
     color: #2E2418;
@@ -2783,133 +2783,6 @@ body.menu-open {
 
 /* Mobile nav close and header styles moved to mobile-nav-top.css */
 
-.mobile-auth {
-    display: flex;
-    gap: 0.75rem;
-    padding: 1rem 0;
-    margin-top: 0.5rem;
-}
-
-.mobile-auth-btn {
-    flex: 1;
-    padding: 1rem 1.5rem;
-    border: none;
-    border-radius: 16px;
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    text-decoration: none;
-    text-align: center;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    overflow: hidden;
-    box-shadow: 0 2px 8px rgba(46, 36, 24, 0.08);
-}
-
-.mobile-auth-btn::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, rgba(43, 42, 40, 0), rgba(250, 248, 242, 0.2), rgba(43, 42, 40, 0));
-    transition: left 0.6s ease;
-}
-
-.mobile-auth-btn:hover::before {
-    left: 100%;
-}
-
-.mobile-auth-btn.primary {
-    background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark, #8C734B));
-    color: var(--color-white);
-    box-shadow: 0 4px 16px rgba(var(--color-primary-rgb, 255, 107, 0), 0.35);
-}
-
-.mobile-auth-btn.primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 24px rgba(var(--color-primary-rgb, 255, 107, 0), 0.45);
-}
-
-.mobile-auth-btn.secondary {
-    background: var(--color-white);
-    color: var(--color-text-primary);
-    border: 2px solid var(--color-gray-300);
-}
-
-.mobile-auth-btn.secondary:hover {
-    background: var(--color-gray-50);
-    border-color: var(--color-gray-400);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(46, 36, 24, 0.1);
-}
-
-.mobile-auth-btn:not(.primary):not(.secondary) {
-    background: var(--color-white);
-    color: var(--color-text-primary);
-    border: 2px solid var(--color-gray-300);
-}
-
-.mobile-auth-btn i,
-.mobile-auth-btn .fa {
-    display: none !important;
-}
-
-.mobile-user-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 1.5rem;
-    padding-top: 1rem;
-    padding-bottom: 0.75rem;
-}
-
-.mobile-user-welcome {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 1rem;
-    background: var(--color-primary-50);
-    border-radius: 12px;
-    margin-top: 1rem;
-}
-
-.mobile-user-avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 12px;
-    background: var(--color-primary);
-    color: var(--color-white);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.2rem;
-    font-weight: 700;
-    box-shadow: 0 2px 8px rgba(46, 36, 24, 0.1);
-}
-
-.mobile-user-details {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-}
-
-.mobile-user-name {
-    font-weight: 700;
-    color: var(--color-text-primary);
-    font-size: 1rem;
-}
-
-.mobile-user-points {
-    font-size: 0.8rem;
-    color: var(--color-accent);
-    font-weight: 500;
-}
-
 .mobile-nav-content {
     padding: 1.5rem;
     padding-top: calc(70px + 1.5rem);
@@ -3262,16 +3135,6 @@ body.modal-open {
     color: var(--color-text-primary) !important;
 }
 
-/* ========== DARK MODE: Mobil özel alanlar ========== */
-.dark-mode .mobile-user-info {
-    background-color: var(--color-bg-secondary) !important;
-}
-
-.dark-mode .mobile-auth-btn:not(.primary) {
-    background-color: var(--color-bg-secondary) !important;
-    color: var(--color-text-primary) !important;
-}
-
 .dark-mode .mobile-actions {
     background: var(--color-bg-secondary) !important;
     background-image: none !important;
@@ -3466,8 +3329,7 @@ body.modal-open {
 /* Footer ve header */
 .footer,
 .header,
-.dropdown-menu,
-.user-dropdown {
+.dropdown-menu {
     background: var(--color-bg);
     color: var(--color-text);
 }
@@ -4288,77 +4150,6 @@ body {
 .mobile-dropdown-menu a:hover {
     background-color: var(--color-primary-light);
     color: var(--color-primary);
-}
-
-/* Mobile User Info */
-.mobile-user-info {
-    padding: var(--space-4);
-    border-bottom: 1px solid var(--color-gray-200);
-}
-
-.mobile-auth {
-    display: flex;
-    gap: var(--space-3);
-}
-
-.mobile-auth-btn {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-2);
-    padding: var(--space-3);
-    border-radius: var(--radius-lg);
-    text-decoration: none;
-    font-weight: var(--font-weight-medium);
-    transition: var(--transition-all);
-}
-
-.mobile-auth-btn.primary {
-    background-color: var(--color-primary);
-    color: var(--color-white);
-}
-
-.mobile-auth-btn:not(.primary) {
-    background-color: var(--color-white);
-    color: var(--color-text-primary);
-    border: 1px solid var(--color-gray-200);
-}
-
-.mobile-user-welcome {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3);
-    background-color: var(--color-primary-50);
-    border-radius: var(--radius-lg);
-}
-
-.mobile-user-avatar {
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background-color: var(--color-primary);
-    color: var(--color-white);
-    border-radius: var(--radius-full);
-    font-size: var(--font-size-lg);
-}
-
-.mobile-user-details {
-    flex: 1;
-}
-
-.mobile-user-name {
-    font-weight: var(--font-weight-semibold);
-    color: var(--color-text-primary);
-    margin-bottom: var(--space-1);
-}
-
-.mobile-user-points {
-    font-size: var(--font-size-sm);
-    color: var(--color-text-secondary);
 }
 
 /* Mobile Actions */
@@ -5243,8 +5034,7 @@ body {
     background-color: var(--color-bg-secondary) !important;
 }
 
-.dark-mode .dropdown-menu,
-.dark-mode .user-dropdown {
+.dark-mode .dropdown-menu {
     background-color: var(--dropdown-bg) !important;
     color: var(--dropdown-link-color) !important;
     border: 1px solid var(--dropdown-border) !important;
@@ -5266,15 +5056,13 @@ body {
     color: var(--color-text-primary) !important;
 }
 
-.dark-mode .header-actions .action-btn,
-.dark-mode .user-btn {
+.dark-mode .header-actions .action-btn {
     background-color: var(--color-bg-secondary) !important;
     color: var(--color-text-primary) !important;
     border-color: var(--color-gray-700) !important;
 }
 
-.dark-mode .action-btn:hover,
-.dark-mode .user-btn:hover {
+.dark-mode .action-btn:hover {
     background-color: var(--color-bg-muted) !important;
     color: var(--color-primary) !important;
 }
@@ -5558,12 +5346,6 @@ a[title="YepPos"] {
         line-height: 1;
     }
 
-    .user-btn {
-        height: 40px;
-        padding: 0.5rem 0.75rem;
-        border-radius: 20px;
-    }
-
     .mobile-nav {
         top: 60px;
     }
@@ -5794,14 +5576,6 @@ a[title="YepPos"] {
         display: none;
     }
 
-    .user-name-display {
-        display: none;
-    }
-
-    .user-menu {
-        display: none !important;
-    }
-
     .header-content {
         min-height: 70px;
         padding: 0 1rem;
@@ -5835,12 +5609,6 @@ a[title="YepPos"] {
     .cart-btn {
         padding: 0.5rem 1rem;
         min-width: 80px;
-        height: 44px;
-        border-radius: 22px;
-    }
-
-    .user-btn {
-        padding: 0.5rem 0.75rem;
         height: 44px;
         border-radius: 22px;
     }
@@ -6007,5 +5775,3 @@ a[title="YepPos"] {
         scroll-behavior: auto !important;
     }
 }
-
-

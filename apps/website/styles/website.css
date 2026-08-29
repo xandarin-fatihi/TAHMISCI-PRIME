@@ -1,20 +1,20 @@
 @font-face {
   font-family: "Tahmisci Poppins";
-  src: url("../assets/fonts/poppins-regular.ttf") format("truetype");
+  src: url("/assets/fonts/poppins-regular.ttf") format("truetype");
   font-weight: 400;
   font-display: swap;
 }
 
 @font-face {
   font-family: "Tahmisci Poppins";
-  src: url("../assets/fonts/poppins-semibold.ttf") format("truetype");
+  src: url("/assets/fonts/poppins-semibold.ttf") format("truetype");
   font-weight: 600;
   font-display: swap;
 }
 
 @font-face {
   font-family: "Tahmisci Poppins";
-  src: url("../assets/fonts/poppins-bold.ttf") format("truetype");
+  src: url("/assets/fonts/poppins-bold.ttf") format("truetype");
   font-weight: 700;
   font-display: swap;
 }
@@ -74,7 +74,7 @@ body.tahmisci-static-menu {
   overflow-y: auto;
   background: var(--paper);
   color: var(--espresso);
-  font-family: Manrope, "Tahmisci Poppins", Poppins, sans-serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -159,7 +159,7 @@ body.tahmisci-static-menu > * {
 .tahmisci-static-menu .section-title,
 .tahmisci-static-menu .menu-catalog-heading h2,
 .tahmisci-static-menu .footer-logo h3 {
-  font-family: Fraunces, Georgia, serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-variation-settings: "opsz" 96;
 }
 
@@ -330,7 +330,6 @@ body.tahmisci-static-menu > * {
 }
 
 .tahmisci-static-menu .language-btn,
-.tahmisci-static-menu .profile-menu-btn,
 .tahmisci-static-menu .mobile-contact-btn,
 .tahmisci-static-menu .mobile-cart-btn,
 .tahmisci-static-menu .mobile-menu-btn {
@@ -344,7 +343,6 @@ body.tahmisci-static-menu > * {
 }
 
 .tahmisci-static-menu .language-btn:hover,
-.tahmisci-static-menu .profile-menu-btn:hover,
 .tahmisci-static-menu .mobile-contact-btn:hover,
 .tahmisci-static-menu .mobile-cart-btn:hover,
 .tahmisci-static-menu .mobile-menu-btn:hover {
@@ -353,7 +351,6 @@ body.tahmisci-static-menu > * {
 }
 
 .tahmisci-static-menu .language-dropdown,
-.tahmisci-static-menu .profile-menu-dropdown,
 .tahmisci-static-menu .mobile-language-dropdown {
   overflow: hidden;
   border: 1px solid rgba(74, 44, 29, 0.12);
@@ -363,7 +360,6 @@ body.tahmisci-static-menu > * {
 }
 
 .tahmisci-static-menu .language-option,
-.tahmisci-static-menu .profile-menu-item,
 .tahmisci-static-menu .mobile-language-option {
   min-height: 44px;
   color: var(--coffee);
@@ -371,39 +367,10 @@ body.tahmisci-static-menu > * {
 
 .tahmisci-static-menu .language-option:hover,
 .tahmisci-static-menu .language-option.active,
-.tahmisci-static-menu .profile-menu-item:hover,
 .tahmisci-static-menu .mobile-language-option:hover,
 .tahmisci-static-menu .mobile-language-option.active {
   background: var(--cream);
   color: var(--copper);
-}
-
-.tahmisci-static-menu .auth-buttons {
-  display: flex;
-  gap: 8px;
-}
-
-.tahmisci-static-menu .btn-auth {
-  min-height: 44px;
-  padding: 0 16px;
-  border: 1px solid rgba(74, 44, 29, 0.18);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--coffee);
-  font-size: 0.82rem;
-  font-weight: 700;
-}
-
-.tahmisci-static-menu .btn-auth:hover,
-.tahmisci-static-menu .btn-register {
-  border-color: var(--espresso);
-  background: var(--espresso);
-  color: var(--paper);
-}
-
-.tahmisci-static-menu .btn-register:hover {
-  border-color: var(--copper);
-  background: var(--copper);
 }
 
 .tahmisci-static-menu .mobile-cart-count,
@@ -841,7 +808,7 @@ body.tahmisci-static-menu > * {
 .tahmisci-static-menu .products-slider-track .product-name {
   margin: 0;
   color: var(--espresso);
-  font-family: Fraunces, Georgia, serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 1.35rem;
   line-height: 1.15;
 }
@@ -1226,7 +1193,7 @@ body.tahmisci-static-menu > * {
 
 .tahmisci-static-menu .menu-category-card-name {
   color: var(--espresso);
-  font-family: Fraunces, Georgia, serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 1.25rem;
   font-weight: 600;
   line-height: 1.14;
@@ -1284,7 +1251,7 @@ body.tahmisci-static-menu > * {
 }
 
 .tahmisci-static-menu .menu-product-panel-title strong {
-  font-family: Fraunces, Georgia, serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 1.25rem;
 }
 
@@ -1355,7 +1322,7 @@ body.tahmisci-static-menu > * {
   margin: 0;
   overflow: hidden;
   color: var(--espresso);
-  font-family: Fraunces, Georgia, serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: 1.08rem;
   font-weight: 600;
   line-height: 1.16;
@@ -1804,7 +1771,6 @@ body.tahmisci-static-menu > * {
 
 /* Modals, cart and floating actions */
 .tahmisci-static-menu .product-modal-overlay,
-.tahmisci-static-menu .auth-modal-overlay,
 .tahmisci-static-menu .new-cart-modal-overlay,
 .tahmisci-static-menu .selection-modal-overlay,
 .tahmisci-static-menu .campaign-modal-overlay,
@@ -1905,7 +1871,7 @@ body.tahmisci-static-menu > * {
 .tahmisci-static-menu .product-modal-title {
   margin: 0;
   color: var(--espresso);
-  font-family: Fraunces, Georgia, serif;
+  font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   font-size: clamp(2rem, 3vw, 3rem);
   font-weight: 600;
   line-height: 1.04;
@@ -1972,7 +1938,6 @@ body.tahmisci-static-menu > * {
   color: var(--paper);
 }
 
-.tahmisci-static-menu .auth-modal,
 .tahmisci-static-menu .selection-modal,
 .tahmisci-static-menu .campaign-modal,
 .tahmisci-static-menu .call-waiter-modal,
@@ -2021,10 +1986,6 @@ body.tahmisci-static-menu > * {
     font-size: 0.8rem;
   }
 
-  .tahmisci-static-menu .auth-buttons .btn-login {
-    display: none;
-  }
-
   .tahmisci-static-menu #productsGrid.is-category-panel {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -2064,8 +2025,7 @@ body.tahmisci-static-menu > * {
     height: 62px;
   }
 
-  .tahmisci-static-menu .header-nav,
-  .tahmisci-static-menu .auth-buttons {
+  .tahmisci-static-menu .header-nav {
     display: none !important;
   }
 
@@ -2078,11 +2038,6 @@ body.tahmisci-static-menu > * {
 
   .tahmisci-static-menu #productsGrid.is-product-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .tahmisci-static-menu .profile-menu-text,
-  .tahmisci-static-menu .profile-menu-arrow {
-    display: none;
   }
 
   .tahmisci-static-menu .hero-media-stage {
@@ -2150,7 +2105,6 @@ body.tahmisci-static-menu > * {
   }
 
   .tahmisci-static-menu .language-btn,
-  .tahmisci-static-menu .profile-menu-btn,
   .tahmisci-static-menu .mobile-contact-btn,
   .tahmisci-static-menu .mobile-cart-btn,
   .tahmisci-static-menu .mobile-menu-btn {
@@ -2634,11 +2588,7 @@ body.tahmisci-static-menu > * {
 .contact-managed-details a {
   color: var(--copper);
 }
-.tahmisci-static-menu .auth-buttons,
-.tahmisci-static-menu #userMenu,
 .tahmisci-static-menu .mobile-cart-btn,
-.tahmisci-static-menu .mobile-nav-auth,
-.tahmisci-static-menu .mobile-nav-account-content,
 .tahmisci-static-menu #callWaiterBtn {
   display: none !important;
 }

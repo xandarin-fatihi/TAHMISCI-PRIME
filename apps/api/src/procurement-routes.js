@@ -7,6 +7,9 @@ const {
   safeDocumentMetadata
 } = require("./procurement-service");
 const { FATURA_CAPABILITIES } = require("./store/migrations");
+const { normalizeStockState } = require("./store/migrations");
+const stockService = require("./stock-service");
+const stockAnalytics = require("./stock-analytics");
 
 const API_ROOT = "/api/procurement/v1";
 const SSE_HEARTBEAT_MS = 25000;
@@ -42,8 +45,40 @@ function registerProcurementRoutes(deps = {}) {
   });
 
   app.get(`${API_ROOT}/context`, ...authenticated, asyncRoute(async (req, res) => {
-    res.json(await service.context(req.procurementActor));
+    res.json(await service.context(req.procurementActor, req.storeSnapshot));
   }));
+
+  registerStockReferenceProjection({
+    app,
+    store,
+    authenticated
+  });
+
+  app.get(`${API_ROOT}/analytics/products`, ...authenticated,
+    capability("inventory.read"), capability("procurement.read"),
+    asyncRoute(async (req, res) => {
+      const data = req.storeSnapshot || await store.read();
+      res.json({ ok: true, ...stockAnalytics.searchProducts(data, req.query.query, { limit: req.query.limit }) });
+    }));
+
+  app.get(`${API_ROOT}/analytics/products/:productId`, ...authenticated,
+    capability("inventory.read"), capability("procurement.read"),
+    asyncRoute(async (req, res) => {
+      const data = req.storeSnapshot || await store.read();
+      const financialVisible = req.procurementActor.type === "admin"
+        || ["accounting.read", "accounting.post", "supplier.manage", "supplierProduct.manage"].some((item) => hasCapability(req.procurementActor, item));
+      res.json({ ok: true, ...stockAnalytics.productAnalytics(data, req.params.productId, req.query.range, { financialVisible }) });
+    }));
+
+  app.get(`${API_ROOT}/analytics/stock-plan`, ...authenticated, capability("inventory.read"),
+    asyncRoute(async (req, res) => {
+      const data = req.storeSnapshot || await store.read();
+      const financialVisible = req.procurementActor.type === "admin"
+        || ["accounting.read", "accounting.post", "supplier.manage", "supplierProduct.manage"].some((item) => hasCapability(req.procurementActor, item));
+      const shipmentVisible = req.procurementActor.type === "admin"
+        || ["procurement.read", "receipt.create", "receipt.approve", "receipt.reject", "accounting.read"].some((item) => hasCapability(req.procurementActor, item));
+      res.json({ ok: true, ...stockAnalytics.stockPlanning(data, req.query.range, { financialVisible, shipmentVisible }) });
+    }));
 
   app.get(`${API_ROOT}/dashboard`, ...authenticated, capability("procurement.read"), asyncRoute(async (req, res) => {
     res.json(await service.dashboard(req.procurementActor));
@@ -288,6 +323,66 @@ function registerProcurementRoutes(deps = {}) {
   return { service };
 }
 
+// /api/procurement/v1/stock/* canonical Fatura stok facade'ıdır ve mevcut
+// canonical stock service'i kullanır; /api/admin/stock/* yalnız compatibility adapter'ıdır.
+function registerStockReferenceProjection(deps) {
+  const { app, store, authenticated } = deps;
+  const actorForStock = (actor) => ({
+    type: actor && actor.type === "admin" ? "admin" : "personel",
+    id: String(actor && actor.id || ""),
+    name: String(actor && actor.name || "Yönetici"),
+    branchId: String(actor && actor.branchId || "main"),
+    stockLocationId: String(actor && actor.stockLocationId || ""),
+    inventoryManage: Boolean(actor && (actor.type === "admin" || hasCapability(actor, "inventory.manage"))),
+    inventoryTransfer: Boolean(actor && (actor.type === "admin" || hasCapability(actor, "inventory.transfer.create"))),
+    inventoryScope: actor && actor.type === "admin" ? "all" : "assigned"
+  });
+  const publicLocations = (stock, actor) => {
+    const locations = stockService.getLocations(stock);
+    if (actor.type === "admin" || hasCapability(actor, "inventory.manage")) return locations;
+    const ownId = stockService.actorLocationId(stock, actorForStock(actor));
+    return locations.filter((item) => String(item.id) === String(ownId));
+  };
+  const responseBase = (data) => ({
+    ok: true,
+    revision: Math.max(0, Number(data && data.revisions && data.revisions.catalog || 0)),
+    inventoryRevision: Math.max(0, Number(data && data.revisions && data.revisions.inventory || 0)),
+    catalogRevision: Math.max(0, Number(data && data.revisions && data.revisions.catalog || 0)),
+    revisions: {
+      inventory: Math.max(0, Number(data && data.revisions && data.revisions.inventory || 0)),
+      catalog: Math.max(0, Number(data && data.revisions && data.revisions.catalog || 0)),
+      stock: Math.max(0, Number(data && data.revisions && data.revisions.stock || 0))
+    },
+    publishRevision: Number(data.revisions && data.revisions.publish || 0),
+    updatedAt: data.stockUpdatedAt || data.stockState && data.stockState.updatedAt || null
+  });
+
+  app.get(`${API_ROOT}/stock/references`, ...authenticated,
+    anyCapability(["inventory.read", "procurement.read", "receipt.create", "receipt.approve", "supplierProduct.manage"]),
+    asyncRoute(async (req, res) => {
+      const data = req.storeSnapshot || await store.read();
+      const stock = normalizeStockState(data.stockState);
+      const stockProducts = stock.products.filter((item) => item.active !== false).map((item) => ({
+        id: String(item.id),
+        name: String(item.name || item.productName || "Stok ürünü"),
+        productCode: String(item.productCode || ""),
+        categoryId: String(item.categoryId || ""),
+        category: String(item.category || ""),
+        baseUnit: String(item.baseUnit || item.unit || "adet"),
+        unit: String(item.baseUnit || item.unit || "adet"),
+        bulkUnit: String(item.bulkUnit || item.caseUnit || ""),
+        unitsPerBulkUnit: Number(item.unitsPerBulkUnit || item.unitsPerCase || 0),
+        defaultMovementUnit: String(item.defaultMovementUnit || item.baseUnit || item.unit || "adet"),
+        allowedUnits: stockService.allowedProductUnits(item)
+      }));
+      const stockLocations = publicLocations(stock, req.procurementActor).map((item) => ({
+        id: String(item.id), code: String(item.code || ""), name: String(item.name || "Depo"),
+        type: String(item.type || "other"), active: item.active !== false, isDefault: item.isDefault === true
+      }));
+      res.json({ ...responseBase(data), stockProducts, stockLocations });
+    }));
+}
+
 function actorMiddleware(resolveActor) {
   return async function attachProcurementActor(req, res, next) {
     try {
@@ -329,6 +424,7 @@ async function resolveActorFromRequest(req, store) {
     name: String(user.name || user.username || "Personel"),
     role: String(user.faturaRole || "operasyon"),
     branchId: String(user.branchId || "main"),
+    stockLocationId: String(user.stockLocationId || ""),
     accessEnabled: user.faturaAccessEnabled !== false,
     template: String(user.faturaTemplate || "ozel"),
     capabilities: user.faturaAccessEnabled === false ? [] : [...new Set((Array.isArray(user.faturaCapabilities) ? user.faturaCapabilities : [])

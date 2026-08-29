@@ -338,7 +338,7 @@ body.is-personel-authenticated {
 
 .personel-dashboard .workspace-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   position: sticky;
@@ -350,6 +350,52 @@ body.is-personel-authenticated {
   border-bottom: 1px solid var(--panel-line);
   background: rgba(251, 246, 238, 0.94);
   backdrop-filter: blur(12px);
+}
+
+.personel-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.personel-notification-trigger {
+  position: relative;
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--panel-control-radius);
+  color: var(--panel-coffee);
+  background: var(--panel-surface);
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.personel-notification-trigger:hover {
+  border-color: rgba(90, 47, 29, .32);
+  box-shadow: var(--panel-shadow);
+  transform: translateY(-1px);
+}
+
+.personel-notification-trigger:active { transform: none; }
+
+.personel-notification-trigger:focus-visible {
+  outline: 3px solid rgba(185, 80, 45, .24);
+  outline-offset: 2px;
+}
+
+.personel-notification-trigger svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .personel-dashboard .workspace-title {

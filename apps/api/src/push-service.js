@@ -1,5 +1,7 @@
 "use strict";
 
+const { APP_ROOTS, normalizeAppTarget, safeAppDeepLink } = require("./app-targets");
+
 function createPushService(config = {}, options = {}) {
   let webPush = options.webPush || null;
   if (!webPush) {
@@ -26,9 +28,10 @@ function createPushService(config = {}, options = {}) {
       throw error;
     }
     const role = notification && notification.recipientRole === "manager" ? "manager" : "personnel";
-    const fallbackLink = role === "manager" ? "/yonetici/" : "/personel/";
-    const deepLink = safeDeepLink(notification && notification.deepLink, fallbackLink, role);
-    const iconRoot = role === "manager" ? "/assets/app-icons/yonetici" : "/assets/app-icons/personel";
+    const appTarget = normalizeAppTarget(notification && notification.appTarget, notification && notification.deepLink, role);
+    const fallbackLink = APP_ROOTS[appTarget];
+    const deepLink = safeAppDeepLink(notification && notification.deepLink, appTarget, fallbackLink);
+    const iconRoot = `/assets/app-icons/${appTarget}`;
     const notificationId = String(notification && notification.id || "").replace(/[\r\n\u0000-\u001f\u007f]+/g, "").slice(0, 180);
     const payload = JSON.stringify({
       title: String(notification && notification.title || "Tahmisçi bildirimi").replace(/[\r\n]+/g, " ").slice(0, 180),
@@ -37,9 +40,15 @@ function createPushService(config = {}, options = {}) {
       badge: `${iconRoot}/icon-192.png`,
       tag: `tahmisci-${role}-${notificationId || "notification"}`.slice(0, 240),
       renotify: false,
+      vibrate: notification && notification.severity === "critical" ? [180, 80, 180, 80, 240] : [120, 60, 120],
+      requireInteraction: notification && notification.severity === "critical",
+      deepLink,
+      appTarget,
+      id: notificationId,
       data: {
         notificationId,
         deepLink,
+        appTarget,
         category: String(notification && notification.category || "system").slice(0, 40),
         recipientRole: role
       }
@@ -54,17 +63,8 @@ function createPushService(config = {}, options = {}) {
   };
 }
 
-function safeDeepLink(value, fallback, role = "personnel") {
-  const link = String(value || "").trim().slice(0, 500);
-  if (!link.startsWith("/") || link.startsWith("//") || /[\r\n]/.test(link)) return fallback;
-  try {
-    const url = new URL(link, "https://tahmisci.invalid/");
-    const root = role === "manager" ? "/yonetici" : "/personel";
-    if (url.origin !== "https://tahmisci.invalid" || (url.pathname !== root && !url.pathname.startsWith(`${root}/`))) return fallback;
-    return `${url.pathname}${url.search}${url.hash}`;
-  } catch (_error) {
-    return fallback;
-  }
+function safeDeepLink(value, fallback, appTarget = "personel") {
+  return safeAppDeepLink(value, appTarget, fallback);
 }
 
 module.exports = { createPushService, safeDeepLink };

@@ -2,6 +2,7 @@
 
 const crypto = require("crypto");
 const { EventEmitter } = require("events");
+const { normalizeAppTarget, safeAppDeepLink } = require("./app-targets");
 
 const NOTIFICATION_CATEGORIES = Object.freeze(["task", "shipment", "shift", "stock", "system"]);
 const NOTIFICATION_SEVERITIES = Object.freeze(["info", "success", "warning", "critical"]);
@@ -45,6 +46,7 @@ function createNotificationInStore(data, input, options = {}) {
     entityType: normalized.entityType,
     entityId: normalized.entityId,
     deepLink: normalized.deepLink,
+    appTarget: normalized.appTarget,
     createdAt,
     updatedAt: createdAt,
     readAt: null,
@@ -53,6 +55,9 @@ function createNotificationInStore(data, input, options = {}) {
     metadata: normalized.metadata,
     inAppVisible: mandatory || (preference.inAppEnabled !== false && categoryEnabled)
   };
+  data.revisions = data.revisions && typeof data.revisions === "object" && !Array.isArray(data.revisions) ? data.revisions : {};
+  data.revisions.notification = Math.max(0, Number(data.revisions.notification || 0)) + 1;
+  notification.revision = data.revisions.notification;
   data.notifications.push(notification);
   data.notifications = retainNotifications(data.notifications, MAX_NOTIFICATIONS);
 
@@ -60,11 +65,16 @@ function createNotificationInStore(data, input, options = {}) {
     enqueueOutbox(data, notification, "email", preference.emailAddress, options);
   }
   if (categoryEnabled && preference.pushEnabled) {
-    const subscriptions = data.pushSubscriptions.filter((item) => item
+    const candidates = data.pushSubscriptions.filter((item) => item
       && !item.disabledAt
       && !item.revokedAt
       && normalizeRole(item.ownerRole || item.recipientRole) === notification.recipientRole
       && String(notification.recipientRole === "manager" ? "manager" : item.ownerId || item.recipientId || "") === notification.recipientId);
+    const subscriptions = candidates.filter((item) => normalizeAppTarget(
+      item.appId || item.appTarget,
+      "",
+      notification.recipientRole
+    ) === notification.appTarget);
     for (const subscription of subscriptions) {
       enqueueOutbox(data, notification, "push", subscription.endpoint, { ...options, subscriptionId: subscription.id });
     }
@@ -208,6 +218,8 @@ function normalizeNotificationInput(input, options = {}) {
     error.status = 400;
     throw error;
   }
+  const appTarget = normalizeAppTarget(source.appTarget, source.deepLink, recipientRole);
+  const deepLink = safeAppDeepLink(source.deepLink, appTarget);
   return {
     id: String(source.id || "").trim().slice(0, 180),
     recipientRole,
@@ -219,7 +231,8 @@ function normalizeNotificationInput(input, options = {}) {
     severity: source.severity === "error" ? "critical" : NOTIFICATION_SEVERITIES.includes(source.severity) ? source.severity : "info",
     entityType: String(source.entityType || "").trim().slice(0, 100),
     entityId: String(source.entityId || "").trim().slice(0, 180),
-    deepLink: safeDeepLink(source.deepLink),
+    deepLink,
+    appTarget,
     createdAt: source.createdAt ? nowIso(source.createdAt) : nowIso(options.now),
     dedupeKey: String(source.dedupeKey || "").trim().slice(0, 240),
     metadata: sanitizeMetadata(source.metadata)
@@ -301,11 +314,6 @@ function normalizeRole(value) {
   if (["manager", "admin", "yonetici"].includes(role)) return "manager";
   if (["personnel", "personel", "recipe"].includes(role)) return "personnel";
   return "";
-}
-
-function safeDeepLink(value) {
-  const link = String(value || "").trim().slice(0, 500);
-  return link.startsWith("/") && !link.startsWith("//") && !/[\r\n]/.test(link) ? link : "";
 }
 
 function sanitizeMetadata(value, depth = 0) {

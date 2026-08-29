@@ -30,9 +30,7 @@
     staleScopes: new Set(),
     loadPromises: new Map(),
     pollingTimer: null,
-    eventSource: null,
-    reconnectTimer: null,
-    reconnectAttempt: 0,
+    gatewayBound: false,
     clientId: createRequestId("personel-workforce-events"),
     sessionEnded: true,
     sessionEndNotified: false
@@ -71,6 +69,7 @@
     document.addEventListener("personel:session-started", handleSessionStarted);
     document.addEventListener("personel:session-ended", handleSessionEnded);
     document.addEventListener("personel:stock-updated", handleStockUpdated);
+    document.addEventListener("personel:gateway-status", handleGatewayStatus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
   }
 
@@ -108,69 +107,37 @@
   }
 
   function connectWorkforceEvents() {
-    if (state.sessionEnded || PREVIEW_TOKEN || document.hidden || state.eventSource || !window.EventSource) {
+    if (state.sessionEnded || PREVIEW_TOKEN || document.hidden || !window.EventSource) {
       if (!window.EventSource) startFallbackPolling();
       return;
     }
-    const query = new URLSearchParams({ clientId: state.clientId });
-    const source = new EventSource(`/api/workforce/events?${query.toString()}`, { withCredentials: true });
-    state.eventSource = source;
-    source.addEventListener("open", () => {
-      state.reconnectAttempt = 0;
-      stopPolling();
-    });
-    const handle = (event) => {
-      let payload;
-      try { payload = JSON.parse(event.data || "{}"); } catch (_error) { return; }
-      const incomingRevision = responseRevision(payload, state.revision);
-      if (event.type === "ready" && !payload.requiresRefetch) {
-        state.revision = Math.max(state.revision, incomingRevision);
-        return;
-      }
-      if (incomingRevision <= state.revision && !payload.requiresRefetch) return;
-      state.revision = Math.max(state.revision, incomingRevision);
-      state.loadedScopes.forEach((scope) => state.staleScopes.add(scope));
-      const activeScope = scopeForSection(state.section);
-      if (["tasks", "shipment", "shift"].includes(state.section) && !state.busy && !isEditingWorkforce()) {
-        state.staleScopes.add(activeScope);
-        openSection(state.section, { silent: true }).catch(() => {});
-      }
-    };
-    source.addEventListener("ready", handle);
-    source.addEventListener("workforce", handle);
-    source.addEventListener("message", handle);
-    source.addEventListener("error", () => {
-      if (state.eventSource === source) state.eventSource = null;
-      try { source.close(); } catch (_error) {}
-      if (state.sessionEnded) return;
-      startFallbackPolling();
-      scheduleWorkforceReconnect();
-    });
+    stopPolling();
+    if (state.gatewayBound) return;
+    state.gatewayBound = true;
+    document.addEventListener("personel:gateway-event", handleWorkforceGatewayEvent);
   }
 
-  function scheduleWorkforceReconnect() {
-    if (state.reconnectTimer || state.sessionEnded || document.hidden || !window.EventSource) return;
-    const delay = Math.min(30000, 5000 * (2 ** Math.min(state.reconnectAttempt, 3)));
-    state.reconnectAttempt += 1;
-    state.reconnectTimer = window.setTimeout(() => {
-      state.reconnectTimer = null;
-      connectWorkforceEvents();
-    }, delay);
+  function handleWorkforceGatewayEvent(event) {
+    if (state.sessionEnded) return;
+    const payload = event && event.detail || {};
+    if (payload.topic !== "workforce" && payload.topic !== "shipment") return;
+    const incomingRevision = responseRevision(payload, state.revision);
+    if (incomingRevision && incomingRevision <= state.revision) return;
+    state.revision = Math.max(state.revision, incomingRevision);
+    state.loadedScopes.forEach((scope) => state.staleScopes.add(scope));
+    const activeScope = scopeForSection(state.section);
+    if (["tasks", "shipment", "shift"].includes(state.section) && !state.busy && !isEditingWorkforce()) {
+      state.staleScopes.add(activeScope);
+      openSection(state.section, { silent: true }).catch(() => {});
+    }
   }
 
   function stopWorkforceEvents() {
     pauseWorkforceEvents();
-    state.reconnectAttempt = 0;
   }
 
   function pauseWorkforceEvents() {
     stopPolling();
-    if (state.eventSource) {
-      try { state.eventSource.close(); } catch (_error) {}
-      state.eventSource = null;
-    }
-    if (state.reconnectTimer) window.clearTimeout(state.reconnectTimer);
-    state.reconnectTimer = null;
     state.loadedScopes.forEach((scope) => state.staleScopes.add(scope));
   }
 
@@ -195,9 +162,15 @@
       stopPolling();
       return;
     }
-    if (!state.eventSource) connectWorkforceEvents();
-    if (!state.eventSource) startFallbackPolling();
+    connectWorkforceEvents();
+    if (!window.EventSource) startFallbackPolling();
     if (!state.sessionEnded && state.staleScopes.has(scopeForSection(state.section)) && !state.busy) openSection(state.section, { silent: true });
+  }
+
+  function handleGatewayStatus(event) {
+    if (state.sessionEnded) return;
+    if (event && event.detail && event.detail.connected) stopPolling();
+    else if (["tasks", "shipment", "shift"].includes(state.section)) startFallbackPolling();
   }
 
   function handleStockUpdated(event) {

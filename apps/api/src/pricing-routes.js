@@ -157,6 +157,7 @@ function registerPricingRoutes(options) {
         data.menuState = applied.menuState;
         data.revisions.pricing = revision;
         data.revisions.publish = publishRevision;
+        data.revisions.catalog = currentCatalogRevision(data) + 1;
         data.pricingUpdatedAt = updatedAt;
         data.menuUpdatedAt = updatedAt;
         data.pricingImportDrafts = data.pricingImportDrafts.filter((item) => item.id !== analysisId);
@@ -226,6 +227,7 @@ function registerPricingRoutes(options) {
         data.menuState = migrated.menuState;
         data.revisions.pricing = revision;
         data.revisions.publish = publishRevision;
+        data.revisions.catalog = currentCatalogRevision(data) + 1;
         data.pricingUpdatedAt = now;
         data.menuUpdatedAt = now;
         appendAudit(data, {
@@ -293,6 +295,7 @@ function registerPricingRoutes(options) {
         data.menuState = migrated.menuState;
         data.revisions.pricing = revision;
         data.revisions.publish = publishRevision;
+        data.revisions.catalog = currentCatalogRevision(data) + 1;
         data.pricingUpdatedAt = now;
         data.menuUpdatedAt = now;
         appendAudit(data, {
@@ -419,6 +422,7 @@ function registerPricingRoutes(options) {
         data.pricing = catalog;
         data.revisions.pricing = revision;
         data.revisions.publish = publishRevision;
+        data.revisions.catalog = currentCatalogRevision(data) + 1;
         data.pricingUpdatedAt = now;
         data.menuUpdatedAt = now;
         const operationId = auditId("pricing-bulk");
@@ -506,6 +510,7 @@ function registerPricingRoutes(options) {
         data.menuState = restored.menuState;
         data.revisions.pricing = revision;
         data.revisions.publish = publishRevision;
+        data.revisions.catalog = currentCatalogRevision(data) + 1;
         data.pricingUpdatedAt = now;
         data.menuUpdatedAt = now;
         audit.undoneAt = now;
@@ -808,7 +813,8 @@ function broadcastPricingChange(data, updatedAt, broadcastMenuUpdate, broadcastP
       serializeLegacyMenuState(data.menuState, data.pricing),
       updatedAt,
       data.pricing,
-      pricingRevision(data)
+      pricingRevision(data),
+      currentCatalogRevision(data)
     );
   }
   if (typeof broadcastPublicUpdate === "function") broadcastPublicUpdate(data, "pricing");
@@ -843,6 +849,11 @@ function pricingRevision(data) {
 
 function currentPublishRevision(data) {
   const value = data && data.revisions && Number(data.revisions.publish);
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function currentCatalogRevision(data) {
+  const value = data && data.revisions && Number(data.revisions.catalog);
   return Number.isInteger(value) && value >= 0 ? value : 0;
 }
 

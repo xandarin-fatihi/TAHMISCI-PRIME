@@ -80,10 +80,10 @@ function registerCatalogCleanupRoutes(options) {
 
 function broadcastCleanup(data, updatedAt, options) {
   if (typeof options.broadcastMenuUpdate === "function") {
-    options.broadcastMenuUpdate(serializeLegacyMenuState(data.menuState, data.pricing), updatedAt, data.pricing, data.revisions.pricing);
+    options.broadcastMenuUpdate(serializeLegacyMenuState(data.menuState, data.pricing), updatedAt, data.pricing, data.revisions.pricing, data.revisions.catalog);
   }
-  if (typeof options.broadcastRecipeUpdate === "function") options.broadcastRecipeUpdate(data.recipeState, updatedAt, data.recipeCatalog || []);
-  if (typeof options.broadcastStockUpdate === "function") options.broadcastStockUpdate(data.stockState, updatedAt);
+  if (typeof options.broadcastRecipeUpdate === "function") options.broadcastRecipeUpdate(data.recipeState, updatedAt, data.recipeCatalog || [], data.revisions.catalog);
+  if (typeof options.broadcastStockUpdate === "function") options.broadcastStockUpdate(data.stockState, updatedAt, data.revisions.inventory, "inventory");
   if (typeof options.broadcastPublicUpdate === "function") options.broadcastPublicUpdate(data, "catalog-cleanup");
 }
 

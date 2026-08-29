@@ -25,8 +25,6 @@ const APP_CONFIG = {
     // Local Storage Keys
     storage: {
         cart: 'yeppos_cart',
-        user: 'yeppos_user',
-        session: 'yeppos_session',
         preferences: 'yeppos_preferences',
         favorites: 'yeppos_favorites',
         addresses: 'yeppos_addresses',
@@ -89,7 +87,7 @@ const APP_CONFIG = {
 
     // Feature Flags
     features: {
-        userRegistration: true,
+        userRegistration: false,
         socialLogin: false, // Disabled for demo
         onlinePayment: false, // Disabled for demo - frontend only
         guestCheckout: true,
@@ -106,7 +104,6 @@ const APP_CONFIG = {
     // Validation Rules
     validation: {
         email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-        phone: /^(\+90|0)?[5][0-9]{9}$/, // Turkish mobile format
         password: {
             minLength: 6,
             requireUppercase: false,
@@ -181,7 +178,7 @@ const APP_CONFIG = {
     // SEO Configuration
     seo: {
         keywords: 'YepPos',
-        ogImage: 'assets/brand/favicon.png',
+        ogImage: '/assets/brand/favicon.png',
         twitterCard: 'summary_large_image'
     }
 };
@@ -236,12 +233,6 @@ const EVENTS = {
     CART_ITEM_REMOVED: 'cart:item-removed',
     CART_ITEM_UPDATED: 'cart:item-updated',
     CART_CLEARED: 'cart:cleared',
-
-    // User Events
-    USER_LOGIN: 'user:login',
-    USER_LOGOUT: 'user:logout',
-    USER_REGISTER: 'user:register',
-    USER_UPDATED: 'user:updated',
 
     // UI Events
     MODAL_OPENED: 'modal:opened',
@@ -485,10 +476,6 @@ class Utils {
         return APP_CONFIG.validation.email.test(email);
     }
 
-    static validatePhone(phone) {
-        return APP_CONFIG.validation.phone.test(phone);
-    }
-
     static validatePassword(password) {
         const config = APP_CONFIG.validation.password;
 
@@ -713,17 +700,6 @@ class Utils {
         return this.formatDate(date);
     }
 
-    static formatPhone(phone) {
-        const cleaned = phone.replace(/\D/g, '');
-        if (cleaned.length === 11 && cleaned.startsWith('0')) {
-            return `${cleaned.slice(0, 4)} ${cleaned.slice(4, 7)} ${cleaned.slice(7, 9)} ${cleaned.slice(9)}`;
-        }
-        if (cleaned.length === 10) {
-            return `${cleaned.slice(0, 3)} ${cleaned.slice(3, 6)} ${cleaned.slice(6, 8)} ${cleaned.slice(8)}`;
-        }
-        return phone;
-    }
-
     // ========== UTILITY FUNCTIONS ==========
 
     static debounce(func, wait, immediate = false) {
@@ -914,357 +890,7 @@ window.Utils = Utils;
 window.$ = Utils.$;
 window.$$ = Utils.$$; 
 
-// ========== AUTHENTICATION SYSTEM ==========
-
-class AuthSystem {
-    constructor() {
-        this.currentUser = null;
-        this.isLoggedIn = false;
-        this.init();
-    }
-    
-    init() {
-        // Load saved user data
-        this.loadUserData();
-        
-        // Update UI based on auth status
-        this.updateAuthUI();
-    }
-    
-    // ========== USER DATA MANAGEMENT ==========
-    
-    loadUserData() {
-        const userData = Utils.getStorage(APP_CONFIG.storage.user);
-        const sessionData = Utils.getStorage(APP_CONFIG.storage.session);
-        
-        if (userData && sessionData) {
-            // Check if session is still valid
-            const sessionExpiry = new Date(sessionData.expiresAt);
-            const now = new Date();
-            
-            if (now < sessionExpiry) {
-                this.currentUser = userData;
-                this.isLoggedIn = true;
-                console.log('ğŸ‘¤ User session restored:', this.currentUser.firstName);
-            } else {
-                // Session expired
-                this.logout();
-                console.log('⏰ Session expired');
-            }
-        }
-    }
-    
-    saveUserData() {
-        if (this.currentUser) {
-            Utils.setStorage(APP_CONFIG.storage.user, this.currentUser);
-            
-            // Create session with 7 days expiry
-            const session = {
-                userId: this.currentUser.id,
-                createdAt: new Date().toISOString(),
-                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-            };
-            
-            Utils.setStorage(APP_CONFIG.storage.session, session);
-        }
-    }
-    
-    clearUserData() {
-        Utils.removeStorage(APP_CONFIG.storage.user);
-        Utils.removeStorage(APP_CONFIG.storage.session);
-        this.currentUser = null;
-        this.isLoggedIn = false;
-    }
-    
-    // ========== AUTHENTICATION METHODS ==========
-    
-    async login(email, password, rememberMe = false) {
-        try {
-            console.log('ğŸ” Attempting login for:', email);
-            
-            // Demo authentication - check against demo users
-            const demoUser = this.validateDemoUser(email, password);
-            
-            if (demoUser) {
-                this.currentUser = { ...demoUser };
-                this.isLoggedIn = true;
-                
-                // Save user data
-                this.saveUserData();
-                
-                // Update UI
-                this.updateAuthUI();
-                
-                // Emit login event
-                Utils.emit(document, EVENTS.USER_LOGIN, { user: this.currentUser });
-                
-                console.log('✅ Login successful:', this.currentUser.firstName);
-                return { success: true, user: this.currentUser };
-                
-            } else {
-                console.log('❌ Invalid credentials');
-                return { success: false, error: 'Geçersiz e-posta veya şifre' };
-            }
-            
-        } catch (error) {
-            console.error('Login error:', error);
-            return { success: false, error: 'Giriş sırasında bir hata oluştu' };
-        }
-    }
-    
-    async register(userData) {
-        try {
-            console.log('ğŸ“ Attempting registration for:', userData.email);
-            
-            // Check if user already exists (demo)
-            const existingUser = APP_CONFIG.demo.users.find(u => u.email === userData.email);
-            if (existingUser) {
-                return { success: false, error: 'Bu e-posta adresi zaten kayıtlı' };
-            }
-            
-            // Create new user
-            const newUser = {
-                id: Date.now(), // Simple ID generation for demo
-                email: userData.email,
-                firstName: userData.firstName,
-                lastName: userData.lastName,
-                phone: userData.phone || '',
-                birthDate: userData.birthDate || '',
-                createdAt: new Date().toISOString(),
-                addresses: []
-            };
-            
-            // In a real app, this would be sent to the server
-            console.log('ğŸ‘¤ New user registered:', newUser);
-            
-            // Auto-login after registration
-            this.currentUser = newUser;
-            this.isLoggedIn = true;
-            
-            // Save user data
-            this.saveUserData();
-            
-            // Update UI
-            this.updateAuthUI();
-            
-            // Emit registration event
-            Utils.emit(document, EVENTS.USER_REGISTER, { user: this.currentUser });
-            
-            return { success: true, user: this.currentUser };
-            
-        } catch (error) {
-            console.error('Registration error:', error);
-            return { success: false, error: 'Kayıt sırasında bir hata oluştu' };
-        }
-    }
-    
-    logout() {
-        console.log('ğŸ‘‹ User logged out');
-        
-        // Clear user data
-        this.clearUserData();
-        
-        // Update UI
-        this.updateAuthUI();
-        
-        // Emit logout event
-        Utils.emit(document, EVENTS.USER_LOGOUT);
-        
-        // Show success message
-        (window.showSwalToast && window.showSwalToast(APP_CONFIG.success.logout, 'success'));
-    }
-    
-    // ========== VALIDATION METHODS ==========
-    
-    validateDemoUser(email, password) {
-        // Check against demo users
-        const demoUser = APP_CONFIG.demo.users.find(user => 
-            user.email === email && user.password === password
-        );
-        
-        if (demoUser) {
-            // Return user without password
-            const { password: _, ...userWithoutPassword } = demoUser;
-            return userWithoutPassword;
-        }
-        
-        return null;
-    }
-    
-    validateEmail(email) {
-        return Utils.validateEmail(email);
-    }
-    
-    validatePassword(password) {
-        return Utils.validatePassword(password);
-    }
-    
-    // ========== UI UPDATES ==========
-    
-    updateAuthUI() {
-        const authLinks = $('#authLinks');
-        const userLinks = $('#userLinks');
-        const userName = $('#userName');
-        
-        if (this.isLoggedIn && this.currentUser) {
-            // User is logged in
-            if (authLinks) authLinks.style.display = 'none';
-            if (userLinks) userLinks.style.display = 'block';
-            if (userName) {
-                userName.textContent = `Merhaba, ${this.currentUser.firstName}!`;
-            }
-        } else {
-            // User is not logged in
-            if (authLinks) authLinks.style.display = 'block';
-            if (userLinks) userLinks.style.display = 'none';
-        }
-    }
-    
-    // ========== UTILITY METHODS ==========
-    
-    getCurrentUser() {
-        return this.currentUser;
-    }
-    
-    isAuthenticated() {
-        return this.isLoggedIn;
-    }
-    
-    hasPermission(permission) {
-        // Simple permission system for demo
-        if (!this.isLoggedIn) return false;
-        
-        switch (permission) {
-            case 'order':
-            case 'profile':
-            case 'addresses':
-                return true;
-            case 'admin':
-                return this.currentUser?.role === 'admin';
-            default:
-                return false;
-        }
-    }
-    
-    requireAuth() {
-        if (!this.isLoggedIn) {
-            (window.showSwalToast && window.showSwalToast('Bu işlem için giriş yapmanız gerekiyor', 'warning'));
-            
-            // Redirect to login page
-            setTimeout(() => {
-                window.location.href = 'pages/login.html';
-            }, 1500);
-            
-            return false;
-        }
-        return true;
-    }
-    
-    // ========== PASSWORD RESET ==========
-    
-    async requestPasswordReset(email) {
-        try {
-            console.log('ğŸ”‘ Password reset requested for:', email);
-            
-            // Check if user exists
-            const userExists = APP_CONFIG.demo.users.some(u => u.email === email);
-            
-            if (!userExists) {
-                return { success: false, error: 'Bu e-posta adresi sistemde kayıtlı değil' };
-            }
-            
-            // Simulate sending reset email
-            await new Promise(resolve => setTimeout(resolve, 1500));
-            
-            console.log('ğŸ“§ Password reset email sent');
-            return { success: true, message: 'Şifre sıfırlama linki e-posta adresinize gönderildi' };
-            
-        } catch (error) {
-            console.error('Password reset error:', error);
-            return { success: false, error: 'Şifre sıfırlama talebinde hata oluştu' };
-        }
-    }
-    
-    async resetPassword(token, newPassword) {
-        try {
-            console.log('ğŸ”‘ Password reset with token:', token);
-            
-            // In a real app, validate token and update password
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            console.log('✅ Password reset successful');
-            return { success: true, message: 'Şifreniz başarıyla değiştirildi' };
-            
-        } catch (error) {
-            console.error('Password reset error:', error);
-            return { success: false, error: 'Şifre değiştirme sırasında hata oluştu' };
-        }
-    }
-    
-    // ========== PROFILE MANAGEMENT ==========
-    
-    async updateProfile(profileData) {
-        try {
-            if (!this.isLoggedIn) {
-                return { success: false, error: 'Giriş yapmanız gerekiyor' };
-            }
-            
-            console.log('ğŸ‘¤ Updating profile:', profileData);
-            
-            // Update current user data
-            this.currentUser = { ...this.currentUser, ...profileData };
-            
-            // Save updated data
-            this.saveUserData();
-            
-            // Update UI
-            this.updateAuthUI();
-            
-            // Emit update event
-            Utils.emit(document, EVENTS.USER_UPDATED, { user: this.currentUser });
-            
-            console.log('✅ Profile updated successfully');
-            return { success: true, user: this.currentUser };
-            
-        } catch (error) {
-            console.error('Profile update error:', error);
-            return { success: false, error: 'Profil güncellenirken hata oluştu' };
-        }
-    }
-    
-    async changePassword(currentPassword, newPassword) {
-        try {
-            if (!this.isLoggedIn) {
-                return { success: false, error: 'Giriş yapmanız gerekiyor' };
-            }
-            
-            console.log('ğŸ” Changing password for user:', this.currentUser.email);
-            
-            // In a real app, verify current password and update
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            console.log('✅ Password changed successfully');
-            return { success: true, message: 'Şifreniz başarıyla değiştirildi' };
-            
-        } catch (error) {
-            console.error('Password change error:', error);
-            return { success: false, error: 'Şifre değiştirme sırasında hata oluştu' };
-        }
-    }
-}
-
-// ========== GLOBAL AUTH INSTANCE ==========
-
-// Create global auth instance
-window.Auth = new AuthSystem();
-
-// Make auth methods available globally
-window.login = (email, password, rememberMe) => Auth.login(email, password, rememberMe);
-window.register = (userData) => Auth.register(userData);
-window.logout = () => Auth.logout();
-window.getCurrentUser = () => Auth.getCurrentUser();
-window.isAuthenticated = () => Auth.isAuthenticated();
-window.requireAuth = () => Auth.requireAuth(); 
+// Müşteri hesapları Müdavim uygulamasındaki backend oturumuna taşındı.
 
 // ========== UI COMPONENTS ==========
 

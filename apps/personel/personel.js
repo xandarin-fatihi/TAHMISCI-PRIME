@@ -47,6 +47,8 @@
     section: "recipe",
     stock: emptyStockState(),
     stockEventSource: null,
+    gatewayEventIds: new Set(),
+    gatewayTopicRevisions: Object.create(null),
     stockLoaded: false,
     stockLoadPromise: null,
     stockRevision: 0,
@@ -93,7 +95,7 @@
       "sectionDescription", "sectionRecipe", "sectionStock", "sectionProfile", "sectionTasks", "sectionShipment", "sectionShift", "sidebarUser", "profilePopover",
       "profileMenuAvatar", "profileMenuName", "profileMenuRole", "profileMenuMessage",
       "recipeFrame", "stockMessage", "stockSearchInput", "stockCategoryPills", "stockGrid",
-      "profileForm", "profileName", "profilePhone", "profileAvatarUrl", "profilePhotoInput", "profileBio",
+      "profileForm", "profileName", "profileAvatarUrl", "profilePhotoInput", "profileBio",
       "profileMessage", "profileAvatar", "personelNotificationTrigger", "personelNotificationBadge", "personelNotificationUnreadText",
       "personelNotificationPreferencesState", "personelAccountSecurityMessage",
       "stockDetailModal", "stockDetailClose", "stockDetailCategory", "stockDetailTitle", "stockDetailStatus",
@@ -409,6 +411,7 @@
     document.dispatchEvent(new CustomEvent("personel:session-started", {
       detail: { userId, preview: state.sessionPreview }
     }));
+    setupStockEvents();
     if (!state.sessionPreview) void loadNotificationUnreadBadge();
   }
 
@@ -658,8 +661,6 @@
     if (next === "stock") {
       loadStock().catch(() => {});
       setupStockEvents();
-    } else {
-      closeStockEvents();
     }
     if (next === "recipe") {
       loadRecipeFrame();
@@ -742,20 +743,34 @@
 
   function setupStockEvents() {
     if (PREVIEW_TOKEN || state.stockEventSource || !window.EventSource) return;
-    const source = new EventSource("/api/stock/events");
-    const handleStockEvent = (event) => {
-      try {
-        const payload = JSON.parse(event.data || "{}");
-        const revision = responseRevision(payload, state.stockRevision);
-        if (revision <= state.stockRevision && !payload.requiresRefetch) return;
-        state.stockRevision = Math.max(state.stockRevision, revision);
-        state.stockLoaded = false;
-        if (state.section === "stock") scheduleStockRefresh();
-      } catch (_error) {}
+    const source = new EventSource("/api/events?appId=personel", { withCredentials: true });
+    source.addEventListener("open", () => {
+      document.dispatchEvent(new CustomEvent("personel:gateway-status", { detail: { connected: true } }));
+    });
+    source.addEventListener("error", () => {
+      document.dispatchEvent(new CustomEvent("personel:gateway-status", { detail: { connected: false } }));
+    });
+    const handleGatewayEvent = (event) => {
+      let payload;
+      try { payload = JSON.parse(event.data || "{}"); } catch (_error) { return; }
+      const eventId = String(payload.eventId || event.lastEventId || "");
+      if (eventId && state.gatewayEventIds.has(eventId)) return;
+      if (eventId) {
+        state.gatewayEventIds.add(eventId);
+        if (state.gatewayEventIds.size > 300) state.gatewayEventIds.delete(state.gatewayEventIds.values().next().value);
+      }
+      const topic = String(payload.topic || "system");
+      const revision = Math.max(0, Number(payload.revision || 0));
+      const previous = Math.max(0, Number(state.gatewayTopicRevisions[topic] || 0));
+      if (revision && revision <= previous) return;
+      if (revision) state.gatewayTopicRevisions[topic] = revision;
+      document.dispatchEvent(new CustomEvent("personel:gateway-event", { detail: payload }));
+      if (topic !== "inventory" && topic !== "catalog") return;
+      state.stockLoaded = false;
+      if (state.section === "stock") scheduleStockRefresh();
     };
-    source.addEventListener("ready", handleStockEvent);
-    source.addEventListener("stock", handleStockEvent);
-    source.addEventListener("message", handleStockEvent);
+    source.addEventListener("event", handleGatewayEvent);
+    source.addEventListener("message", handleGatewayEvent);
     state.stockEventSource = source;
   }
 
@@ -779,9 +794,10 @@
   }
 
   function closeStockEvents() {
-    if (!state.stockEventSource) return;
-    state.stockEventSource.close();
+    if (state.stockEventSource) state.stockEventSource.close();
     state.stockEventSource = null;
+    state.gatewayEventIds.clear();
+    state.gatewayTopicRevisions = Object.create(null);
     window.clearTimeout(state.stockRefreshTimer);
     state.stockRefreshTimer = null;
     state.stockRefreshPending = false;
@@ -1277,7 +1293,6 @@
       }
       const profile = {
         name: els.profileName ? els.profileName.value.trim() : "",
-        phone: els.profilePhone ? els.profilePhone.value.trim() : "",
         avatarUrl,
         bio: els.profileBio ? els.profileBio.value.trim() : ""
       };
@@ -1415,7 +1430,6 @@
   function fillProfileForm() {
     const user = state.user || {};
     if (els.profileName) els.profileName.value = user.name || "";
-    if (els.profilePhone) els.profilePhone.value = user.phone || "";
     if (els.profileAvatarUrl) els.profileAvatarUrl.value = user.avatarUrl || "";
     if (els.profileBio) els.profileBio.value = user.bio || "";
     renderAvatar(user.name || user.username || "Personel", user.avatarUrl);
@@ -1520,7 +1534,7 @@
     if (window.TahmisciPersonelNotifications) return window.TahmisciPersonelNotifications;
     await Promise.all([
       loadLazyStyle("notifications", "/personel/notifications.css?v=20260827-performance"),
-      loadLazyScript("notifications", "/personel/notifications.js?v=20260827-performance")
+      loadLazyScript("notifications", "/personel/notifications.js?v=20260828-app-target")
     ]);
     if (state.sessionActive) {
       document.dispatchEvent(new CustomEvent("personel:session-started", {

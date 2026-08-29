@@ -1,5 +1,7 @@
 "use strict";
 
+const NORMALIZED_STOCK_SNAPSHOT = Symbol.for("tahmisci.stock.normalized-snapshot");
+
 // Central, location-aware inventory operations.  Routes intentionally pass the
 // current store object into this module so a balance update, movement record and
 // transfer status always live in one FileStore transaction.
@@ -90,7 +92,14 @@ function createId(prefix) {
 }
 
 function normalizeState(stockState) {
-  return normalizeStockState(stockState || {});
+  if (stockState && stockState[NORMALIZED_STOCK_SNAPSHOT] === true) return stockState;
+  const state = normalizeStockState(stockState || {});
+  Object.defineProperty(state, NORMALIZED_STOCK_SNAPSHOT, { value: true, enumerable: false });
+  return state;
+}
+
+function prepareSnapshot(stockState) {
+  return normalizeState(stockState);
 }
 
 function getLocations(stockState, options = {}) {
@@ -126,7 +135,7 @@ function getLocation(stockState, locationId, options = {}) {
 
 function actorLocationId(stockState, actor) {
   const state = normalizeState(stockState);
-  if (actor && actor.type === "admin") return null;
+  if (actor && (actor.type === "admin" || actor.inventoryManage === true || actor.inventoryScope === "all")) return null;
   const requested = String(actor && (actor.stockLocationId || actor.locationId) || "").trim();
   if (requested) {
     const location = getLocation(state, requested);
@@ -373,14 +382,14 @@ function applyStockMovement(stockState, input = {}, actor = {}, options = {}) {
   const state = normalizeState(stockState);
   const requestId = String(input.requestId || input.idempotencyKey || options.requestId || "").trim();
   const requestedType = String(input.type || "").trim();
-  const type = actor && actor.type === "personel"
+  const type = actor && actor.type === "personel" && actor.inventoryManage !== true
     ? ({ consumption: "waste", adjustment_out: "manual_out", stock_out: "manual_out" }[requestedType] || requestedType)
     : requestedType;
   if (!MOVEMENT_TYPES.has(type)) throw stockError("Geçersiz stok hareket türü.", 422);
   if (!actor || !["admin", "personel"].includes(actor.type)) {
     throw stockError("Stok işlemi için yetkili kullanıcı gerekli.", 403);
   }
-  if (actor.type === "personel" && !PERSONNEL_OUT_MOVEMENT_TYPES.has(type)) {
+  if (actor.type === "personel" && actor.inventoryManage !== true && !PERSONNEL_OUT_MOVEMENT_TYPES.has(type)) {
     throw stockError("Personel yalnızca Sarf İşle veya Eksilt hareketi oluşturabilir.", 403);
   }
   const duplicate = idempotentRecord(state, "movement", requestId);
@@ -391,7 +400,7 @@ function applyStockMovement(stockState, input = {}, actor = {}, options = {}) {
   const product = getProduct(state, input.productId || input.stockProductId, input.productCode || input.stockProductCode);
   const locationId = String(input.locationId || options.locationId || actorLocationId(state, actor) || "").trim();
   const location = getLocation(state, locationId);
-  if (actor && actor.type !== "admin" && String(actorLocationId(state, actor)) !== location.id) {
+  if (actor && actor.type !== "admin" && actor.inventoryManage !== true && String(actorLocationId(state, actor)) !== location.id) {
     throw stockError("Bu stok lokasyonunda işlem yetkiniz yok.", 403);
   }
   const sourceQuantity = finitePositive(input.quantity);
@@ -494,7 +503,7 @@ function serializeTransfer(state, transfer) {
 function createTransferRequest(stockState, input = {}, actor = {}, options = {}) {
   const state = normalizeState(stockState);
   const requestId = String(input.requestId || input.idempotencyKey || options.requestId || "").trim();
-  if (actor && actor.type !== "admin") {
+  if (actor && actor.type !== "admin" && actor.inventoryTransfer !== true) {
     throw stockError("Depolar arası transfer işlemi Yönetici yetkisi gerektirir.", 403);
   }
   const duplicate = idempotentRecord(state, "transfer_create", requestId);
@@ -873,7 +882,7 @@ function reverseMovement(stockState, movementId, input = {}, actor = {}, options
   if (duplicate) return { stockState: state, movements: [], idempotent: true };
   const original = (state.movements || []).find((item) => String(item.id) === String(movementId));
   if (!original) throw stockError("Stok hareketi bulunamadı.", 404);
-  if (actor && actor.type === "personel") {
+  if (actor && actor.type === "personel" && actor.inventoryManage !== true) {
     const ownLocationId = actorLocationId(state, actor);
     const ownsMovement = String(original.personnelId || original.actorId || "") === String(actor.id || "");
     if (!ownsMovement || String(original.locationId || "") !== String(ownLocationId)) {
@@ -882,7 +891,7 @@ function reverseMovement(stockState, movementId, input = {}, actor = {}, options
     if (!["waste", "manual_out", "stock_out"].includes(String(original.type || ""))) {
       throw stockError("Personel yalnızca kendi Sarf veya Eksilt hareketini geri alabilir.", 403);
     }
-  } else if (!actor || actor.type !== "admin") {
+  } else if (!actor || (actor.type !== "admin" && actor.inventoryManage !== true)) {
     throw stockError("Stok hareketini geri almak için yetkili kullanıcı gerekli.", 403);
   }
   if (original.reversedMovementId || original.type === "reversal") throw stockError("Bu hareket daha önce terslenmiş.", 409);
@@ -1051,6 +1060,7 @@ module.exports = {
   GENERAL_LOCATION_ID,
   LOCATION_TYPES,
   MOVEMENT_TYPES,
+  prepareSnapshot,
   TRANSFER_STATUSES,
   actorLocationId,
   applyStockMovement,

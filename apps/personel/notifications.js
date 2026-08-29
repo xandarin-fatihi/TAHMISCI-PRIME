@@ -5,7 +5,6 @@
   const DEVICE_STORAGE_KEY = "tahmisci.notifications.personel.device.v1";
   const PAGE_SIZE = 30;
   const FALLBACK_POLL_MS = 15000;
-  const MAX_RECONNECT_MS = 30000;
   const BOOLEAN_PREFERENCES = [
     "inAppEnabled", "emailEnabled", "taskNotifications", "shipmentNotifications",
     "shiftNotifications", "taskReminder24h", "taskReminder2h",
@@ -56,9 +55,7 @@
     devicesLoading: false,
     loading: false,
     pending: new Set(),
-    eventSource: null,
-    reconnectTimer: null,
-    reconnectAttempt: 0,
+    gatewayBound: false,
     pollTimer: null,
     previousFocus: null,
     lastLoadedAt: 0,
@@ -97,6 +94,7 @@
     document.addEventListener("personel:session-started", handleSessionStarted);
     document.addEventListener("personel:session-ended", handleSessionEnded);
     document.addEventListener("personel:section-change", handleSectionChange);
+    document.addEventListener("personel:gateway-status", handleGatewayStatus);
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", stopRealtime);
     window.addEventListener("beforeunload", stopRealtime);
@@ -398,6 +396,7 @@
 
   function updateUnreadUi() {
     const count = Math.max(0, Number(state.unreadCount || 0));
+    void window.TahmisciPWA?.updateBadge?.(count);
     if (elements.personelNotificationBadge) {
       elements.personelNotificationBadge.textContent = count > 99 ? "99+" : String(count);
       elements.personelNotificationBadge.hidden = count === 0;
@@ -801,7 +800,7 @@
   }
 
   function notificationDeviceHeaders() {
-    return { "X-Tahmisci-Device-Id": notificationDeviceId() };
+    return { "X-Tahmisci-Device-Id": notificationDeviceId(), "X-Tahmisci-App-Id": "personel" };
   }
 
   async function loadDevices(force = false) {
@@ -1174,70 +1173,27 @@
   }
 
   function connectEvents() {
-    if (!state.active || state.preview || !window.EventSource || navigator.onLine === false || state.eventSource) {
+    if (!state.active || state.preview || !window.EventSource || navigator.onLine === false) {
       if (!window.EventSource) startPolling();
       return;
     }
-    const source = new EventSource(`${API_ROOT}/events`, { withCredentials: true });
-    state.eventSource = source;
-    source.addEventListener("open", () => {
-      state.reconnectAttempt = 0;
-      stopPolling();
-    });
-    source.addEventListener("notification", handleNotificationEvent);
-    source.addEventListener("unread-count", handleUnreadEvent);
-    source.addEventListener("message", handleNotificationEvent);
-    source.addEventListener("error", () => {
-      if (state.eventSource === source) {
-        source.close();
-        state.eventSource = null;
-      }
-      if (!state.active) return;
-      startPolling();
-      scheduleReconnect();
-    });
+    stopPolling();
+    if (state.gatewayBound) return;
+    state.gatewayBound = true;
+    document.addEventListener("personel:gateway-event", handleNotificationGatewayEvent);
   }
 
-  function handleNotificationEvent(event) {
-    let payload;
-    try { payload = JSON.parse(event.data || "{}"); } catch (_error) { return; }
-    const source = payload.notification || payload.data || (payload.id ? payload : null);
-    if (!source) {
-      applyUnreadCount(payload);
-      return;
-    }
-    const notification = normalizeNotification(source);
-    if (!notification.id || notification.archivedAt) return;
-    if (matchesCurrentFilter(notification)) {
-      state.notifications = mergeUnique([notification], state.notifications.filter((item) => item.id !== notification.id));
-      renderNotificationList();
-    }
-    if (Number.isSafeInteger(Number(payload.unreadCount))) applyUnreadCount(payload);
-    else {
-      state.unreadCount += notification.readAt ? 0 : 1;
-      updateUnreadUi();
-    }
+  function handleNotificationGatewayEvent(event) {
+    const payload = event && event.detail || {};
+    if (!state.active || payload.topic !== "notification") return;
+    void refreshUnreadCount();
+    if (state.drawerOpen) void loadNotifications();
   }
 
-  function handleUnreadEvent(event) {
-    try { applyUnreadCount(JSON.parse(event.data || "{}")); } catch (_error) {}
-  }
-
-  function matchesCurrentFilter(notification) {
-    if (state.category !== "all" && notification.category !== state.category) return false;
-    if (state.view === "archived") return Boolean(notification.archivedAt);
-    if (notification.archivedAt) return false;
-    return !state.unreadOnly || !notification.readAt;
-  }
-
-  function scheduleReconnect() {
-    if (state.reconnectTimer || !state.active || navigator.onLine === false) return;
-    const delay = Math.min(MAX_RECONNECT_MS, 1000 * (2 ** Math.min(state.reconnectAttempt, 5)));
-    state.reconnectAttempt += 1;
-    state.reconnectTimer = window.setTimeout(() => {
-      state.reconnectTimer = null;
-      connectEvents();
-    }, delay);
+  function handleGatewayStatus(event) {
+    if (!state.active) return;
+    if (event && event.detail && event.detail.connected) stopPolling();
+    else startPolling();
   }
 
   function startPolling() {
@@ -1255,10 +1211,6 @@
   }
 
   function stopRealtime() {
-    if (state.eventSource) state.eventSource.close();
-    state.eventSource = null;
-    if (state.reconnectTimer) window.clearTimeout(state.reconnectTimer);
-    state.reconnectTimer = null;
     stopPolling();
   }
 

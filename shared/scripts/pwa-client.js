@@ -15,10 +15,11 @@
   const appId = String(root.dataset.pwaApp || "").trim();
   const workerUrl = String(root.dataset.pwaWorker || "").trim();
   const workerScope = String(root.dataset.pwaScope || "").trim();
-  const isBackOffice = appId === "personel" || appId === "yonetici";
+  const isBackOffice = appId === "personel" || appId === "yonetici" || appId === "fatura";
   const updateCheckKey = `tahmisci:pwa-update-check:${appId}`;
   const notificationIntroKey = `tahmisci:pwa-notification-intro:${appId}:v1`;
   const updateCheckIntervalMs = 6 * 60 * 60 * 1000;
+  const isLocalhostDevelopment = isLocalHostname(location.hostname);
   const dirtyForms = new WeakSet();
   let registrationPromise = null;
   let watchedRegistration = null;
@@ -62,11 +63,22 @@
       return true;
     },
     showNotificationPrompt: scheduleNotificationIntro,
+    updateBadge: updateAppBadge,
     hasUnsavedChanges,
     markFormClean(form) {
       if (form instanceof HTMLFormElement) dirtyForms.delete(form);
     }
   });
+
+  async function updateAppBadge(value) {
+    const count = Math.max(0, Math.trunc(Number(value || 0)));
+    try {
+      if (count > 0 && typeof navigator.setAppBadge === "function") await navigator.setAppBadge(count);
+      else if (count === 0 && typeof navigator.clearAppBadge === "function") await navigator.clearAppBadge();
+    } catch (_error) {
+      // App Badge API desteklenmeyen/izin verilmeyen tarayıcılarda sessizce atlanır.
+    }
+  }
 
   function handleBeforeInstallPrompt(event) {
     event.preventDefault();
@@ -239,6 +251,10 @@
   }
 
   function scheduleAutomaticUpdateCheck(registration) {
+    if (isLocalhostDevelopment) {
+      registration.update().catch(() => {});
+      return;
+    }
     let lastCheckedAt = 0;
     try { lastCheckedAt = Number(window.localStorage.getItem(updateCheckKey) || 0); } catch (_error) {}
     if (Date.now() - lastCheckedAt < updateCheckIntervalMs) return;
@@ -448,7 +464,11 @@
 
   function isSafeRegistrationOrigin() {
     if (window.isSecureContext || location.protocol === "https:") return true;
-    const hostname = location.hostname.toLowerCase();
-    return hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "127.0.0.1" || hostname === "[::1]";
+    return isLocalHostname(location.hostname);
+  }
+
+  function isLocalHostname(value) {
+    const hostname = String(value || "").toLowerCase();
+    return hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
   }
 })();

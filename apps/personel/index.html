@@ -9,16 +9,16 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/app-icons/personel/favicon-32.png">
   <link rel="icon" type="image/png" sizes="48x48" href="/assets/app-icons/personel/favicon-48.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/app-icons/personel/apple-touch-icon-180.png">
-  <link rel="stylesheet" href="/personel/personel.css?v=20260827-stock-workspace">
+  <link rel="stylesheet" href="/personel/personel.css?v=20260829-email-account">
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20260801-phase2">
-  <link rel="stylesheet" href="/personel/personel-compact.css?v=20260826-stock-location">
+  <link rel="stylesheet" href="/personel/personel-compact.css?v=20260829-notification-shell">
   <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260816-account-notifications">
   <meta name="tahmisci-lazy-style" content="/shared/styles/account-security.css">
   <meta name="tahmisci-lazy-script" content="/shared/scripts/account-security.js">
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
-  <script src="/personel/personel.js?v=20260827-stock-workspace" defer></script>
+  <script src="/personel/personel.js?v=20260829-email-account" defer></script>
   <script src="/shared/scripts/live-preview-receiver.js?v=20260801-phase3" defer></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260826-update-ready" defer></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260828-app-target" defer></script>
 </head>
 <body>
   <main class="personel-app" id="personelApp" data-view="booting">
@@ -114,12 +114,11 @@
               <div>
                 <p class="eyebrow">Profil</p>
                 <h3>Kendi profilini düzenle</h3>
-                <p>Ad, telefon ve kısa profil bilgilerini buradan güncelle.</p>
+                <p>Ad, e-posta ve hesap güvenliği bilgilerini buradan güncelle.</p>
               </div>
             </div>
             <div class="form-grid two">
               <label><span>Ad soyad</span><input id="profileName" type="text" maxlength="80"></label>
-              <label><span>Telefon</span><input id="profilePhone" type="tel" maxlength="40"></label>
               <label class="wide"><span>Avatar URL</span><input id="profileAvatarUrl" type="url" maxlength="500" placeholder="https://..."></label>
               <label class="wide"><span>Profil fotoğrafı</span><input id="profilePhotoInput" type="file" accept="image/jpeg,image/png,image/webp"></label>
               <label class="wide"><span>Kısa not</span><textarea id="profileBio" rows="4" maxlength="240"></textarea></label>

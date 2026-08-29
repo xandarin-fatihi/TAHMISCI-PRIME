@@ -46,6 +46,8 @@ const FATURA_ACCESS_TEMPLATES = Object.freeze({
 });
 const FATURA_SECTION_DEFINITIONS = Object.freeze([
   Object.freeze({ id: "dashboard", label: "Genel Bakış", all: Object.freeze(["procurement.read"]) }),
+  Object.freeze({ id: "stock", label: "Stok & Sevkiyat", all: Object.freeze(["inventory.read"]) }),
+  Object.freeze({ id: "productAnalysis", label: "Ürün Analizi", all: Object.freeze(["inventory.read", "procurement.read"]) }),
   Object.freeze({ id: "shipments", label: "Mal Kabul", any: Object.freeze(["procurement.read", "receipt.create", "receipt.approve", "receipt.reject", "accounting.read"]) }),
   Object.freeze({ id: "suppliers", label: "Tedarikçiler", any: Object.freeze(["supplier.read", "receipt.create", "supplier.manage"]) }),
   Object.freeze({ id: "links", label: "Ürün Eşlemeleri", any: Object.freeze(["procurement.read", "receipt.create", "supplierProduct.manage"]) }),
@@ -76,9 +78,6 @@ function createProcurementService(options = {}) {
 
   async function context(actor) {
     const { data, procurement } = await readSnapshot();
-    const stockState = normalizeStockState(data.stockState);
-    const canReadProducts = ["procurement.read", "receipt.create", "receipt.approve", "receipt.reject", "supplierProduct.manage"]
-      .some((capability) => hasCapability(actor, capability));
     const publicActorValue = publicActor(actor);
     return {
       ok: true,
@@ -93,13 +92,15 @@ function createProcurementService(options = {}) {
         revision: procurement.revision,
         settings: procurement.settings
       },
-      stockProducts: (canReadProducts ? stockState.products : [])
-        .filter(isActiveStockProduct)
-        .map(publicStockProduct),
-      stockLocations: (canReadProducts ? stockState.locations : [])
-        .filter((location) => location && location.active !== false)
-        .sort((first, second) => Number(first.sortOrder || 0) - Number(second.sortOrder || 0))
-        .map(publicStockLocation)
+      revisions: {
+        procurement: procurement.revision,
+        inventory: Math.max(0, Number(data.revisions && (data.revisions.inventory ?? data.revisions.stock) || 0)),
+        catalog: Math.max(0, Number(data.revisions && data.revisions.catalog || 0)),
+        shipment: Math.max(0, Number(data.revisions && data.revisions.shipment || 0)),
+        notification: Math.max(0, Number(data.revisions && data.revisions.notification || 0)),
+        stock: Math.max(0, Number(data.revisions && data.revisions.stock || 0)),
+        workforce: Math.max(0, Number(data.revisions && data.revisions.workforce || 0))
+      }
     };
   }
 
@@ -1156,6 +1157,7 @@ function createProcurementService(options = {}) {
       entityId: text(event && event.entityId, 180),
       branchId: text(event && event.branchId, 80),
       revision: nonNegativeInteger(event && event.revision, "Revision"),
+      shipmentRevision: Math.max(0, Math.trunc(Number(event && event.shipmentRevision || 0))),
       createdAt: event && event.createdAt || isoNow(now)
     });
   }
@@ -1189,7 +1191,10 @@ function createProcurementService(options = {}) {
       procurement.revision = revision;
       if (!data.revisions || typeof data.revisions !== "object" || Array.isArray(data.revisions)) data.revisions = {};
       data.revisions.procurement = revision;
-      response = { ok: true, requestId, revision, ...(outcome.payload || {}) };
+      const shipmentRevision = operation.startsWith("shipment.")
+        ? (data.revisions.shipment = Math.max(0, Number(data.revisions.shipment || 0)) + 1)
+        : Math.max(0, Number(data.revisions.shipment || 0));
+      response = { ok: true, requestId, revision, shipmentRevision, ...(outcome.payload || {}) };
       procurement.auditEvents.push({
         id: createId("procurement-audit"),
         action: operation,
@@ -1199,6 +1204,7 @@ function createProcurementService(options = {}) {
         actorId: actor.id,
         actorName: actor.name,
         revision,
+        shipmentRevision,
         requestId,
         metadata: sanitizeMetadata(outcome.metadata),
         createdAt: isoNow(now)
@@ -1220,6 +1226,7 @@ function createProcurementService(options = {}) {
         entityType: outcome.entityType || "procurement",
         entityId: outcome.resourceId || "",
         revision,
+        shipmentRevision,
         branchId: text(outcome.metadata && outcome.metadata.branchId, 80),
         workforceRevision: Math.max(0, Math.trunc(Number(outcome.metadata && outcome.metadata.workforceRevision || 0))),
         createdAt: isoNow(now)
@@ -1416,11 +1423,6 @@ function notifyFaturaReceiptUsers(data, helpers, shipment, input) {
 }
 
 function visibleFaturaSections(actor) {
-  if (actor && actor.type !== "admin" && String(actor.template || actor.faturaTemplate || "") === "mal_kabul") {
-    const canOpenShipments = FATURA_SECTION_DEFINITIONS.find((section) => section.id === "shipments");
-    const any = canOpenShipments && Array.isArray(canOpenShipments.any) ? canOpenShipments.any : [];
-    return any.some((capability) => hasCapability(actor, capability)) ? ["shipments"] : [];
-  }
   return FATURA_SECTION_DEFINITIONS
     .filter((section) => {
       const all = Array.isArray(section.all) ? section.all : [];
@@ -1627,9 +1629,21 @@ function validateShipmentItems(stockStateInput, requestedItems, createId) {
     if (seen.has(identity)) throw fail("Aynı stok ürünü sevkiyata birden fazla kez eklenemez.", 400, "DUPLICATE_SHIPMENT_PRODUCT");
     seen.add(identity);
     const quantity = positiveDecimal(requested.quantity, "Miktar");
+    const baseUnitSnapshot = text(product.baseUnit || product.unit || "adet", 40) || "adet";
+    const bulkUnitSnapshot = text(product.bulkUnit || product.caseUnit || "", 40);
+    const unitsPerBulkUnitSnapshot = Math.max(0, Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0) || 0);
+    const purchaseUnitSnapshot = text(requested.purchaseUnit || requested.unit || product.defaultMovementUnit || baseUnitSnapshot, 40) || baseUnitSnapshot;
+    const normalizedPurchaseUnit = purchaseUnitSnapshot.toLocaleLowerCase("tr-TR");
+    const normalizedBulkUnit = bulkUnitSnapshot.toLocaleLowerCase("tr-TR");
+    const normalizedBaseUnit = baseUnitSnapshot.toLocaleLowerCase("tr-TR");
+    let conversionFactor = normalizedPurchaseUnit === normalizedBulkUnit && unitsPerBulkUnitSnapshot > 0 ? unitsPerBulkUnitSnapshot : 1;
+    if (normalizedPurchaseUnit !== normalizedBulkUnit && normalizedPurchaseUnit !== normalizedBaseUnit && requested.conversionFactor !== undefined) {
+      conversionFactor = positiveDecimal(requested.conversionFactor, "Dönüşüm katsayısı");
+    }
+    const baseQuantity = quantity * conversionFactor;
     const unitPriceKurus = nonNegativeInteger(requested.unitPriceKurus || 0, "Birim fiyat");
     const taxKurus = nonNegativeInteger(requested.taxKurus || 0, "Vergi");
-    const calculatedTotal = multiplyKurus(unitPriceKurus, requested.quantity) + taxKurus;
+    const calculatedTotal = multiplyKurus(unitPriceKurus, quantity) + taxKurus;
     const totalKurus = requested.totalKurus === undefined
       ? calculatedTotal
       : nonNegativeInteger(requested.totalKurus, "Satır toplamı");
@@ -1643,11 +1657,17 @@ function validateShipmentItems(stockStateInput, requestedItems, createId) {
       categoryId: String(product.categoryId || ""),
       category: String(product.category || ""),
       quantity,
-      unit: text(requested.unit || product.unit, 40),
-      baseQuantity: Number(requested.baseQuantity || quantity),
-      baseUnit: String(product.unit || requested.unit || ""),
-      conversionFactor: positiveDecimal(requested.conversionFactor === undefined ? 1 : requested.conversionFactor, "Dönüşüm katsayısı"),
-      purchaseUnit: text(requested.purchaseUnit || requested.unit || product.unit, 40),
+      unit: purchaseUnitSnapshot,
+      baseQuantity,
+      baseUnit: baseUnitSnapshot,
+      conversionFactor,
+      purchaseUnit: purchaseUnitSnapshot,
+      baseUnitSnapshot,
+      bulkUnitSnapshot,
+      unitsPerBulkUnitSnapshot,
+      purchaseUnitSnapshot,
+      baseUnitPriceKurus: baseQuantity > 0 ? Math.round(totalKurus / baseQuantity) : 0,
+      bulkUnitPriceKurus: unitsPerBulkUnitSnapshot > 0 ? Math.round(totalKurus / baseQuantity * unitsPerBulkUnitSnapshot) : 0,
       unitPriceKurus,
       taxKurus,
       totalKurus,

@@ -6,7 +6,7 @@ const {
   validateRecipeState,
   validateSiteState
 } = require("./validators");
-const { normalizeStockState, reconcileRecipeCatalog } = require("./store/migrations");
+const { reconcileRecipeCatalog } = require("./store/migrations");
 const { migratePricingSystem } = require("./pricing");
 
 class IdempotentReplay extends Error {
@@ -113,7 +113,7 @@ function validatePublishInput(requestId, expectedRevision, changes) {
 }
 
 function validateChanges(changes) {
-  const allowed = new Set(["menuState", "recipeState", "recipeCatalog", "siteState", "stockState", "panelConfig"]);
+  const allowed = new Set(["menuState", "recipeState", "recipeCatalog", "siteState", "panelConfig"]);
   const unknown = Object.keys(changes).find((key) => !allowed.has(key));
   if (unknown) throw invalid(`Desteklenmeyen kayıt alanı: ${unknown}`);
   if (Object.prototype.hasOwnProperty.call(changes, "menuState")) {
@@ -138,6 +138,8 @@ function validateChanges(changes) {
 
 function applyChanges(data, changes, updatedAt) {
   const scopes = [];
+  let catalogChanged = false;
+  data.revisions = data.revisions && typeof data.revisions === "object" && !Array.isArray(data.revisions) ? data.revisions : {};
   if (Object.prototype.hasOwnProperty.call(changes, "menuState")) {
     const beforePricing = menuPricingFingerprint(data.menuState, data.pricing);
     const migrated = migratePricingSystem(changes.menuState.pricing || data.pricing, changes.menuState);
@@ -151,29 +153,28 @@ function applyChanges(data, changes, updatedAt) {
       data.pricingUpdatedAt = updatedAt;
     }
     data.menuUpdatedAt = updatedAt;
+    catalogChanged = true;
     scopes.push("menu");
   }
   if (Object.prototype.hasOwnProperty.call(changes, "recipeState")) {
     data.recipeState = changes.recipeState;
     data.recipeCatalog = reconcileRecipeCatalog(changes.recipeState, changes.recipeCatalog);
     data.recipeUpdatedAt = updatedAt;
+    catalogChanged = true;
     scopes.push("recipes");
   }
   if (Object.prototype.hasOwnProperty.call(changes, "siteState")) {
     data.siteState = changes.siteState;
     data.siteUpdatedAt = updatedAt;
+    data.revisions.site = Math.max(0, Number(data.revisions.site || 0)) + 1;
     scopes.push("site");
-  }
-  if (Object.prototype.hasOwnProperty.call(changes, "stockState")) {
-    data.stockState = normalizeStockState(changes.stockState);
-    data.stockUpdatedAt = updatedAt;
-    scopes.push("stock");
   }
   if (Object.prototype.hasOwnProperty.call(changes, "panelConfig")) {
     data.panelConfig = changes.panelConfig;
     data.panelConfigUpdatedAt = updatedAt;
     scopes.push("panel");
   }
+  if (catalogChanged) data.revisions.catalog = Math.max(0, Number(data.revisions.catalog || 0)) + 1;
   return scopes;
 }
 

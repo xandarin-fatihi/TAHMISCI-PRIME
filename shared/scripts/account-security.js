@@ -19,6 +19,8 @@
     document.addEventListener("personel:session-ended", () => controllers.get("personel")?.reset());
     document.addEventListener("tahmisci:admin-session-started", () => controllers.get("admin")?.load());
     document.addEventListener("tahmisci:admin-session-ended", () => controllers.get("admin")?.reset());
+    document.addEventListener("mudavim:session-started", () => controllers.get("mudavim")?.load());
+    document.addEventListener("mudavim:session-ended", () => controllers.get("mudavim")?.reset());
     document.addEventListener("tahmisci:admin-section-change", (event) => {
       if (event.detail && event.detail.section === "settings") controllers.get("admin")?.load();
     });
@@ -193,7 +195,7 @@
         });
         await unsubscribeCurrentPush(scope);
         setMessage(result.message || "Tüm cihazlardaki oturumlar kapatıldı.", "success");
-        const fallback = scope === "admin" ? "/yonetici/" : "/personel/";
+        const fallback = scope === "admin" ? "/yonetici/" : scope === "personel" ? "/personel/" : "/mudavim/";
         const destination = safeScopeDestination(result.redirectTo, scope) || fallback;
         window.setTimeout(() => window.location.assign(destination), 500);
       } catch (error) {
@@ -291,7 +293,7 @@
 
   function normalizeScope(value) {
     const scope = String(value || "").trim().toLowerCase();
-    return scope === "admin" || scope === "personel" ? scope : "";
+    return scope === "admin" || scope === "personel" || scope === "mudavim" ? scope : "";
   }
 
   function isValidEmail(value) {
@@ -302,7 +304,7 @@
     try {
       const url = new URL(String(value || ""), window.location.origin);
       if (url.origin !== window.location.origin) return "";
-      const root = scope === "admin" ? "/yonetici" : "/personel";
+      const root = scope === "admin" ? "/yonetici" : scope === "personel" ? "/personel" : "/mudavim";
       if (url.pathname !== root && !url.pathname.startsWith(`${root}/`)) return "";
       return `${url.pathname}${url.search}${url.hash}`;
     } catch (_error) {
@@ -312,7 +314,7 @@
 
   async function unsubscribeCurrentPush(scope) {
     if (!("serviceWorker" in navigator)) return;
-    const registration = await navigator.serviceWorker.getRegistration(scope === "admin" ? "/yonetici/" : "/personel/").catch(() => null);
+    const registration = await navigator.serviceWorker.getRegistration(scope === "admin" ? "/yonetici/" : scope === "personel" ? "/personel/" : "/mudavim/").catch(() => null);
     const subscription = registration && registration.pushManager
       ? await registration.pushManager.getSubscription().catch(() => null)
       : null;

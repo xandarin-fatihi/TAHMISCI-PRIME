@@ -11,8 +11,10 @@
   const offlineCacheName = `${cachePrefix}offline-${config.version}`;
   const currentCaches = new Set([staticCacheName, offlineCacheName]);
   const staticExtensions = /\.(?:css|js|mjs|woff2?|ttf|otf|png|jpe?g|webp|gif|svg|ico)$/i;
+  const localNetworkFirstExtensions = /\.(?:css|js|mjs)$/i;
   const mutationMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
   const sensitivePathPattern = /(?:^|\/)(?:api|auth|login|logout|session|sessions)(?:\/|$)/i;
+  const isLocalhostDevelopment = isLocalHostname(globalScope.location.hostname);
 
   globalScope.addEventListener("install", (event) => {
     event.waitUntil(precacheOfflineShell());
@@ -55,7 +57,18 @@
     }
 
     if (!isStaticAsset(request, url)) return;
-    event.respondWith(cacheFirstStatic(event, request, url));
+    event.respondWith(isLocalhostDevelopment && localNetworkFirstExtensions.test(url.pathname)
+      ? networkFirstStatic(event, request, url)
+      : cacheFirstStatic(event, request, url));
+  });
+
+  globalScope.addEventListener("push", (event) => {
+    event.waitUntil(showPushNotification(event));
+  });
+
+  globalScope.addEventListener("notificationclick", (event) => {
+    event.notification.close();
+    event.waitUntil(openNotificationTarget(event.notification && event.notification.data));
   });
 
   async function precacheOfflineShell() {
@@ -109,10 +122,27 @@
     return response;
   }
 
+  async function networkFirstStatic(event, request, url) {
+    if (!(await belongsToConfiguredApp(event))) return fetch(request);
+
+    const cache = await caches.open(staticCacheName);
+    const key = canonicalCacheKey(url);
+    try {
+      const response = await fetch(new Request(request, { cache: "no-store" }));
+      if (isSafeCacheResponse(response)) await cache.put(key, response.clone());
+      return response;
+    } catch (error) {
+      const cached = await cache.match(key);
+      if (cached) return cached;
+      throw error;
+    }
+  }
+
   function isSensitiveRequest(request, url) {
     if (sensitivePathPattern.test(url.pathname)) return true;
     if ((config.neverCachePrefixes || []).some((prefix) => url.pathname.startsWith(prefix))) return true;
     if (request.headers.has("authorization") || request.headers.has("cookie")) return true;
+    if (String(request.headers.get("accept") || "").toLowerCase().includes("text/event-stream")) return true;
     return request.destination === "document" && request.mode !== "navigate";
   }
 
@@ -153,7 +183,12 @@
   }
 
   function canonicalCacheKey(url) {
-    return new Request(`${url.origin}${url.pathname}`, { method: "GET", credentials: "same-origin" });
+    return new Request(`${url.origin}${url.pathname}${url.search}`, { method: "GET", credentials: "same-origin" });
+  }
+
+  function isLocalHostname(value) {
+    const hostname = String(value || "").toLowerCase();
+    return hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
   }
 
   function unique(values) {
@@ -165,10 +200,80 @@
     for (const value of unique(values)) {
       try {
         const url = new URL(value, globalScope.location.origin);
-        const key = `${url.origin}${url.pathname}`;
+        const key = `${url.origin}${url.pathname}${url.search}`;
         resources.set(key, value);
       } catch (_error) {}
     }
     return Array.from(resources.values());
+  }
+
+  async function showPushNotification(event) {
+    const payload = readPushPayload(event);
+    const source = payload.notification && typeof payload.notification === "object" ? payload.notification : payload;
+    const sourceData = source.data && typeof source.data === "object" ? source.data : {};
+    const deepLink = safeDeepLink(source.deepLink || sourceData.deepLink);
+    const unreadCount = Math.max(0, Math.trunc(Number(source.unreadCount ?? sourceData.unreadCount ?? 0)));
+    await globalScope.registration.showNotification(String(source.title || config.notificationTitle || "Tahmisçi").slice(0, 120), {
+      body: String(source.body || "Yeni bir bildiriminiz var.").slice(0, 240),
+      icon: config.icon || `/assets/app-icons/${config.appId}/icon-192.png`,
+      badge: config.badge || `/assets/app-icons/${config.appId}/favicon-48.png`,
+      tag: source.id ? `tahmisci-${config.appId}-${String(source.id).slice(0, 100)}` : undefined,
+      renotify: source.renotify === true,
+      vibrate: normalizeVibration(source.vibrate || sourceData.vibrate),
+      requireInteraction: source.requireInteraction === true,
+      data: { ...sourceData, deepLink, appTarget: config.appId }
+    });
+    if (unreadCount && typeof globalScope.registration.setAppBadge === "function") {
+      await globalScope.registration.setAppBadge(unreadCount).catch(() => {});
+    }
+  }
+
+  function readPushPayload(event) {
+    if (!event || !event.data) return {};
+    try { return event.data.json() || {}; } catch (_error) {
+      try { return { body: event.data.text() }; } catch (_textError) { return {}; }
+    }
+  }
+
+  function normalizeVibration(value) {
+    if (!Array.isArray(value)) return [120, 60, 120];
+    return value.slice(0, 12).map((item) => Math.max(0, Math.min(2000, Number(item) || 0)));
+  }
+
+  function safeDeepLink(value) {
+    const fallback = String(config.fallbackRoot || config.scopePath || "/");
+    const allowedRoots = unique((config.allowedRoots || [fallback]).map((root) => String(root || "")).filter(Boolean));
+    try {
+      const url = new URL(String(value || fallback), globalScope.location.origin);
+      if (url.origin !== globalScope.location.origin || !allowedRoots.some((root) => pathBelongsToRoot(url.pathname, root))) return fallback;
+      return `${url.pathname}${url.search}${url.hash}`;
+    } catch (_error) {
+      return fallback;
+    }
+  }
+
+  function pathBelongsToRoot(pathname, root) {
+    const normalized = root === "/" ? "/" : `/${String(root).replace(/^\/+|\/+$/g, "")}/`;
+    if (normalized === "/") return pathname === "/" || pathname === "/index.html" || pathname.startsWith("/qr-menu/");
+    const bare = normalized.slice(0, -1);
+    return pathname === bare || pathname.startsWith(normalized);
+  }
+
+  async function openNotificationTarget(data) {
+    const target = safeDeepLink(data && data.deepLink);
+    const targetPath = new URL(target, globalScope.location.origin).pathname;
+    const windows = await globalScope.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const existing = windows.find((client) => {
+      try { return pathBelongsToRoot(new URL(client.url).pathname, targetPath.split("/").slice(0, 2).join("/") || "/"); } catch (_error) { return false; }
+    });
+    if (existing) {
+      if ("navigate" in existing) await existing.navigate(target).catch(() => null);
+      await existing.focus();
+    } else {
+      await globalScope.clients.openWindow(target);
+    }
+    if (typeof globalScope.registration.clearAppBadge === "function") {
+      await globalScope.registration.clearAppBadge().catch(() => {});
+    }
   }
 })(self);

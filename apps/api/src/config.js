@@ -37,7 +37,12 @@ const config = {
   ),
   mainDomain: clean(process.env.MAIN_DOMAIN),
   adminDomain: clean(process.env.ADMIN_DOMAIN),
-  publicSiteUrl: clean(process.env.PUBLIC_SITE_URL),
+  publicRootUrl: clean(process.env.PUBLIC_ROOT_URL) || clean(process.env.PUBLIC_SITE_URL),
+  // Backward-compatible alias; this value is the public origin, not /site/.
+  publicSiteUrl: clean(process.env.PUBLIC_ROOT_URL) || clean(process.env.PUBLIC_SITE_URL),
+  websitePath: normalizePublicPath(process.env.WEBSITE_PATH, "/site/"),
+  qrMenuPath: normalizePublicPath(process.env.QR_MENU_PATH, "/"),
+  mudavimPath: normalizePublicPath(process.env.MUDAVIM_PATH, "/mudavim/"),
   allowedOrigins: parseOrigins(process.env.ALLOWED_ORIGINS),
   jwtSecret: clean(process.env.JWT_SECRET),
   jwtIssuer: clean(process.env.JWT_ISSUER) || "tahmisci-backend",
@@ -76,6 +81,7 @@ const config = {
   bcryptRounds: clampInt(process.env.BCRYPT_ROUNDS, 12, 10, 14),
   adminCookieName: clean(process.env.ADMIN_COOKIE_NAME) || "tahmisci_admin_session",
   recipeCookieName: clean(process.env.RECIPE_COOKIE_NAME) || "tahmisci_recipe_session",
+  mudavimCookieName: clean(process.env.MUDAVIM_COOKIE_NAME) || "tahmisci_mudavim_session",
   cookieSecure: parseBoolean(process.env.COOKIE_SECURE, isProduction),
   cookieSameSite: (clean(process.env.COOKIE_SAME_SITE) || "lax").toLowerCase(),
   allowLocalhostOrigins: parseBoolean(process.env.ALLOW_LOCALHOST_ORIGINS, !isProduction),
@@ -216,8 +222,8 @@ function validateConfig() {
     errors.push("COOKIE_SAME_SITE=none icin COOKIE_SECURE=true olmali.");
   }
 
-  if (config.publicSiteUrl && !normalizeOrigin(config.publicSiteUrl)) {
-    errors.push("PUBLIC_SITE_URL gecerli bir http/https URL olmali.");
+  if (config.publicRootUrl && !normalizeOrigin(config.publicRootUrl)) {
+    errors.push("PUBLIC_ROOT_URL (veya eski PUBLIC_SITE_URL) gecerli bir http/https URL olmali.");
   }
 
   if (errors.length) {
@@ -227,6 +233,12 @@ function validateConfig() {
 
 function clean(value) {
   return String(value || "").trim();
+}
+
+function normalizePublicPath(value, fallback) {
+  const text = clean(value || fallback);
+  const safe = text.startsWith("/") && !text.startsWith("//") ? text : fallback;
+  return safe === "/" ? "/" : `/${safe.replace(/^\/+|\/+$/g, "")}/`;
 }
 
 function parseOrigins(value) {

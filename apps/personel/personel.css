@@ -24,7 +24,7 @@
 body {
   margin: 0;
   min-height: 100svh;
-  font-family: Manrope, Inter, Arial, sans-serif;
+  font-family: var(--panel-font-ui, "Tahmisci Poppins", Poppins, system-ui, sans-serif);
   color: var(--espresso);
   background:
     radial-gradient(circle at 18% 0%, rgba(255, 250, 242, 0.92), transparent 34%),
@@ -942,7 +942,7 @@ textarea {
 
 .personel-login .login-card h1 {
   color: #2C1609;
-  font-family: Manrope, Inter, Arial, sans-serif;
+  font-family: var(--panel-font-ui, "Tahmisci Poppins", Poppins, system-ui, sans-serif);
   font-size: clamp(22px, 3.6vw, 27px);
   font-weight: 900;
   letter-spacing: -0.04em;
@@ -3384,7 +3384,7 @@ textarea {
 ),
 .stock-personel-modal,
 .stock-personel-modal :where(button, input, select, textarea) {
-  font-family: var(--panel-font-ui, "Tahmisci Poppins", Poppins, Inter, system-ui, sans-serif);
+  font-family: var(--panel-font-ui, "Tahmisci Poppins", Poppins, system-ui, sans-serif);
 }
 
 html.is-panel-modal-open,
@@ -3472,7 +3472,7 @@ body.is-panel-modal-open {
 
 .stock-personel-modal :where(.stock-detail-heading, .stock-action-heading) h2 {
   margin: 4px 0 0;
-  font-family: var(--panel-font-ui, "Tahmisci Poppins", Poppins, Inter, system-ui, sans-serif);
+  font-family: var(--panel-font-ui, "Tahmisci Poppins", Poppins, system-ui, sans-serif);
   font-size: clamp(23px, 3vw, 31px);
   font-weight: 700;
   letter-spacing: -0.035em;
@@ -3527,7 +3527,7 @@ body.is-panel-modal-open {
 .stock-card-quantity .stock-card-quantity__combined {
   display: block;
   color: var(--panel-ink, #2c1609);
-  font-family: var(--panel-font-ui, "Tahmisci Poppins", Poppins, Inter, system-ui, sans-serif);
+  font-family: var(--panel-font-ui, "Tahmisci Poppins", Poppins, system-ui, sans-serif);
   font-size: clamp(19px, 2vw, 24px);
   font-weight: 700;
   line-height: 1.2;

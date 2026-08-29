@@ -340,7 +340,6 @@ body[data-panel-theme="dark"] select {
 .panel-nav a[data-panel-section="menuOutput"]::before { content: "TV"; font-size: 10px; }
 .panel-nav a[data-panel-section="recipe"]::before { content: "R"; }
 .panel-nav a[data-panel-section="staffAccess"]::before { content: "U"; }
-.panel-nav a[data-panel-section="mudavim"]::before { content: "M"; }
 .panel-nav a[data-panel-section="feedback"]::before { content: "!"; }
 .panel-nav a[data-panel-section="settings"]::before { content: "âš™"; }
 
