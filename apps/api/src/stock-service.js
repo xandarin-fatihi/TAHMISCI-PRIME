@@ -289,6 +289,144 @@ function formatBaseQuantity(product, value) {
   };
 }
 
+function unitSchemaMigrationFactor(currentMetadata, targetMetadata, hasStoredData) {
+  if (currentMetadata.baseUnit === targetMetadata.baseUnit) return 1;
+  if (targetMetadata.bulkUnit === currentMetadata.baseUnit && targetMetadata.unitsPerBulkUnit > 0) {
+    return targetMetadata.unitsPerBulkUnit;
+  }
+  if (currentMetadata.bulkUnit === targetMetadata.baseUnit && currentMetadata.unitsPerBulkUnit > 0) {
+    return 1 / currentMetadata.unitsPerBulkUnit;
+  }
+  const measures = {
+    kg: { group: "mass", factor: 1000 }, g: { group: "mass", factor: 1 }, gr: { group: "mass", factor: 1 },
+    litre: { group: "volume", factor: 1000 }, liter: { group: "volume", factor: 1000 }, lt: { group: "volume", factor: 1000 }, l: { group: "volume", factor: 1000 },
+    ml: { group: "volume", factor: 1 }
+  };
+  const currentMeasure = measures[currentMetadata.baseUnit];
+  const targetMeasure = measures[targetMetadata.baseUnit];
+  if (currentMeasure && targetMeasure && currentMeasure.group === targetMeasure.group) {
+    return round(currentMeasure.factor / targetMeasure.factor);
+  }
+  if (!hasStoredData) return 1;
+  throw stockError("Temel birimler arasında güvenli dönüşüm oranı kurulamadı.", 422);
+}
+
+function unitMigrationTarget(product, input = {}) {
+  const current = productUnitMetadata(product);
+  const baseUnit = controlledUnit(input.targetBaseUnit ?? input.baseUnit, "");
+  const bulkUnit = controlledUnit(input.targetBulkUnit ?? input.bulkUnit, "");
+  const unitsPerBulkUnit = bulkUnit
+    ? finitePositive(input.unitsPerBulkUnit ?? input.unitsPerCase)
+    : 0;
+  if (!baseUnit) throw stockError("Yeni temel birim zorunludur.", 422);
+  if (bulkUnit && !unitsPerBulkUnit) throw stockError("Toplu birim dönüşümü sıfırdan büyük olmalıdır.", 422);
+  if (bulkUnit && bulkUnit === baseUnit) throw stockError("Temel ve toplu birim aynı olamaz.", 422);
+  const allowDecimal = input.allowDecimal === undefined
+    ? current.allowDecimal
+    : input.allowDecimal === true;
+  const requestedDefault = controlledUnit(input.defaultMovementUnit || current.defaultMovementUnit || baseUnit, baseUnit);
+  const defaultMovementUnit = requestedDefault === bulkUnit && bulkUnit && unitsPerBulkUnit > 0
+    ? bulkUnit
+    : baseUnit;
+  return { baseUnit, bulkUnit, unitsPerBulkUnit: unitsPerBulkUnit || 0, allowDecimal, defaultMovementUnit };
+}
+
+function buildUnitMigrationPlan(stockState, productId, input = {}) {
+  const state = normalizeState(stockState);
+  const product = getProduct(state, productId);
+  const current = productUnitMetadata(product);
+  const target = unitMigrationTarget(product, input);
+  const balances = (state.balances || []).filter((item) => String(item.productId) === String(product.id));
+  const hasHistory = (state.movements || []).some((item) => String(item.productId || item.stockProductId) === String(product.id));
+  const hasBalance = balances.some((item) => Number(item.quantity || 0) !== 0
+    || Number(item.criticalThreshold || 0) !== 0 || Number(item.orderThreshold || 0) !== 0 || Number(item.targetLevel || 0) !== 0);
+  const factor = unitSchemaMigrationFactor(current, target, hasHistory || hasBalance);
+  const baseChanged = current.baseUnit !== target.baseUnit;
+  const converted = (value) => round(Number(value || 0) * (baseChanged ? factor : 1));
+  if (baseChanged && !target.allowDecimal) {
+    const storedValues = balances.flatMap((balance) => [balance.quantity, balance.criticalThreshold, balance.orderThreshold, balance.targetLevel])
+      .concat([product.catalogCriticalThreshold, product.criticalThreshold, product.catalogOrderThreshold, product.orderThreshold, product.targetLevel, product.targetStock])
+      .filter((value) => value !== undefined && value !== null && value !== "");
+    if (storedValues.some((value) => !Number.isInteger(converted(value)))) {
+      throw stockError(`Yeni “${target.baseUnit}” birimi için ondalıklı miktara izin verin veya tam sayıya dönüşen bir şema seçin.`, 422);
+    }
+  }
+  const targetProduct = { ...product, ...target, unit: target.baseUnit, caseUnit: target.bulkUnit, unitsPerCase: target.unitsPerBulkUnit };
+  const locations = balances.map((balance) => ({
+    locationId: String(balance.locationId || ""),
+    locationName: (state.locations || []).find((item) => String(item.id) === String(balance.locationId))?.name || "Depo",
+    current: {
+      quantity: round(Number(balance.quantity || 0)),
+      criticalThreshold: round(Number(balance.criticalThreshold || 0)),
+      orderThreshold: round(Number(balance.orderThreshold || 0)),
+      targetLevel: round(Number(balance.targetLevel || 0)),
+      display: formatBaseQuantity(product, balance.quantity).display
+    },
+    next: {
+      quantity: converted(balance.quantity),
+      criticalThreshold: converted(balance.criticalThreshold),
+      orderThreshold: converted(balance.orderThreshold),
+      targetLevel: converted(balance.targetLevel),
+      display: formatBaseQuantity(targetProduct, converted(balance.quantity)).display
+    }
+  }));
+  const currentTotal = round(balances.reduce((sum, item) => sum + Number(item.quantity || 0), 0));
+  const nextTotal = converted(currentTotal);
+  return {
+    productId: String(product.id),
+    productName: productName(product),
+    baseChanged,
+    factor,
+    hasHistory,
+    currentSchema: current,
+    targetSchema: target,
+    currentTotal,
+    nextTotal,
+    currentDisplay: formatBaseQuantity(product, currentTotal).display,
+    nextDisplay: formatBaseQuantity(targetProduct, nextTotal).display,
+    locations
+  };
+}
+
+function migrateProductUnitSchema(stockState, productId, input = {}, options = {}) {
+  if (input.confirm !== true) throw stockError("Birim dönüşümü için açık onay gereklidir.", 422);
+  const state = normalizeState(stockState);
+  const plan = buildUnitMigrationPlan(state, productId, input);
+  const product = getProduct(state, productId);
+  const timestamp = nowIso(options.now);
+  if (plan.baseChanged) {
+    for (const balance of state.balances || []) {
+      if (String(balance.productId) !== String(product.id)) continue;
+      for (const field of ["quantity", "criticalThreshold", "orderThreshold", "targetLevel"]) {
+        balance[field] = round(Number(balance[field] || 0) * plan.factor);
+      }
+      balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
+      balance.updatedAt = timestamp;
+    }
+    for (const field of ["catalogCriticalThreshold", "criticalThreshold", "catalogOrderThreshold", "orderThreshold", "targetLevel", "targetStock"]) {
+      if (Number.isFinite(Number(product[field]))) product[field] = round(Number(product[field]) * plan.factor);
+    }
+  }
+  Object.assign(product, {
+    baseUnit: plan.targetSchema.baseUnit,
+    unit: plan.targetSchema.baseUnit,
+    bulkUnit: plan.targetSchema.bulkUnit,
+    caseUnit: plan.targetSchema.bulkUnit,
+    unitsPerBulkUnit: plan.targetSchema.unitsPerBulkUnit,
+    unitsPerCase: plan.targetSchema.unitsPerBulkUnit,
+    allowDecimal: plan.targetSchema.allowDecimal,
+    defaultMovementUnit: plan.targetSchema.defaultMovementUnit,
+    unitSchemaVersion: Math.max(0, Number(product.unitSchemaVersion || 0)) + 1,
+    unitSchemaSource: "manual",
+    unitSchemaLocked: true,
+    unitSchemaUpdatedAt: timestamp,
+    updatedAt: timestamp
+  });
+  updateProductTotalProjection(state, product.id, timestamp);
+  state.updatedAt = timestamp;
+  return { state, plan, product };
+}
+
 function operationKey(type, requestId) {
   const key = String(requestId || "").trim();
   return key ? `${type}:${key}` : "";
@@ -330,6 +468,7 @@ function addMovement(state, input) {
     toLocationId: input.toLocationId ? String(input.toLocationId) : null,
     locationId: input.locationId ? String(input.locationId) : null,
     quantity: round(Number(input.quantity || 0)),
+    baseQuantity: round(Math.abs(Number(input.baseQuantity ?? input.quantity ?? input.baseQuantityDelta ?? 0))),
     baseUnit: String(input.baseUnit || "adet"),
     unit: String(input.baseUnit || "adet"),
     sourceQuantity: round(Number(input.sourceQuantity || input.quantity || 0)),
@@ -1080,6 +1219,8 @@ module.exports = {
   getLocations,
   getProductBalance,
   formatBaseQuantity,
+  buildUnitMigrationPlan,
+  migrateProductUnitSchema,
   rejectTransfer,
   reverseMovement,
   serializeCounts,

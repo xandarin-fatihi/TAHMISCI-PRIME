@@ -1444,6 +1444,12 @@ function normalizeStockProduct(product, index, categoryNames) {
     unitsPerCase: unitsPerBulkUnit,
     allowDecimal,
     defaultMovementUnit,
+    unitSchemaVersion: Math.max(0, Math.trunc(finiteNumber(product.unitSchemaVersion, 0))),
+    unitSchemaSource: ["manual", "excel", "legacy"].includes(String(product.unitSchemaSource || ""))
+      ? String(product.unitSchemaSource)
+      : (product.sourceType === "excel" ? "excel" : product.sourceType === "manual" ? "manual" : "legacy"),
+    unitSchemaLocked: product.unitSchemaLocked === true,
+    unitSchemaUpdatedAt: product.unitSchemaUpdatedAt || null,
     stockQuantity: Math.max(0, finiteNumber(product.stockQuantity ?? product.quantity ?? product.stock, 0)),
     stockQuantityText: String(product.stockQuantityText ?? product.quantityText ?? product.stockQuantity ?? product.quantity ?? product.stock ?? ""),
     orderThreshold: Math.max(0, finiteNumber(product.orderThreshold ?? product.warningThreshold, 0)),
@@ -1503,6 +1509,7 @@ function normalizeStockMovement(movement, productsById = new Map(), legacyGenera
     productName: String(movement.productName || ""),
     type: ["opening_balance", "manual_in", "manual_out", "waste", "inbound_shipment", "shipment_in", "transfer", "transfer_out", "transfer_in", "adjustment", "correction", "reversal", "stock_in", "stock_out", "order_suggestion", "import"].includes(movement.type) ? movement.type : "stock_out",
     quantity: Math.max(0, finiteNumber(movement.quantity, 0)),
+    baseQuantity: Math.max(0, finiteNumber(movement.baseQuantity ?? movement.quantity, Math.abs(baseQuantityDelta))),
     unit: baseUnit,
     baseUnit,
     sourceQuantity,

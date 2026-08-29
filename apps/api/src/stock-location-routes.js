@@ -56,7 +56,7 @@ function registerStockLocationRoutes(deps) {
   function stockCapability(method, suffix) {
     const verb = String(method || "get").toLowerCase();
     if (verb === "get") return "inventory.read";
-    if (suffix.startsWith("/catalog") || suffix.startsWith("/unit-definitions")) return "inventory.catalog.manage";
+    if (suffix.startsWith("/catalog") || suffix.startsWith("/unit-definitions") || suffix.includes("/unit-migration")) return "inventory.catalog.manage";
     if (suffix.startsWith("/locations")) return "inventory.location.manage";
     if (suffix.startsWith("/counts")) return "inventory.count.manage";
     if (suffix.startsWith("/transfers") && (suffix.includes("/approve") || suffix.includes("/reject"))) return "inventory.transfer.approve";
@@ -263,6 +263,18 @@ function registerStockLocationRoutes(deps) {
       : product.bulkUnit || product.caseUnit) === key);
   }
 
+  function assertUnitMigrationCatalog(state, body) {
+    const baseUnit = normalizeCatalogUnit(body.targetBaseUnit ?? body.baseUnit);
+    const bulkUnit = normalizeCatalogUnit(body.targetBulkUnit ?? body.bulkUnit);
+    const definitions = state.unitDefinitions || { base: [], bulk: [] };
+    if (!baseUnit || !(definitions.base || []).some((unit) => catalogUnitKey(unit) === catalogUnitKey(baseUnit))) {
+      throw fail("Yeni temel birim Birim Merkezi kataloğunda bulunmalıdır.", 422);
+    }
+    if (bulkUnit && !(definitions.bulk || []).some((unit) => catalogUnitKey(unit) === catalogUnitKey(bulkUnit))) {
+      throw fail("Yeni toplu birim Birim Merkezi kataloğunda bulunmalıdır.", 422);
+    }
+  }
+
   function updateProductUnitReferences(state, kind, from, to, timestamp) {
     const fromKey = catalogUnitKey(from);
     for (const product of state.products) {
@@ -409,6 +421,10 @@ function registerStockLocationRoutes(deps) {
           order: state.categories.length,
           sourceType: "manual",
           statusSource: "manual",
+          unitSchemaVersion: 1,
+          unitSchemaSource: "manual",
+          unitSchemaLocked: true,
+          unitSchemaUpdatedAt: timestamp,
           sourcePresent: true,
           createdAt: timestamp,
           updatedAt: timestamp
@@ -550,6 +566,8 @@ function registerStockLocationRoutes(deps) {
         if (!product) throw fail("Stok ürünü bulunamadı.", 404);
         const previous = { ...product };
         const values = validateCatalogProduct(state, body, product);
+        const unitSchemaTouched = ["baseUnit", "unit", "bulkUnit", "caseUnit", "unitsPerBulkUnit", "unitsPerCase", "allowDecimal", "defaultMovementUnit"]
+          .some((key) => Object.prototype.hasOwnProperty.call(body, key));
         const baseChanged = catalogUnitKey(values.baseUnit) !== catalogUnitKey(product.baseUnit || product.unit);
         if (baseChanged && (state.movements.some((item) => String(item.productId) === String(product.id))
           || state.balances.some((item) => String(item.productId) === String(product.id) && Number(item.quantity || 0) !== 0))) {
@@ -578,6 +596,12 @@ function registerStockLocationRoutes(deps) {
         if (body.allowDecimal !== undefined) product.allowDecimal = body.allowDecimal === true;
         product.active = body.active === undefined ? product.active !== false : body.active !== false;
         product.statusSource = "manual";
+        if (unitSchemaTouched) {
+          product.unitSchemaVersion = Math.max(1, Number(product.unitSchemaVersion || 0));
+          product.unitSchemaSource = "manual";
+          product.unitSchemaLocked = true;
+          product.unitSchemaUpdatedAt = timestamp;
+        }
         product.updatedAt = timestamp;
         product.defaultMovementUnit = normalizeCatalogUnit(
           body.defaultMovementUnit !== undefined ? body.defaultMovementUnit : product.defaultMovementUnit
@@ -590,6 +614,57 @@ function registerStockLocationRoutes(deps) {
       });
       if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "catalog"), "catalog");
       res.json({ ok: true, product, entityId: product && product.id, idempotent, ...canonicalRevisionPayload(saved, "catalog"), updatedAt: saved.stockUpdatedAt || timestamp });
+    } catch (error) { next(error); }
+  });
+
+  registerAdminStockRoute("post", "/products/:productId/unit-migration", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+    try {
+      const body = req.body || {};
+      requireActorCapability(req, "inventory.catalog.manage");
+      if (body.confirm !== true) {
+        const data = req.storeSnapshot || await store.read();
+        const state = normalizeStockState(data.stockState);
+        assertUnitMigrationCatalog(state, body);
+        const plan = stockService.buildUnitMigrationPlan(state, req.params.productId, body);
+        return res.json({ ok: true, preview: true, plan, ...canonicalRevisionPayload(data, "catalog"), updatedAt: data.stockUpdatedAt || state.updatedAt || null });
+      }
+      const operationId = requestId(req, true);
+      const timestamp = nowIso();
+      let result;
+      let idempotent = false;
+      const saved = await store.update((data, context) => {
+        const state = normalizeStockState(data.stockState);
+        const replay = routeOperation(state, "unit_migration", operationId);
+        if (replay) {
+          if (String(replay.value && replay.value.productId || "") !== String(req.params.productId)) {
+            throw fail("Bu requestId başka bir birim dönüşümü için kullanıldı.", 409);
+          }
+          result = {
+            state,
+            product: state.products.find((item) => String(item.id) === String(req.params.productId)),
+            plan: replay.value.plan
+          };
+          idempotent = true;
+          return context.noChange;
+        }
+        assertExpectedDomainRevision(data, body, "inventory", "unit_migration", operationId);
+        assertExpectedDomainRevision(data, body, "catalog", "unit_migration", operationId);
+        assertUnitMigrationCatalog(state, body);
+        const previousProduct = state.products.find((item) => String(item.id) === String(req.params.productId));
+        const previous = previousProduct ? { ...previousProduct } : null;
+        result = stockService.migrateProductUnitSchema(state, req.params.productId, body, { now: timestamp });
+        rememberRouteOperation(result.state, "unit_migration", operationId, { productId: result.product.id, plan: result.plan }, timestamp);
+        persistStockMutation(data, result.state, timestamp, ["inventory", "catalog"]);
+        appendStockAudit(data, adminActor(req), "stock.catalog.unit_migration", result.product.id, operationId,
+          { product: previous, balances: result.plan.locations.map((item) => ({ locationId: item.locationId, ...item.current })) },
+          { product: result.product, balances: result.plan.locations.map((item) => ({ locationId: item.locationId, ...item.next })) }, timestamp);
+        return data;
+      });
+      if (!idempotent) {
+        broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
+        broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "catalog"), "catalog");
+      }
+      res.json({ ok: true, product: result.product, plan: result.plan, idempotent, ...canonicalRevisionPayload(saved, "catalog"), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
 
@@ -943,6 +1018,12 @@ function registerStockLocationRoutes(deps) {
         if (product.bulkUnit && Number(product.unitsPerBulkUnit || 0) <= 0) throw fail("Toplu birim kullanılıyorsa dönüşüm miktarı sıfırdan büyük olmalıdır.");
         const allowedUnits = stockService.allowedProductUnits(product);
         if (!allowedUnits.includes(product.defaultMovementUnit)) throw fail("Varsayılan hareket birimi ürünün temel veya toplu birimi olmalıdır.");
+        if (updatesCatalog) {
+          product.unitSchemaVersion = Math.max(1, Number(product.unitSchemaVersion || 0));
+          product.unitSchemaSource = "manual";
+          product.unitSchemaLocked = true;
+          product.unitSchemaUpdatedAt = timestamp;
+        }
         balance.updatedAt = timestamp;
         balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
         product.updatedAt = timestamp;
@@ -1334,7 +1415,7 @@ function appendStockAudit(data, actor, action, entityId, requestId, previous, ne
     actorRole: actor && actor.type === "admin" ? "admin" : "personel",
     userId: String(actor && actor.id || "system"),
     name: String(actor && actor.name || "Sistem"),
-    entityType: action.includes("unit_catalog") ? "stock_unit_definition" : action.includes("location") ? "stock_location" : action.includes("transfer") ? "stock_transfer" : "stock_movement",
+    entityType: action.includes("unit_migration") ? "stock_product" : action.includes("unit_catalog") ? "stock_unit_definition" : action.includes("location") ? "stock_location" : action.includes("transfer") ? "stock_transfer" : "stock_movement",
     entityId: String(entityId || ""),
     requestId: String(requestId || ""),
     previousState: previous || null,

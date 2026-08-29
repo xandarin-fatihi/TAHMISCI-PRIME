@@ -869,6 +869,7 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
     const unitsPerBulkUnit = unitsPerBulkRaw ? numericPrefix(unitsPerBulkRaw) : 0;
     const allowDecimalRaw = String(cell(source.row, ["ondalıklı miktar", "ondalikli miktar", "ondalıklı", "ondalikli", "allow decimal"]) || "").trim().toLocaleLowerCase("tr-TR");
     const defaultMovementUnitRaw = String(cell(source.row, ["varsayılan hareket birimi", "varsayilan hareket birimi", "default movement unit"]) || "").trim().toLocaleLowerCase("tr-TR");
+    const hasExplicitUnitSchema = Boolean(baseUnitRaw || bulkUnit || unitsPerBulkRaw || allowDecimalRaw || defaultMovementUnitRaw);
     const sourceWarehouseName = String(cell(source.row, ["depo", "depo adı", "depo adi", "warehouse", "location"]) || "").trim();
     if (bulkUnit && !(unitsPerBulkUnit > 0)) {
       addIssue(ctx, "stock", source, "invalid_unit_conversion", "Toplu birim girildiğinde koli içi/temel birim miktarı sıfırdan büyük olmalıdır.");
@@ -950,6 +951,10 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
         unitsPerBulkUnit,
         allowDecimal,
         defaultMovementUnit: requestedDefaultMovementUnit,
+        unitSchemaVersion: 1,
+        unitSchemaSource: "excel",
+        unitSchemaLocked: false,
+        unitSchemaUpdatedAt: ctx.now,
         sourceWarehouseName,
         stockQuantity: 0,
         stockQuantityText: `0 ${quantity.unit}`,
@@ -979,14 +984,29 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
       const returned = product.sourcePresent === false;
       const hasQuantityOrHistory = (state.balances || []).some((balance) => String(balance.productId) === String(product.id) && Number(balance.quantity || 0) !== 0)
         || (state.movements || []).some((movement) => String(movement.productId || movement.stockProductId) === String(product.id));
-      const safeBaseUnit = oldUnit && oldUnit !== requestedBaseUnit && hasQuantityOrHistory ? oldUnit : requestedBaseUnit;
-      if (safeBaseUnit !== requestedBaseUnit) {
+      const manualSchema = product.unitSchemaLocked === true || product.unitSchemaSource === "manual";
+      const requestedExistingBaseUnit = baseUnitRaw ? requestedBaseUnit : (oldUnit || requestedBaseUnit);
+      const safeBaseUnit = oldUnit && oldUnit !== requestedExistingBaseUnit && hasQuantityOrHistory ? oldUnit : requestedExistingBaseUnit;
+      const baseMigrationBlocked = safeBaseUnit !== requestedExistingBaseUnit;
+      const preserveManualSchema = manualSchema && !hasExplicitUnitSchema;
+      const safeBulkUnit = baseMigrationBlocked || preserveManualSchema || (!bulkUnit && !unitsPerBulkRaw) ? oldBulkUnit : bulkUnit;
+      const safeUnitsPerBulkUnit = baseMigrationBlocked || preserveManualSchema || !unitsPerBulkRaw ? oldUnitsPerBulkUnit : unitsPerBulkUnit;
+      const safeAllowDecimal = baseMigrationBlocked || preserveManualSchema || !allowDecimalRaw ? Boolean(product.allowDecimal) : allowDecimal;
+      const requestedExistingDefault = defaultMovementUnitRaw || String(product.defaultMovementUnit || safeBaseUnit);
+      const safeDefaultMovementUnit = [safeBaseUnit, safeBulkUnit].includes(requestedExistingDefault)
+        ? requestedExistingDefault
+        : safeBaseUnit;
+      if (baseMigrationBlocked) {
         addIssue(ctx, "stock", source, "base_unit_history_preserved", `“${name}” hareket geçmişine sahip olduğu için temel birimi “${oldUnit}” olarak korundu.`, "warning");
       }
       Object.assign(product, {
         categoryId: category.id, category: category.name, productName: name, name, unit: safeBaseUnit, baseUnit: safeBaseUnit,
-        bulkUnit, unitsPerBulkUnit, allowDecimal,
-        defaultMovementUnit: [safeBaseUnit, bulkUnit].includes(requestedDefaultMovementUnit) ? requestedDefaultMovementUnit : safeBaseUnit,
+        bulkUnit: safeBulkUnit, unitsPerBulkUnit: safeUnitsPerBulkUnit, allowDecimal: safeAllowDecimal,
+        defaultMovementUnit: safeDefaultMovementUnit,
+        unitSchemaVersion: Math.max(1, Number(product.unitSchemaVersion || 0)),
+        unitSchemaSource: preserveManualSchema || safeBaseUnit !== requestedExistingBaseUnit ? (product.unitSchemaSource || "manual") : (hasExplicitUnitSchema ? "excel" : product.unitSchemaSource || "excel"),
+        unitSchemaLocked: preserveManualSchema || safeBaseUnit !== requestedExistingBaseUnit ? true : product.unitSchemaLocked === true,
+        unitSchemaUpdatedAt: hasExplicitUnitSchema && safeBaseUnit === requestedExistingBaseUnit ? ctx.now : product.unitSchemaUpdatedAt || null,
         sourceWarehouseName,
         catalogQuantityText: quantityText,
         catalogOrderThreshold: threshold,
@@ -1003,11 +1023,11 @@ function analyzeStockWorkbook(workbook, staged, ctx) {
         if (!product.active) ctx.report.manualInactivePreserved += 1;
       }
       if (returned && product.statusSource === "excel_removed") { product.active = true; product.statusSource = "excel_returned"; ctx.report.autoReactivated += 1; }
-      if (oldUnit !== safeBaseUnit || oldQuantityText !== quantityText || oldBulkUnit !== bulkUnit || oldUnitsPerBulkUnit !== Number(unitsPerBulkUnit || 0)) {
+      if (oldUnit !== safeBaseUnit || oldQuantityText !== quantityText || oldBulkUnit !== safeBulkUnit || oldUnitsPerBulkUnit !== Number(safeUnitsPerBulkUnit || 0)) {
         ctx.report.updatedStockProducts += 1;
-        addChange(ctx, "stock", category.name, name, "katalog miktarı/birim", `${oldQuantityText || "—"} ${oldUnit}`.trim(), `${quantityText} ${safeBaseUnit}${bulkUnit ? ` · 1 ${bulkUnit} = ${unitsPerBulkUnit} ${safeBaseUnit}` : ""}`.trim(), "update", "balance-preserved", "excel", productCode);
+        addChange(ctx, "stock", category.name, name, "katalog miktarı/birim", `${oldQuantityText || "—"} ${oldUnit}`.trim(), `${quantityText} ${safeBaseUnit}${safeBulkUnit ? ` · 1 ${safeBulkUnit} = ${safeUnitsPerBulkUnit} ${safeBaseUnit}` : ""}`.trim(), "update", "balance-preserved", "excel", productCode);
       }
-      if (oldUnit === safeBaseUnit && oldQuantityText === quantityText && oldThreshold === threshold && oldCriticalThreshold === criticalThreshold && oldBulkUnit === bulkUnit && oldUnitsPerBulkUnit === Number(unitsPerBulkUnit || 0)) ctx.report.unchanged += 1;
+      if (oldUnit === safeBaseUnit && oldQuantityText === quantityText && oldThreshold === threshold && oldCriticalThreshold === criticalThreshold && oldBulkUnit === safeBulkUnit && oldUnitsPerBulkUnit === Number(safeUnitsPerBulkUnit || 0)) ctx.report.unchanged += 1;
       if (returned) ctx.report.rediscovered += 1;
     }
     if (cafeLocation) {

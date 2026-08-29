@@ -1147,7 +1147,11 @@
       { quantity: 1, unit: baseUnit, label: `1 ${baseUnit}` },
       { quantity: 5, unit: baseUnit, label: `5 ${baseUnit}` }
     ];
-    if (productUnitsPerBulk(product) > 0) values.splice(1, 0, { quantity: 1, unit: bulkUnit, label: `1 ${bulkUnit}` });
+    if (productUnitsPerBulk(product) > 0) {
+      values.push(
+        { quantity: 1, unit: bulkUnit, label: `1 ${bulkUnit}` },
+        { quantity: 5, unit: bulkUnit, label: `5 ${bulkUnit}` });
+    }
     els.stockQuickAmounts.innerHTML = values.map((item) => `<button type="button" data-quick-quantity="${item.quantity}" data-quick-unit="${escapeAttribute(item.unit)}">${escapeHTML(item.label)}</button>`).join("");
   }
 

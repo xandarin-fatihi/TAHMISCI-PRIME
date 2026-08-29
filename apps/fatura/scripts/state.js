@@ -21,11 +21,11 @@ export const state = {
   stock: {
     revision: 0, inventoryRevision: 0, catalogRevision: 0,
     locations: [], personnel: [], unitDefinitions: { base: [], bulk: [] }, selectedLocationId: "",
-    balances: [], summary: {}, transfers: [], movements: [], counts: [], activeCount: null,
+    balances: [], summary: {}, transfers: [], transferLocations: [], movements: [], counts: [], activeCount: null,
     secondaryLoaded: false, secondaryLoadPromise: null, secondaryLocationId: "", selectedCategory: "all",
     selectedProductId: "", viewMode: "overview", drawerReturnFocus: null, inventoryController: null,
     loadSequence: 0, updatedAt: "", loaded: false, stale: true, loadPromise: null, busyKeys: new Set(),
-    bound: false, boundWorkspace: null, confirmResolver: null, thresholdInitial: null, catalogStock: null,
+    bound: false, boundWorkspace: null, confirmResolver: null, thresholdInitial: null, pendingUnitMigration: null, catalogStock: null,
     catalogLoaded: false, catalogLoading: false, catalogCategoryId: "", catalogProductId: "", catalogBusy: false,
     appliedIntentKey: "", activeAccordion: "management", planning: null, planningStale: true,
     planningError: "", planningLoadPromise: null

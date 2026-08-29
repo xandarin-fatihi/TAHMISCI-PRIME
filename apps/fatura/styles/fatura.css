@@ -1,5 +1,6 @@
 /* Tahmisçi Fatura — tüm kurallar modül namespace'i içindedir. */
 .fatura-app,.fatura-app *{box-sizing:border-box}
+.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
 .fatura-page{margin:0;min-width:320px;min-height:100%;background:var(--panel-canvas);color:var(--panel-ink);font-family:var(--panel-font-ui);font-size:var(--panel-body-size)}
 .fatura-page.dialog-open,.fatura-page.notification-open{overflow:hidden}
 .fatura-app{--fatura-sidebar:238px;--fatura-sidebar-compact:76px;min-height:100dvh;background:radial-gradient(circle at 92% 4%,rgba(185,80,45,.06),transparent 28%),var(--panel-canvas)}

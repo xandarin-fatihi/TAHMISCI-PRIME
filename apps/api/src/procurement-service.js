@@ -286,7 +286,7 @@ function createProcurementService(options = {}) {
       ok: true,
       revision: procurement.revision,
       workforceRevision: workforceRevision(data),
-      shipments: shipments.map((shipment) => publicShipment(shipment, supplierIndex.get(shipment.supplierId), actor))
+      shipments: shipments.map((shipment) => publicShipment(shipment, supplierIndex.get(shipment.supplierId), actor, procurement))
         .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))
     };
   }
@@ -307,7 +307,7 @@ function createProcurementService(options = {}) {
       ok: true,
       revision: procurement.revision,
       workforceRevision: workforceRevision(data),
-      shipment: publicShipment(shipment, supplier, actor),
+      shipment: publicShipment(shipment, supplier, actor, procurement),
       documents,
       ledgerEntries: entries
     };
@@ -358,7 +358,7 @@ function createProcurementService(options = {}) {
       data.workforceShipments = (data.workforceShipments || []).concat(shipment);
       linkDocumentsToShipment(procurement, evidenceDocumentIds, shipment);
       const workforceRevisionValue = touchWorkforceRevision(data);
-      return helpers.result("shipment", shipment.id, { shipment: publicShipment(shipment, supplier, actor) }, {
+      return helpers.result("shipment", shipment.id, { shipment: publicShipment(shipment, supplier, actor, procurement) }, {
         branchId: shipment.branchId,
         workforceRevision: workforceRevisionValue
       });
@@ -405,7 +405,7 @@ function createProcurementService(options = {}) {
       shipment.revision = positiveRevision(shipment.revision) + 1;
       shipment.expectedRevision = shipment.revision;
       const workforceRevisionValue = touchWorkforceRevision(data);
-      return helpers.result("shipment", shipment.id, { shipment: publicShipment(shipment, supplier, actor) }, {
+      return helpers.result("shipment", shipment.id, { shipment: publicShipment(shipment, supplier, actor, procurement) }, {
         branchId: shipment.branchId,
         workforceRevision: workforceRevisionValue
       });
@@ -467,7 +467,7 @@ function createProcurementService(options = {}) {
         });
       }
       return helpers.result("shipment", shipment.id, {
-        shipment: publicShipment(shipment, procurement.suppliers.find((item) => item.id === shipment.supplierId), actor)
+        shipment: publicShipment(shipment, procurement.suppliers.find((item) => item.id === shipment.supplierId), actor, procurement)
       }, {
         branchId: shipment.branchId,
         workforceRevision: workforceRevisionValue
@@ -507,9 +507,48 @@ function createProcurementService(options = {}) {
         dedupeKey: `procurement-shipment-rejected:${shipment.id}:${shipment.userId}`
       });
       return helpers.result("shipment", shipment.id, {
-        shipment: publicShipment(shipment, procurement.suppliers.find((item) => item.id === shipment.supplierId), actor)
+        shipment: publicShipment(shipment, procurement.suppliers.find((item) => item.id === shipment.supplierId), actor, procurement)
       }, {
         branchId: shipment.branchId,
+        workforceRevision: workforceRevisionValue
+      });
+    });
+  }
+
+  async function deleteShipment(actor, shipmentId, mutation) {
+    requireAnyCapability(actor, ["receipt.create", "receipt.reject"]);
+    return mutate("shipment.delete", actor, mutation, (data, procurement, helpers) => {
+      const shipment = findVisibleShipment(data, actor, shipmentId);
+      const canDeleteOwn = hasCapability(actor, "receipt.create") && canEditShipment(actor, shipment);
+      if (!hasCapability(actor, "receipt.reject") && !canDeleteOwn) {
+        throw fail("Bu mal kabul kaydını silme yetkiniz yok.", 403, "FORBIDDEN");
+      }
+      if (!shipmentCanBeDeleted(shipment, procurement)) {
+        throw fail("Yalnız stok ve muhasebe etkisi olmayan taslak veya reddedilmiş kayıtlar silinebilir.", 409, "SHIPMENT_DELETE_CONFLICT");
+      }
+      const itemIds = new Set((shipment.items || []).map((item) => String(item.id || "")).filter(Boolean));
+      let unlinkedDocuments = 0;
+      for (const document of procurement.documents || []) {
+        const shipmentIds = Array.isArray(document.shipmentIds) ? document.shipmentIds : [];
+        const shipmentItemIds = Array.isArray(document.shipmentItemIds) ? document.shipmentItemIds : [];
+        const nextShipmentIds = shipmentIds.filter((id) => String(id) !== String(shipment.id));
+        const nextShipmentItemIds = shipmentItemIds.filter((id) => !itemIds.has(String(id)));
+        if (nextShipmentIds.length !== shipmentIds.length || nextShipmentItemIds.length !== shipmentItemIds.length) {
+          document.shipmentIds = nextShipmentIds;
+          document.shipmentItemIds = nextShipmentItemIds;
+          document.updatedAt = isoNow(now);
+          unlinkedDocuments += 1;
+        }
+      }
+      data.workforceShipments = (data.workforceShipments || []).filter((item) => String(item.id) !== String(shipment.id));
+      const workforceRevisionValue = touchWorkforceRevision(data);
+      return helpers.result("shipment", shipment.id, {
+        deleted: true,
+        shipmentId: shipment.id
+      }, {
+        branchId: shipment.branchId,
+        previousStatus: shipment.status,
+        unlinkedDocuments,
         workforceRevision: workforceRevisionValue
       });
     });
@@ -580,7 +619,7 @@ function createProcurementService(options = {}) {
         dedupeKey: `procurement-accounting-posted:${shipment.id}`
       });
       return helpers.result("ledgerEntry", entry.id, {
-        shipment: publicShipment(shipment, supplier, actor),
+        shipment: publicShipment(shipment, supplier, actor, procurement),
         ledgerEntry: entry
       }, {
         branchId: shipment.branchId,
@@ -640,7 +679,7 @@ function createProcurementService(options = {}) {
         dedupeKey: `procurement-accounting-reversed:${shipment.id}:${reversal.id}`
       });
       return helpers.result("ledgerEntry", reversal.id, {
-        shipment: publicShipment(shipment, procurement.suppliers.find((item) => item.id === shipment.supplierId), actor),
+        shipment: publicShipment(shipment, procurement.suppliers.find((item) => item.id === shipment.supplierId), actor, procurement),
         ledgerEntry: reversal
       }, {
         branchId: shipment.branchId,
@@ -1278,6 +1317,7 @@ function createProcurementService(options = {}) {
     createSupplier,
     dashboard,
     deactivateSupplier,
+    deleteShipment,
     exportData,
     findIdempotentResponse,
     getDocument,
@@ -1369,6 +1409,15 @@ function canEditShipment(actor, shipment) {
     && String(shipment.userId || "") === String(actor.id))));
 }
 
+function shipmentCanBeDeleted(shipment, procurement = null) {
+  if (!shipment || !["taslak", "reddedildi", "rejected"].includes(String(shipment.status || ""))) return false;
+  if (shipment.stockAppliedAt || shipment.stockMovementRef || (shipment.stockMovementRefs || []).length) return false;
+  if (shipment.finalizedAt || shipment.finalized === true || shipment.isFinalized === true) return false;
+  if (shipment.accountingPostedAt || (shipment.accountingEntryIds || []).length) return false;
+  if (!["", "not_posted", "none"].includes(String(shipment.accountingStatus || ""))) return false;
+  return !(procurement && (procurement.ledgerEntries || []).some((entry) => String(entry.shipmentId || "") === String(shipment.id || "")));
+}
+
 function findVisibleShipment(data, actor, shipmentId) {
   const shipment = findById(data.workforceShipments, shipmentId, "Sevkiyat");
   const visible = actor && actor.type === "admin"
@@ -1452,7 +1501,7 @@ function publicAccessTemplates() {
   }));
 }
 
-function publicShipment(shipment, supplier, actor) {
+function publicShipment(shipment, supplier, actor, procurement = null) {
   const canViewFinancials = Boolean(actor && (actor.type === "admin"
     || ["accounting.read", "accounting.post", "supplier.manage", "supplierProduct.manage"]
       .some((capability) => hasCapability(actor, capability))));
@@ -1465,6 +1514,8 @@ function publicShipment(shipment, supplier, actor) {
     canEdit: shipment.status === "taslak" && canEditShipment(actor, shipment),
     canApprove: shipment.status === "onay_bekliyor" && !shipment.stockAppliedAt && hasCapability(actor, "receipt.approve"),
     canReject: shipment.status === "onay_bekliyor" && !shipment.stockAppliedAt && hasCapability(actor, "receipt.reject"),
+    canDelete: shipmentCanBeDeleted(shipment, procurement)
+      && (hasCapability(actor, "receipt.reject") || hasCapability(actor, "receipt.create") && canEditShipment(actor, shipment)),
     canAccount: !["taslak", "reddedildi"].includes(shipment.status) && shipment.accountingStatus !== "posted"
       && hasCapability(actor, "accounting.post")
   };

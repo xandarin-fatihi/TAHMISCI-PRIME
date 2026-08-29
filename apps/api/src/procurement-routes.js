@@ -131,6 +131,10 @@ function registerProcurementRoutes(deps = {}) {
     res.json(await service.updateShipment(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
+  app.delete(`${API_ROOT}/shipments/:id`, ...mutationMiddlewares, anyCapability(["receipt.create", "receipt.reject"]), asyncRoute(async (req, res) => {
+    res.json(await service.deleteShipment(req.procurementActor, req.params.id, mutationInput(req)));
+  }));
+
   app.post(`${API_ROOT}/shipments/:id/submit`, ...mutationMiddlewares, capability("receipt.submit"), asyncRoute(async (req, res) => {
     res.json(await service.submitShipment(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));

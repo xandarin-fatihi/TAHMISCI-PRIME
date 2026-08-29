@@ -7,7 +7,7 @@ let loadSequence = 0;
 
 export async function loadProductAnalysis({ force = false, productId = "" } = {}) {
   const model = state.productAnalysis;
-  const requestedProductId = String(productId || model.selectedProductId || new URL(location.href).searchParams.get("productId") || "");
+  const requestedProductId = String(productId || model.selectedProductId || "");
   if (force) {
     model.productsStale = true;
     model.detailStale = true;
@@ -49,7 +49,7 @@ export function renderProductAnalysis() {
   const detail = model.detail;
   return `<section class="product-analysis" aria-label="Ürün analizi">
     <div class="product-analysis-search-shell">
-      <label class="product-analysis-search"><span class="sr-only">Ürün ara</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="productAnalysisSearch" type="search" value="${escapeHtml(model.query)}" placeholder="Ürün ara…" autocomplete="off" aria-controls="productAnalysisResults" aria-expanded="${model.resultsOpen}"><i aria-hidden="true"></i></label>
+      <label class="product-analysis-search"><span class="sr-only">Ürün ara</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="productAnalysisSearch" type="search" value="${escapeHtml(model.query)}" placeholder="Ürün ara…" autocomplete="off" aria-controls="productAnalysisResults" aria-expanded="${model.resultsOpen}"><span class="product-analysis-live"><i aria-hidden="true"></i>Canlı</span></label>
       <div class="product-analysis-results" id="productAnalysisResults" ${model.resultsOpen ? "" : "hidden"}>${renderSearchResults(matches)}</div>
     </div>
     ${detail ? renderDetail(detail) : renderEmpty()}
@@ -116,11 +116,8 @@ async function selectProduct(productId) {
 }
 
 function replaceProductUrl(productId) {
-  const url = new URL(location.href);
-  url.searchParams.set("view", "productAnalysis");
-  if (productId) url.searchParams.set("productId", productId);
-  else url.searchParams.delete("productId");
-  history.replaceState({}, "", url);
+  if (productId) state.productAnalysis.selectedProductId = String(productId);
+  history.replaceState({}, "", "/fatura/");
 }
 
 function rerender() {

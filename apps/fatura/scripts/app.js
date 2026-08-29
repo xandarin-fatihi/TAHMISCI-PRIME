@@ -78,10 +78,8 @@ document.addEventListener("keydown", (event) => {
 document.addEventListener("tahmisci:fatura:navigate", async (event) => {
   const detail = event.detail && typeof event.detail === "object" ? event.detail : {};
   if (!detail.view || !visibleViews.some((view) => view.id === detail.view)) return;
-  if (detail.productId) {
-    const url = new URL(location.href); url.searchParams.set("view", detail.view); url.searchParams.set("productId", detail.productId); history.replaceState({}, "", url);
-  }
-  await setView(detail.view, { preserveQuery: Boolean(detail.productId) });
+  if (detail.view === "productAnalysis" && detail.productId) state.productAnalysis.selectedProductId = String(detail.productId);
+  await setView(detail.view);
   if (detail.action === "new-shipment" && detail.view === "shipments") openShipmentForm();
 });
 
@@ -163,14 +161,16 @@ function renderNav() {
 }
 
 async function activateInitialView() {
-  const preference = safeLocalStorageGet("tahmisci:fatura:view");
+  const preference = safeSessionStorageGet("tahmisci:fatura:view");
   const intent = consumeOpenIntent();
   const requested = intent && intent.view || preference;
   if (requested && visibleViews.some((view) => view.id === requested)) state.activeView = requested;
+  if (intent && intent.view === "productAnalysis" && intent.productId) state.productAnalysis.selectedProductId = String(intent.productId);
   await setView(state.activeView);
   if (intent && intent.view === "stock") await applyStockIntent(intent);
   if (intent && intent.entityType === "shipment" && intent.entityId) await openShipment(intent.entityId);
   if (intent && intent.entityType === "document" && intent.entityId && has(CAPABILITIES.documentsRead)) await openDocument(intent.entityId);
+  cleanFaturaUrl();
 }
 
 async function setView(viewId, options = {}) {
@@ -178,13 +178,8 @@ async function setView(viewId, options = {}) {
   if (!view) return;
   if (state.activeView === "stock" && viewId !== "stock") disconnectStockEvents();
   state.activeView = viewId;
-  if (options.syncUrl !== false) {
-    const url = new URL(location.href);
-    url.searchParams.set("view", viewId);
-    if (viewId !== "productAnalysis" && !options.preserveQuery) url.searchParams.delete("productId");
-    history.replaceState({}, "", url);
-  }
-  safeLocalStorageSet("tahmisci:fatura:view", viewId);
+  cleanFaturaUrl();
+  safeSessionStorageSet("tahmisci:fatura:view", viewId);
   renderNav();
   document.getElementById("pageTitle").textContent = view.label;
   document.getElementById("pageDescription").textContent = view.description;
@@ -216,7 +211,7 @@ async function loadView(view, force = false) {
       }
       await loadStockView({ force });
     },
-    productAnalysis: () => loadProductAnalysis({ force, productId: new URL(location.href).searchParams.get("productId") || state.productAnalysis.selectedProductId }),
+    productAnalysis: () => loadProductAnalysis({ force, productId: state.productAnalysis.selectedProductId }),
     settings: () => Promise.all([loadSettings(force), has(CAPABILITIES.accountingRead) || has(CAPABILITIES.users) ? loadAudit(force) : null])
   }[view];
   if (loader) await loader();
@@ -686,6 +681,7 @@ async function handleDetailAction(button, action) {
   if (action === "supplier-ledger") { state.filters.ledgerSupplier = detail.id; closeDetailDialog(); return setView("ledger"); }
   if (action === "approve-stock") return approveStock(button, detail.id);
   if (action === "reject-shipment") return rejectShipment(button, detail.id);
+  if (action === "delete-shipment") return deleteShipment(button, detail.id);
   if (action === "submit-shipment") return submitShipment(button, detail.id);
   if (action === "account-shipment") return openAccountingForm(detail.payload);
   if (action === "upload-shipment-document") { closeDetailDialog(); return openDocumentForm(detail.id); }
@@ -705,6 +701,26 @@ async function approveStock(button, id) {
 async function rejectShipment(button, id) {
   const reason = window.prompt("Red nedeni:"); if (reason === null) return;
   await runButtonMutation(button, () => api(`/shipments/${encodeURIComponent(id)}/reject`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["shipments","dashboard"], async () => { closeDetailDialog(); await setView("shipments", {force:true}); });
+}
+async function deleteShipment(button, id) {
+  if (!await confirmShipmentDeletion()) return;
+  await runButtonMutation(button, () => api(`/shipments/${encodeURIComponent(id)}`, { method:"DELETE", body:{}, expectedRevision:state.revision }), ["shipments","dashboard","stock"], async () => { closeDetailDialog(); await setView("shipments", {force:true}); });
+}
+function confirmShipmentDeletion() {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "fatura-dialog";
+    dialog.innerHTML = '<div class="detail-dialog-shell"><header><div><p class="eyebrow">KALICI SİLME</p><h2>Mal kabul kaydını sil</h2></div></header><div class="dialog-body"><p>Bu kayıt kalıcı olarak silinecek.</p></div><footer><button class="ui-button ui-button--secondary" type="button" data-delete-decision="cancel">Vazgeç</button><button class="ui-button ui-button--danger" type="button" data-delete-decision="confirm">Evet, Sil</button></footer></div>';
+    const finish = (confirmed) => { if (dialog.open) dialog.close(); dialog.remove(); resolve(confirmed); };
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); finish(false); }, { once: true });
+    dialog.addEventListener("click", (event) => {
+      const decision = event.target.closest("[data-delete-decision]")?.dataset.deleteDecision;
+      if (decision) finish(decision === "confirm");
+    });
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    dialog.querySelector('[data-delete-decision="cancel"]')?.focus();
+  });
 }
 async function submitShipment(button, id) {
   await runButtonMutation(button, () => api(`/shipments/${encodeURIComponent(id)}/submit`, { method:"POST", body:{}, expectedRevision:state.revision }), ["shipments","dashboard"], async () => { closeDetailDialog(); await setView("shipments", {force:true}); });
@@ -827,30 +843,42 @@ function closeMobileSidebar(){app.classList.remove("is-mobile-open");document.ge
 function restoreSidebarPreference(){if(safeLocalStorageGet("tahmisci:fatura:sidebar")==="collapsed")app.classList.add("is-collapsed");}
 function safeLocalStorageGet(key){try{return localStorage.getItem(key)||"";}catch(_error){return "";}}
 function safeLocalStorageSet(key,value){try{localStorage.setItem(key,value);}catch(_error){}}
+function safeSessionStorageGet(key){try{return sessionStorage.getItem(key)||"";}catch(_error){return "";}}
+function safeSessionStorageSet(key,value){try{sessionStorage.setItem(key,value);}catch(_error){}}
+function cleanFaturaUrl(){if(location.pathname!=="/fatura/"||location.search||location.hash)history.replaceState({},"","/fatura/");}
 function consumeOpenIntent(){
+  const url=new URL(location.href);
+  const entityId=url.searchParams.get("shipmentId")||url.searchParams.get("entityId")||"";
+  const productId=url.searchParams.get("productId")||url.searchParams.get("stockProductId")||"";
+  const view=url.searchParams.get("view")||url.searchParams.get("section")||"";
+  if(view||entityId||productId||url.searchParams.get("locationId")||url.searchParams.get("transferId")){
+    try{sessionStorage.removeItem("tahmisci:fatura:intent");}catch(_error){}
+    const resolvedView=view||(productId?"productAnalysis":"shipments");
+    const stockIntent=resolvedView==="stock";
+    return{
+      view:resolvedView,
+      entityType:url.searchParams.get("entityType")||(stockIntent&&url.searchParams.get("workforce")==="shipments"&&entityId?"shipment":entityId&&!stockIntent?"shipment":""),
+      entityId,
+      locationId:url.searchParams.get("locationId")||"",
+      productId,
+      transferId:url.searchParams.get("transferId")||"",
+      workforce:url.searchParams.get("workforce")||""
+    };
+  }
   try{
     const raw=sessionStorage.getItem("tahmisci:fatura:intent");sessionStorage.removeItem("tahmisci:fatura:intent");
     if(raw){const parsed=JSON.parse(raw);if(parsed&&typeof parsed==="object")return parsed;}
   }catch(_error){}
-  const url=new URL(location.href);const entityId=url.searchParams.get("shipmentId")||url.searchParams.get("entityId")||"";const view=url.searchParams.get("view")||url.searchParams.get("section")||"";
-  if(!view&&!entityId)return null;
-  const stockIntent=view==="stock";
-  return{
-    view:view||"shipments",
-    entityType:url.searchParams.get("entityType")||(stockIntent&&url.searchParams.get("workforce")==="shipments"&&entityId?"shipment":entityId&&!stockIntent?"shipment":""),
-    entityId,
-    locationId:url.searchParams.get("locationId")||"",
-    productId:url.searchParams.get("productId")||url.searchParams.get("stockProductId")||"",
-    transferId:url.searchParams.get("transferId")||"",
-    workforce:url.searchParams.get("workforce")||""
-  };
+  return null;
 }
 async function activateIntentFromUrl(url){
   const entityId=url.searchParams.get("shipmentId")||url.searchParams.get("entityId")||"";
   const entityType=url.searchParams.get("entityType")||(entityId?"shipment":"");
+  const productId=url.searchParams.get("productId")||url.searchParams.get("stockProductId")||"";
   let view=url.searchParams.get("view")||url.searchParams.get("section")||"";
   if(!view)view=entityType==="document"?"documents":entityType==="supplier"?"suppliers":"shipments";
-  if(!visibleViews.some((item)=>item.id===view))return toast("Bağlantının hedeflediği bölüm için erişiminiz bulunmuyor.",true);
+  if(!visibleViews.some((item)=>item.id===view)){cleanFaturaUrl();return toast("Bağlantının hedeflediği bölüm için erişiminiz bulunmuyor.",true);}
+  if(view==="productAnalysis"&&productId)state.productAnalysis.selectedProductId=String(productId);
   await setView(view);
   if(view==="stock"){
     const intent={
@@ -858,7 +886,7 @@ async function activateIntentFromUrl(url){
       entityType,
       entityId,
       locationId:url.searchParams.get("locationId")||"",
-      productId:url.searchParams.get("productId")||url.searchParams.get("stockProductId")||"",
+      productId,
       transferId:url.searchParams.get("transferId")||"",
       workforce:url.searchParams.get("workforce")||""
     };
@@ -867,4 +895,5 @@ async function activateIntentFromUrl(url){
   if(entityType==="shipment"&&entityId)await openShipment(entityId);
   else if(entityType==="document"&&entityId)await openDocument(entityId);
   else if(entityType==="supplier"&&entityId)await openSupplier(entityId);
+  cleanFaturaUrl();
 }
