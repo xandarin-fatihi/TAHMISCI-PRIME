@@ -208,9 +208,7 @@ function registerStockLocationRoutes(deps) {
       assignments.get(person.stockLocationId).push(person.id);
     }
     return stockService.getLocations(stockState, { includeInactive: true }).map((location) => {
-      const inventory = location.active === false
-        ? { balances: [], summary: { totalProducts: 0, criticalProducts: 0, pendingTransfers: 0, lastUpdatedAt: location.updatedAt || null } }
-        : stockService.getLocationInventory(stockState, location.id, { includeInactive: false });
+      const inventory = stockService.getLocationInventory(stockState, location.id, { includeInactive: false, allowInactive: true });
       const sufficientProducts = inventory.balances.filter((balance) => balance.status === "Yeterli").length;
       const openSuggestions = inventory.balances.filter((balance) => balance.recommendation).length;
       const lastMovement = stockService.serializeMovements(stockState, { locationId: location.id })[0] || null;
@@ -230,7 +228,9 @@ function registerStockLocationRoutes(deps) {
 
   function locationPayload(data, locationId, actor) {
     const state = normalizeStockState(data.stockState);
-    const inventory = stockService.getLocationInventory(state, locationId);
+    const inventory = stockService.getLocationInventory(state, locationId, {
+      allowInactive: Boolean(actor && (actor.type === "admin" || actor.inventoryManage === true || actor.inventoryScope === "all"))
+    });
     return {
       ok: true,
       location: inventory.location,
@@ -279,15 +279,29 @@ function registerStockLocationRoutes(deps) {
     const fromKey = catalogUnitKey(from);
     for (const product of state.products) {
       if (kind === "base" && catalogUnitKey(product.baseUnit || product.unit) === fromKey) {
+        stockService.recordProductUnitSchemaTransition(product, {
+          ...stockServiceProductSchema(product), baseUnit: to,
+          defaultMovementUnit: catalogUnitKey(product.defaultMovementUnit) === fromKey ? to : product.defaultMovementUnit
+        }, timestamp);
         product.baseUnit = to;
         product.unit = to;
         if (catalogUnitKey(product.defaultMovementUnit) === fromKey) product.defaultMovementUnit = to;
+        product.unitSchemaSource = "manual";
+        product.unitSchemaLocked = true;
+        product.unitSchemaUpdatedAt = timestamp;
         product.updatedAt = timestamp;
       }
       if (kind === "bulk" && catalogUnitKey(product.bulkUnit || product.caseUnit) === fromKey) {
+        stockService.recordProductUnitSchemaTransition(product, {
+          ...stockServiceProductSchema(product), bulkUnit: to,
+          defaultMovementUnit: catalogUnitKey(product.defaultMovementUnit) === fromKey ? to : product.defaultMovementUnit
+        }, timestamp);
         product.bulkUnit = to;
         product.caseUnit = to;
         if (catalogUnitKey(product.defaultMovementUnit) === fromKey) product.defaultMovementUnit = to;
+        product.unitSchemaSource = "manual";
+        product.unitSchemaLocked = true;
+        product.unitSchemaUpdatedAt = timestamp;
         product.updatedAt = timestamp;
       }
     }
@@ -596,17 +610,20 @@ function registerStockLocationRoutes(deps) {
         if (body.allowDecimal !== undefined) product.allowDecimal = body.allowDecimal === true;
         product.active = body.active === undefined ? product.active !== false : body.active !== false;
         product.statusSource = "manual";
+        product.defaultMovementUnit = normalizeCatalogUnit(
+          body.defaultMovementUnit !== undefined ? body.defaultMovementUnit : product.defaultMovementUnit
+        ) || values.baseUnit;
+        if (!stockService.allowedProductUnits(product).includes(product.defaultMovementUnit)) product.defaultMovementUnit = values.baseUnit;
         if (unitSchemaTouched) {
-          product.unitSchemaVersion = Math.max(1, Number(product.unitSchemaVersion || 0));
+          const historySource = { ...previous, unitSchemaHistory: Array.isArray(previous.unitSchemaHistory) ? previous.unitSchemaHistory.map((entry) => ({ ...entry })) : [] };
+          const version = stockService.recordProductUnitSchemaTransition(historySource, stockServiceProductSchema(product), timestamp);
+          product.unitSchemaVersion = version;
+          product.unitSchemaHistory = historySource.unitSchemaHistory;
           product.unitSchemaSource = "manual";
           product.unitSchemaLocked = true;
           product.unitSchemaUpdatedAt = timestamp;
         }
         product.updatedAt = timestamp;
-        product.defaultMovementUnit = normalizeCatalogUnit(
-          body.defaultMovementUnit !== undefined ? body.defaultMovementUnit : product.defaultMovementUnit
-        ) || values.baseUnit;
-        if (!stockService.allowedProductUnits(product).includes(product.defaultMovementUnit)) product.defaultMovementUnit = values.baseUnit;
         rememberRouteOperation(state, "catalog_product_update", operationId, { productId: product.id }, timestamp);
         persistStockMutation(data, state, timestamp, "catalog");
         appendStockAudit(data, adminActor(req), "stock.catalog.product.update", product.id, operationId, previous, product, timestamp);
@@ -755,14 +772,14 @@ function registerStockLocationRoutes(deps) {
   registerAdminStockRoute("post", "/locations", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
       const body = req.body || {};
-      const name = String(body.name || "").trim().slice(0, 120);
+      const name = validateLocationName(body.name);
       const code = normalizeLocationCode(body.code || name);
       const type = String(body.type || "other").trim();
-        if (!name || !code) throw fail("Depo adı ve kodu zorunludur.");
-        if (!stockService.LOCATION_TYPES.has(type)) throw fail("Depo türü geçersiz.");
-        if (type !== "cafe" && normalizeIdList(body.assignedPersonnelIds).length) {
-          throw fail("Personel yalnızca Kafe Deposuna atanabilir.");
-        }
+      if (!code) throw fail("Depo kodu zorunludur.");
+      if (!stockService.LOCATION_TYPES.has(type)) throw fail("Depo türü geçersiz.");
+      if (type !== "cafe" && normalizeIdList(body.assignedPersonnelIds).length) {
+        throw fail("Personel yalnızca Kafe Deposuna atanabilir.");
+      }
       const operationId = requestId(req, true);
       const timestamp = nowIso();
       let location;
@@ -777,6 +794,9 @@ function registerStockLocationRoutes(deps) {
         }
         assertExpectedDomainRevision(data, body, "inventory", "location_create", operationId);
         if (state.locations.some((item) => item.code === code)) throw fail("Bu depo kodu zaten kullanılıyor.", 409);
+        if (body.active !== false && state.locations.some((item) => item.active !== false && locationNameKey(item.name) === locationNameKey(name))) {
+          throw fail("Bu depo adı aktif başka bir depoda kullanılıyor.", 409);
+        }
         location = {
           id: uniqueLocationId(state, code),
           code,
@@ -785,7 +805,7 @@ function registerStockLocationRoutes(deps) {
           type,
           active: body.active !== false,
           sortOrder: Number.isFinite(Number(body.sortOrder)) ? Math.max(0, Math.trunc(Number(body.sortOrder))) : state.locations.length * 10 + 10,
-          isDefault: body.isDefault === true,
+          isDefault: body.active !== false && body.isDefault === true,
           assignedPersonnelIds: normalizeIdList(body.assignedPersonnelIds),
           createdAt: timestamp,
           updatedAt: timestamp
@@ -830,9 +850,7 @@ function registerStockLocationRoutes(deps) {
         if (!location) throw fail("Stok lokasyonu bulunamadı.", 404);
         const previous = { ...location };
         if (body.name !== undefined) {
-          const name = String(body.name || "").trim().slice(0, 120);
-          if (!name) throw fail("Depo adı boş olamaz.");
-          location.name = name;
+          location.name = validateLocationName(body.name);
         }
         if (body.description !== undefined) location.description = String(body.description || "").trim().slice(0, 500);
         if (body.code !== undefined) {
@@ -847,13 +865,24 @@ function registerStockLocationRoutes(deps) {
           location.type = type;
         }
         if (body.active !== undefined) {
-          if (location.code === "GENEL" && body.active === false) throw fail("Genel Depo pasifleştirilemez.", 409);
           location.active = body.active !== false;
+          location.deactivatedAt = location.active ? null : timestamp;
+        }
+        if (location.active !== false && state.locations.some((item) => item.id !== location.id && item.active !== false && locationNameKey(item.name) === locationNameKey(location.name))) {
+          throw fail("Bu depo adı aktif başka bir depoda kullanılıyor.", 409);
+        }
+        if (location.active === false && location.isDefault) {
+          const fallback = state.locations.find((candidate) => candidate.id !== location.id && candidate.active !== false);
+          if (!fallback) throw fail("Son aktif depo pasifleştirilemez.", 409);
+          location.isDefault = false;
+          fallback.isDefault = true;
+          fallback.updatedAt = timestamp;
         }
         if (body.sortOrder !== undefined && Number.isFinite(Number(body.sortOrder))) location.sortOrder = Math.max(0, Math.trunc(Number(body.sortOrder)));
         if (body.isDefault !== undefined) {
           const makeDefault = body.isDefault === true;
           if (makeDefault) {
+            if (location.active === false) throw fail("Pasif depo varsayılan depo yapılamaz.", 409);
             for (const candidate of state.locations) candidate.isDefault = candidate.id === location.id;
           } else if (location.code !== "GENEL") {
             location.isDefault = false;
@@ -878,7 +907,11 @@ function registerStockLocationRoutes(deps) {
         location.updatedAt = timestamp;
         rememberRouteOperation(state, "location_update", operationId, { locationId: location.id }, timestamp);
         persistStockMutation(data, normalizeStockState(state), timestamp);
-        appendStockAudit(data, adminActor(req), "stock.location.update", location.id, operationId, previous, location, timestamp);
+        const renamed = previous.name !== location.name;
+        appendStockAudit(data, adminActor(req), renamed ? "stock.location.rename" : "stock.location.update", location.id, operationId,
+          renamed ? { ...previous, locationId: location.id, oldName: previous.name } : previous,
+          renamed ? { ...location, locationId: location.id, newName: location.name } : location,
+          timestamp);
         return data;
       });
       if (!idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
@@ -1019,7 +1052,10 @@ function registerStockLocationRoutes(deps) {
         const allowedUnits = stockService.allowedProductUnits(product);
         if (!allowedUnits.includes(product.defaultMovementUnit)) throw fail("Varsayılan hareket birimi ürünün temel veya toplu birimi olmalıdır.");
         if (updatesCatalog) {
-          product.unitSchemaVersion = Math.max(1, Number(product.unitSchemaVersion || 0));
+          const historySource = { ...previous.product, unitSchemaHistory: Array.isArray(previous.product.unitSchemaHistory) ? previous.product.unitSchemaHistory.map((entry) => ({ ...entry })) : [] };
+          const version = stockService.recordProductUnitSchemaTransition(historySource, stockServiceProductSchema(product), timestamp);
+          product.unitSchemaVersion = version;
+          product.unitSchemaHistory = historySource.unitSchemaHistory;
           product.unitSchemaSource = "manual";
           product.unitSchemaLocked = true;
           product.unitSchemaUpdatedAt = timestamp;
@@ -1360,6 +1396,31 @@ function normalizeLocationCode(value) {
     .replace(/[^A-Z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
+}
+
+function validateLocationName(value) {
+  const name = String(value || "").trim().replace(/\s+/g, " ");
+  if (!name) throw Object.assign(new Error("Depo adı boş olamaz."), { status: 422 });
+  if ([...name].length > 120) throw Object.assign(new Error("Depo adı en fazla 120 karakter olabilir."), { status: 422 });
+  return name;
+}
+
+function locationNameKey(value) {
+  return String(value || "").trim().toLocaleLowerCase("tr-TR").replace(/ı/g, "i")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
+}
+
+function stockServiceProductSchema(product = {}) {
+  const baseUnit = String(product.baseUnit || product.unit || "adet");
+  const bulkUnit = String(product.bulkUnit || product.caseUnit || "");
+  const unitsPerBulkUnit = Math.max(0, Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0) || 0);
+  return {
+    baseUnit,
+    bulkUnit,
+    unitsPerBulkUnit,
+    allowDecimal: product.allowDecimal === true,
+    defaultMovementUnit: String(product.defaultMovementUnit || baseUnit)
+  };
 }
 
 function uniqueLocationId(state, code) {

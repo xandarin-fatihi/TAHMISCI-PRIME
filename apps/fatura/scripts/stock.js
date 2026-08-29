@@ -9,6 +9,8 @@ import { renderShipments } from "./receipts.js";
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[character]));
+  const locationNameKey = (value) => String(value || "").trim().toLocaleLowerCase("tr-TR")
+    .replace(/ı/g, "i").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
   const LOCATION_STORAGE_KEY = "tahmisci.admin.stock.location.v1";
 
   // Fatura kabuğu, stok görünümü ve olay akışı aynı revision kontrollü state'i paylaşır.
@@ -436,7 +438,7 @@ import { renderShipments } from "./receipts.js";
   function renderLocations() {
     const host = $("#stockLocationSelector");
     if (!host) return;
-    const options = [{ id: "total", name: "Tüm Depolar", code: "TOPLAM", active: true }, ...state.locations.filter((item) => item.active !== false)];
+    const options = [{ id: "total", name: "Tüm Depolar", code: "TOPLAM", active: true }, ...state.locations.filter((item) => item.active !== false || String(item.id) === String(state.selectedLocationId))];
     host.innerHTML = options.map((location) => `
       <button type="button" role="tab" aria-selected="${String(location.id) === String(state.selectedLocationId)}"
         class="stock-location-tab${String(location.id) === String(state.selectedLocationId) ? " is-active" : ""}"
@@ -589,20 +591,22 @@ import { renderShipments } from "./receipts.js";
     const host = $("#stockWarehouseCards");
     if (!host) return;
     const activeLocations = state.locations.filter((location) => location.active !== false);
+    const orderedLocations = state.locations.slice().sort((left, right) => Number(left.active === false) - Number(right.active === false));
     const totalProducts = Math.max(0, ...activeLocations.map((location) => Number(location.inventorySummary?.totalProducts || 0)));
     const totalCritical = activeLocations.reduce((sum, location) => sum + Number(location.inventorySummary?.criticalProducts || 0), 0);
     const cards = [{
       id: "total", name: "Tüm Depolar", code: "TOPLAM", type: "overview",
       description: "Bütün depo bakiyelerinin birleşik görünümü",
       inventorySummary: { totalProducts, criticalProducts: totalCritical, sufficientProducts: Math.max(0, totalProducts - totalCritical), pendingTransfers: state.transfers.length, lastMovementAt: state.updatedAt }
-    }, ...activeLocations];
+    }, ...orderedLocations];
     host.innerHTML = cards.length ? cards.map((location, index) => {
       const summary = location.inventorySummary || {};
       const type = location.id === "total" ? "GENEL BAKIŞ" : location.type === "cafe" ? "KAFE" : location.type === "central" ? "GENEL" : "DİĞER";
       const assigned = Array.isArray(location.assignedPersonnelIds) ? location.assignedPersonnelIds.length : Number(summary.assignedPersonnelCount || 0);
       return `<article class="stock-warehouse-card" data-location-status="${location.active === false ? "passive" : "active"}">
         <div class="stock-warehouse-card__index">${String(index + 1).padStart(2, "0")}</div>
-        <div class="stock-warehouse-card__identity"><span>${esc(type)}</span><h5>${esc(location.name)}</h5><p>${esc(location.description || "Depo bakiyeleri ve hareketleri")}</p></div>
+        <div class="stock-warehouse-card__identity"><span>${esc(type)}</span><h5>${esc(location.name)}</h5><div class="stock-warehouse-card__meta"><b>${esc(location.code || "Kod yok")}</b><i class="is-${location.active === false ? "passive" : "active"}">${location.id === "total" ? "Birleşik" : location.active === false ? "Pasif" : "Aktif"}</i></div><p>${esc(location.description || (location.active === false ? "Geçmiş kayıtlar salt okunur görüntülenebilir." : "Depo bakiyeleri ve hareketleri"))}</p></div>
+        ${location.id !== "total" && can(CAPABILITIES.inventoryLocationManage) ? `<button class="stock-warehouse-card__edit" type="button" data-stock-warehouse-edit="${esc(location.id)}" aria-label="${esc(location.name)} deposunu düzenle">Düzenle</button>` : ""}
         <dl><div><dt>Ürün</dt><dd>${esc(summary.totalProducts || 0)}</dd></div><div><dt>Kritik</dt><dd>${esc(summary.criticalProducts || 0)}</dd></div><div><dt>Personel</dt><dd>${esc(assigned)}</dd></div><div><dt>Son hareket</dt><dd>${esc(summary.lastMovementAt ? formatDate(summary.lastMovementAt) : "Henüz yok")}</dd></div></dl>
         <button class="ui-button ui-button--primary ui-button--block" type="button" data-stock-warehouse-open="${esc(location.id)}">Depoyu Aç <span aria-hidden="true">→</span></button>
       </article>`;
@@ -686,16 +690,18 @@ import { renderShipments } from "./receipts.js";
     state.selectedProductId = productId(balance);
     state.drawerReturnFocus = trigger instanceof HTMLElement ? trigger : document.activeElement;
     const product = productOf(balance);
-    const totalReadOnly = state.selectedLocationId === "total";
+    const selectedLocation = state.locations.find((location) => String(location.id) === String(state.selectedLocationId));
+    const totalReadOnly = state.selectedLocationId === "total" || selectedLocation?.active === false;
     const canMoveStock = can(CAPABILITIES.inventoryMovementCreate);
     const canTransfer = can(CAPABILITIES.inventoryTransferCreate);
     const canManageInventory = can(CAPABILITIES.inventoryManage);
     const canManageCatalog = can(CAPABILITIES.inventoryCatalogManage);
-    const selectedLocation = state.locations.find((location) => String(location.id) === String(state.selectedLocationId));
     const cafeQuantity = balance.cafeQuantity ?? (selectedLocation && selectedLocation.type === "cafe" ? balance.quantity : 0);
     $("#stockProductDrawerTitle").textContent = productName(balance);
     $("#stockProductDrawerSubtitle").textContent = `${product.productCode || "Kod yok"} · ${product.category || "Kategori yok"}`;
-    $("#stockProductDrawerMessage").textContent = totalReadOnly ? "Tüm Depolar görünümü salt okunurdur. İşlem için Kafe veya Genel Depoyu seçin." : "";
+    $("#stockProductDrawerMessage").textContent = state.selectedLocationId === "total"
+      ? "Tüm Depolar görünümü salt okunurdur. İşlem için aktif bir depo seçin."
+      : selectedLocation?.active === false ? "Pasif depo geçmişi salt okunurdur; yeni stok, transfer ve sayım işlemi yapılamaz." : "";
     const body = $("#stockProductDrawerBody");
     const recentMovements = state.movements.filter((movement) => String(movement.productId) === String(product.id)).slice(0, 4);
     const currentBaseUnit = unitOf(balance);
@@ -825,6 +831,10 @@ import { renderShipments } from "./receipts.js";
       setMessage("Stok hareketi için gerçek bir depo seçin.", "error");
       return;
     }
+    if (state.locations.find((location) => String(location.id) === String(state.selectedLocationId))?.active === false) {
+      setMessage("Pasif depoda yeni stok hareketi oluşturulamaz.", "error");
+      return;
+    }
     const balance = state.balances.find((item) => productId(item) === String(productIdValue));
     const dialog = $("#stockMovementDialog");
     if (!balance || !dialog) return;
@@ -887,6 +897,10 @@ import { renderShipments } from "./receipts.js";
       setMessage("Transfer için gerçek bir depo seçin.", "error");
       return;
     }
+    if (state.locations.find((location) => String(location.id) === String(state.selectedLocationId))?.active === false) {
+      setMessage("Pasif depo transfer kaynağı veya hedefi olamaz.", "error");
+      return;
+    }
     renderFormOptions();
     if ($("#stockTransferFrom")) {
       $("#stockTransferFrom").value = state.selectedLocationId;
@@ -930,6 +944,10 @@ import { renderShipments } from "./receipts.js";
     const balance = selectedProductBalance(productIdValue);
     if (!balance || state.selectedLocationId === "total") {
       setMessage("Eşik ayarları için gerçek bir depo seçin.", "error");
+      return;
+    }
+    if (state.locations.find((location) => String(location.id) === String(state.selectedLocationId))?.active === false) {
+      setMessage("Pasif depoda yeni eşik veya birim işlemi yapılamaz.", "error");
       return;
     }
     const product = productOf(balance);
@@ -1064,7 +1082,7 @@ import { renderShipments } from "./receipts.js";
       return `<article>
         <div><strong>${esc(location.name)}</strong><span>${esc(location.code)} · ${esc(location.type)}${location.description ? ` · ${esc(location.description)}` : ""}</span></div>
         <span class="stock-location-status is-${location.active === false ? "inactive" : "active"}">${location.active === false ? "Pasif" : "Aktif"}</span>
-        <div class="stock-location-management__actions">${assignmentControl}<button class="ui-button ui-button--secondary ui-button--sm" type="button" data-location-edit="${esc(location.id)}">Düzenle</button><button class="ui-button ui-button--ghost ui-button--sm" type="button" data-location-toggle="${esc(location.id)}" data-next-active="${location.active === false}">${location.active === false ? "Aktifleştir" : "Pasifleştir"}</button>${!["CAFE", "GENEL"].includes(location.code) ? `<button class="ui-button ui-button--danger ui-button--sm" type="button" data-location-remove="${esc(location.id)}">Pasifleştir</button>` : ""}</div>
+        <div class="stock-location-management__actions">${assignmentControl}<button class="ui-button ui-button--secondary ui-button--sm" type="button" data-location-edit="${esc(location.id)}">Düzenle</button><button class="ui-button ui-button--ghost ui-button--sm" type="button" data-location-toggle="${esc(location.id)}" data-next-active="${location.active === false}">${location.active === false ? "Aktifleştir" : "Pasifleştir"}</button></div>
       </article>`;
     }).join("");
   }
@@ -1490,6 +1508,7 @@ import { renderShipments } from "./receipts.js";
 
   async function toggleLocation(id, active, button) {
     if (!can(CAPABILITIES.inventoryLocationManage)) throw new Error("Depo yönetimi yetkiniz yok.");
+    if (!active && !await requestConfirmation("Depoyu pasifleştir", "Bu depo yeni stok ve transfer işlemlerine kapatılacaktır. Geçmiş kayıtlar korunacaktır.", "Pasifleştir")) return;
     return runOperation(`location-toggle:${id}`, button, async () => {
       const result = await api(`/api/procurement/v1/stock/locations/${encodeURIComponent(id)}`, mutation("PATCH", { active }, "fatura-stock-location-toggle"));
       await reloadAfterMutation(result, active ? "Depo aktifleştirildi." : "Depo pasifleştirildi.");
@@ -1502,7 +1521,7 @@ import { renderShipments } from "./receipts.js";
     if (!location) return;
     $("#stockLocationEditId").value = String(id);
     $("#stockLocationEditName").value = location.name || "";
-    $("#stockLocationEditDescription").value = location.description || "";
+    $("#stockLocationEditStatus").value = location.active === false ? "passive" : "active";
     $("#stockLocationEditMessage").textContent = "";
     const dialog = $("#stockLocationEditDialog");
     if (dialog && !dialog.open) dialog.showModal();
@@ -1513,23 +1532,21 @@ import { renderShipments } from "./receipts.js";
     if (!can(CAPABILITIES.inventoryLocationManage)) throw new Error("Depo yönetimi yetkiniz yok.");
     const id = $("#stockLocationEditId")?.value || "";
     const name = $("#stockLocationEditName")?.value.trim() || "";
-    const description = $("#stockLocationEditDescription")?.value.trim() || "";
+    const active = $("#stockLocationEditStatus")?.value !== "passive";
     if (!id || !name) throw new Error("Depo adı zorunludur.");
+    if (name.length > 120) throw new Error("Depo adı en fazla 120 karakter olabilir.");
+    const current = state.locations.find((location) => String(location.id) === String(id));
+    if (active && state.locations.some((location) => String(location.id) !== String(id)
+      && location.active !== false && locationNameKey(location.name) === locationNameKey(name))) {
+      throw new Error("Bu depo adı aktif başka bir depoda kullanılıyor.");
+    }
+    if (current && current.active !== false && !active
+      && !await requestConfirmation("Depoyu pasifleştir", "Bu depo yeni stok ve transfer işlemlerine kapatılacaktır. Geçmiş kayıtlar korunacaktır.", "Pasifleştir")) return;
     const button = $("#stockLocationEditSubmit");
     return runOperation(`location-edit:${id}`, button, async () => {
-      const result = await api(`/api/procurement/v1/stock/locations/${encodeURIComponent(id)}`, mutation("PATCH", { name, description }, "fatura-stock-location-edit"));
+      const result = await api(`/api/procurement/v1/stock/locations/${encodeURIComponent(id)}`, mutation("PATCH", { name, active }, "fatura-stock-location-edit"));
       $("#stockLocationEditDialog")?.close();
       await reloadAfterMutation(result, "Depo bilgileri güncellendi.");
-    });
-  }
-
-  async function removeLocation(id, button) {
-    if (!can(CAPABILITIES.inventoryLocationManage)) throw new Error("Depo yönetimi yetkiniz yok.");
-    const location = state.locations.find((item) => String(item.id) === String(id));
-    if (!location || !await requestConfirmation("Depoyu pasifleştir", `${location.name} yeni işlemlere kapatılacak; geçmiş hareketleri korunacaktır.`, "Pasifleştir")) return;
-    return runOperation(`location-remove:${id}`, button, async () => {
-      const result = await api(`/api/procurement/v1/stock/locations/${encodeURIComponent(id)}`, mutation("DELETE", {}, "fatura-stock-location-remove"));
-      await reloadAfterMutation(result, "Depo pasifleştirildi; geçmiş hareketler korundu.");
     });
   }
 
@@ -1711,6 +1728,7 @@ import { renderShipments } from "./receipts.js";
   async function openOrStartCount(button) {
     if (!can(CAPABILITIES.inventoryCountManage)) throw new Error("Sayım yönetimi yetkiniz yok.");
     if (!state.selectedLocationId || state.selectedLocationId === "total") throw new Error("Sayım için gerçek bir depo seçin.");
+    if (state.locations.find((location) => String(location.id) === String(state.selectedLocationId))?.active === false) throw new Error("Pasif depoda yeni sayım başlatılamaz.");
     return runOperation("stock-count-start", button, async () => {
       const existing = state.counts.find((count) => count.status === "active" && count.locationId === state.selectedLocationId);
       if (existing) state.activeCount = existing;
@@ -1801,6 +1819,11 @@ import { renderShipments } from "./receipts.js";
         state.viewMode = "inventory";
         try { localStorage.setItem(LOCATION_STORAGE_KEY, state.selectedLocationId); } catch (_error) {}
         loadAll({ force: true }).catch(() => {});
+        return;
+      }
+      const warehouseEdit = event.target.closest("[data-stock-warehouse-edit]");
+      if (warehouseEdit) {
+        editLocation(warehouseEdit.dataset.stockWarehouseEdit, warehouseEdit).catch(() => {});
         return;
       }
       const locationButton = event.target.closest("[data-stock-location-select]");
@@ -1894,11 +1917,6 @@ import { renderShipments } from "./receipts.js";
       const locationEdit = event.target.closest("[data-location-edit]");
       if (locationEdit) {
         editLocation(locationEdit.dataset.locationEdit, locationEdit).catch(() => {});
-        return;
-      }
-      const locationRemove = event.target.closest("[data-location-remove]");
-      if (locationRemove) {
-        removeLocation(locationRemove.dataset.locationRemove, locationRemove).catch(() => {});
         return;
       }
       const locationPersonnel = event.target.closest("[data-location-personnel-save]");

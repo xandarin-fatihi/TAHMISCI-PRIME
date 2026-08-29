@@ -1179,16 +1179,19 @@ function normalizeStockLocations(value) {
     const existing = result.find((item) => item.code === location.code || item.id === location.id);
     if (existing) {
       if (!existing.id) existing.id = location.id;
-      if (location.code === "CAFE" && !result.some((item) => item.isDefault)) existing.isDefault = true;
+      if (location.code === "CAFE" && existing.active !== false && !result.some((item) => item.active !== false && item.isDefault)) existing.isDefault = true;
       continue;
     }
     result.push({ ...location, description: "", assignedPersonnelIds: [], createdAt: null, updatedAt: null, deactivatedAt: null });
   }
-  if (!result.some((item) => item.isDefault)) {
-    const cafe = result.find((item) => item.code === "CAFE");
+  if (!result.some((item) => item.active !== false && item.isDefault)) {
+    const cafe = result.find((item) => item.active !== false && item.code === "CAFE");
     if (cafe) cafe.isDefault = true;
   }
-  const defaultLocation = result.find((item) => item.isDefault)
+  const defaultLocation = result.find((item) => item.active !== false && item.isDefault)
+    || result.find((item) => item.active !== false && item.code === "CAFE")
+    || result.find((item) => item.active !== false)
+    || result.find((item) => item.isDefault)
     || result.find((item) => item.code === "CAFE")
     || result[0];
   for (const location of result) location.isDefault = Boolean(defaultLocation && location.id === defaultLocation.id);
@@ -1286,16 +1289,22 @@ function normalizeStockTransfers(value, productsById, locations) {
       if (!product || itemIds.has(entryProductId)) return null;
       itemIds.add(entryProductId);
       const baseUnit = normalizeStockUnit(entry.baseUnit || product.baseUnit || product.unit || "adet");
+      const snapshot = entry.conversionSnapshot && typeof entry.conversionSnapshot === "object" && !Array.isArray(entry.conversionSnapshot)
+        ? { ...entry.conversionSnapshot }
+        : null;
+      const schemaVersionValue = entry.unitSchemaVersion ?? (snapshot && snapshot.unitSchemaVersion);
+      const unitSchemaVersion = Number.isInteger(Number(schemaVersionValue)) && Number(schemaVersionValue) > 0
+        ? Math.trunc(Number(schemaVersionValue))
+        : null;
       return {
         productId: entryProductId,
         quantity: Math.max(0, finiteNumber(entry.quantity, 0)),
         baseUnit,
         sourceQuantity: Math.max(0, finiteNumber(entry.sourceQuantity ?? entry.quantity, 0)),
         sourceUnit: normalizeStockUnit(entry.sourceUnit || entry.inputUnit || entry.baseUnit || baseUnit),
+        unitSchemaVersion,
         conversionFactor: Math.max(0, finiteNumber(entry.conversionFactor, 1)),
-        conversionSnapshot: entry.conversionSnapshot && typeof entry.conversionSnapshot === "object" && !Array.isArray(entry.conversionSnapshot)
-          ? { ...entry.conversionSnapshot }
-          : null,
+        conversionSnapshot: snapshot ? { ...snapshot, unitSchemaVersion } : null,
         sourceExpectedRevision: entry.sourceExpectedRevision === null || entry.sourceExpectedRevision === undefined
           ? null
           : Math.max(0, Math.trunc(finiteNumber(entry.sourceExpectedRevision, 0))),
@@ -1318,7 +1327,9 @@ function normalizeStockTransfers(value, productsById, locations) {
       baseUnit: firstItem.baseUnit,
       sourceQuantity: firstItem.sourceQuantity,
       sourceUnit: firstItem.sourceUnit,
+      unitSchemaVersion: firstItem.unitSchemaVersion,
       conversionFactor: firstItem.conversionFactor,
+      conversionSnapshot: firstItem.conversionSnapshot,
       requestedBy: String(item.requestedBy || ""),
       requestedByName: String(item.requestedByName || ""),
       requestId: String(item.requestId || ""),
@@ -1429,6 +1440,13 @@ function normalizeStockProduct(product, index, categoryNames) {
   const defaultMovementUnit = requestedDefaultUnit === bulkUnit && bulkUnit && unitsPerBulkUnit > 0
     ? bulkUnit
     : baseUnit;
+  const normalizedSchema = normalizeStockUnitSchemaHistory(product, {
+    baseUnit,
+    bulkUnit,
+    unitsPerBulkUnit,
+    allowDecimal,
+    defaultMovementUnit
+  });
   return {
     ...product,
     id: String(product.id || stableStockId("stock-product", `${categoryId}\u0000${product.productName || product.name || index}`)),
@@ -1444,7 +1462,8 @@ function normalizeStockProduct(product, index, categoryNames) {
     unitsPerCase: unitsPerBulkUnit,
     allowDecimal,
     defaultMovementUnit,
-    unitSchemaVersion: Math.max(0, Math.trunc(finiteNumber(product.unitSchemaVersion, 0))),
+    unitSchemaVersion: normalizedSchema.version,
+    unitSchemaHistory: normalizedSchema.history,
     unitSchemaSource: ["manual", "excel", "legacy"].includes(String(product.unitSchemaSource || ""))
       ? String(product.unitSchemaSource)
       : (product.sourceType === "excel" ? "excel" : product.sourceType === "manual" ? "manual" : "legacy"),
@@ -1481,25 +1500,103 @@ function normalizeStockUnit(value) {
   return normalized && normalized.length <= 30 && /^[\p{L}\p{N} _-]+$/u.test(normalized) ? normalized : "";
 }
 
+function normalizeStockUnitSchemaHistory(product, activeSchema) {
+  const requestedVersion = Math.max(1, Math.trunc(finiteNumber(product.unitSchemaVersion, 1)));
+  const history = normalizeArray(product.unitSchemaHistory).map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const version = Math.max(1, Math.trunc(finiteNumber(entry.version, 0)));
+    const baseUnit = normalizeStockUnit(entry.baseUnit || entry.unit || "");
+    if (!baseUnit) return null;
+    const bulkUnit = normalizeStockUnit(entry.bulkUnit || entry.caseUnit || "");
+    const unitsPerBulkUnit = bulkUnit
+      ? Math.max(0, finiteNumber(entry.unitsPerBulkUnit ?? entry.unitsPerCase, 0))
+      : 0;
+    return {
+      version,
+      baseUnit,
+      bulkUnit,
+      unitsPerBulkUnit,
+      allowDecimal: typeof entry.allowDecimal === "boolean" ? entry.allowDecimal : ["kg", "gr", "litre", "ml"].includes(baseUnit),
+      defaultMovementUnit: normalizeStockUnit(entry.defaultMovementUnit || baseUnit) || baseUnit,
+      validFrom: entry.validFrom || null,
+      validUntil: entry.validUntil || null
+    };
+  }).filter(Boolean).sort((left, right) => left.version - right.version);
+  const sameSchema = (entry) => entry
+    && entry.baseUnit === activeSchema.baseUnit
+    && entry.bulkUnit === activeSchema.bulkUnit
+    && Number(entry.unitsPerBulkUnit || 0) === Number(activeSchema.unitsPerBulkUnit || 0)
+    && entry.allowDecimal === activeSchema.allowDecimal
+    && entry.defaultMovementUnit === activeSchema.defaultMovementUnit;
+  const maxVersion = history.reduce((maximum, entry) => Math.max(maximum, entry.version), 0);
+  let version = Math.max(requestedVersion, maxVersion || 1);
+  let activeEntry = history.find((entry) => entry.version === version && sameSchema(entry));
+  if (!activeEntry) {
+    if (history.length) version = Math.max(version, maxVersion + 1);
+    activeEntry = {
+      version,
+      ...activeSchema,
+      validFrom: product.unitSchemaUpdatedAt || product.createdAt || null,
+      validUntil: null
+    };
+    history.push(activeEntry);
+  }
+  history.sort((left, right) => left.version - right.version);
+  for (let index = 0; index < history.length; index += 1) {
+    const entry = history[index];
+    const next = history[index + 1];
+    if (entry.version === version) entry.validUntil = null;
+    else if (!entry.validUntil && next && next.validFrom) entry.validUntil = next.validFrom;
+  }
+  return { version, history };
+}
+
 function normalizeStockMovement(movement, productsById = new Map(), legacyGeneralLocationId = "stock-location-general") {
   if (!movement || typeof movement !== "object" || Array.isArray(movement)) return null;
   const productId = String(movement.stockProductId || movement.productId || "");
   const product = productsById.get(productId);
-  const baseUnit = normalizeStockUnit(movement.baseUnit || product && (product.baseUnit || product.unit) || movement.unit || "adet") || "adet";
+  const baseUnit = normalizeStockUnit(movement.baseUnit || movement.unit || product && (product.baseUnit || product.unit) || "adet") || "adet";
   const sourceQuantity = Math.max(0, finiteNumber(movement.inputQuantity ?? movement.sourceQuantity ?? movement.quantity, 0));
   const sourceUnit = normalizeStockUnit(movement.inputUnit || movement.sourceUnit || movement.unit || baseUnit) || baseUnit;
   const previousBalance = Math.max(0, finiteNumber(movement.previousBalance ?? movement.previousStock, 0));
   const resultingBalance = Math.max(0, finiteNumber(movement.resultingBalance ?? movement.resultingStock, 0));
   const inferredDelta = resultingBalance - previousBalance;
   const baseQuantityDelta = finiteNumber(movement.baseQuantityDelta, inferredDelta);
-  const conversionSnapshot = movement.conversionSnapshot && typeof movement.conversionSnapshot === "object" && !Array.isArray(movement.conversionSnapshot)
+  const explicitSnapshot = movement.conversionSnapshot && typeof movement.conversionSnapshot === "object" && !Array.isArray(movement.conversionSnapshot)
     ? movement.conversionSnapshot
+    : null;
+  const schemaVersionValue = movement.unitSchemaVersion ?? (explicitSnapshot && explicitSnapshot.unitSchemaVersion);
+  const unitSchemaVersion = Number.isInteger(Number(schemaVersionValue)) && Number(schemaVersionValue) > 0
+    ? Math.trunc(Number(schemaVersionValue))
+    : null;
+  const hasMovementFactor = movement.conversionFactor !== null
+    && movement.conversionFactor !== undefined
+    && movement.conversionFactor !== "";
+  const hasSnapshotFactor = explicitSnapshot
+    && explicitSnapshot.factor !== null
+    && explicitSnapshot.factor !== undefined
+    && explicitSnapshot.factor !== "";
+  const explicitConversionFactor = hasMovementFactor && Number.isFinite(Number(movement.conversionFactor))
+    ? Number(movement.conversionFactor)
+    : hasSnapshotFactor && Number.isFinite(Number(explicitSnapshot.factor)) ? Number(explicitSnapshot.factor) : null;
+  const conversionSnapshot = explicitSnapshot
+    ? {
+        ...explicitSnapshot,
+        baseUnit: normalizeStockUnit(explicitSnapshot.baseUnit || baseUnit) || baseUnit,
+        bulkUnit: normalizeStockUnit(explicitSnapshot.bulkUnit || ""),
+        unitsPerBulkUnit: Math.max(0, finiteNumber(explicitSnapshot.unitsPerBulkUnit ?? explicitSnapshot.unitsPerCase, 0)),
+        inputUnit: normalizeStockUnit(explicitSnapshot.inputUnit || sourceUnit) || sourceUnit,
+        factor: hasSnapshotFactor && Number.isFinite(Number(explicitSnapshot.factor)) ? Number(explicitSnapshot.factor) : explicitConversionFactor,
+        unitSchemaVersion
+      }
     : {
         baseUnit,
-        bulkUnit: normalizeStockUnit(product && (product.bulkUnit || product.caseUnit) || ""),
-        unitsPerBulkUnit: Math.max(0, finiteNumber(product && (product.unitsPerBulkUnit ?? product.unitsPerCase), 0)),
+        bulkUnit: "",
+        unitsPerBulkUnit: 0,
         inputUnit: sourceUnit,
-        factor: finiteNumber(movement.conversionFactor, 1)
+        factor: explicitConversionFactor,
+        unitSchemaVersion: null,
+        legacyInferred: true
       };
   return {
     ...movement,
@@ -1517,8 +1614,9 @@ function normalizeStockMovement(movement, productsById = new Map(), legacyGenera
     inputQuantity: sourceQuantity,
     inputUnit: sourceUnit,
     baseQuantityDelta,
+    unitSchemaVersion,
     conversionSnapshot,
-    conversionFactor: finiteNumber(movement.conversionFactor, 1),
+    conversionFactor: explicitConversionFactor,
     locationId: String(movement.locationId || movement.toLocationId || movement.fromLocationId || legacyGeneralLocationId || ""),
     fromLocationId: movement.fromLocationId ? String(movement.fromLocationId) : null,
     toLocationId: movement.toLocationId ? String(movement.toLocationId) : null,

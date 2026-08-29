@@ -76,6 +76,55 @@ function productUnitMetadata(product = {}) {
   return { baseUnit, bulkUnit, unitsPerBulkUnit, allowDecimal, defaultMovementUnit };
 }
 
+function sameUnitSchema(left = {}, right = {}) {
+  return normalizeUnit(left.baseUnit) === normalizeUnit(right.baseUnit)
+    && normalizeUnit(left.bulkUnit) === normalizeUnit(right.bulkUnit)
+    && Number(left.unitsPerBulkUnit || 0) === Number(right.unitsPerBulkUnit || 0)
+    && Boolean(left.allowDecimal) === Boolean(right.allowDecimal)
+    && normalizeUnit(left.defaultMovementUnit || left.baseUnit) === normalizeUnit(right.defaultMovementUnit || right.baseUnit);
+}
+
+function unitSchemaEntry(metadata, version, validFrom = null, validUntil = null) {
+  return {
+    version,
+    baseUnit: metadata.baseUnit,
+    bulkUnit: metadata.bulkUnit,
+    unitsPerBulkUnit: metadata.unitsPerBulkUnit,
+    allowDecimal: metadata.allowDecimal,
+    defaultMovementUnit: metadata.defaultMovementUnit,
+    validFrom: validFrom || null,
+    validUntil: validUntil || null
+  };
+}
+
+function recordProductUnitSchemaTransition(product, targetSchema, timestamp = nowIso()) {
+  const current = productUnitMetadata(product);
+  const target = productUnitMetadata({ ...product, ...targetSchema, unit: targetSchema.baseUnit, caseUnit: targetSchema.bulkUnit, unitsPerCase: targetSchema.unitsPerBulkUnit });
+  const history = (Array.isArray(product.unitSchemaHistory) ? product.unitSchemaHistory : [])
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => ({ ...entry }))
+    .sort((left, right) => Number(left.version || 0) - Number(right.version || 0));
+  const maxVersion = history.reduce((maximum, entry) => Math.max(maximum, Number(entry.version || 0)), 0);
+  const currentVersion = Math.max(1, Number(product.unitSchemaVersion || 0), maxVersion || 1);
+  let currentEntry = history.find((entry) => Number(entry.version) === currentVersion && sameUnitSchema(entry, current));
+  if (!currentEntry) {
+    currentEntry = unitSchemaEntry(current, currentVersion, product.unitSchemaUpdatedAt || product.createdAt || null, null);
+    history.push(currentEntry);
+  }
+  if (sameUnitSchema(current, target)) {
+    currentEntry.validUntil = null;
+    product.unitSchemaHistory = history.sort((left, right) => Number(left.version) - Number(right.version));
+    product.unitSchemaVersion = currentVersion;
+    return currentVersion;
+  }
+  currentEntry.validUntil = timestamp;
+  const nextVersion = Math.max(currentVersion, maxVersion) + 1;
+  history.push(unitSchemaEntry(target, nextVersion, timestamp, null));
+  product.unitSchemaHistory = history.sort((left, right) => Number(left.version) - Number(right.version));
+  product.unitSchemaVersion = nextVersion;
+  return nextVersion;
+}
+
 function allowedProductUnits(product) {
   const metadata = productUnitMetadata(product);
   const result = new Set([metadata.baseUnit]);
@@ -112,14 +161,20 @@ function getLocations(stockState, options = {}) {
 }
 
 function defaultCafeLocation(state) {
-  return getLocations(state, { includeInactive: true }).find((location) => location.code === "CAFE")
-    || getLocations(state, { includeInactive: true }).find((location) => location.type === "cafe")
+  const locations = getLocations(state, { includeInactive: true });
+  return locations.find((location) => location.active !== false && location.code === "CAFE")
+    || locations.find((location) => location.active !== false && location.type === "cafe")
+    || locations.find((location) => location.code === "CAFE")
+    || locations.find((location) => location.type === "cafe")
     || null;
 }
 
 function defaultGeneralLocation(state) {
-  return getLocations(state, { includeInactive: true }).find((location) => location.code === "GENEL")
-    || getLocations(state, { includeInactive: true }).find((location) => location.type === "central")
+  const locations = getLocations(state, { includeInactive: true });
+  return locations.find((location) => location.active !== false && location.code === "GENEL")
+    || locations.find((location) => location.active !== false && location.type === "central")
+    || locations.find((location) => location.code === "GENEL")
+    || locations.find((location) => location.type === "central")
     || null;
 }
 
@@ -394,6 +449,7 @@ function migrateProductUnitSchema(stockState, productId, input = {}, options = {
   const plan = buildUnitMigrationPlan(state, productId, input);
   const product = getProduct(state, productId);
   const timestamp = nowIso(options.now);
+  const unitSchemaVersion = recordProductUnitSchemaTransition(product, plan.targetSchema, timestamp);
   if (plan.baseChanged) {
     for (const balance of state.balances || []) {
       if (String(balance.productId) !== String(product.id)) continue;
@@ -416,7 +472,7 @@ function migrateProductUnitSchema(stockState, productId, input = {}, options = {
     unitsPerCase: plan.targetSchema.unitsPerBulkUnit,
     allowDecimal: plan.targetSchema.allowDecimal,
     defaultMovementUnit: plan.targetSchema.defaultMovementUnit,
-    unitSchemaVersion: Math.max(0, Number(product.unitSchemaVersion || 0)) + 1,
+    unitSchemaVersion,
     unitSchemaSource: "manual",
     unitSchemaLocked: true,
     unitSchemaUpdatedAt: timestamp,
@@ -455,6 +511,24 @@ function movementDirection(type, input = {}) {
 }
 
 function addMovement(state, input) {
+  const product = (state.products || []).find((item) => String(item.id) === String(input.productId));
+  const requestedSnapshotVersion = Number(input.unitSchemaVersion
+    ?? (input.conversionSnapshot && input.conversionSnapshot.unitSchemaVersion)
+    ?? (product && product.unitSchemaVersion)
+    ?? 1);
+  const snapshotVersion = Number.isInteger(requestedSnapshotVersion) && requestedSnapshotVersion > 0
+    ? requestedSnapshotVersion
+    : 1;
+  const conversionSnapshot = input.conversionSnapshot && typeof input.conversionSnapshot === "object"
+    ? { ...input.conversionSnapshot, unitSchemaVersion: snapshotVersion }
+    : {
+        baseUnit: String(input.baseUnit || "adet"),
+        bulkUnit: String(input.bulkUnit || ""),
+        unitsPerBulkUnit: Number(input.unitsPerBulkUnit || 0),
+        inputUnit: String(input.inputUnit || input.sourceUnit || input.baseUnit || "adet"),
+        factor: Number.isFinite(Number(input.conversionFactor)) ? Number(input.conversionFactor) : 1,
+        unitSchemaVersion: snapshotVersion
+      };
   const movement = {
     id: input.id || createId("stock-movement"),
     type: input.type,
@@ -476,16 +550,9 @@ function addMovement(state, input) {
     inputQuantity: round(Number(input.inputQuantity ?? input.sourceQuantity ?? input.quantity ?? 0)),
     inputUnit: String(input.inputUnit || input.sourceUnit || input.baseUnit || "adet"),
     baseQuantityDelta: round(Number(input.baseQuantityDelta ?? (Number(input.resultingBalance || 0) - Number(input.previousBalance || 0)))),
+    unitSchemaVersion: snapshotVersion,
     conversionFactor: Number.isFinite(Number(input.conversionFactor)) ? Number(input.conversionFactor) : 1,
-    conversionSnapshot: input.conversionSnapshot && typeof input.conversionSnapshot === "object"
-      ? { ...input.conversionSnapshot }
-      : {
-          baseUnit: String(input.baseUnit || "adet"),
-          bulkUnit: String(input.bulkUnit || ""),
-          unitsPerBulkUnit: Number(input.unitsPerBulkUnit || 0),
-          inputUnit: String(input.inputUnit || input.sourceUnit || input.baseUnit || "adet"),
-          factor: Number.isFinite(Number(input.conversionFactor)) ? Number(input.conversionFactor) : 1
-        },
+    conversionSnapshot,
     previousBalance: round(Number(input.previousBalance || 0)),
     resultingBalance: round(Number(input.resultingBalance || 0)),
     // Legacy aliases keep historical consumers operational while all new data
@@ -576,7 +643,8 @@ function applyStockMovement(stockState, input = {}, actor = {}, options = {}) {
     quantity: Math.abs(conversion.quantity), baseUnit: conversion.baseUnit,
     sourceQuantity, sourceUnit: conversion.inputUnit, inputQuantity: sourceQuantity, inputUnit: conversion.inputUnit,
     baseQuantityDelta: delta, conversionFactor: conversion.factor,
-    conversionSnapshot: { baseUnit: conversion.baseUnit, bulkUnit: conversion.bulkUnit, unitsPerBulkUnit: conversion.unitsPerBulkUnit, inputUnit: conversion.inputUnit, factor: conversion.factor },
+    unitSchemaVersion: Math.max(1, Number(product.unitSchemaVersion || 1)),
+    conversionSnapshot: { baseUnit: conversion.baseUnit, bulkUnit: conversion.bulkUnit, unitsPerBulkUnit: conversion.unitsPerBulkUnit, inputUnit: conversion.inputUnit, factor: conversion.factor, unitSchemaVersion: Math.max(1, Number(product.unitSchemaVersion || 1)) },
     previousBalance: previous, resultingBalance: resulting,
     expectedRevision: input.expectedBalanceRevision,
     referenceType: input.referenceType || "manual", referenceId: input.referenceId,
@@ -671,7 +739,8 @@ function createTransferRequest(stockState, input = {}, actor = {}, options = {})
       sourceQuantity,
       sourceUnit: conversion.inputUnit,
       conversionFactor: conversion.factor,
-      conversionSnapshot: { baseUnit: conversion.baseUnit, bulkUnit: conversion.bulkUnit, unitsPerBulkUnit: conversion.unitsPerBulkUnit, inputUnit: conversion.inputUnit, factor: conversion.factor },
+      unitSchemaVersion: Math.max(1, Number(product.unitSchemaVersion || 1)),
+      conversionSnapshot: { baseUnit: conversion.baseUnit, bulkUnit: conversion.bulkUnit, unitsPerBulkUnit: conversion.unitsPerBulkUnit, inputUnit: conversion.inputUnit, factor: conversion.factor, unitSchemaVersion: Math.max(1, Number(product.unitSchemaVersion || 1)) },
       sourceExpectedRevision: Math.max(0, Number(sourceBalance.revision || 0)),
       destinationExpectedRevision: Math.max(0, Number(destinationBalance.revision || 0))
     };
@@ -690,6 +759,7 @@ function createTransferRequest(stockState, input = {}, actor = {}, options = {})
     sourceQuantity: firstItem.sourceQuantity,
     sourceUnit: firstItem.sourceUnit,
     conversionFactor: firstItem.conversionFactor,
+    unitSchemaVersion: firstItem.unitSchemaVersion,
     conversionSnapshot: firstItem.conversionSnapshot,
     sourceExpectedRevision: firstItem.sourceExpectedRevision,
     destinationExpectedRevision: firstItem.destinationExpectedRevision,
@@ -766,6 +836,7 @@ function approveTransfer(stockState, transferId, input = {}, actor = {}, options
       productId: product.id, stockProductCode: product.productCode, productName: productName(product),
       quantity: amount, baseUnit: item.baseUnit || product.unit, sourceQuantity: item.sourceQuantity || amount,
       sourceUnit: item.sourceUnit || product.unit, conversionFactor: item.conversionFactor || 1,
+      unitSchemaVersion: item.unitSchemaVersion || item.conversionSnapshot && item.conversionSnapshot.unitSchemaVersion || product.unitSchemaVersion,
       conversionSnapshot: item.conversionSnapshot || { ...productUnitMetadata(product), inputUnit: item.sourceUnit || product.unit, factor: item.conversionFactor || 1 },
       referenceType: "transfer", referenceId: transfer.id, transferId: transfer.id, requestId, idempotencyKey: requestId,
       transactionRef, actor, note: input.note || transfer.note, reason: "Depolar arası aktarım", createdAt: timestamp, approvedAt: timestamp
@@ -1097,7 +1168,9 @@ function stockStatus(balance, generalQuantity = 0) {
 
 function getLocationInventory(stockState, locationId, options = {}) {
   const state = normalizeState(stockState);
-  const location = locationId === "total" || locationId === "TOPLAM" ? null : getLocation(state, locationId);
+  const location = locationId === "total" || locationId === "TOPLAM"
+    ? null
+    : getLocation(state, locationId, { includeInactive: options.allowInactive === true, allowInactive: options.allowInactive === true });
   const cafe = defaultCafeLocation(state);
   const general = defaultGeneralLocation(state);
   const balances = (state.products || []).filter((product) => options.includeInactive || product.active !== false).map((product) => {
@@ -1221,6 +1294,7 @@ module.exports = {
   formatBaseQuantity,
   buildUnitMigrationPlan,
   migrateProductUnitSchema,
+  recordProductUnitSchemaTransition,
   rejectTransfer,
   reverseMovement,
   serializeCounts,

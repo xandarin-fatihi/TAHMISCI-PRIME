@@ -213,13 +213,138 @@ function consumptionModel(stock, product, rangeKey, analyticsIndex) {
   });
   const consumptionRows = rows.filter((item) => item.type === "manual_out");
   const wasteRows = rows.filter((item) => item.type === "waste");
-  const totalConsumption = consumptionRows.reduce((sum, item) => sum + Math.abs(Number(item.baseQuantityDelta || item.sourceQuantity || 0)), 0);
-  const totalWaste = wasteRows.reduce((sum, item) => sum + Math.abs(Number(item.baseQuantityDelta || item.sourceQuantity || 0)), 0);
+  const totalConsumption = consumptionRows.reduce((sum, item) => sum + normalizeMovementToActiveBase(item, product), 0);
+  const totalWaste = wasteRows.reduce((sum, item) => sum + normalizeMovementToActiveBase(item, product), 0);
   const firstTime = consumptionRows.length ? Math.min(...consumptionRows.map((item) => new Date(item.createdAt || 0).getTime()).filter(Number.isFinite)) : 0;
   const requestedDays = RANGE_DAYS[rangeKey] || 30;
   const activeDays = firstTime > 0 ? Math.max(1, Math.min(requestedDays || 3650, Math.ceil((Date.now() - firstTime) / DAY_MS) + 1)) : 0;
   const dailyAverage = activeDays ? totalConsumption / activeDays : 0;
   return { range: rangeKey, activeDays, totalConsumption: round(totalConsumption), totalWaste: round(totalWaste), dailyAverage: round(dailyAverage), monthlyAverage: round(dailyAverage * 30) };
+}
+
+function normalizeMovementToActiveBase(movement, product) {
+  const amount = historicalBaseQuantity(movement);
+  if (!(amount > 0)) return 0;
+  const activeSchema = schemaFromProduct(product);
+  const history = (Array.isArray(product.unitSchemaHistory) ? product.unitSchemaHistory : [])
+    .filter((entry) => entry && entry.baseUnit)
+    .slice()
+    .sort((left, right) => Number(left.version || 0) - Number(right.version || 0));
+  const requestedVersion = positive(
+    movement.unitSchemaVersion ?? (movement.conversionSnapshot && movement.conversionSnapshot.unitSchemaVersion),
+    0
+  );
+  let sourceSchema = requestedVersion
+    ? history.find((entry) => Number(entry.version) === Number(requestedVersion)) || null
+    : null;
+  if (!sourceSchema) {
+    const snapshot = movement.conversionSnapshot && typeof movement.conversionSnapshot === "object"
+      ? movement.conversionSnapshot
+      : null;
+    if (snapshot && snapshot.legacyInferred !== true && snapshot.baseUnit) sourceSchema = schemaFromSnapshot(snapshot);
+  }
+  if (!sourceSchema) sourceSchema = schemaAtMovementTime(history, movement.createdAt);
+  if (!sourceSchema) {
+    const snapshot = movement.conversionSnapshot && typeof movement.conversionSnapshot === "object"
+      ? movement.conversionSnapshot
+      : {};
+    const legacyBaseUnit = text(movement.baseUnit || movement.unit || snapshot.baseUnit);
+    if (legacyBaseUnit) sourceSchema = schemaFromSnapshot({ ...snapshot, baseUnit: legacyBaseUnit });
+  }
+  if (!sourceSchema) return round(amount);
+  const factor = historicalToActiveFactor(sourceSchema, activeSchema, history);
+  return factor === null ? round(amount) : round(amount * factor);
+}
+
+function historicalBaseQuantity(movement) {
+  const input = absoluteNumber(movement.inputQuantity ?? movement.sourceQuantity);
+  const factor = positive(movement.conversionFactor ?? (movement.conversionSnapshot && movement.conversionSnapshot.factor), 0);
+  if (input !== null && factor > 0) return input * factor;
+  const explicitBase = absoluteNumber(movement.baseQuantity);
+  if (explicitBase !== null && explicitBase > 0) return explicitBase;
+  const delta = absoluteNumber(movement.baseQuantityDelta);
+  if (delta !== null && delta > 0) return delta;
+  return input !== null ? input : absoluteNumber(movement.quantity) || 0;
+}
+
+function schemaFromProduct(product = {}) {
+  return {
+    version: Math.max(1, Number(product.unitSchemaVersion || 1)),
+    baseUnit: text(product.baseUnit || product.unit || "adet"),
+    bulkUnit: text(product.bulkUnit || product.caseUnit || ""),
+    unitsPerBulkUnit: positive(product.unitsPerBulkUnit ?? product.unitsPerCase, 0)
+  };
+}
+
+function schemaFromSnapshot(snapshot = {}) {
+  return {
+    version: positive(snapshot.version ?? snapshot.unitSchemaVersion, 0) || null,
+    baseUnit: text(snapshot.baseUnit || snapshot.unit || ""),
+    bulkUnit: text(snapshot.bulkUnit || snapshot.caseUnit || ""),
+    unitsPerBulkUnit: positive(snapshot.unitsPerBulkUnit ?? snapshot.unitsPerCase, 0),
+    validFrom: snapshot.validFrom || null,
+    validUntil: snapshot.validUntil || null
+  };
+}
+
+function schemaAtMovementTime(history, createdAt) {
+  const time = new Date(createdAt || 0).getTime();
+  if (!Number.isFinite(time) || !history.length) return null;
+  const hasTemporalEvidence = history.length > 1 || history.some((entry) => entry.validFrom || entry.validUntil);
+  if (!hasTemporalEvidence) return null;
+  return history.find((entry) => {
+    const from = entry.validFrom ? new Date(entry.validFrom).getTime() : Number.NEGATIVE_INFINITY;
+    const until = entry.validUntil ? new Date(entry.validUntil).getTime() : Number.POSITIVE_INFINITY;
+    return time >= (Number.isFinite(from) ? from : Number.NEGATIVE_INFINITY)
+      && time < (Number.isFinite(until) ? until : Number.POSITIVE_INFINITY);
+  }) || null;
+}
+
+function historicalToActiveFactor(sourceSchema, activeSchema, history) {
+  if (unitEquals(sourceSchema.baseUnit, activeSchema.baseUnit)) return 1;
+  const sourceVersion = positive(sourceSchema.version, 0);
+  const activeVersion = positive(activeSchema.version, 0);
+  if (sourceVersion && activeVersion) {
+    const ordered = history.filter((entry) => Number(entry.version) >= sourceVersion && Number(entry.version) <= activeVersion);
+    if (ordered.length && Number(ordered[0].version) === sourceVersion) {
+      let factor = 1;
+      let current = ordered[0];
+      for (let index = 1; index < ordered.length; index += 1) {
+        const transition = schemaConversionFactor(current, ordered[index]);
+        if (transition === null) return null;
+        factor *= transition;
+        current = ordered[index];
+      }
+      const finalTransition = schemaConversionFactor(current, activeSchema);
+      return finalTransition === null ? null : factor * finalTransition;
+    }
+  }
+  return schemaConversionFactor(sourceSchema, activeSchema);
+}
+
+function schemaConversionFactor(source, target) {
+  if (!source || !target || !source.baseUnit || !target.baseUnit) return null;
+  if (unitEquals(source.baseUnit, target.baseUnit)) return 1;
+  if (unitEquals(source.baseUnit, target.bulkUnit) && positive(target.unitsPerBulkUnit, 0) > 0) {
+    return positive(target.unitsPerBulkUnit, 0);
+  }
+  if (unitEquals(source.bulkUnit, target.baseUnit) && positive(source.unitsPerBulkUnit, 0) > 0) {
+    return 1 / positive(source.unitsPerBulkUnit, 0);
+  }
+  const measures = {
+    kg: { group: "mass", factor: 1000 }, gr: { group: "mass", factor: 1 }, g: { group: "mass", factor: 1 },
+    litre: { group: "volume", factor: 1000 }, liter: { group: "volume", factor: 1000 }, lt: { group: "volume", factor: 1000 }, l: { group: "volume", factor: 1000 },
+    ml: { group: "volume", factor: 1 }
+  };
+  const from = measures[searchable(source.baseUnit)];
+  const to = measures[searchable(target.baseUnit)];
+  return from && to && from.group === to.group ? from.factor / to.factor : null;
+}
+
+function absoluteNumber(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.abs(number) : null;
 }
 
 function coverageModel(product, balance, usage) {
