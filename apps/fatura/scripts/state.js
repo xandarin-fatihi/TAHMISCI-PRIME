@@ -16,7 +16,7 @@ export const state = {
   context: null, revision: 0, workforceRevision: 0, activeView: "dashboard", loaded: new Map(), eventSource: null,
   suppliers: [], productLinks: [], shipments: [], documents: [], ledgerEntries: [], payments: [], users: [], auditEvents: [],
   notifications: [], unreadCount: 0,
-  dashboard: null, settings: null, accessTemplates: [], sectionDefinitions: [], filters: Object.create(null), detail: null,
+  dashboard: null, settings: null, accessTemplates: [], sectionDefinitions: [], sectionAccess: Object.create(null), filters: Object.create(null), detail: null,
   revisions: { procurement: 0, workforce: 0, stock: 0, inventory: 0, shipment: 0, catalog: 0, notification: 0 },
   stock: {
     revision: 0, inventoryRevision: 0, catalogRevision: 0,
@@ -39,6 +39,17 @@ export const state = {
 export function has(capability) {
   const actor = state.context && state.context.actor;
   return Boolean(actor && (actor.capabilities || []).includes(capability));
+}
+
+export function sectionLevel(sectionId) {
+  const actor = state.context && state.context.actor;
+  if (actor && actor.type === "admin") return "full";
+  return String(state.sectionAccess && state.sectionAccess[sectionId] || "off");
+}
+
+export function hasSection(sectionId, minimumLevel = "view") {
+  const rank = { off: 0, view: 1, operate: 2, full: 3 };
+  return (rank[sectionLevel(sectionId)] || 0) >= (rank[minimumLevel] || 1);
 }
 
 export function updateRevision(payload, domain = "procurement") {

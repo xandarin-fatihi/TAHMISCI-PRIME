@@ -13,38 +13,14 @@ const {
   normalizeProductCodeRegistry,
   registryCodeForEntity
 } = require("./product-code-registry");
+const {
+  FATURA_CAPABILITIES,
+  FATURA_ROLES,
+  normalizeSectionAccess
+} = require("../procurement-access");
 
-const STORE_SCHEMA_VERSION = 20;
+const STORE_SCHEMA_VERSION = 21;
 const PROCUREMENT_SCHEMA_VERSION = 1;
-const FATURA_ROLES = new Set(["operasyon", "mal_kabul", "muhasebe", "satın_alma", "yönetici", "özel"]);
-const FATURA_CAPABILITIES = new Set([
-  "procurement.read",
-  "supplier.read",
-  "supplier.manage",
-  "supplierProduct.manage",
-  "receipt.create",
-  "receipt.submit",
-  "receipt.approve",
-  "receipt.reject",
-  "accounting.read",
-  "accounting.post",
-  "accounting.reverse",
-  "payment.create",
-  "payment.reverse",
-  "documents.read",
-  "documents.upload",
-  "documents.archive",
-  "procurement.users.manage",
-  "inventory.read",
-  "inventory.manage",
-  "inventory.movement.create",
-  "inventory.movement.reverse",
-  "inventory.transfer.create",
-  "inventory.transfer.approve",
-  "inventory.count.manage",
-  "inventory.location.manage",
-  "inventory.catalog.manage"
-]);
 const DEFAULT_FATURA_CAPABILITIES = Object.freeze([
   "supplier.read",
   "receipt.create",
@@ -889,15 +865,20 @@ function normalizeRecipeUsers(value) {
     const accessEnabled = typeof item.faturaAccessEnabled === "boolean"
       ? item.faturaAccessEnabled
       : capabilities.length > 0;
+    const role = FATURA_ROLES.has(String(item.faturaRole || "")) ? String(item.faturaRole) : "operasyon";
+    const template = procurementText(item.faturaTemplate, 40) || "ozel";
+    const sectionAccess = normalizeSectionAccess(item.faturaSectionAccess, {
+      capabilities,
+      allowManagement: template === "yonetici" || role === "yönetici"
+    });
     return {
       ...item,
       ...normalizeAccountSecurity(item),
       faturaAccessEnabled: accessEnabled,
-      faturaRole: FATURA_ROLES.has(String(item.faturaRole || ""))
-        ? String(item.faturaRole)
-        : "operasyon",
-      faturaTemplate: procurementText(item.faturaTemplate, 40) || "ozel",
+      faturaRole: role,
+      faturaTemplate: template,
       faturaCapabilities: accessEnabled ? capabilities : [],
+      faturaSectionAccess: sectionAccess,
       // Stok lokasyonu yalnızca sunucu tarafındaki oturumdan çözülür. Eski
       // personel kayıtları güvenli başlangıç olarak Kafe Deposuna bağlanır.
       stockLocationId: String(item.stockLocationId || item.locationId || "stock-location-cafe").trim() || "stock-location-cafe"

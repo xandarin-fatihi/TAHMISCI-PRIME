@@ -1,5 +1,5 @@
 import { api, ApiError, login, logout, requestId, uploadDocument } from "./api.js";
-import { CAPABILITIES, comboField, escapeHtml, has, icon, integerKurus, invalidate, state, trDate, updateRevision, value } from "./state.js";
+import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, updateRevision, value } from "./state.js";
 import { renderDashboard } from "./dashboard.js";
 import { renderProductLinks, renderSuppliers } from "./suppliers.js";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
@@ -104,6 +104,9 @@ async function resolveContext() {
   const payload = await api("/context", { dedupe: false });
   state.context = payload;
   state.settings = payload.procurement && payload.procurement.settings || {};
+  state.sectionAccess = payload.access && payload.access.sectionAccess && typeof payload.access.sectionAccess === "object"
+    ? { ...payload.access.sectionAccess }
+    : Object.create(null);
   updateRevision(payload);
   return payload;
 }
@@ -149,6 +152,8 @@ function capabilitySummary(actor) {
 }
 
 function canSeeView(view) {
+  const actor = state.context && state.context.actor;
+  if (actor && actor.type !== "admin" && state.context.access && state.context.access.sectionAccess) return hasSection(view.id, "view");
   const sections = state.context && state.context.access && state.context.access.sections;
   if (Array.isArray(sections)) return sections.includes(view.id);
   if (Array.isArray(view.all) && !view.all.every(has)) return false;
@@ -196,15 +201,24 @@ async function setView(viewId, options = {}) {
 
 async function loadView(view, force = false) {
   const loader = {
-    dashboard: () => Promise.all([loadDashboard(force), loadSuppliers(force), loadShipments(force), loadStockReferences(force)]),
+    dashboard: () => Promise.all([
+      loadDashboard(force),
+      hasSection("suppliers") ? loadSuppliers(force) : Promise.resolve().then(() => { state.suppliers = []; }),
+      hasSection("shipments") ? loadShipments(force) : Promise.resolve().then(() => { state.shipments = []; }),
+      hasSection("stock") || hasSection("productAnalysis") ? loadStockReferences(force) : null
+    ]),
     shipments: () => Promise.all([loadSuppliers(force), loadShipments(force), loadStockReferences(force)]),
     suppliers: () => loadSuppliers(force),
     links: () => Promise.all([loadSuppliers(force), loadProductLinks(force), loadStockReferences(force)]),
-    documents: () => Promise.all([loadSuppliers(force), loadShipments(force), loadDocuments(force)]),
+    documents: () => Promise.all([
+      loadSuppliers(force),
+      hasSection("shipments") ? loadShipments(force) : Promise.resolve().then(() => { state.shipments = []; }),
+      loadDocuments(force)
+    ]),
     ledger: () => Promise.all([loadSuppliers(force), loadLedger(force)]),
     users: () => loadUsers(force),
     stock: async () => {
-      if ([CAPABILITIES.read, CAPABILITIES.receiptCreate, CAPABILITIES.receiptApprove, CAPABILITIES.receiptReject, CAPABILITIES.accountingRead].some(has)) {
+      if (hasSection("shipments")) {
         await loadShipments(force);
       } else {
         state.shipments = [];
@@ -460,7 +474,17 @@ function handleChange(event) {
   }
   if (event.target.id === "access-template") return applyAccessTemplate(event.target);
   if (event.target.name === "faturaAccess") return toggleAccessControls(event.target.checked);
-  if (event.target.name === "capabilities") { const template = document.getElementById("access-template"); if (template) template.value = "ozel"; }
+  if (event.target.matches("[data-section-toggle]")) {
+    if (event.target.checked) {
+      const card = event.target.closest("[data-section-card]");
+      const defaultLevel = card && (card.querySelector('input[type="radio"][value="view"]') || card.querySelector('input[type="radio"]'));
+      if (defaultLevel) defaultLevel.checked = true;
+    }
+    markAccessAsCustom();
+    return updatePermissionSectionCard(event.target.closest("[data-section-card]"));
+  }
+  if (String(event.target.name || "").startsWith("sectionLevel:")) return markAccessAsCustom();
+  if (event.target.id === "fatura-role") return markAccessAsCustom(false);
   if (event.target.id === "shipment-status") { state.filters.shipmentStatus = event.target.value; return renderActiveView(); }
   if (event.target.id === "ledger-supplier") { state.filters.ledgerSupplier = event.target.value; return renderActiveView(); }
 }
@@ -506,24 +530,76 @@ function updateShipmentLineUnit(input) {
 }
 
 function applyAccessTemplate(select) {
-  const option = select.selectedOptions[0];
-  if (!option) return;
-  const capabilities = new Set(String(option.dataset.capabilities || "").split(",").filter(Boolean));
+  const template = state.accessTemplates.find((item) => item.key === select.value);
+  if (!template) return;
   const role = document.getElementById("fatura-role");
   const access = entityForm.elements.faturaAccess;
   if (access) access.checked = true;
-  if (role && option.dataset.role) role.value = option.dataset.role;
-  entityForm.querySelectorAll('input[name="capabilities"]').forEach((input) => {
-    input.disabled = option.value !== "ozel";
-    if (option.value !== "ozel") input.checked = capabilities.has(input.value);
-  });
+  if (role && template.role) role.value = template.role;
+  const custom = template.key === "ozel";
+  if (role) role.disabled = !custom;
+  const controls = entityForm.querySelector("[data-access-controls]");
+  if (controls) controls.dataset.templateMode = custom ? "custom" : "template";
+  if (!custom) applySectionAccessToForm(template.sectionAccess || {});
+  updateAllPermissionSectionCards();
 }
 
 function toggleAccessControls(enabled) {
   const template = document.getElementById("access-template");
-  entityForm.querySelectorAll('input[name="capabilities"]').forEach((input) => { input.disabled = !enabled || Boolean(template && template.value !== "ozel"); });
-  if (enabled && !entityForm.querySelector('input[name="capabilities"]:checked')) {
-    if (template) { template.value = "mal_kabul"; applyAccessTemplate(template); }
+  if (enabled && !entityForm.querySelector("[data-section-toggle]:checked")) {
+    if (template) {
+      template.value = state.accessTemplates.some((item) => item.key === "mal_kabul") ? "mal_kabul" : state.accessTemplates[0]?.key || "ozel";
+      applyAccessTemplate(template);
+      return;
+    }
+  }
+  updateAllPermissionSectionCards();
+}
+
+function applySectionAccessToForm(sectionAccess) {
+  entityForm.querySelectorAll("[data-section-card]").forEach((card) => {
+    const id = card.dataset.sectionCard;
+    const level = String(sectionAccess && sectionAccess[id] || "off");
+    const toggle = card.querySelector("[data-section-toggle]");
+    if (toggle) toggle.checked = level !== "off";
+    const radio = card.querySelector(`input[type="radio"][value="${CSS.escape(level)}"]`);
+    if (radio) radio.checked = true;
+  });
+}
+
+function markAccessAsCustom(resetRole = true) {
+  const template = document.getElementById("access-template");
+  if (template) template.value = "ozel";
+  const controls = entityForm.querySelector("[data-access-controls]");
+  if (controls) controls.dataset.templateMode = "custom";
+  const role = document.getElementById("fatura-role");
+  if (role) {
+    role.disabled = false;
+    if (resetRole) role.value = "özel";
+  }
+  updateAllPermissionSectionCards();
+}
+
+function updateAllPermissionSectionCards() {
+  entityForm.querySelectorAll("[data-section-card]").forEach(updatePermissionSectionCard);
+}
+
+function updatePermissionSectionCard(card) {
+  if (!card) return;
+  const enabled = Boolean(entityForm.elements.faturaAccess && entityForm.elements.faturaAccess.checked);
+  const toggle = card.querySelector("[data-section-toggle]");
+  const open = Boolean(toggle && toggle.checked);
+  card.classList.toggle("is-open", open);
+  if (toggle) toggle.disabled = !enabled;
+  const label = card.querySelector(".permission-section-switch span");
+  if (label) label.textContent = open ? "Görünür" : "Kapalı";
+  const fieldset = card.querySelector("[data-section-levels]");
+  if (!fieldset) return;
+  fieldset.hidden = !open;
+  fieldset.disabled = !enabled || !open;
+  if (open && !fieldset.querySelector("input:checked")) {
+    const first = fieldset.querySelector("input[value=view], input");
+    if (first) first.checked = true;
   }
 }
 
@@ -637,7 +713,14 @@ async function saveLedgerEntry(data) {
 }
 async function saveUserAccess(data) {
   const accessEnabled = data.get("faturaAccess") === "on";
-  const payload = await api(`/users/${encodeURIComponent(entityForm.dataset.entityId)}/access`, { method: "PUT", body: { faturaAccessEnabled: accessEnabled, faturaTemplate: value(data,"accessTemplate") || "ozel", faturaRole: value(data,"faturaRole") || "özel", faturaCapabilities: accessEnabled ? data.getAll("capabilities").map(String) : [] }, expectedRevision: state.revision });
+  const sectionAccess = {};
+  entityForm.querySelectorAll("[data-section-card]").forEach((card) => {
+    const sectionId = String(card.dataset.sectionCard || "");
+    const enabled = Boolean(card.querySelector("[data-section-toggle]")?.checked);
+    const selectedLevel = card.querySelector('input[type="radio"]:checked')?.value || "view";
+    if (sectionId) sectionAccess[sectionId] = enabled ? selectedLevel : "off";
+  });
+  const payload = await api(`/users/${encodeURIComponent(entityForm.dataset.entityId)}/access`, { method: "PUT", body: { faturaAccessEnabled: accessEnabled, faturaTemplate: value(data,"accessTemplate") || "ozel", faturaRole: value(data,"faturaRole") || "özel", faturaSectionAccess: sectionAccess }, expectedRevision: state.revision });
   mutationComplete(payload, ["users"]);
 }
 async function saveShipmentAccounting(data) {

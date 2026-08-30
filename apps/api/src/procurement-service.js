@@ -3,11 +3,20 @@
 const crypto = require("crypto");
 const { EventEmitter } = require("events");
 const {
-  FATURA_CAPABILITIES,
-  FATURA_ROLES,
   normalizeProcurement,
   normalizeStockState
 } = require("./store/migrations");
+const {
+  FATURA_CAPABILITIES,
+  FATURA_ROLES,
+  deriveCapabilitiesFromSectionAccess,
+  effectiveSectionAccess,
+  hasSectionAccess,
+  normalizeSectionAccess,
+  publicSectionDefinitions: canonicalPublicSectionDefinitions,
+  templateSectionAccess,
+  visibleFaturaSections
+} = require("./procurement-access");
 const { normalizeProductCode } = require("./store/product-code-registry");
 
 const IDEMPOTENCY_LIMIT = 1000;
@@ -18,44 +27,24 @@ const REQUEST_ID_PATTERN = /^[a-zA-Z0-9._:-]{8,160}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const PRIVILEGED_SHIPMENT_CAPABILITIES = ["procurement.read", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "supplier.manage"];
 const FATURA_ACCESS_TEMPLATES = Object.freeze({
-  mal_kabul: Object.freeze({
-    key: "mal_kabul",
-    label: "Mal Kabul Personeli",
-    role: "mal_kabul",
-    capabilities: Object.freeze(["supplier.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "documents.read", "documents.upload"])
-  }),
-  satin_alma: Object.freeze({
-    key: "satin_alma",
-    label: "Satın Alma",
-    role: "satın_alma",
-    capabilities: Object.freeze(["procurement.read", "supplier.read", "supplier.manage", "supplierProduct.manage", "receipt.create", "receipt.submit", "documents.read", "documents.upload"])
-  }),
-  muhasebe: Object.freeze({
-    key: "muhasebe",
-    label: "Muhasebe",
-    role: "muhasebe",
-    capabilities: Object.freeze(["supplier.read", "documents.read", "accounting.read", "accounting.post", "accounting.reverse", "payment.create", "payment.reverse"])
-  }),
-  yonetici: Object.freeze({
-    key: "yonetici",
-    label: "Fatura Yöneticisi",
-    role: "yönetici",
-    capabilities: Object.freeze([...FATURA_CAPABILITIES])
-  }),
-  ozel: Object.freeze({ key: "ozel", label: "Özel Yetki", role: "özel", capabilities: Object.freeze([]) })
+  stok_personeli: accessTemplate("stok_personeli", "Stok Personeli", "operasyon"),
+  mal_kabul: accessTemplate("mal_kabul", "Mal Kabul Personeli", "mal_kabul"),
+  satin_alma: accessTemplate("satin_alma", "Satın Alma", "satın_alma"),
+  muhasebe: accessTemplate("muhasebe", "Muhasebe", "muhasebe"),
+  yonetici: accessTemplate("yonetici", "Fatura Yöneticisi", "yönetici", true),
+  ozel: accessTemplate("ozel", "Özel Yetki", "özel")
 });
-const FATURA_SECTION_DEFINITIONS = Object.freeze([
-  Object.freeze({ id: "dashboard", label: "Genel Bakış", all: Object.freeze(["procurement.read"]) }),
-  Object.freeze({ id: "stock", label: "Stok & Sevkiyat", all: Object.freeze(["inventory.read"]) }),
-  Object.freeze({ id: "productAnalysis", label: "Ürün Analizi", all: Object.freeze(["inventory.read", "procurement.read"]) }),
-  Object.freeze({ id: "shipments", label: "Mal Kabul", any: Object.freeze(["procurement.read", "receipt.create", "receipt.approve", "receipt.reject", "accounting.read"]) }),
-  Object.freeze({ id: "suppliers", label: "Tedarikçiler", any: Object.freeze(["supplier.read", "receipt.create", "supplier.manage"]) }),
-  Object.freeze({ id: "links", label: "Ürün Eşlemeleri", any: Object.freeze(["procurement.read", "receipt.create", "supplierProduct.manage"]) }),
-  Object.freeze({ id: "documents", label: "Belgeler", all: Object.freeze(["documents.read"]) }),
-  Object.freeze({ id: "ledger", label: "Cari Hesap", all: Object.freeze(["accounting.read"]) }),
-  Object.freeze({ id: "users", label: "Kullanıcı ve Yetkiler", all: Object.freeze(["procurement.users.manage"]) }),
-  Object.freeze({ id: "settings", label: "Ayarlar ve Audit", any: Object.freeze(["procurement.users.manage", "accounting.read"]) })
-]);
+
+function accessTemplate(key, label, role, allowManagement = false) {
+  const sectionAccess = templateSectionAccess(key);
+  return Object.freeze({
+    key,
+    label,
+    role,
+    sectionAccess: Object.freeze({ ...sectionAccess }),
+    capabilities: Object.freeze(deriveCapabilitiesFromSectionAccess(sectionAccess, { allowManagement }))
+  });
+}
 
 function createProcurementService(options = {}) {
   const store = options.store;
@@ -85,7 +74,8 @@ function createProcurementService(options = {}) {
       actor: publicActorValue,
       access: {
         enabled: publicActorValue.accessEnabled,
-        sections: visibleFaturaSections(actor)
+        sections: publicActorValue.sections,
+        sectionAccess: publicActorValue.sectionAccess
       },
       procurement: {
         version: procurement.version,
@@ -106,8 +96,14 @@ function createProcurementService(options = {}) {
 
   async function dashboard(actor) {
     requireCapability(actor, "procurement.read");
+    requireSection(actor, "dashboard", "view");
     const { data, procurement } = await readSnapshot();
-    const shipments = visibleShipments(data.workforceShipments, actor);
+    const shipmentVisible = hasSectionAccess(actor, "shipments", "view");
+    const supplierVisible = hasSectionAccess(actor, "suppliers", "view");
+    const ledgerVisible = hasSectionAccess(actor, "ledger", "view");
+    const linkVisible = hasSectionAccess(actor, "links", "view");
+    const stockVisible = hasSectionAccess(actor, "stock", "view");
+    const shipments = shipmentVisible ? visibleShipments(data.workforceShipments, actor) : [];
     const today = dateKey(now());
     const monthPrefix = today.slice(0, 7);
     const dueSoonDays = procurement.settings.dueSoonDays || 7;
@@ -115,12 +111,13 @@ function createProcurementService(options = {}) {
     const balances = supplierBalances(procurement.ledgerEntries);
     const invoiceEntries = procurement.ledgerEntries.filter((entry) => entry.type === "invoice" && !isReversed(entry, procurement.ledgerEntries));
     const payments = procurement.ledgerEntries.filter((entry) => entry.type === "payment" && !isReversed(entry, procurement.ledgerEntries));
-    const financialVisible = hasCapability(actor, "accounting.read");
+    const financialVisible = ledgerVisible && hasCapability(actor, "accounting.read");
     return {
       ok: true,
       revision: procurement.revision,
       dashboard: {
         financialVisible,
+        visibility: { stock: stockVisible, shipments: shipmentVisible, suppliers: supplierVisible, links: linkVisible, ledger: ledgerVisible },
         supplierDebtKurus: financialVisible ? [...balances.values()].reduce((sum, balance) => addKurus(sum, Math.max(0, -balance)), 0) : 0,
         monthPurchasesKurus: financialVisible ? invoiceEntries
           .filter((entry) => String(entry.createdAt || "").startsWith(monthPrefix))
@@ -128,13 +125,13 @@ function createProcurementService(options = {}) {
         monthPaymentsKurus: financialVisible ? payments
           .filter((entry) => String(entry.createdAt || "").startsWith(monthPrefix))
           .reduce((sum, entry) => addKurus(sum, Math.max(0, entry.amountKurus)), 0) : 0,
-        pendingShipments: shipments.filter((shipment) => shipment.status === "onay_bekliyor").length,
-        unaccountedShipments: shipments.filter((shipment) => !["taslak", "reddedildi"].includes(shipment.status)
-          && shipment.accountingStatus !== "posted").length,
-        missingDocuments: shipments.filter((shipment) => !(shipment.evidenceDocumentIds || []).length).length,
+        pendingShipments: shipmentVisible ? shipments.filter((shipment) => shipment.status === "onay_bekliyor").length : 0,
+        unaccountedShipments: shipmentVisible && ledgerVisible ? shipments.filter((shipment) => !["taslak", "reddedildi"].includes(shipment.status)
+          && shipment.accountingStatus !== "posted").length : 0,
+        missingDocuments: shipmentVisible && hasSectionAccess(actor, "documents", "view") ? shipments.filter((shipment) => !(shipment.evidenceDocumentIds || []).length).length : 0,
         dueSoon: financialVisible ? invoiceEntries.filter((entry) => entry.dueDate && entry.dueDate >= today && entry.dueDate <= dueSoonLimit).length : 0,
         overdue: financialVisible ? invoiceEntries.filter((entry) => entry.dueDate && entry.dueDate < today).length : 0,
-        recentPriceChanges: procurement.supplierProductLinks
+        recentPriceChanges: linkVisible ? procurement.supplierProductLinks
           .filter((link) => link.active !== false && link.lastPurchasePriceKurus !== link.defaultPurchasePriceKurus)
           .slice(-10)
           .reverse()
@@ -146,13 +143,15 @@ function createProcurementService(options = {}) {
             previousPriceKurus: link.defaultPurchasePriceKurus,
             currentPriceKurus: link.lastPurchasePriceKurus,
             updatedAt: link.updatedAt
-          }))
+          })) : []
       }
     };
   }
 
   async function listSuppliers(actor, filters = {}) {
-    requireAnyCapability(actor, ["supplier.read", "receipt.create", "supplier.manage"]);
+    // Tedarikçi listesi Mal Kabul, Belgeler, Cari ve Ürün Eşleşmeleri için ortak
+    // destek verisidir; section gate route katmanında ilgili açık bölümü doğrular.
+    requireAnyCapability(actor, ["supplier.read", "supplier.manage", "receipt.create", "procurement.read", "documents.read", "accounting.read"]);
     const { procurement } = await readSnapshot();
     const balances = hasCapability(actor, "accounting.read") ? supplierBalances(procurement.ledgerEntries) : null;
     const search = normalizeLookup(filters.search);
@@ -1030,7 +1029,7 @@ function createProcurementService(options = {}) {
   }
 
   async function listAudit(actor, filters = {}) {
-    requireAnyCapability(actor, ["procurement.users.manage", "accounting.read"]);
+    requireCapability(actor, "procurement.users.manage");
     const { procurement } = await readSnapshot();
     let events = procurement.auditEvents;
     if (filters.entityType) events = events.filter((event) => event.entityType === String(filters.entityType));
@@ -1065,12 +1064,30 @@ function createProcurementService(options = {}) {
       if (!template) throw fail("Fatura yetki şablonu geçersiz.", 400, "INVALID_FATURA_TEMPLATE");
       const role = templateKey === "ozel" ? String(source.faturaRole || "özel") : template.role;
       if (!FATURA_ROLES.has(role)) throw fail("Fatura rolü geçersiz.", 400, "INVALID_FATURA_ROLE");
-      const requestedCapabilities = templateKey === "ozel"
-        ? uniqueStrings(source.faturaCapabilities, 100)
-        : [...template.capabilities];
+      if (templateKey === "ozel" && role === "yönetici") throw fail("Fatura Yöneticisi rolü yalnız hazır yönetici şablonuyla verilebilir.", 400, "INVALID_FATURA_ROLE");
+      const allowManagement = templateKey === "yonetici";
+      if (templateKey === "ozel" && source.faturaSectionAccess && typeof source.faturaSectionAccess === "object") {
+        const definitions = canonicalPublicSectionDefinitions();
+        const definitionsById = new Map(definitions.map((definition) => [definition.id, definition]));
+        for (const [sectionId, level] of Object.entries(source.faturaSectionAccess)) {
+          const definition = definitionsById.get(sectionId);
+          if (!definition || !definition.levels.includes(String(level))) {
+            throw fail("Fatura bölüm yetkisi geçersiz.", 400, "INVALID_FATURA_SECTION_ACCESS", { sectionId, level });
+          }
+        }
+      }
+      const sectionAccess = templateKey === "ozel"
+        ? normalizeSectionAccess(source.faturaSectionAccess && typeof source.faturaSectionAccess === "object"
+            ? source.faturaSectionAccess
+            : user.faturaSectionAccess, {
+            capabilities: user.faturaCapabilities,
+            allowManagement: false
+          })
+        : { ...template.sectionAccess };
+      const requestedCapabilities = deriveCapabilitiesFromSectionAccess(sectionAccess, { allowManagement });
       const accessEnabled = typeof source.faturaAccessEnabled === "boolean"
         ? source.faturaAccessEnabled
-        : requestedCapabilities.length > 0;
+        : Object.values(sectionAccess).some((level) => level !== "off");
       const capabilities = accessEnabled ? requestedCapabilities : [];
       if (capabilities.some((capability) => !FATURA_CAPABILITIES.has(capability))) {
         throw fail("Bilinmeyen fatura yetkisi gönderildi.", 400, "INVALID_CAPABILITY");
@@ -1080,6 +1097,7 @@ function createProcurementService(options = {}) {
       user.faturaRole = role;
       user.faturaTemplate = templateKey;
       user.faturaCapabilities = capabilities;
+      user.faturaSectionAccess = sectionAccess;
       user.updatedAt = isoNow(now);
       const updated = publicProcurementUser(user);
       helpers.notifyPerson(data, user.id, {
@@ -1087,26 +1105,28 @@ function createProcurementService(options = {}) {
         eventType: "procurement_access_updated",
         title: accessEnabled ? "Fatura erişimin güncellendi" : "Fatura erişimin kaldırıldı",
         body: accessEnabled
-          ? `${template.label} yetki şablonu hesabına uygulandı.`
+          ? "Fatura erişimin ve bölüm yetkilerin güncellendi."
           : "Yönetici Fatura uygulaması erişimini kapattı.",
         severity: accessEnabled ? "info" : "warning",
         entityType: "procurement_access",
         entityId: String(user.id),
         deepLink: "/fatura/",
         dedupeKey: `procurement-access:${user.id}:${helpers.requestId}`,
-        metadata: { accessEnabled, template: templateKey, role }
+        metadata: { accessEnabled, template: templateKey, role, sectionAccess }
       });
       return helpers.result("personel", user.id, { user: updated }, {
         previous: {
           accessEnabled: previous.faturaAccessEnabled,
           template: previous.faturaTemplate,
           role: previous.faturaRole,
+          sectionAccess: previous.faturaSectionAccess,
           capabilities: previous.faturaCapabilities.join(",")
         },
         next: {
           accessEnabled: updated.faturaAccessEnabled,
           template: updated.faturaTemplate,
           role: updated.faturaRole,
+          sectionAccess: updated.faturaSectionAccess,
           capabilities: updated.faturaCapabilities.join(",")
         }
       });
@@ -1145,8 +1165,16 @@ function createProcurementService(options = {}) {
     const kind = ["ledger", "suppliers", "shipments"].includes(String(filters.kind || ""))
       ? String(filters.kind)
       : "ledger";
-    if (kind === "ledger") requireCapability(actor, "accounting.read");
-    else requireCapability(actor, "procurement.read");
+    if (kind === "ledger") {
+      requireSection(actor, "ledger", "view");
+      requireCapability(actor, "accounting.read");
+    } else if (kind === "suppliers") {
+      requireSection(actor, "suppliers", "view");
+      requireCapability(actor, "supplier.read");
+    } else {
+      requireSection(actor, "shipments", "view");
+      requireCapability(actor, "procurement.read");
+    }
     const { data, procurement } = await readSnapshot();
     const supplierIndex = new Map(procurement.suppliers.map((supplier) => [supplier.id, supplier]));
     let headers;
@@ -1355,12 +1383,18 @@ function requireAnyCapability(actor, capabilities) {
   throw fail("Bu işlem için yetkiniz yok.", 403, "PROCUREMENT_CAPABILITY_REQUIRED", { capabilities });
 }
 
+function requireSection(actor, sectionId, minimumLevel = "view") {
+  if (hasSectionAccess(actor, sectionId, minimumLevel)) return;
+  throw fail("Bu Fatura bölümüne erişim yetkiniz yok.", 403, "PROCUREMENT_SECTION_ACCESS_REQUIRED", { sectionId, minimumLevel });
+}
+
 function hasCapability(actor, capability) {
   return Boolean(actor && (actor.type === "admin" || actor.capabilities && actor.capabilities.includes(capability)));
 }
 
 function publicActor(actor) {
   const capabilities = actor.type === "admin" ? [...FATURA_CAPABILITIES] : [...new Set(actor.capabilities || [])];
+  const sectionAccess = effectiveSectionAccess({ ...actor, capabilities });
   return {
     type: actor.type,
     id: actor.id,
@@ -1369,24 +1403,34 @@ function publicActor(actor) {
     branchId: actor.branchId || "main",
     accessEnabled: actor.type === "admin" || actor.accessEnabled !== false && capabilities.length > 0,
     template: actor.type === "admin" ? "yonetici" : String(actor.template || "ozel"),
-    capabilities
+    capabilities,
+    sectionAccess,
+    sections: visibleFaturaSections({ ...actor, capabilities, sectionAccess })
   };
 }
 
 function publicProcurementUser(user) {
   const capabilities = [...new Set(Array.isArray(user.faturaCapabilities) ? user.faturaCapabilities : [])];
   const template = String(user.faturaTemplate || "ozel");
+  const accessEnabled = user.faturaAccessEnabled !== false && capabilities.length > 0;
+  const sectionAccess = normalizeSectionAccess(user.faturaSectionAccess, {
+    capabilities,
+    allowManagement: template === "yonetici" || String(user.faturaRole) === "yönetici"
+  });
   return {
     id: String(user.id || ""),
     username: String(user.username || ""),
     name: String(user.name || user.username || ""),
     active: user.active !== false,
     branchId: String(user.branchId || "main"),
-    faturaAccessEnabled: user.faturaAccessEnabled !== false && capabilities.length > 0,
+    faturaAccessEnabled: accessEnabled,
     faturaRole: String(user.faturaRole || "operasyon"),
     faturaTemplate: template,
     faturaCapabilities: capabilities,
-    faturaSections: visibleFaturaSections({ type: "personel", template, capabilities })
+    faturaSectionAccess: sectionAccess,
+    faturaSections: accessEnabled
+      ? visibleFaturaSections({ type: "personel", template, role: user.faturaRole, capabilities, sectionAccess, accessEnabled })
+      : []
   };
 }
 
@@ -1449,9 +1493,13 @@ function notifyFaturaReceiptUsers(data, helpers, shipment, input) {
       type: "personel",
       id: String(user.id || ""),
       branchId,
-      capabilities
+      capabilities,
+      accessEnabled: user.faturaAccessEnabled !== false,
+      template: String(user.faturaTemplate || "ozel"),
+      role: String(user.faturaRole || "operasyon"),
+      sectionAccess: user.faturaSectionAccess
     };
-    if (!recipient.id || !canViewAllShipments(recipient)) continue;
+    if (!recipient.id || !hasSectionAccess(recipient, "shipments", "view") || !canViewAllShipments(recipient)) continue;
     helpers.notifyPerson(data, recipient.id, {
       category: "shipment",
       eventType: input.eventType,
@@ -1471,24 +1519,8 @@ function notifyFaturaReceiptUsers(data, helpers, shipment, input) {
   }
 }
 
-function visibleFaturaSections(actor) {
-  return FATURA_SECTION_DEFINITIONS
-    .filter((section) => {
-      const all = Array.isArray(section.all) ? section.all : [];
-      const any = Array.isArray(section.any) ? section.any : [];
-      return all.every((capability) => hasCapability(actor, capability))
-        && (!any.length || any.some((capability) => hasCapability(actor, capability)));
-    })
-    .map((section) => section.id);
-}
-
 function publicSectionDefinitions() {
-  return FATURA_SECTION_DEFINITIONS.map((section) => ({
-    id: section.id,
-    label: section.label,
-    allCapabilities: [...(section.all || [])],
-    anyCapabilities: [...(section.any || [])]
-  }));
+  return canonicalPublicSectionDefinitions();
 }
 
 function publicAccessTemplates() {
@@ -1497,7 +1529,8 @@ function publicAccessTemplates() {
     label: template.label,
     role: template.role,
     capabilities: [...template.capabilities],
-    sections: visibleFaturaSections({ type: "personel", template: template.key, capabilities: [...template.capabilities] })
+    sectionAccess: { ...template.sectionAccess },
+    sections: Object.entries(template.sectionAccess).filter(([, level]) => level !== "off").map(([sectionId]) => sectionId)
   }));
 }
 

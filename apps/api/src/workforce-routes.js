@@ -2,6 +2,7 @@
 
 const { normalizeProductCode } = require("./store/product-code-registry");
 const stockService = require("./stock-service");
+const { hasSectionAccess } = require("./procurement-access");
 
 const SHIPMENT_UNITS = new Set(["koli", "paket", "adet", "kg", "gr", "litre", "ml", "şişe"]);
 const SHIFT_TYPES = new Set(["morning", "evening", "leave", "custom", "unassigned"]);
@@ -64,6 +65,14 @@ function registerWorkforceRoutes(deps) {
       if (String(user.branchId || "main") !== branchId) continue;
       const capabilities = Array.isArray(user.faturaCapabilities) ? user.faturaCapabilities : [];
       if (!capabilities.some((item) => receiptCapabilities.has(String(item)))) continue;
+      if (!hasSectionAccess({
+        type: "personel",
+        accessEnabled: user.faturaAccessEnabled !== false,
+        role: user.faturaRole,
+        template: user.faturaTemplate,
+        capabilities,
+        sectionAccess: user.faturaSectionAccess
+      }, "shipments", "view")) continue;
       queueNotification(data, pending, personnelNotification(user.id, {
         category: "shipment",
         eventType: "shipment_reported",

@@ -1,5 +1,5 @@
 import { api as faturaApi, requestId as createRequestId } from "./api.js";
-import { CAPABILITIES, has, state as faturaState, updateRevision as syncRevision } from "./state.js";
+import { CAPABILITIES, has, hasSection, state as faturaState, updateRevision as syncRevision } from "./state.js";
 import { renderShipments } from "./receipts.js";
 
 "use strict";
@@ -95,18 +95,10 @@ import { renderShipments } from "./receipts.js";
     ];
     for (const [selector, capability] of rules) {
       const node = $(selector);
-      if (node) node.hidden = !can(capability);
+      if (node) node.hidden = !can(capability) || selector === "#stockQuickShipmentButton" && !hasSection("shipments");
     }
     const shipmentPanel = $(".stock-shipment-panel");
-    if (shipmentPanel) {
-      shipmentPanel.hidden = ![
-        CAPABILITIES.read,
-        CAPABILITIES.receiptCreate,
-        CAPABILITIES.receiptApprove,
-        CAPABILITIES.receiptReject,
-        CAPABILITIES.accountingRead
-      ].some(can);
-    }
+    if (shipmentPanel) shipmentPanel.hidden = !hasSection("shipments");
   }
 
   function formatNumber(value) {
@@ -1145,7 +1137,7 @@ import { renderShipments } from "./receipts.js";
   function renderShipmentWorkspace() {
     const host = $("#stockShipmentWorkspace");
     if (!host) return;
-    host.innerHTML = renderShipments();
+    host.innerHTML = hasSection("shipments") ? renderShipments() : "";
   }
 
   function setCatalogMessage(message, isError = false) {

@@ -6,8 +6,13 @@ const {
   hasCapability,
   safeDocumentMetadata
 } = require("./procurement-service");
-const { FATURA_CAPABILITIES } = require("./store/migrations");
 const { normalizeStockState } = require("./store/migrations");
+const {
+  FATURA_CAPABILITIES,
+  hasSectionAccess,
+  normalizeSectionAccess,
+  templateSectionAccess
+} = require("./procurement-access");
 const stockService = require("./stock-service");
 const stockAnalytics = require("./stock-analytics");
 
@@ -55,14 +60,14 @@ function registerProcurementRoutes(deps = {}) {
   });
 
   app.get(`${API_ROOT}/analytics/products`, ...authenticated,
-    capability("inventory.read"), capability("procurement.read"),
+    sectionAccess("productAnalysis", "view"), capability("inventory.read"), capability("procurement.read"),
     asyncRoute(async (req, res) => {
       const data = req.storeSnapshot || await store.read();
       res.json({ ok: true, ...stockAnalytics.searchProducts(data, req.query.query, { limit: req.query.limit }) });
     }));
 
   app.get(`${API_ROOT}/analytics/products/:productId`, ...authenticated,
-    capability("inventory.read"), capability("procurement.read"),
+    sectionAccess("productAnalysis", "view"), capability("inventory.read"), capability("procurement.read"),
     asyncRoute(async (req, res) => {
       const data = req.storeSnapshot || await store.read();
       const financialVisible = req.procurementActor.type === "admin"
@@ -70,76 +75,75 @@ function registerProcurementRoutes(deps = {}) {
       res.json({ ok: true, ...stockAnalytics.productAnalytics(data, req.params.productId, req.query.range, { financialVisible }) });
     }));
 
-  app.get(`${API_ROOT}/analytics/stock-plan`, ...authenticated, capability("inventory.read"),
+  app.get(`${API_ROOT}/analytics/stock-plan`, ...authenticated, sectionAccess("stock", "view"), capability("inventory.read"),
     asyncRoute(async (req, res) => {
       const data = req.storeSnapshot || await store.read();
       const financialVisible = req.procurementActor.type === "admin"
         || ["accounting.read", "accounting.post", "supplier.manage", "supplierProduct.manage"].some((item) => hasCapability(req.procurementActor, item));
-      const shipmentVisible = req.procurementActor.type === "admin"
-        || ["procurement.read", "receipt.create", "receipt.approve", "receipt.reject", "accounting.read"].some((item) => hasCapability(req.procurementActor, item));
+      const shipmentVisible = hasSectionAccess(req.procurementActor, "shipments", "view");
       res.json({ ok: true, ...stockAnalytics.stockPlanning(data, req.query.range, { financialVisible, shipmentVisible }) });
     }));
 
-  app.get(`${API_ROOT}/dashboard`, ...authenticated, capability("procurement.read"), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/dashboard`, ...authenticated, sectionAccess("dashboard", "view"), capability("procurement.read"), asyncRoute(async (req, res) => {
     res.json(await service.dashboard(req.procurementActor));
   }));
 
-  app.get(`${API_ROOT}/suppliers`, ...authenticated, anyCapability(["supplier.read", "receipt.create", "supplier.manage"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/suppliers`, ...authenticated, anySectionAccess(["suppliers", "shipments", "documents", "ledger", "links"]), anyCapability(["supplier.read", "supplier.manage", "receipt.create", "procurement.read", "documents.read", "accounting.read"]), asyncRoute(async (req, res) => {
     res.json(await service.listSuppliers(req.procurementActor, req.query));
   }));
 
-  app.post(`${API_ROOT}/suppliers`, ...mutationMiddlewares, capability("supplier.manage"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/suppliers`, ...mutationMiddlewares, sectionAccess("suppliers", "full"), capability("supplier.manage"), asyncRoute(async (req, res) => {
     const result = await service.createSupplier(req.procurementActor, jsonBody(req), mutationInput(req));
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
 
-  app.put(`${API_ROOT}/suppliers/:id`, ...mutationMiddlewares, capability("supplier.manage"), asyncRoute(async (req, res) => {
+  app.put(`${API_ROOT}/suppliers/:id`, ...mutationMiddlewares, sectionAccess("suppliers", "full"), capability("supplier.manage"), asyncRoute(async (req, res) => {
     res.json(await service.updateSupplier(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.post(`${API_ROOT}/suppliers/:id/deactivate`, ...mutationMiddlewares, capability("supplier.manage"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/suppliers/:id/deactivate`, ...mutationMiddlewares, sectionAccess("suppliers", "full"), capability("supplier.manage"), asyncRoute(async (req, res) => {
     res.json(await service.deactivateSupplier(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.get(`${API_ROOT}/product-links`, ...authenticated, anyCapability(["procurement.read", "receipt.create", "supplierProduct.manage"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/product-links`, ...authenticated, sectionAccess("links", "view"), anyCapability(["procurement.read", "receipt.create", "supplierProduct.manage"]), asyncRoute(async (req, res) => {
     res.json(await service.listProductLinks(req.procurementActor, req.query));
   }));
 
-  app.post(`${API_ROOT}/product-links`, ...mutationMiddlewares, capability("supplierProduct.manage"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/product-links`, ...mutationMiddlewares, sectionAccess("links", "full"), capability("supplierProduct.manage"), asyncRoute(async (req, res) => {
     const result = await service.createProductLink(req.procurementActor, jsonBody(req), mutationInput(req));
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
 
-  app.put(`${API_ROOT}/product-links/:id`, ...mutationMiddlewares, capability("supplierProduct.manage"), asyncRoute(async (req, res) => {
+  app.put(`${API_ROOT}/product-links/:id`, ...mutationMiddlewares, sectionAccess("links", "full"), capability("supplierProduct.manage"), asyncRoute(async (req, res) => {
     res.json(await service.updateProductLink(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.get(`${API_ROOT}/shipments`, ...authenticated, anyCapability(["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/shipments`, ...authenticated, sectionAccess("shipments", "view"), anyCapability(["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
     res.json(await service.listShipments(req.procurementActor, req.query));
   }));
 
-  app.get(`${API_ROOT}/shipments/:id`, ...authenticated, anyCapability(["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/shipments/:id`, ...authenticated, sectionAccess("shipments", "view"), anyCapability(["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
     res.json(await service.getShipment(req.procurementActor, req.params.id));
   }));
 
-  app.post(`${API_ROOT}/shipments`, ...mutationMiddlewares, capability("receipt.create"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/shipments`, ...mutationMiddlewares, sectionAccess("shipments", "operate"), capability("receipt.create"), asyncRoute(async (req, res) => {
     const result = await service.createShipment(req.procurementActor, jsonBody(req), mutationInput(req));
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
 
-  app.put(`${API_ROOT}/shipments/:id`, ...mutationMiddlewares, capability("receipt.create"), asyncRoute(async (req, res) => {
+  app.put(`${API_ROOT}/shipments/:id`, ...mutationMiddlewares, sectionAccess("shipments", "operate"), capability("receipt.create"), asyncRoute(async (req, res) => {
     res.json(await service.updateShipment(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.delete(`${API_ROOT}/shipments/:id`, ...mutationMiddlewares, anyCapability(["receipt.create", "receipt.reject"]), asyncRoute(async (req, res) => {
+  app.delete(`${API_ROOT}/shipments/:id`, ...mutationMiddlewares, sectionAccess("shipments", "operate"), anyCapability(["receipt.create", "receipt.reject"]), asyncRoute(async (req, res) => {
     res.json(await service.deleteShipment(req.procurementActor, req.params.id, mutationInput(req)));
   }));
 
-  app.post(`${API_ROOT}/shipments/:id/submit`, ...mutationMiddlewares, capability("receipt.submit"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/shipments/:id/submit`, ...mutationMiddlewares, sectionAccess("shipments", "operate"), capability("receipt.submit"), asyncRoute(async (req, res) => {
     res.json(await service.submitShipment(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.post(`${API_ROOT}/shipments/:id/approve-stock`, ...mutationMiddlewares, capability("receipt.approve"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/shipments/:id/approve-stock`, ...mutationMiddlewares, sectionAccess("shipments", "full"), capability("receipt.approve"), asyncRoute(async (req, res) => {
     if (typeof approveWorkforceShipment !== "function") {
       throw fail("Ortak sevkiyat stok onay servisi yapılandırılmamış.", 503, "STOCK_APPROVAL_SERVICE_UNAVAILABLE");
     }
@@ -164,25 +168,25 @@ function registerProcurementRoutes(deps = {}) {
     });
   }));
 
-  app.post(`${API_ROOT}/shipments/:id/reject`, ...mutationMiddlewares, capability("receipt.reject"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/shipments/:id/reject`, ...mutationMiddlewares, sectionAccess("shipments", "full"), capability("receipt.reject"), asyncRoute(async (req, res) => {
     res.json(await service.rejectShipment(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.post(`${API_ROOT}/shipments/:id/account`, ...mutationMiddlewares, capability("accounting.post"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/shipments/:id/account`, ...mutationMiddlewares, sectionAccess("ledger", "operate"), capability("accounting.post"), asyncRoute(async (req, res) => {
     const result = await service.accountShipment(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req));
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
 
-  app.post(`${API_ROOT}/shipments/:id/reverse-accounting`, ...mutationMiddlewares, capability("accounting.reverse"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/shipments/:id/reverse-accounting`, ...mutationMiddlewares, sectionAccess("ledger", "full"), capability("accounting.reverse"), asyncRoute(async (req, res) => {
     const result = await service.reverseShipmentAccounting(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req));
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
 
-  app.get(`${API_ROOT}/documents`, ...authenticated, capability("documents.read"), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/documents`, ...authenticated, sectionAccess("documents", "view"), capability("documents.read"), asyncRoute(async (req, res) => {
     res.json(await service.listDocuments(req.procurementActor, req.query));
   }));
 
-  app.post(`${API_ROOT}/documents`, requireRequestOrigin, ...authenticated, riskOperationLimiter, capability("documents.upload"), rawImageParser, asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/documents`, requireRequestOrigin, ...authenticated, riskOperationLimiter, sectionAccess("documents", "operate"), capability("documents.upload"), rawImageParser, asyncRoute(async (req, res) => {
     if (!documentService || typeof documentService.storeUpload !== "function") {
       throw fail("Özel belge depolama servisi yapılandırılmamış.", 503, "DOCUMENT_SERVICE_UNAVAILABLE");
     }
@@ -213,7 +217,7 @@ function registerProcurementRoutes(deps = {}) {
     }
   }));
 
-  app.get(`${API_ROOT}/documents/:id/content`, ...authenticated, capability("documents.read"), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/documents/:id/content`, ...authenticated, sectionAccess("documents", "view"), capability("documents.read"), asyncRoute(async (req, res) => {
     if (!documentService || typeof documentService.resolveContent !== "function") {
       throw fail("Özel belge depolama servisi yapılandırılmamış.", 503, "DOCUMENT_SERVICE_UNAVAILABLE");
     }
@@ -233,52 +237,52 @@ function registerProcurementRoutes(deps = {}) {
     res.send(buffer);
   }));
 
-  app.post(`${API_ROOT}/documents/:id/archive`, ...mutationMiddlewares, capability("documents.archive"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/documents/:id/archive`, ...mutationMiddlewares, sectionAccess("documents", "full"), capability("documents.archive"), asyncRoute(async (req, res) => {
     res.json(await service.archiveDocument(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.get(`${API_ROOT}/ledger`, ...authenticated, capability("accounting.read"), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/ledger`, ...authenticated, sectionAccess("ledger", "view"), capability("accounting.read"), asyncRoute(async (req, res) => {
     res.json(await service.listLedger(req.procurementActor, req.query));
   }));
 
-  app.post(`${API_ROOT}/ledger`, ...mutationMiddlewares, capability("accounting.post"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/ledger`, ...mutationMiddlewares, sectionAccess("ledger", "operate"), capability("accounting.post"), asyncRoute(async (req, res) => {
     const result = await service.createLedgerEntry(req.procurementActor, jsonBody(req), mutationInput(req));
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
 
-  app.post(`${API_ROOT}/ledger/:id/reverse`, ...mutationMiddlewares, capability("accounting.reverse"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/ledger/:id/reverse`, ...mutationMiddlewares, sectionAccess("ledger", "full"), capability("accounting.reverse"), asyncRoute(async (req, res) => {
     const result = await service.reverseLedgerEntry(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req));
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
 
-  app.post(`${API_ROOT}/payments`, ...mutationMiddlewares, capability("payment.create"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/payments`, ...mutationMiddlewares, sectionAccess("ledger", "operate"), capability("payment.create"), asyncRoute(async (req, res) => {
     const result = await service.createPayment(req.procurementActor, jsonBody(req), mutationInput(req));
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
 
-  app.post(`${API_ROOT}/payments/:id/reverse`, ...mutationMiddlewares, capability("payment.reverse"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/payments/:id/reverse`, ...mutationMiddlewares, sectionAccess("ledger", "full"), capability("payment.reverse"), asyncRoute(async (req, res) => {
     const result = await service.reversePayment(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req));
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
 
-  app.get(`${API_ROOT}/audit`, ...authenticated, anyCapability(["procurement.users.manage", "accounting.read"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/audit`, ...authenticated, sectionAccess("settings", "full"), capability("procurement.users.manage"), asyncRoute(async (req, res) => {
     res.json(await service.listAudit(req.procurementActor, req.query));
   }));
 
-  app.get(`${API_ROOT}/users`, ...authenticated, capability("procurement.users.manage"), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/users`, ...authenticated, sectionAccess("users", "full"), capability("procurement.users.manage"), asyncRoute(async (req, res) => {
     res.json(await service.listUsers(req.procurementActor));
   }));
 
-  app.put(`${API_ROOT}/users/:id/access`, ...mutationMiddlewares, capability("procurement.users.manage"), asyncRoute(async (req, res) => {
+  app.put(`${API_ROOT}/users/:id/access`, ...mutationMiddlewares, sectionAccess("users", "full"), capability("procurement.users.manage"), asyncRoute(async (req, res) => {
     res.json(await service.updateUserAccess(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.get(`${API_ROOT}/settings`, ...authenticated, anyCapability(["procurement.read", "procurement.users.manage", "accounting.read"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/settings`, ...authenticated, sectionAccess("settings", "full"), capability("procurement.users.manage"), asyncRoute(async (req, res) => {
     const result = await service.context(req.procurementActor);
     res.json({ ok: true, revision: result.revision, settings: result.procurement.settings });
   }));
 
-  app.put(`${API_ROOT}/settings`, ...mutationMiddlewares, capability("procurement.users.manage"), asyncRoute(async (req, res) => {
+  app.put(`${API_ROOT}/settings`, ...mutationMiddlewares, sectionAccess("settings", "full"), capability("procurement.users.manage"), asyncRoute(async (req, res) => {
     res.json(await service.updateSettings(req.procurementActor, jsonBody(req), mutationInput(req)));
   }));
 
@@ -362,6 +366,7 @@ function registerStockReferenceProjection(deps) {
   });
 
   app.get(`${API_ROOT}/stock/references`, ...authenticated,
+    anySectionAccess(["stock", "productAnalysis", "shipments", "links"]),
     anyCapability(["inventory.read", "procurement.read", "receipt.create", "receipt.approve", "supplierProduct.manage"]),
     asyncRoute(async (req, res) => {
       const data = req.storeSnapshot || await store.read();
@@ -414,7 +419,10 @@ async function resolveActorFromRequest(req, store) {
       name: "Yönetici",
       role: "yönetici",
       branchId: "main",
-      capabilities: [...FATURA_CAPABILITIES]
+      capabilities: [...FATURA_CAPABILITIES],
+      accessEnabled: true,
+      template: "yonetici",
+      sectionAccess: templateSectionAccess("yonetici")
     };
   }
   if (sessionRole !== "personel" && payload.sessionRole !== "personel") return null;
@@ -431,9 +439,39 @@ async function resolveActorFromRequest(req, store) {
     stockLocationId: String(user.stockLocationId || ""),
     accessEnabled: user.faturaAccessEnabled !== false,
     template: String(user.faturaTemplate || "ozel"),
+    sectionAccess: normalizeSectionAccess(user.faturaSectionAccess, {
+      capabilities: user.faturaCapabilities,
+      allowManagement: user.faturaTemplate === "yonetici" || user.faturaRole === "yönetici"
+    }),
     capabilities: user.faturaAccessEnabled === false ? [] : [...new Set((Array.isArray(user.faturaCapabilities) ? user.faturaCapabilities : [])
       .map((item) => String(item || "").trim())
       .filter((item) => FATURA_CAPABILITIES.has(item)))]
+  };
+}
+
+function sectionAccess(sectionId, minimumLevel = "view") {
+  return function requireProcurementSection(req, res, next) {
+    if (hasSectionAccess(req.procurementActor, sectionId, minimumLevel)) return next();
+    return res.status(403).json({
+      ok: false,
+      message: "Bu Fatura bölümüne erişim yetkiniz yok.",
+      code: "PROCUREMENT_SECTION_ACCESS_REQUIRED",
+      sectionId,
+      minimumLevel
+    });
+  };
+}
+
+function anySectionAccess(sectionIds, minimumLevel = "view") {
+  return function requireAnyProcurementSection(req, res, next) {
+    if ((sectionIds || []).some((sectionId) => hasSectionAccess(req.procurementActor, sectionId, minimumLevel))) return next();
+    return res.status(403).json({
+      ok: false,
+      message: "Bu Fatura verisine erişim yetkiniz yok.",
+      code: "PROCUREMENT_SECTION_ACCESS_REQUIRED",
+      sectionIds,
+      minimumLevel
+    });
   };
 }
 

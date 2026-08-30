@@ -2,6 +2,7 @@
 
 const crypto = require("crypto");
 const { normalizeStockState } = require("./store/migrations");
+const { hasSectionAccess } = require("./procurement-access");
 const stockService = require("./stock-service");
 
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9._:-]{8,160}$/;
@@ -31,6 +32,7 @@ function registerStockLocationRoutes(deps) {
       requireAdminOrMainRequestOrigin,
       auth.requireRecipe,
       attachProcurementActor,
+      requireCanonicalSection(stockMinimumLevel(method, suffix)),
       requireCanonicalCapability(stockCapability(method, suffix)),
       businessHandler);
   };
@@ -51,6 +53,22 @@ function registerStockLocationRoutes(deps) {
         : req.procurementActor && req.procurementActor.type === "admin";
       return allowed ? next() : res.status(403).json({ ok: false, message: "Bu stok işlemi için yetkiniz yok.", capability });
     };
+  }
+
+  function requireCanonicalSection(minimumLevel) {
+    return (req, res, next) => hasSectionAccess(req.procurementActor, "stock", minimumLevel)
+      ? next()
+      : res.status(403).json({ ok: false, message: "Stok & Sevkiyat bölümüne erişim yetkiniz yok.", code: "PROCUREMENT_SECTION_ACCESS_REQUIRED", sectionId: "stock", minimumLevel });
+  }
+
+  function stockMinimumLevel(method, suffix) {
+    const verb = String(method || "get").toLowerCase();
+    if (verb === "get") return "view";
+    if (suffix.startsWith("/catalog") || suffix.startsWith("/unit-definitions") || suffix.includes("/unit-migration")) return "full";
+    if (suffix.startsWith("/locations") || suffix.startsWith("/inventory")) return "full";
+    if (suffix.startsWith("/transfers") && (suffix.includes("/approve") || suffix.includes("/reject"))) return "full";
+    if (suffix.startsWith("/movements") && suffix.includes("/reverse")) return "full";
+    return "operate";
   }
 
   function stockCapability(method, suffix) {
