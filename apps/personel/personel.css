@@ -21,6 +21,10 @@
   display: none !important;
 }
 
+[data-module-ready="false"] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-height: 100svh;
@@ -493,26 +497,28 @@ textarea {
 }
 
 .profile-card {
-  max-width: 920px;
-  padding: clamp(24px, 4vw, 38px);
+  width: min(960px, 100%);
+  max-width: none;
+  padding: 16px;
+  border-radius: 14px;
 }
 
 .profile-hero {
   display: flex;
   align-items: center;
-  gap: 18px;
-  margin-bottom: 24px;
+  gap: 14px;
+  margin-bottom: 14px;
 }
 
 .profile-avatar {
-  width: 88px;
-  height: 88px;
+  width: 64px;
+  height: 64px;
   display: grid;
   place-items: center;
   border-radius: 50%;
   background: linear-gradient(135deg, #683820, #32170d);
   color: #fff8ec;
-  font: 800 34px "Tahmisci Poppins", Poppins, system-ui, sans-serif;
+  font: 800 26px "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   overflow: hidden;
 }
 
@@ -524,7 +530,7 @@ textarea {
 
 .form-grid {
   display: grid;
-  gap: 16px;
+  gap: 10px 12px;
 }
 
 .form-grid.two {
@@ -539,7 +545,12 @@ textarea {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-top: 18px;
+  margin-top: 12px;
+}
+
+.profile-card textarea {
+  min-height: 90px;
+  max-height: 110px;
 }
 
 .profile-actions span {

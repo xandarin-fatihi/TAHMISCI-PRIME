@@ -672,7 +672,12 @@
         if (panel) panel.dataset.moduleState = "error";
       });
     }
-    if (next === "profile") void ensureAccountSecurityModule().catch(() => {});
+    if (next === "profile") {
+      void Promise.all([
+        ensureAccountSecurityModule(),
+        ensureNotificationsModule()
+      ]).catch(() => {});
+    }
     document.dispatchEvent(new CustomEvent("personel:section-change", { detail: { section: next } }));
   }
 
@@ -1537,9 +1542,11 @@
   async function ensureNotificationsModule() {
     if (window.TahmisciPersonelNotifications) return window.TahmisciPersonelNotifications;
     await Promise.all([
-      loadLazyStyle("notifications", "/personel/notifications.css?v=20260827-performance"),
-      loadLazyScript("notifications", "/personel/notifications.js?v=20260828-app-target")
+      loadLazyStyle("notifications", "/personel/notifications.css?v=20260831-profile-compact"),
+      loadLazyScript("notifications", "/personel/notifications.js?v=20260831-profile-compact")
     ]);
+    const preferencesForm = document.getElementById("personelNotificationPreferencesForm");
+    if (preferencesForm) preferencesForm.dataset.moduleReady = "true";
     if (state.sessionActive) {
       document.dispatchEvent(new CustomEvent("personel:session-started", {
         detail: { userId: state.user && state.user.id, preview: state.sessionPreview, replay: true }
@@ -1551,9 +1558,11 @@
   async function ensureAccountSecurityModule() {
     if (window.TahmisciAccountSecurity) return window.TahmisciAccountSecurity;
     await Promise.all([
-      loadLazyStyle("account-security", "/shared/styles/account-security.css?v=20260827-performance"),
-      loadLazyScript("account-security", "/shared/scripts/account-security.js?v=20260827-performance")
+      loadLazyStyle("account-security", "/shared/styles/account-security.css?v=20260831-personal-email"),
+      loadLazyScript("account-security", "/shared/scripts/account-security.js?v=20260831-personal-email")
     ]);
+    const securityCard = document.querySelector('[data-account-security][data-account-scope="personel"]');
+    if (securityCard) securityCard.dataset.moduleReady = "true";
     if (state.sessionActive) {
       document.dispatchEvent(new CustomEvent("personel:session-started", {
         detail: { userId: state.user && state.user.id, preview: state.sessionPreview, replay: true }

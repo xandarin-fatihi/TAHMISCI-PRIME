@@ -52,6 +52,7 @@
     capabilities: {},
     pushIssue: null,
     devices: [],
+    devicesLoaded: false,
     devicesLoading: false,
     loading: false,
     pending: new Set(),
@@ -78,8 +79,10 @@
       "personelNotificationViews", "personelNotificationClearArchive",
       "personelNotificationMessage", "personelNotificationList", "personelNotificationLoadMore",
       "personelNotificationPreferencesForm", "personelNotificationPreferencesState",
-      "personelNotificationEmail", "personelPushStatus", "personelPushToggle", "personelPushTest", "recipeFrame",
-      "personelNotificationManageEmail", "personelNotificationDevices", "personelNotificationDevicesRefresh"
+      "personelNotificationEmail", "personelNotificationEmailSummary", "personelNotificationQuietTimes",
+      "personelPushStatus", "personelPushToggle", "personelPushTest", "recipeFrame",
+      "personelNotificationManageEmail", "personelNotificationDevices", "personelNotificationDevicesRefresh",
+      "personelNotificationDevicesPanel", "personelNotificationDevicesCount"
     ].forEach((id) => { elements[id] = document.getElementById(id); });
 
     bindEvents();
@@ -120,6 +123,9 @@
     elements.personelNotificationManageEmail?.addEventListener("click", openAccountSecurity);
     elements.personelNotificationDevicesRefresh?.addEventListener("click", () => loadDevices(true));
     elements.personelNotificationDevices?.addEventListener("click", handleDeviceClick);
+    elements.personelNotificationDevicesPanel?.addEventListener("toggle", () => {
+      if (elements.personelNotificationDevicesPanel.open) void loadDevices();
+    });
     document.addEventListener("tahmisci:account-security-updated", (event) => {
       if (event.detail && event.detail.scope === "personel") void loadPreferences();
     });
@@ -198,12 +204,15 @@
     state.capabilities = {};
     state.pushIssue = null;
     state.devices = [];
+    state.devicesLoaded = false;
     state.devicesLoading = false;
     state.loading = false;
     state.pending.clear();
     state.lastLoadedAt = 0;
     state.initialDeepLinkConsumed = false;
     state.preferencesLoaded = false;
+    if (elements.personelNotificationDevicesCount) elements.personelNotificationDevicesCount.textContent = "(…)";
+    if (elements.personelNotificationDevicesPanel) elements.personelNotificationDevicesPanel.open = false;
     if (elements.personelNotificationUnreadOnly) elements.personelNotificationUnreadOnly.checked = false;
     syncNotificationViews();
     updateUnreadUi();
@@ -213,7 +222,6 @@
     handleInitialDeepLink();
     if (event && event.detail && event.detail.section === "profile") {
       if (!state.preferencesLoaded) void loadPreferences();
-      void loadDevices();
     }
   }
 
@@ -230,7 +238,6 @@
     const pending = [];
     if (!state.lastLoadedAt || Date.now() - state.lastLoadedAt > 10000) pending.push(loadNotifications());
     if (!state.preferencesLoaded) pending.push(loadPreferences());
-    if (!state.devices.length) pending.push(loadDevices());
     if (pending.length) await Promise.allSettled(pending);
   }
 
@@ -700,8 +707,13 @@
     });
     if (form.elements.emailAddress) {
       form.elements.emailAddress.value = state.preferences.emailAddress || "";
-      form.elements.emailAddress.readOnly = true;
-      form.elements.emailAddress.setAttribute("aria-readonly", "true");
+    }
+    if (elements.personelNotificationEmailSummary) {
+      const verifiedEmail = state.preferences.emailVerified && state.preferences.emailAddress
+        ? `✓ ${state.preferences.emailAddress}`
+        : "Henüz doğrulanmadı";
+      elements.personelNotificationEmailSummary.textContent = verifiedEmail;
+      elements.personelNotificationEmailSummary.classList.toggle("is-verified", Boolean(state.preferences.emailVerified));
     }
     if (form.elements.emailEnabled) {
       form.elements.emailEnabled.disabled = !state.preferences.emailVerified;
@@ -721,6 +733,7 @@
     const form = elements.personelNotificationPreferencesForm;
     if (!form) return;
     const enabled = Boolean(form.elements.quietHoursEnabled?.checked);
+    if (elements.personelNotificationQuietTimes) elements.personelNotificationQuietTimes.hidden = !enabled;
     [form.elements.quietHoursStart, form.elements.quietHoursEnd].forEach((input) => {
       if (input) input.disabled = !enabled;
     });
@@ -804,13 +817,15 @@
   }
 
   async function loadDevices(force = false) {
-    if (!state.active || state.preview || !elements.personelNotificationDevices || state.devicesLoading || (!force && state.devices.length)) return;
+    if (!state.active || state.preview || !elements.personelNotificationDevices || state.devicesLoading || (!force && state.devicesLoaded)) return;
     state.devicesLoading = true;
+    if (elements.personelNotificationDevicesCount) elements.personelNotificationDevicesCount.textContent = "(…)";
     elements.personelNotificationDevices.replaceChildren(createDeviceEmpty("Bağlı cihazlar yükleniyor…"));
     if (elements.personelNotificationDevicesRefresh) elements.personelNotificationDevicesRefresh.disabled = true;
     try {
       const result = await request(`${API_ROOT}/push-subscriptions`, { headers: notificationDeviceHeaders() });
       state.devices = Array.isArray(result.devices) ? result.devices : Array.isArray(result.subscriptions) ? result.subscriptions : [];
+      state.devicesLoaded = true;
       renderDevices();
       void renderPushState();
     } catch (error) {
@@ -824,6 +839,9 @@
   function renderDevices() {
     const root = elements.personelNotificationDevices;
     if (!root) return;
+    if (elements.personelNotificationDevicesCount) {
+      elements.personelNotificationDevicesCount.textContent = `(${state.devices.length})`;
+    }
     root.replaceChildren();
     if (!state.devices.length) {
       root.append(createDeviceEmpty("Bu hesaba bağlı bildirim cihazı yok."));

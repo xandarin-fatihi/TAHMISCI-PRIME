@@ -9,14 +9,14 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/app-icons/personel/favicon-32.png">
   <link rel="icon" type="image/png" sizes="48x48" href="/assets/app-icons/personel/favicon-48.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/app-icons/personel/apple-touch-icon-180.png">
-  <link rel="stylesheet" href="/personel/personel.css?v=20260829-email-account">
+  <link rel="stylesheet" href="/personel/personel.css?v=20260831-personal-email">
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20260801-phase2">
-  <link rel="stylesheet" href="/personel/personel-compact.css?v=20260829-notification-shell">
+  <link rel="stylesheet" href="/personel/personel-compact.css?v=20260831-profile-compact">
   <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260816-account-notifications">
   <meta name="tahmisci-lazy-style" content="/shared/styles/account-security.css">
   <meta name="tahmisci-lazy-script" content="/shared/scripts/account-security.js">
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
-  <script src="/personel/personel.js?v=20260829-email-account" defer></script>
+  <script src="/personel/personel.js?v=20260831-personal-email" defer></script>
   <script src="/shared/scripts/live-preview-receiver.js?v=20260801-phase3" defer></script>
   <script src="/shared/scripts/pwa-client.js?v=20260828-app-target" defer></script>
 </head>
@@ -119,8 +119,8 @@
             </div>
             <div class="form-grid two">
               <label><span>Ad soyad</span><input id="profileName" type="text" maxlength="80"></label>
-              <label class="wide"><span>Avatar URL</span><input id="profileAvatarUrl" type="url" maxlength="500" placeholder="https://..."></label>
-              <label class="wide"><span>Profil fotoğrafı</span><input id="profilePhotoInput" type="file" accept="image/jpeg,image/png,image/webp"></label>
+              <label><span>Avatar URL</span><input id="profileAvatarUrl" type="url" maxlength="500" placeholder="https://..."></label>
+              <label><span>Profil fotoğrafı</span><input id="profilePhotoInput" type="file" accept="image/jpeg,image/png,image/webp"></label>
               <label class="wide"><span>Kısa not</span><textarea id="profileBio" rows="4" maxlength="240"></textarea></label>
             </div>
             <div class="profile-actions">
@@ -128,88 +128,98 @@
               <span id="profileMessage"></span>
             </div>
           </form>
-          <section class="account-security-card" data-account-security data-account-scope="personel" aria-labelledby="personelAccountSecurityTitle">
+          <section class="account-security-card" data-account-security data-account-scope="personel" data-account-email-explicit-target="true" data-module-ready="false" aria-labelledby="personelAccountSecurityTitle">
             <header class="account-security-head">
               <div>
                 <p class="eyebrow">Hesap güvenliği</p>
-                <h3 id="personelAccountSecurityTitle">Doğrulanmış hesap e-postası</h3>
-                <p>Şifre kurtarma ve güvenlik bildirimleri yalnız doğrulanmış hesap adresine gönderilir.</p>
+                <h3 id="personelAccountSecurityTitle">Kişisel e-posta</h3>
+                <p>Doğrulama ve hesap kurtarma kodları yalnız girdiğiniz kişisel adrese gönderilir.</p>
               </div>
               <span class="account-security-state" id="personelAccountEmailState" data-account-email-state>Denetlenmedi</span>
             </header>
             <form class="account-security-email-form" id="personelAccountEmailForm" data-account-email-form novalidate>
-              <label><span>Hesap e-postası</span><input id="personelAccountEmail" data-account-email type="email" name="email" maxlength="254" autocomplete="email" required placeholder="ad.soyad@example.com"></label>
-              <button class="ui-button ui-button--secondary" id="personelAccountEmailSave" type="submit">E-postayı kaydet</button>
+              <label><span>Kişisel e-posta</span><input id="personelAccountEmail" data-account-email type="email" name="email" maxlength="254" autocomplete="email" required placeholder="ornek@gmail.com"></label>
+              <button class="ui-button ui-button--primary" id="personelAccountEmailVerificationRequest" data-account-email-send type="submit">Kodu Gönder</button>
             </form>
             <div class="account-security-verification" data-account-verification hidden>
-              <div><strong data-account-verification-title>E-posta doğrulaması gerekli</strong><span data-account-verification-copy>Adrese altı haneli güvenlik kodu gönderin.</span></div>
-              <button class="ui-button ui-button--secondary" id="personelAccountEmailVerificationRequest" data-account-email-send type="button">Doğrulama kodu gönder</button>
+              <div><strong data-account-verification-title>Doğrulama kodu gönderildi</strong><span data-account-verification-copy>Altı haneli kodu girin.</span></div>
               <form class="account-security-code-form" id="personelAccountEmailVerificationForm" data-account-email-confirm-form hidden novalidate>
                 <label><span>Altı haneli kod</span><input id="personelAccountEmailCode" data-account-email-code type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>
-                <button class="ui-button ui-button--primary" id="personelAccountEmailVerificationConfirm" type="submit">E-postayı doğrula</button>
+                <button class="ui-button ui-button--primary" id="personelAccountEmailVerificationConfirm" type="submit">Doğrula</button>
               </form>
             </div>
-            <div class="account-security-meta">
-              <span><small>Etkin adres</small><strong data-account-current-email>Henüz eklenmedi</strong></span>
-              <span><small>Son şifre yenileme</small><strong data-account-password-reset>Bilgi yok</strong></span>
-            </div>
+            <p class="account-security-meta-line">Son şifre yenileme: <strong data-account-password-reset>Bilgi yok</strong></p>
             <div class="account-security-danger-row">
-              <span><strong>Tüm cihazlardan çıkış yap</strong><small>Açık oturumları ve hesaba bağlı bildirim cihazlarını güvenle kapatır.</small></span>
-              <button class="ui-button ui-button--danger ui-button--sm" type="button" data-account-logout-all>Tümünden çıkış yap</button>
+              <span><strong>Tüm cihazlardaki oturumları kapat</strong><small>Diğer açık oturumları ve bildirim bağlantılarını sonlandırır.</small></span>
+              <button class="ui-button ui-button--danger ui-button--sm" type="button" data-account-logout-all>Oturumları kapat</button>
             </div>
             <p class="account-security-message" id="personelAccountSecurityMessage" data-account-security-message role="status" aria-live="polite"></p>
           </section>
-          <form class="notification-preferences-card" id="personelNotificationPreferencesForm">
+          <form class="notification-preferences-card" id="personelNotificationPreferencesForm" data-module-ready="false">
             <header>
               <div>
                 <p class="eyebrow">Bildirim tercihleri</p>
-                <h3>Bildirim ve e-posta</h3>
-                <p>Uygulama içi bildirimleri, hatırlatmaları ve isteğe bağlı teslim kanallarını yönetin.</p>
+                <h3>Bildirim tercihleri</h3>
+                <p>Uygulama ve e-posta bildirimlerini buradan yönet.</p>
               </div>
               <span class="notification-preferences-state" id="personelNotificationPreferencesState" role="status"></span>
             </header>
             <div class="notification-preferences-grid">
-              <label class="notification-field notification-field--wide"><span>Doğrulanmış hesap e-postası</span><input id="personelNotificationEmail" name="emailAddress" type="email" maxlength="254" autocomplete="email" placeholder="Önce hesap e-postanızı doğrulayın" readonly aria-readonly="true" aria-describedby="personelNotificationEmailHelp"></label>
-              <div class="notification-email-help notification-field--wide" id="personelNotificationEmailHelp"><span>Bildirim e-postası hesap güvenliği alanından yönetilir.</span><button class="ui-button ui-button--ghost ui-button--sm" id="personelNotificationManageEmail" type="button">Hesap e-postasını yönet</button></div>
-              <fieldset class="notification-preference-group notification-field--wide">
-                <legend>Teslim kanalları</legend>
-                <label><input name="inAppEnabled" type="checkbox"><span>Uygulama içi bildirimler</span></label>
-                <label><input name="emailEnabled" type="checkbox"><span>E-posta bildirimleri</span></label>
-              </fieldset>
-              <fieldset class="notification-preference-group notification-field--wide">
-                <legend>Kategoriler</legend>
-                <label><input name="taskNotifications" type="checkbox"><span>Görevler</span></label>
-                <label><input name="shipmentNotifications" type="checkbox"><span>Sevkiyat</span></label>
-                <label><input name="shiftNotifications" type="checkbox"><span>Vardiya ve talepler</span></label>
-              </fieldset>
-              <fieldset class="notification-preference-group notification-field--wide">
-                <legend>Hatırlatmalar</legend>
-                <label><input name="taskReminder24h" type="checkbox"><span>Görevden 24 saat önce</span></label>
-                <label><input name="taskReminder2h" type="checkbox"><span>Görevden 2 saat önce</span></label>
-                <label><input name="overdueReminder" type="checkbox"><span>Süresi geçen görevler</span></label>
-                <label><input name="shiftReminder12h" type="checkbox"><span>Vardiyadan 12 saat önce</span></label>
-                <label><input name="shiftReminder2h" type="checkbox"><span>Vardiyadan 2 saat önce</span></label>
-              </fieldset>
-              <fieldset class="notification-preference-group notification-field--wide">
-                <legend>Sessiz saatler</legend>
-                <label><input name="quietHoursEnabled" type="checkbox"><span>Sessiz saatleri kullan</span></label>
-                <label class="notification-time-field"><span>Başlangıç</span><input name="quietHoursStart" type="time"></label>
-                <label class="notification-time-field"><span>Bitiş</span><input name="quietHoursEnd" type="time"></label>
-              </fieldset>
+              <div class="notification-email-summary notification-field--wide" id="personelNotificationEmailHelp">
+                <span><small>E-posta</small><strong id="personelNotificationEmailSummary">Henüz doğrulanmadı</strong></span>
+                <input id="personelNotificationEmail" name="emailAddress" type="hidden">
+                <button class="ui-button ui-button--ghost ui-button--sm" id="personelNotificationManageEmail" type="button">Değiştir</button>
+              </div>
+              <section class="notification-preference-group notification-field--wide" aria-labelledby="personelDeliveryChannelsTitle">
+                <h4 id="personelDeliveryChannelsTitle">Teslim kanalları</h4>
+                <div class="notification-toggle-grid">
+                  <label class="notification-toggle-row"><span>Uygulama içi bildirimler</span><input name="inAppEnabled" type="checkbox" role="switch"></label>
+                  <label class="notification-toggle-row"><span>E-posta bildirimleri</span><input name="emailEnabled" type="checkbox" role="switch"></label>
+                </div>
+              </section>
+              <section class="notification-preference-group notification-field--wide" aria-labelledby="personelCategoriesTitle">
+                <h4 id="personelCategoriesTitle">Kategoriler</h4>
+                <div class="notification-toggle-grid notification-toggle-grid--three">
+                  <label class="notification-toggle-row"><span>Görevler</span><input name="taskNotifications" type="checkbox" role="switch"></label>
+                  <label class="notification-toggle-row"><span>Sevkiyat</span><input name="shipmentNotifications" type="checkbox" role="switch"></label>
+                  <label class="notification-toggle-row"><span>Vardiya ve talepler</span><input name="shiftNotifications" type="checkbox" role="switch"></label>
+                </div>
+              </section>
+              <section class="notification-preference-group notification-field--wide" aria-labelledby="personelRemindersTitle">
+                <h4 id="personelRemindersTitle">Hatırlatmalar</h4>
+                <div class="notification-toggle-grid">
+                  <label class="notification-toggle-row"><span>Görevden 24 saat önce</span><input name="taskReminder24h" type="checkbox" role="switch"></label>
+                  <label class="notification-toggle-row"><span>Görevden 2 saat önce</span><input name="taskReminder2h" type="checkbox" role="switch"></label>
+                  <label class="notification-toggle-row"><span>Süresi geçen görevler</span><input name="overdueReminder" type="checkbox" role="switch"></label>
+                  <label class="notification-toggle-row"><span>Vardiyadan 12 saat önce</span><input name="shiftReminder12h" type="checkbox" role="switch"></label>
+                  <label class="notification-toggle-row"><span>Vardiyadan 2 saat önce</span><input name="shiftReminder2h" type="checkbox" role="switch"></label>
+                </div>
+              </section>
+              <section class="notification-preference-group notification-field--wide" aria-labelledby="personelQuietHoursTitle">
+                <h4 id="personelQuietHoursTitle">Sessiz saatler</h4>
+                <label class="notification-toggle-row notification-toggle-row--wide"><span>Sessiz saatleri kullan</span><input name="quietHoursEnabled" type="checkbox" role="switch"></label>
+                <div class="notification-quiet-times" id="personelNotificationQuietTimes" hidden>
+                  <label class="notification-time-field"><span>Başlangıç</span><input name="quietHoursStart" type="time"></label>
+                  <label class="notification-time-field"><span>Bitiş</span><input name="quietHoursEnd" type="time"></label>
+                </div>
+              </section>
               <section class="notification-push-card notification-field--wide" aria-labelledby="personelPushTitle">
+                <span class="notification-push-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></span>
                 <div><strong id="personelPushTitle">Tarayıcı bildirimleri</strong><span id="personelPushStatus">Durum denetleniyor…</span></div>
                 <div class="notification-push-actions">
                   <button class="ui-button ui-button--ghost" id="personelPushTest" type="button" hidden>Test bildirimi gönder</button>
                   <button class="ui-button ui-button--secondary" id="personelPushToggle" type="button">Bildirimleri Aç</button>
                 </div>
               </section>
-              <section class="notification-devices-card notification-field--wide" aria-labelledby="personelNotificationDevicesTitle">
-                <header><div><strong id="personelNotificationDevicesTitle">Bağlı bildirim cihazları</strong><span>Hesabınıza bağlı tarayıcıları görüntüleyin ve artık kullanmadıklarınızı kaldırın.</span></div><button class="ui-button ui-button--ghost ui-button--sm" id="personelNotificationDevicesRefresh" type="button">Yenile</button></header>
-                <div class="notification-device-list" id="personelNotificationDevices" aria-live="polite"></div>
-              </section>
+              <details class="notification-devices-card notification-field--wide" id="personelNotificationDevicesPanel">
+                <summary><span id="personelNotificationDevicesTitle">Bağlı cihazlar <b id="personelNotificationDevicesCount">(…)</b></span><span aria-hidden="true">›</span></summary>
+                <div class="notification-devices-content">
+                  <header><span>Hesabınıza bağlı bildirim tarayıcıları</span><button class="ui-button ui-button--ghost ui-button--sm" id="personelNotificationDevicesRefresh" type="button">Yenile</button></header>
+                  <div class="notification-device-list" id="personelNotificationDevices" aria-live="polite"></div>
+                </div>
+              </details>
             </div>
             <footer>
-              <p>Kritik güvenlik ve veri bütünlüğü bildirimleri kapatılamaz.</p>
               <button class="ui-button ui-button--primary" type="submit">Tercihleri Kaydet</button>
             </footer>
           </form>

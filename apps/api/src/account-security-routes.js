@@ -96,22 +96,31 @@ function registerAccountSecurityRoutes(options) {
       if (!mailConfigured(config, selectedMailService)) {
         return res.status(503).json({ ok: false, message: "E-posta hizmeti şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin." });
       }
+      const hasExplicitPersonelEmail = req.accountScope === "personel"
+        && req.body && Object.prototype.hasOwnProperty.call(req.body, "email");
+      const explicitPersonelEmail = hasExplicitPersonelEmail ? normalizeAccountEmail(req.body.email) : "";
+      if (hasExplicitPersonelEmail && !isEmailLike(explicitPersonelEmail)) {
+        return res.status(400).json({ ok: false, message: "Geçerli bir kişisel e-posta adresi girin." });
+      }
       const snapshot = await requestStore(req, store);
       const initialAccount = resolveAuthenticatedAccount(snapshot, req, req.accountScope);
       if (!initialAccount) return res.status(404).json({ ok: false, message: "Hesap bulunamadı." });
-      const destination = normalizeAccountEmail(initialAccount.pendingEmail || initialAccount.emailNormalized || initialAccount.email);
+      let destination = explicitPersonelEmail
+        || normalizeAccountEmail(initialAccount.pendingEmail || initialAccount.emailNormalized || initialAccount.email);
       if (!isEmailLike(destination)) {
         return res.status(400).json({ ok: false, message: "Önce geçerli bir e-posta adresi ekleyin." });
       }
 
       const accountId = accountIdentity(req.accountScope, initialAccount);
+      const requestedDestinationHash = hashEmail(destination, config);
       const activeChallenge = latestActiveChallenge(snapshot.emailVerificationChallenges, {
         purpose: "email_verification",
         scope: req.accountScope,
         targetUserId: accountId
       });
       const resendMs = config.emailVerificationResendSeconds * 1000;
-      if (activeChallenge && Date.now() - Date.parse(activeChallenge.createdAt || 0) < resendMs) {
+      if (activeChallenge && activeChallenge.destinationHash === requestedDestinationHash
+        && Date.now() - Date.parse(activeChallenge.createdAt || 0) < resendMs) {
         const retryAfterSeconds = Math.max(1, Math.ceil((resendMs - (Date.now() - Date.parse(activeChallenge.createdAt))) / 1000));
         res.set("Retry-After", String(retryAfterSeconds));
         return res.status(429).json({ ok: false, retryAfterSeconds, message: `Yeni kod için ${retryAfterSeconds} saniye bekleyin.` });
@@ -121,17 +130,34 @@ function registerAccountSecurityRoutes(options) {
       const code = securityCode(config);
       const createdAt = new Date().toISOString();
       const expiresAt = new Date(Date.now() + config.emailVerificationTtlMinutes * 60 * 1000).toISOString();
-      const version = Math.max(0, Number(initialAccount.emailVerificationVersion || 0));
-      const destinationHash = hashEmail(destination, config);
-      const codeHash = hashChallengeCode({ challengeId, purpose: "email_verification", scope: req.accountScope, targetUserId: accountId, version, code }, config);
+      let security = null;
 
       await store.update((data) => {
         const account = resolveAuthenticatedAccount(data, req, req.accountScope);
         if (!account || accountIdentity(req.accountScope, account) !== accountId) throw httpError(404, "Hesap bulunamadı.");
-        if (normalizeAccountEmail(account.pendingEmail || account.emailNormalized || account.email) !== destination
-          || Number(account.emailVerificationVersion || 0) !== version) {
-          throw httpError(409, "E-posta bilgisi değişti. Yeniden deneyin.");
+        if (hasExplicitPersonelEmail) {
+          assertUniqueEmail(data, "personel", explicitPersonelEmail, accountId);
+          const currentEmail = normalizeAccountEmail(account.emailNormalized || account.email);
+          const pendingEmail = normalizeAccountEmail(account.pendingEmail);
+          const alreadyVerified = currentEmail === explicitPersonelEmail && Boolean(account.emailVerifiedAt) && !pendingEmail;
+          if (!alreadyVerified && pendingEmail !== explicitPersonelEmail) {
+            applyPendingEmail(account, explicitPersonelEmail, createdAt, { pendingOnly: true });
+          }
+          destination = explicitPersonelEmail;
+        } else {
+          destination = normalizeAccountEmail(account.pendingEmail || account.emailNormalized || account.email);
         }
+        if (!isEmailLike(destination)) throw httpError(400, "Önce geçerli bir e-posta adresi ekleyin.");
+        const version = Math.max(0, Number(account.emailVerificationVersion || 0));
+        const destinationHash = hashEmail(destination, config);
+        const codeHash = hashChallengeCode({
+          challengeId,
+          purpose: "email_verification",
+          scope: req.accountScope,
+          targetUserId: accountId,
+          version,
+          code
+        }, config);
         revokeEmailChallenges(data, req.accountScope, accountId, createdAt);
         data.emailVerificationChallenges = (Array.isArray(data.emailVerificationChallenges) ? data.emailVerificationChallenges : []).concat({
           id: challengeId,
@@ -154,6 +180,7 @@ function registerAccountSecurityRoutes(options) {
           result: "queued",
           createdAt
         }, config);
+        security = publicAccountSecurity(account);
         return data;
       });
 
@@ -175,6 +202,7 @@ function registerAccountSecurityRoutes(options) {
         challengeId,
         expiresAt,
         maskedEmail: maskEmail(destination),
+        security,
         message: `Doğrulama kodu gönderildi. Kod ${config.emailVerificationTtlMinutes} dakika geçerlidir.`
       });
     } catch (error) {
@@ -825,7 +853,7 @@ function publicAccountSecurity(account) {
   };
 }
 
-function applyPendingEmail(account, email, now) {
+function applyPendingEmail(account, email, now, options = {}) {
   const current = normalizeAccountEmail(account.emailNormalized || account.email);
   if (email === current && account.emailVerifiedAt) {
     account.pendingEmail = "";
@@ -833,7 +861,7 @@ function applyPendingEmail(account, email, now) {
     return;
   }
   account.emailVerificationVersion = Math.max(0, Number(account.emailVerificationVersion || 0)) + 1;
-  if (current && account.emailVerifiedAt) {
+  if (options.pendingOnly || (current && account.emailVerifiedAt)) {
     account.pendingEmail = email;
   } else {
     account.email = email;

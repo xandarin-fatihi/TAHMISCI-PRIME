@@ -36,6 +36,7 @@
   function createController(root) {
     const scope = normalizeScope(root.dataset.accountScope);
     if (!scope) return null;
+    const explicitEmailTarget = scope === "personel" && root.dataset.accountEmailExplicitTarget === "true";
     const elements = {
       state: root.querySelector("[data-account-email-state]"),
       emailForm: root.querySelector("[data-account-email-form]"),
@@ -53,10 +54,19 @@
     };
     const state = { scope, security: null, challengeId: "", loaded: false, loading: false, busy: false };
 
-    elements.emailForm?.addEventListener("submit", changeEmail);
-    elements.send?.addEventListener("click", requestVerification);
+    elements.emailForm?.addEventListener("submit", explicitEmailTarget ? requestVerification : changeEmail);
+    if (!explicitEmailTarget) elements.send?.addEventListener("click", requestVerification);
     elements.confirmForm?.addEventListener("submit", confirmVerification);
     elements.logoutAll?.addEventListener("click", revokeAllSessions);
+    elements.email?.addEventListener("input", () => {
+      if (!explicitEmailTarget || !state.challengeId) return;
+      const security = state.security || {};
+      const destination = security.pendingEmail || security.email || "";
+      if (String(elements.email.value || "").trim().toLowerCase() === destination) return;
+      state.challengeId = "";
+      if (elements.confirmForm) elements.confirmForm.hidden = true;
+      render();
+    });
     elements.code?.addEventListener("input", () => {
       elements.code.value = elements.code.value.replace(/\D/g, "").slice(0, 6);
     });
@@ -116,15 +126,28 @@
       }
     }
 
-    async function requestVerification() {
+    async function requestVerification(event) {
+      event?.preventDefault?.();
       if (state.busy) return;
+      const email = explicitEmailTarget ? String(elements.email?.value || "").trim().toLowerCase() : "";
+      if (explicitEmailTarget && !isValidEmail(email)) {
+        setMessage("Geçerli bir kişisel e-posta adresi girin.", "error");
+        elements.email?.focus();
+        return;
+      }
       state.busy = true;
       setBusy(true);
       setMessage("Doğrulama kodu gönderiliyor…");
       try {
-        const result = await request(`/api/account/${scope}/email-verification/request`, { method: "POST", body: { scope } });
+        const body = explicitEmailTarget ? { scope, email } : { scope };
+        const result = await request(`/api/account/${scope}/email-verification/request`, { method: "POST", body });
         state.challengeId = String(result.challengeId || "");
         if (!state.challengeId) throw new Error("Doğrulama isteği oluşturulamadı.");
+        if (result.security || result.accountSecurity) {
+          state.security = normalizeSecurity(result.security || result.accountSecurity);
+          state.loaded = true;
+          render();
+        }
         if (elements.verificationTitle) elements.verificationTitle.textContent = "Doğrulama kodu gönderildi";
         if (elements.verificationCopy) {
           const destination = String(result.maskedEmail || "hesap e-postanıza");
@@ -210,20 +233,21 @@
       const verified = Boolean(security.email && security.emailVerifiedAt && !security.emailVerificationRequired && !security.pendingEmail);
       const candidate = security.pendingEmail || security.email || "";
       if (elements.state) {
-        elements.state.textContent = verified ? "Doğrulandı" : candidate ? "Doğrulama bekliyor" : "E-posta gerekli";
+        elements.state.textContent = verified ? (explicitEmailTarget ? "✓ Doğrulandı" : "Doğrulandı") : candidate ? "Doğrulama bekliyor" : "E-posta gerekli";
         elements.state.dataset.state = verified ? "verified" : "pending";
       }
       if (elements.email && document.activeElement !== elements.email) elements.email.value = candidate;
       if (elements.currentEmail) elements.currentEmail.textContent = security.email || "Henüz eklenmedi";
       if (elements.passwordReset) elements.passwordReset.textContent = formatDateTime(security.lastPasswordResetAt) || "Bilgi yok";
-      if (elements.verification) elements.verification.hidden = verified || !candidate;
-      if (verified || !candidate) {
+      if (elements.verification) elements.verification.hidden = explicitEmailTarget ? !state.challengeId : verified || !candidate;
+      if ((!explicitEmailTarget && (verified || !candidate)) || (explicitEmailTarget && !state.challengeId)) {
         state.challengeId = "";
         if (elements.confirmForm) elements.confirmForm.hidden = true;
-        if (elements.send) elements.send.textContent = "Doğrulama kodu gönder";
+        if (elements.send) elements.send.textContent = explicitEmailTarget ? "Kodu Gönder" : "Doğrulama kodu gönder";
       } else if (elements.verificationCopy && !state.challengeId) {
         elements.verificationCopy.textContent = `${candidate} adresine altı haneli güvenlik kodu gönderin.`;
       }
+      if (explicitEmailTarget && elements.send && state.challengeId) elements.send.textContent = "Kodu Tekrar Gönder";
     }
 
     function setBusy(busy) {

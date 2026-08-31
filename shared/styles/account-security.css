@@ -1,9 +1,9 @@
 /* Yönetici ve personel için ortak doğrulanmış hesap e-postası arayüzü. */
 .account-security-card {
-  width: min(920px, 100%);
+  width: min(960px, 100%);
   display: grid;
-  gap: 14px;
-  padding: 16px;
+  gap: 10px;
+  padding: 15px 16px;
   border: 1px solid var(--panel-line, rgba(90, 47, 29, .18));
   border-radius: var(--panel-card-radius, 14px);
   color: var(--panel-ink, #2c1609);
@@ -23,7 +23,7 @@
 .account-security-head h4 {
   margin: 2px 0 4px;
   color: var(--panel-ink, #2c1609);
-  font: 700 20px/1.2 var(--panel-font-display, Georgia, serif);
+  font: 700 19px/1.2 var(--panel-font-ui, sans-serif);
 }
 
 .account-security-head p:not(.eyebrow) {
@@ -95,7 +95,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
-  padding: 12px;
+  padding: 10px 11px;
   border: 1px solid rgba(185, 80, 45, .22);
   border-radius: 11px;
   background: rgba(185, 80, 45, .06);
@@ -122,7 +122,7 @@
 
 .account-security-code-form {
   grid-column: 1 / -1;
-  padding-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid rgba(185, 80, 45, .16);
 }
 
@@ -160,15 +160,26 @@
   white-space: nowrap;
 }
 
+.account-security-meta-line {
+  margin: 0;
+  color: var(--panel-muted, #806b5b);
+  font: 600 10px/1.4 var(--panel-font-ui, sans-serif);
+}
+
+.account-security-meta-line strong {
+  color: var(--panel-ink, #2c1609);
+  font-weight: 700;
+}
+
 .account-security-danger-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 11px 12px;
-  border: 1px solid rgba(168, 45, 37, .2);
+  padding: 8px 10px;
+  border: 1px solid rgba(168, 45, 37, .14);
   border-radius: 10px;
-  background: rgba(168, 45, 37, .045);
+  background: rgba(168, 45, 37, .025);
 }
 
 .account-security-danger-row > span {
@@ -179,12 +190,12 @@
 
 .account-security-danger-row strong {
   color: var(--panel-danger, #a82d25);
-  font: 700 12px/1.35 var(--panel-font-ui, sans-serif);
+  font: 700 11px/1.35 var(--panel-font-ui, sans-serif);
 }
 
 .account-security-danger-row small {
   color: var(--panel-muted, #806b5b);
-  font: 500 10px/1.45 var(--panel-font-ui, sans-serif);
+  font: 500 9px/1.4 var(--panel-font-ui, sans-serif);
 }
 
 .account-security-danger-row .ui-button { flex: 0 0 auto; }
