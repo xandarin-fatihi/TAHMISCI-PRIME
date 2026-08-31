@@ -1,20 +1,22 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="tr" data-pwa-app="mudavim" data-pwa-worker="/mudavim/sw.js" data-pwa-scope="/mudavim/">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Tahmisçi Müdavim dijital sadakat kartı.">
+  <meta name="description" content="Tahmisçi Müdavim hesabı, duyuruları ve bildirim tercihleri.">
   <title>Tahmisçi Müdavim</title>
-  <link rel="icon" type="image/png" href="/assets/brand/favicon.png">
+  <meta name="theme-color" content="#0b0b0b">
+  <link rel="manifest" href="/mudavim/manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/app-icons/mudavim/favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/app-icons/mudavim/apple-touch-icon.png">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link rel="stylesheet" href="/shared/styles/account-security.css?v=20260829-mudavim">
-  <link rel="stylesheet" href="/mudavim/mudavim.css?v=20260829-email-account">
+  <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260830-mudavim">
+  <link rel="stylesheet" href="/mudavim/mudavim.css?v=20260830-viewport-fit">
 </head>
 <body class="is-guest">
   <header class="mudavim-header">
-    <a class="mudavim-logo" href="/" aria-label="Tahmisçi ana sayfa">
-      <img src="/assets/brand/logo-primary.png" alt="Tahmisçi">
-    </a>
+    <a class="mudavim-logo" href="/mudavim/" aria-label="Tahmisçi Müdavim ana ekranı">Tahmisçi Müdavim</a>
     <nav class="mudavim-nav" aria-label="Müdavim bağlantıları">
       <a href="#features" data-guest-nav>Kampanyalar</a>
       <button type="button" data-auth-open="login" data-guest-nav>Giriş Yap</button>
@@ -24,16 +26,17 @@
 
   <main>
     <section class="mudavim-gate" id="gate">
-      <div class="mudavim-gate__watermark" aria-hidden="true"></div>
       <div class="mudavim-gate__copy">
-        <p class="eyebrow">Tahmisçi Coffee & Roastery</p>
-        <h1><span>Tahmisçi</span><span>Müdavim</span></h1>
-        <p class="gate-lead">Ziyaretlerin kaybolmasın. Kasada kodunu okut, ilerlemeni takip et ve sadakat avantajlarından yararlan.</p>
+        <div class="mudavim-hero-brand" aria-label="Tahmisçi Müdavim">
+          <span class="mudavim-hero-brand__mark" aria-hidden="true"><img src="/assets/brand/logo-primary.png" alt=""></span>
+          <strong>TAHMİSÇİ MÜDAVİM</strong>
+        </div>
+        <p class="gate-lead">Müdavim hesabını e-posta ile güvenle oluştur; Tahmisçi duyurularını, profilini ve bildirim tercihlerini tek yerden yönet.</p>
 
         <div class="gate-feature-layout" id="features">
           <div class="gate-benefits" aria-label="Müdavim özellikleri">
-            <button class="feature-row" type="button" data-feature="qr" aria-expanded="false" aria-controls="featurePopover">
-              <span>Dijital QR kart</span><i aria-hidden="true">→</i>
+            <button class="feature-row" type="button" data-feature="account" aria-expanded="false" aria-controls="featurePopover">
+              <span>Güvenli hesap</span><i aria-hidden="true">→</i>
             </button>
             <button class="feature-row" type="button" data-feature="visits" aria-expanded="false" aria-controls="featurePopover">
               <span>Ziyaret takibi</span><i aria-hidden="true">→</i>
@@ -47,9 +50,9 @@
           </div>
 
           <aside class="feature-popover" id="featurePopover" role="region" aria-labelledby="featurePopoverTitle" aria-live="polite" hidden>
-            <span class="feature-popover__icon" aria-hidden="true"><i class="fas fa-qrcode"></i></span>
+            <span class="feature-popover__icon" aria-hidden="true"><i class="fas fa-user-shield"></i></span>
             <div>
-              <strong id="featurePopoverTitle">Dijital QR kart</strong>
+              <strong id="featurePopoverTitle">Güvenli hesap</strong>
               <p id="featurePopoverText"></p>
             </div>
           </aside>
@@ -64,8 +67,8 @@
 
     <section class="mudavim-app" id="app" hidden>
       <header class="member-topbar">
-        <a class="member-brand" href="/" aria-label="Tahmisçi ana sayfa">
-          <img src="/assets/brand/logo-primary.png" alt="Tahmisçi Coffee & Roastery">
+        <a class="member-brand" href="/mudavim/" aria-label="Tahmisçi Müdavim ana ekranı">
+          <img src="/assets/app-icons/mudavim/icon-192.png" alt="Tahmisçi Müdavim">
         </a>
         <nav class="member-tabs" aria-label="Müdavim paneli">
           <button type="button" data-member-panel="announcements" aria-pressed="false">
@@ -75,6 +78,9 @@
             <i class="fas fa-clock-rotate-left" aria-hidden="true"></i><span>Geçmiş Ziyaretlerim</span>
           </button>
         </nav>
+        <button class="member-notification-button" id="memberNotificationButton" type="button" data-member-panel="notifications" aria-label="Bildirimleri aç" aria-pressed="false">
+          <i class="far fa-bell" aria-hidden="true"></i><span id="memberNotificationBadge" hidden>0</span>
+        </button>
         <button class="member-user-chip" id="memberProfileTrigger" type="button" aria-label="Profili düzenle" aria-controls="memberProfileOverlay" aria-expanded="false">
           <span class="member-avatar" id="memberAvatar">M</span>
           <span><small>Merhaba,</small><strong id="memberFullName">Müdavim</strong></span>
@@ -128,6 +134,16 @@
               </div>
               <div class="member-history-list member-history-list--full" id="memberHistoryPanel"></div>
             </div>
+
+            <div class="member-center-view member-drawer" data-member-view="notifications" hidden>
+              <div class="member-drawer__head">
+                <button class="member-notifications-read-all" id="memberNotificationsReadAll" type="button">Tümünü okundu işaretle</button>
+                <h2>Bildirimler</h2>
+                <button type="button" data-member-panel-close aria-label="Bildirimleri kapat"><i class="fas fa-xmark" aria-hidden="true"></i></button>
+              </div>
+              <p class="member-notification-status" id="memberNotificationStatus" role="status" aria-live="polite"></p>
+              <div class="member-notification-feed" id="memberNotificationFeed"></div>
+            </div>
           </section>
 
           <aside class="member-column member-column--history" aria-label="Son ziyaretler">
@@ -177,12 +193,22 @@
               </section>
 
               <section class="member-profile-section" aria-labelledby="memberPreferencesTitle">
-                <h3 id="memberPreferencesTitle">Tercihler</h3>
+                <h3 id="memberPreferencesTitle">Bildirimler</h3>
                 <div class="member-profile-preferences">
+                  <button class="member-profile-push" id="memberPushToggle" type="button">
+                    <i class="fas fa-mobile-screen-button" aria-hidden="true"></i>
+                    <span><strong>Push Bildirimleri</strong><small id="memberPushState">Bu cihazda kapalı</small></span>
+                    <b>Bildirimleri Aç</b>
+                  </button>
+                  <label>
+                    <i class="fas fa-tags" aria-hidden="true"></i>
+                    <span><strong>Kampanya ve fırsatlar</strong><small>İsteğe bağlı ticari iletileri yönet.</small></span>
+                    <input id="memberProfileCampaignConsent" type="checkbox" role="switch">
+                  </label>
                   <label>
                     <i class="far fa-bell" aria-hidden="true"></i>
-                    <span><strong>Duyuru Bildirimleri</strong><small>Yeni duyurulardan haberdar ol.</small></span>
-                    <input id="memberProfileCampaignConsent" type="checkbox" role="switch">
+                    <span><strong>Müdavim duyuruları</strong><small>Yeni Müdavim duyurularından haberdar ol.</small></span>
+                    <input id="memberProfileMudavimNotifications" type="checkbox" role="switch">
                   </label>
                 </div>
               </section>
@@ -194,6 +220,10 @@
                     <i class="fas fa-lock" aria-hidden="true"></i>
                     <span><strong>Şifreyi Değiştir</strong><small>Hesap şifrenizi güvenle güncelleyin.</small></span>
                     <i class="fas fa-chevron-right" aria-hidden="true"></i>
+                  </button>
+                  <button id="memberInstallButton" type="button">
+                    <i class="fas fa-arrow-down-to-bracket" aria-hidden="true"></i>
+                    <span><strong>Uygulamayı Yükle</strong><small>Tahmisçi Müdavim'i ana ekranına ekle.</small></span>
                   </button>
                   <button class="member-profile-logout" type="button" data-logout>
                     <i class="fas fa-right-from-bracket" aria-hidden="true"></i>
@@ -223,7 +253,7 @@
       <form class="mudavim-auth-card" data-auth-step="login" novalidate>
         <p class="eyebrow">Tahmisçi Müdavim</p>
         <h2 id="mudavimAuthTitle">Giriş Yap</h2>
-        <p>Hesabına giriş yap, kartını ve ödül ilerlemeni gör.</p>
+        <p>Hesabına giriş yap; duyurularını, profilini ve bildirim tercihlerini yönet.</p>
         <label class="mudavim-auth-input">
           <span>E-posta</span>
           <input id="loginEmail" type="email" autocomplete="email" placeholder="ornek@email.com" maxlength="254" required>
@@ -260,8 +290,9 @@
         <label class="mudavim-auth-input"><span>E-posta</span><input id="registerEmail" type="email" autocomplete="email" maxlength="254" required></label>
         <label class="mudavim-auth-input"><span>Şifre</span><input id="registerPassword" type="password" autocomplete="new-password" maxlength="72" required></label>
         <label class="mudavim-auth-input"><span>Şifre tekrar</span><input id="registerPasswordConfirm" type="password" autocomplete="new-password" maxlength="72" required></label>
-        <label class="mudavim-auth-check"><input id="registerTerms" type="checkbox" required><span>Üyelik koşullarını ve KVKK bilgilendirmesini okudum.</span></label>
-        <label class="mudavim-auth-check"><input id="registerCampaigns" type="checkbox"><span>Tahmisçi duyuru ve kampanyalarını almak istiyorum.</span></label>
+        <div class="mudavim-legal-row"><input id="registerTerms" type="checkbox" required aria-readonly="true" aria-label="Üyelik Sözleşmesi kabulü"><button type="button" data-legal-open="terms"><span>Üyelik Sözleşmesi'ni okudum ve kabul ediyorum.</span><em>İncele</em></button></div>
+        <div class="mudavim-legal-row"><input id="registerPrivacy" type="checkbox" required aria-readonly="true" aria-label="KVKK Aydınlatma Metni bildirimi"><button type="button" data-legal-open="privacy"><span>KVKK Aydınlatma Metni'ni okudum.</span><em>İncele</em></button></div>
+        <div class="mudavim-legal-row"><input id="registerCampaigns" type="checkbox" aria-readonly="true" aria-label="Kampanya ve ticari ileti onayı"><button type="button" data-legal-open="commercial"><span>Tahmisçi duyuru, kampanya ve fırsatlarını almak istiyorum.</span><em>İncele</em></button></div>
         <p class="auth-error" data-auth-message role="status" aria-live="polite"></p>
         <button class="mudavim-auth-cta" type="submit">Hesabı Oluştur ve Kod Gönder</button>
       </form>
@@ -271,6 +302,7 @@
         <label class="mudavim-auth-input"><span>Doğrulama kodu</span><input id="registerVerificationCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
         <p class="auth-error" data-auth-message role="status" aria-live="polite"></p>
         <button class="mudavim-auth-cta" type="submit">E-postayı Doğrula</button>
+        <button class="mudavim-auth-link mudavim-resend" id="registerResend" type="button">Kodu yeniden gönder</button>
       </form>
 
       <form class="mudavim-auth-card" data-auth-step="verify-reset" hidden novalidate>
@@ -289,17 +321,11 @@
       </form>
 
       <div class="mudavim-auth-card" data-auth-step="success" hidden>
-        <p class="eyebrow">Kartım hazır</p>
-        <h2>Müdavim Kartın Hazır</h2>
+        <p class="eyebrow">Hesabın hazır</p>
+        <h2>Müdavim hesabın hazır.</h2>
         <div class="mudavim-auth-success">
+          <span class="mudavim-auth-success__mark" aria-hidden="true">✓</span>
           <span id="authSuccessCode">E-posta doğrulandı</span>
-          <div class="mudavim-auth-qr" aria-label="QR placeholder">
-            <i></i><i></i><i></i><i></i><i></i>
-            <i></i><i></i><i></i><i></i><i></i>
-            <i></i><i></i><i></i><i></i><i></i>
-            <i></i><i></i><i></i><i></i><i></i>
-            <i></i><i></i><i></i><i></i><i></i>
-          </div>
           <b id="authSuccessProgress">Hesabın aktif</b>
           <p>Giriş yaparak Müdavim alanına ulaşabilirsin.</p>
         </div>
@@ -308,7 +334,16 @@
     </section>
   </div>
 
+  <div class="mudavim-legal-overlay" id="mudavimLegalOverlay" hidden>
+    <section class="mudavim-legal-modal" role="dialog" aria-modal="true" aria-labelledby="mudavimLegalTitle" tabindex="-1">
+      <header class="mudavim-legal-head"><div><small>TAHMİSÇİ MÜDAVİM</small><h2 id="mudavimLegalTitle"></h2></div><button id="mudavimLegalClose" type="button" aria-label="Yasal metni kapat"><i class="fas fa-xmark" aria-hidden="true"></i></button></header>
+      <div class="mudavim-legal-copy" id="mudavimLegalCopy" tabindex="0"></div>
+      <footer class="mudavim-legal-actions"><button id="mudavimLegalCancel" type="button">Vazgeç</button><button id="mudavimLegalApprove" type="button"></button></footer>
+    </section>
+  </div>
+
   <script src="/shared/scripts/account-security.js?v=20260829-mudavim"></script>
-  <script src="/mudavim/mudavim.js?v=20260829-email-account"></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260830-mudavim"></script>
+  <script src="/mudavim/mudavim.js?v=20260830-production-account"></script>
 </body>
 </html>

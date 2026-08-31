@@ -2056,7 +2056,8 @@ notificationService.subscribeNotificationEvents((notification) => publishAuthent
   revision: notification && notification.revision || 0,
   actorId: "system",
   timestamp: notification && notification.updatedAt || notification && notification.createdAt,
-  targets: [notification && notification.appTarget || (notification && notification.recipientRole === "manager" ? "yonetici" : "personel")]
+  targets: [notification && notification.appTarget || (notification && notification.recipientRole === "manager"
+    ? "yonetici" : notification && notification.recipientRole === "mudavim" ? "mudavim" : "personel")]
 }));
 
 registerNotificationRoutes({

@@ -1,0 +1,18 @@
+{
+  "name": "Tahmisçi Müdavim",
+  "short_name": "Müdavim",
+  "description": "Tahmisçi Müdavim hesabı, duyuruları ve bildirimleri",
+  "lang": "tr",
+  "id": "/mudavim/",
+  "start_url": "/mudavim/",
+  "scope": "/mudavim/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#fbf6ee",
+  "theme_color": "#0b0b0b",
+  "icons": [
+    { "src": "/assets/app-icons/mudavim/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/app-icons/mudavim/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/app-icons/mudavim/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

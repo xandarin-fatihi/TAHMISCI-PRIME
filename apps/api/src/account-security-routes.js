@@ -1,6 +1,11 @@
 "use strict";
 
 const crypto = require("crypto");
+const {
+  MUDAVIM_TERMS_VERSION,
+  MUDAVIM_PRIVACY_VERSION,
+  MUDAVIM_COMMERCIAL_CONSENT_VERSION
+} = require("./mudavim-legal");
 
 const PUBLIC_RESET_MESSAGE = "Bilgiler kayıtlarımızla eşleşiyorsa doğrulama kodu gönderildi.";
 const ACCOUNT_SCOPES = new Set(["admin", "personel", "mudavim"]);
@@ -84,7 +89,7 @@ function registerAccountSecurityRoutes(options) {
   const emailVerificationRequestHandler = async (req, res, next) => {
     try {
       if (!mailConfigured(config, mailService)) {
-        return res.status(503).json({ ok: false, message: "E-posta gönderimi henüz yapılandırılmamış." });
+        return res.status(503).json({ ok: false, message: "E-posta hizmeti şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin." });
       }
       const snapshot = await requestStore(req, store);
       const initialAccount = resolveAuthenticatedAccount(snapshot, req, req.accountScope);
@@ -157,7 +162,7 @@ function registerAccountSecurityRoutes(options) {
         });
       } catch (error) {
         await revokeChallengeAfterDeliveryFailure(store, "emailVerificationChallenges", challengeId, req, config, "email_verification_delivery_failed");
-        return res.status(503).json({ ok: false, message: "Doğrulama e-postası gönderilemedi. Yapılandırmayı kontrol edin." });
+        return res.status(503).json({ ok: false, message: "Doğrulama e-postası gönderilemedi. Lütfen biraz sonra tekrar deneyin." });
       }
 
       return res.json({
@@ -278,7 +283,7 @@ function registerAccountSecurityRoutes(options) {
         return res.status(400).json({ ok: false, message: "Hesap kapsamı giriş ekranıyla eşleşmiyor." });
       }
       if (!mailConfigured(config, mailService)) {
-        return res.status(503).json({ ok: false, message: "E-posta ile parola sıfırlama henüz yapılandırılmamış." });
+        return res.status(503).json({ ok: false, message: "E-posta hizmeti şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin." });
       }
       const identifier = normalizeIdentifier(req.body && (req.body.identifier || req.body.username || req.body.email));
       const identifierHash = hashIdentifier(identifier, scope, config);
@@ -425,7 +430,7 @@ function registerAccountSecurityRoutes(options) {
   app.post("/api/mudavim/register", requireRequestOrigin, requestLimiter, async (req, res, next) => {
     try {
       if (!mailConfigured(config, mailService)) {
-        return res.status(503).json({ ok: false, message: "E-posta gönderimi henüz yapılandırılmamış." });
+        return res.status(503).json({ ok: false, message: "E-posta hizmeti şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin." });
       }
       const fullName = String(req.body && req.body.fullName || "").trim().replace(/\s+/g, " ").slice(0, 120);
       const email = normalizeAccountEmail(req.body && req.body.email);
@@ -434,7 +439,13 @@ function registerAccountSecurityRoutes(options) {
       if (fullName.length < 2) return res.status(400).json({ ok: false, message: "Ad soyad alanını doldurun." });
       if (!isEmailLike(email)) return res.status(400).json({ ok: false, message: "Geçerli bir e-posta adresi girin." });
       if (password !== passwordConfirm) return res.status(400).json({ ok: false, message: "Şifreler eşleşmiyor." });
-      if (req.body && req.body.termsAccepted !== true) return res.status(400).json({ ok: false, message: "Üyelik koşulları ve KVKK onayı gerekli." });
+      if (req.body && req.body.termsAccepted !== true) return res.status(422).json({ ok: false, message: "Üyelik Sözleşmesi kabulü gerekli." });
+      if (req.body && req.body.privacyAcknowledged !== true) return res.status(422).json({ ok: false, message: "KVKK Aydınlatma Metni'nin okunduğu doğrulanmalıdır." });
+      if (String(req.body && req.body.membershipTermsVersion || "") !== MUDAVIM_TERMS_VERSION
+        || String(req.body && req.body.privacyNoticeVersion || "") !== MUDAVIM_PRIVACY_VERSION
+        || String(req.body && req.body.commercialConsentVersion || "") !== MUDAVIM_COMMERCIAL_CONSENT_VERSION) {
+        return res.status(409).json({ ok: false, code: "LEGAL_DOCUMENT_VERSION_CHANGED", message: "Yasal metinler güncellendi. Lütfen metinleri yeniden inceleyin." });
+      }
       const passwordError = validatePassword(password);
       if (passwordError) return res.status(400).json({ ok: false, message: passwordError });
 
@@ -460,6 +471,8 @@ function registerAccountSecurityRoutes(options) {
       const createdAt = new Date().toISOString();
       const expiresAt = new Date(Date.now() + config.emailVerificationTtlMinutes * 60 * 1000).toISOString();
       let version = 1;
+      let termsAcceptanceChanged = false;
+      let privacyAcknowledgementChanged = false;
       await store.update((data) => {
         data.mudavimAccounts = Array.isArray(data.mudavimAccounts) ? data.mudavimAccounts : [];
         let account = data.mudavimAccounts.find((item) => item && String(item.id || "") === accountId);
@@ -481,7 +494,17 @@ function registerAccountSecurityRoutes(options) {
         account.fullName = fullName;
         account.alias = String(req.body && req.body.alias || fullName.split(" ")[0] || "Müdavim").trim().slice(0, 60);
         account.birthDate = "";
-        account.campaignConsent = req.body && req.body.campaignConsent === true;
+        const previousTermsVersion = String(account.membershipTermsVersion || "");
+        const previousPrivacyVersion = String(account.privacyNoticeVersion || "");
+        termsAcceptanceChanged = previousTermsVersion !== MUDAVIM_TERMS_VERSION || !account.membershipTermsAcceptedAt;
+        privacyAcknowledgementChanged = previousPrivacyVersion !== MUDAVIM_PRIVACY_VERSION || !account.privacyNoticeAcknowledgedAt;
+        account.membershipTermsVersion = MUDAVIM_TERMS_VERSION;
+        account.membershipTermsAcceptedAt = previousTermsVersion === MUDAVIM_TERMS_VERSION
+          ? account.membershipTermsAcceptedAt || createdAt : createdAt;
+        account.privacyNoticeVersion = MUDAVIM_PRIVACY_VERSION;
+        account.privacyNoticeAcknowledgedAt = previousPrivacyVersion === MUDAVIM_PRIVACY_VERSION
+          ? account.privacyNoticeAcknowledgedAt || createdAt : createdAt;
+        applyCampaignConsent(account, req.body && req.body.campaignConsent === true, createdAt);
         account.status = "pending_email_verification";
         account.updatedAt = createdAt;
         version = account.emailVerificationVersion;
@@ -501,6 +524,8 @@ function registerAccountSecurityRoutes(options) {
           revokedAt: null
         }).slice(-500);
         appendSecurityAudit(data, req, { action: "mudavim_registered", scope: "mudavim", accountId, result: "pending_email_verification", createdAt }, config);
+        if (termsAcceptanceChanged) appendSecurityAudit(data, req, { action: "mudavim_terms_accepted", scope: "mudavim", accountId, result: MUDAVIM_TERMS_VERSION, createdAt }, config);
+        if (privacyAcknowledgementChanged) appendSecurityAudit(data, req, { action: "mudavim_privacy_acknowledged", scope: "mudavim", accountId, result: MUDAVIM_PRIVACY_VERSION, createdAt }, config);
         return data;
       });
 
@@ -514,12 +539,13 @@ function registerAccountSecurityRoutes(options) {
         });
       } catch (_error) {
         await revokeChallengeAfterDeliveryFailure(store, "emailVerificationChallenges", challengeId, req, config, "mudavim_verification_delivery_failed");
-        return res.status(503).json({ ok: false, message: "Doğrulama e-postası gönderilemedi." });
+        return res.status(503).json({ ok: false, message: "Doğrulama e-postası gönderilemedi. Lütfen biraz sonra tekrar deneyin." });
       }
       return res.status(existingPending ? 200 : 201).json({
         ok: true,
         challengeId,
         expiresAt,
+        resendAfterSeconds: config.emailVerificationResendSeconds,
         maskedEmail: maskEmail(email),
         message: "Altı haneli doğrulama kodu e-posta adresinize gönderildi."
       });
@@ -627,8 +653,20 @@ function registerAccountSecurityRoutes(options) {
         account.fullName = fullName;
         account.alias = alias;
         account.birthDate = birthDate;
-        account.campaignConsent = req.body && req.body.campaignConsent === true;
         account.updatedAt = new Date().toISOString();
+        const previousCampaignConsent = account.campaignConsent === true;
+        if (typeof (req.body && req.body.campaignConsent) === "boolean") {
+          applyCampaignConsent(account, req.body.campaignConsent === true, account.updatedAt);
+          if (previousCampaignConsent !== account.campaignConsent) {
+            appendSecurityAudit(data, req, {
+              action: "mudavim_campaign_consent_updated",
+              scope: "mudavim",
+              accountId: account.id,
+              result: `previous:${previousCampaignConsent};next:${account.campaignConsent}`,
+              createdAt: account.updatedAt
+            }, config);
+          }
+        }
         member = publicMudavimAccount(account);
         appendSecurityAudit(data, req, { action: "mudavim_profile_updated", scope: "mudavim", accountId: account.id, result: "success", createdAt: account.updatedAt }, config);
         return data;
@@ -934,10 +972,29 @@ function publicMudavimAccount(account) {
     alias: String(source.alias || ""),
     birthDate: String(source.birthDate || ""),
     campaignConsent: source.campaignConsent === true,
+    campaignConsentVersion: String(source.campaignConsentVersion || ""),
+    campaignConsentAt: source.campaignConsentAt || null,
+    campaignConsentRevokedAt: source.campaignConsentRevokedAt || null,
     status: String(source.status || "pending_email_verification"),
     createdAt: source.createdAt || null,
     updatedAt: source.updatedAt || null
   };
+}
+
+function applyCampaignConsent(account, enabled, timestamp) {
+  const next = enabled === true;
+  const previous = account.campaignConsent === true;
+  account.campaignConsent = next;
+  account.campaignConsentVersion = MUDAVIM_COMMERCIAL_CONSENT_VERSION;
+  if (next && !previous) {
+    account.campaignConsentAt = timestamp;
+    account.campaignConsentRevokedAt = null;
+  } else if (!next && previous) {
+    account.campaignConsentRevokedAt = timestamp;
+  } else {
+    account.campaignConsentAt = next ? account.campaignConsentAt || timestamp : account.campaignConsentAt || null;
+    account.campaignConsentRevokedAt = next ? null : account.campaignConsentRevokedAt || null;
+  }
 }
 
 function emptyLoyalty() {

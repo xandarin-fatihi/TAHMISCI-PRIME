@@ -102,6 +102,11 @@ function createNotificationDeliveryWorker(options) {
       await removeRecipientSubscriptions(notification.recipientRole, notification.recipientId);
       return cancel(item, "Alıcı hesabı aktif değil.");
     }
+    if (normalizeRole(notification.recipientRole) === "mudavim"
+      && String(notification.category || "") === "campaign"
+      && !mudavimCampaignConsent(snapshot, notification.recipientId)) {
+      return cancel(item, "Kampanya iletisi alıcı izni olmadığı için teslim edilmedi.");
+    }
     try {
       const preference = getNotificationPreferences(snapshot, notification.recipientRole, notification.recipientId);
       const quietUntil = notification.severity === "critical" ? null : quietHoursEnd(preference, nowDate(clock));
@@ -505,10 +510,21 @@ function zonedClockMinutes(date, timezone) {
 
 function recipientIsActive(data, role, id) {
   if (role === "manager") return true;
+  if (normalizeRole(role) === "mudavim") {
+    const account = (Array.isArray(data.mudavimAccounts) ? data.mudavimAccounts : [])
+      .find((item) => item && String(item.id || "") === String(id || ""));
+    return Boolean(account && account.status === "active" && !account.disabledAt);
+  }
   const users = Array.isArray(data.recipeUsers) ? data.recipeUsers : [];
   if (!users.length) return true;
   const user = users.find((item) => item && String(item.id) === String(id));
   return Boolean(user && user.active !== false);
+}
+
+function mudavimCampaignConsent(data, id) {
+  const account = (Array.isArray(data && data.mudavimAccounts) ? data.mudavimAccounts : [])
+    .find((item) => item && String(item.id || "") === String(id || ""));
+  return Boolean(account && account.status === "active" && !account.disabledAt && account.campaignConsent === true);
 }
 
 function permanentError(message, code) {

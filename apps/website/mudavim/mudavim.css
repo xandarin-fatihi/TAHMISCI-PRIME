@@ -6,6 +6,13 @@
 }
 
 @font-face {
+  font-family: "Magnolia Script";
+  src: url("/assets/fonts/magnolia-script.otf") format("opentype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
   font-family: "Tahmisci Poppins";
   src: url("/assets/fonts/poppins-semibold.ttf") format("truetype");
   font-weight: 600;
@@ -20,6 +27,7 @@
 }
 
 :root {
+  --mudavim-guest-header-height: 82px;
   --espresso: #301a0c;
   --coffee: #573b29;
   --copper: #9f6b42;
@@ -70,7 +78,7 @@ input:focus-visible {
 .mudavim-header {
   position: relative;
   z-index: 30;
-  min-height: 92px;
+  min-height: var(--mudavim-guest-header-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -78,26 +86,20 @@ input:focus-visible {
   border-bottom: 1px solid rgba(48, 26, 12, 0.1);
   background: rgba(255, 250, 243, 0.9);
   backdrop-filter: blur(18px);
-  padding: 9px clamp(24px, 5vw, 82px);
+  padding: 7px clamp(24px, 5vw, 82px);
 }
 
 .mudavim-logo {
-  width: 104px;
-  height: 72px;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  min-height: 52px;
   flex: 0 0 auto;
-  overflow: hidden;
-}
-
-.mudavim-logo img {
-  width: 72px;
-  height: 72px;
-  display: block;
-  object-fit: contain;
-  transform: scale(2.02);
-  filter: brightness(0) saturate(100%) invert(19%) sepia(31%) saturate(966%) hue-rotate(342deg) brightness(91%) contrast(91%);
+  color: var(--espresso);
+  font-family: "Magnolia Script", cursive;
+  font-size: clamp(1.85rem, 2.35vw, 2.45rem);
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .mudavim-nav {
@@ -152,29 +154,15 @@ main {
 }
 
 .mudavim-gate {
-  min-height: calc(100svh - 92px);
+  min-height: calc(100svh - var(--mudavim-guest-header-height));
+  min-height: calc(100dvh - var(--mudavim-guest-header-height));
   position: relative;
   display: grid;
-  grid-template-columns: minmax(360px, 0.94fr) minmax(400px, 1.06fr);
+  grid-template-columns: minmax(390px, 0.96fr) minmax(400px, 1.04fr);
   align-items: center;
-  gap: clamp(30px, 3.8vw, 62px);
-  overflow: clip;
-  padding: clamp(28px, 4vh, 52px) 0;
-}
-
-.mudavim-gate__watermark {
-  position: absolute;
-  z-index: -1;
-  left: 10%;
-  top: 51%;
-  width: min(600px, 48vw);
-  aspect-ratio: 1;
-  transform: translate(-18%, -50%);
-  background: url("/assets/brand/logo-large.png") center / contain no-repeat;
-  filter: brightness(0) saturate(100%) invert(27%) sepia(35%) saturate(1050%) hue-rotate(345deg) brightness(84%) contrast(88%);
-  opacity: 0.3;
-  mix-blend-mode: multiply;
-  pointer-events: none;
+  gap: clamp(38px, 4.4vw, 72px);
+  overflow: visible;
+  padding: clamp(18px, 2.8vh, 32px) 0;
 }
 
 .mudavim-gate__copy,
@@ -185,7 +173,41 @@ main {
 
 .mudavim-gate__copy {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   padding-left: 4px;
+}
+
+.mudavim-hero-brand {
+  width: min(100%, 430px);
+  display: grid;
+  justify-items: center;
+  gap: 13px;
+}
+
+.mudavim-hero-brand__mark {
+  width: clamp(260px, 22vw, 300px);
+  max-width: 100%;
+  aspect-ratio: 500 / 337;
+  display: block;
+  overflow: hidden;
+}
+
+.mudavim-hero-brand__mark img {
+  width: 100%;
+  height: auto;
+  display: block;
+  filter: brightness(0) saturate(100%) invert(19%) sepia(31%) saturate(966%) hue-rotate(342deg) brightness(91%) contrast(91%);
+}
+
+.mudavim-hero-brand strong {
+  color: var(--coffee);
+  font-size: clamp(0.88rem, 1.05vw, 1.04rem);
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  line-height: 1.35;
+  text-align: center;
 }
 
 .eyebrow {
@@ -197,20 +219,10 @@ main {
   text-transform: uppercase;
 }
 
-h1,
 h2 {
   font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif;
   letter-spacing: -0.035em;
 }
-
-h1 {
-  max-width: 680px;
-  font-size: clamp(3.75rem, 5.5vw, 6.25rem);
-  font-weight: 600;
-  line-height: 0.92;
-}
-
-h1 span { display: block; }
 
 .gate-lead,
 .app-hero p,
@@ -223,9 +235,10 @@ h1 span { display: block; }
 }
 
 .gate-lead {
-  max-width: 610px;
-  margin-top: 20px;
-  font-size: clamp(0.95rem, 1.08vw, 1.08rem);
+  max-width: 620px;
+  margin-top: clamp(24px, 3.2vh, 34px);
+  font-size: clamp(1.04rem, 1.18vw, 1.18rem);
+  line-height: 1.72;
 }
 
 .gate-feature-layout {
@@ -250,10 +263,11 @@ h1 span { display: block; }
   border-bottom: 1px solid rgba(159, 107, 66, 0.36);
   background: transparent;
   color: var(--coffee);
-  padding: 8px 1px;
+  padding: 10px 1px;
   text-align: left;
-  font-size: 0.96rem;
+  font-size: clamp(0.98rem, 1.02vw, 1.08rem);
   font-weight: 650;
+  line-height: 1.45;
   transition: color 0.2s ease, padding 0.2s ease;
 }
 
@@ -335,7 +349,7 @@ h1 span { display: block; }
 
 .mudavim-gate__visual {
   width: min(100%, 680px);
-  height: clamp(420px, 58vh, 620px);
+  height: clamp(360px, 55dvh, 560px);
   justify-self: end;
   margin: 0;
   overflow: hidden;
@@ -356,6 +370,68 @@ h1 span { display: block; }
 @keyframes featurePopoverIn {
   from { opacity: 0; transform: translateX(-7px); }
   to { opacity: 1; transform: translateX(0); }
+}
+
+@media (min-width: 901px) and (max-height: 900px) {
+  :root { --mudavim-guest-header-height: 76px; }
+
+  .mudavim-header { padding-block: 5px; }
+
+  .mudavim-gate {
+    gap: clamp(30px, 3.5vw, 54px);
+    padding-block: 12px;
+  }
+
+  .mudavim-hero-brand { gap: 8px; }
+  .mudavim-hero-brand__mark { width: clamp(225px, 19vw, 270px); }
+  .mudavim-hero-brand strong { font-size: clamp(0.8rem, 0.92vw, 0.94rem); }
+
+  .gate-lead {
+    margin-top: 16px;
+    font-size: clamp(1rem, 1.05vw, 1.1rem);
+    line-height: 1.58;
+  }
+
+  .gate-feature-layout { margin-top: 14px; }
+
+  .feature-row {
+    min-height: 42px;
+    padding-block: 6px;
+    font-size: clamp(1.02rem, 1.08vw, 1.12rem);
+  }
+
+  .mudavim-gate .mudavim-gate__visual { height: clamp(350px, 52dvh, 470px); }
+}
+
+@media (min-width: 901px) and (max-height: 800px) {
+  :root { --mudavim-guest-header-height: 70px; }
+
+  .mudavim-header { padding-block: 4px; }
+
+  .mudavim-gate {
+    gap: clamp(26px, 3vw, 46px);
+    padding-block: 8px;
+  }
+
+  .mudavim-hero-brand { gap: 6px; }
+  .mudavim-hero-brand__mark { width: clamp(195px, 17.5vw, 240px); }
+  .mudavim-hero-brand strong { font-size: clamp(0.76rem, 0.86vw, 0.88rem); }
+
+  .gate-lead {
+    margin-top: 12px;
+    font-size: clamp(0.98rem, 1vw, 1.05rem);
+    line-height: 1.5;
+  }
+
+  .gate-feature-layout { margin-top: 10px; }
+
+  .feature-row {
+    min-height: 40px;
+    padding-block: 4px;
+    font-size: clamp(1rem, 1.04vw, 1.08rem);
+  }
+
+  .mudavim-gate .mudavim-gate__visual { height: clamp(330px, 50dvh, 410px); }
 }
 
 .member-card,
@@ -898,13 +974,8 @@ input:focus {
   }
 
   .mudavim-logo {
-    width: 82px;
-    height: 58px;
-  }
-
-  .mudavim-logo img {
-    width: 58px;
-    height: 58px;
+    min-height: 48px;
+    font-size: clamp(1.65rem, 4vw, 2rem);
   }
 
   .mudavim-nav a,
@@ -929,15 +1000,11 @@ input:focus {
     padding: 38px 0 36px;
   }
 
-  .mudavim-gate__watermark {
-    left: 48%;
-    top: 32%;
-    width: min(610px, 82vw);
-    transform: translate(-50%, -50%);
-    opacity: 0.16;
-  }
+  .mudavim-gate__copy { align-items: center; }
 
-  h1 { font-size: clamp(3.6rem, 10vw, 5.2rem); }
+  .mudavim-hero-brand { width: min(100%, 460px); }
+
+  .gate-lead { max-width: 680px; text-align: center; }
 
   .gate-feature-layout {
     width: min(680px, 100%);
@@ -992,13 +1059,8 @@ input:focus {
   }
 
   .mudavim-logo {
-    width: 58px;
-    height: 50px;
-  }
-
-  .mudavim-logo img {
-    width: 50px;
-    height: 50px;
+    min-height: 44px;
+    font-size: clamp(1.32rem, 6.2vw, 1.65rem);
   }
 
   .mudavim-nav { gap: 1px; }
@@ -1022,19 +1084,25 @@ input:focus {
     padding: 34px 0 30px;
   }
 
-  .mudavim-gate__watermark { opacity: 0.13; }
-
   .eyebrow {
     margin-bottom: 16px;
     font-size: 0.66rem;
     letter-spacing: 0.16em;
   }
 
-  h1 { font-size: clamp(3.35rem, 16vw, 4.7rem); }
-
   .gate-lead {
-    margin-top: 22px;
-    font-size: 0.96rem;
+    margin-top: 24px;
+    font-size: 1rem;
+    line-height: 1.68;
+  }
+
+  .mudavim-hero-brand { gap: 10px; }
+
+  .mudavim-hero-brand__mark { width: min(100%, 330px); }
+
+  .mudavim-hero-brand strong {
+    font-size: 0.78rem;
+    letter-spacing: 0.18em;
   }
 
   .gate-feature-layout {
@@ -2232,6 +2300,212 @@ body.profile-open .mudavim-app {
   overflow: hidden;
 }
 
+/* Müdavim production account, legal consent ve bildirim katmanı. */
+.member-brand img {
+  width: 58px;
+  height: 58px;
+  transform: none;
+  filter: none;
+  border-radius: 14px;
+  object-fit: cover;
+}
+
+.member-topbar {
+  grid-template-columns: minmax(120px, 1fr) auto 48px minmax(210px, 1fr);
+  gap: clamp(10px, 1.8vw, 26px);
+}
+
+.member-notification-button {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  justify-self: end;
+  border: 1px solid rgba(48, 26, 12, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 250, 243, 0.76);
+  color: var(--espresso);
+  font-size: 1.05rem;
+}
+
+.member-notification-button span {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--paper);
+  border-radius: 999px;
+  background: #a83b27;
+  color: #fff;
+  padding-inline: 4px;
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.member-notification-button span[hidden] { display: none; }
+
+.mudavim-legal-row {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(223, 217, 200, 0.28);
+  padding: 10px 12px;
+}
+
+.mudavim-legal-row input {
+  width: 20px;
+  min-height: 20px;
+  accent-color: var(--coffee);
+  cursor: pointer;
+}
+
+.mudavim-legal-row button {
+  min-width: 0;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--coffee);
+  text-align: left;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.mudavim-legal-row em {
+  flex: 0 0 auto;
+  color: var(--copper);
+  font-style: normal;
+  text-decoration: underline;
+}
+
+.mudavim-legal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: rgba(24, 14, 8, 0.7);
+  backdrop-filter: blur(10px);
+  padding: clamp(12px, 3vw, 32px);
+}
+
+.mudavim-legal-overlay[hidden] { display: none; }
+
+.mudavim-legal-modal {
+  width: min(740px, 100%);
+  max-height: min(880px, calc(100svh - 24px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid rgba(90, 47, 29, 0.22);
+  border-radius: 26px;
+  background: #fffaf3;
+  box-shadow: 0 28px 90px rgba(18, 10, 5, 0.4);
+  color: #2c1609;
+}
+
+.mudavim-legal-head,
+.mudavim-legal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: #fbf6ee;
+  padding: 18px clamp(18px, 4vw, 30px);
+}
+
+.mudavim-legal-head { border-bottom: 1px solid rgba(90, 47, 29, 0.14); }
+.mudavim-legal-head small { display: block; color: #5a2f1d; font-weight: 900; letter-spacing: 0.14em; }
+.mudavim-legal-head h2 { margin-top: 4px; font-size: clamp(1.55rem, 4vw, 2.25rem); }
+.mudavim-legal-head button { width: 44px; height: 44px; flex: 0 0 auto; border-radius: 50%; background: rgba(90, 47, 29, 0.08); color: #2c1609; }
+
+.mudavim-legal-copy {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 22px clamp(18px, 4vw, 34px) 34px;
+  font-size: clamp(0.88rem, 2vw, 1rem);
+  line-height: 1.72;
+}
+
+.mudavim-legal-copy section + section { margin-top: 22px; }
+.mudavim-legal-copy h3 { margin-bottom: 6px; color: #5a2f1d; font-family: "Tahmisci Poppins", Poppins, system-ui, sans-serif; font-size: 1rem; }
+.mudavim-legal-copy p { color: #4a2c1d; font-weight: 560; }
+.mudavim-legal-actions { justify-content: flex-end; border-top: 1px solid rgba(90, 47, 29, 0.14); }
+.mudavim-legal-actions button { min-height: 46px; border-radius: 13px; padding: 10px 18px; font-weight: 850; }
+.mudavim-legal-actions button:first-child { border: 1px solid rgba(90, 47, 29, 0.22); color: #5a2f1d; }
+.mudavim-legal-actions button:last-child { background: #5a2f1d; color: #fffaf3; }
+
+.mudavim-auth-success__mark {
+  width: 68px;
+  height: 68px;
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(255, 250, 243, 0.62);
+  border-radius: 50%;
+  font-size: 2rem;
+  font-weight: 900;
+}
+
+.member-profile-preferences { grid-template-columns: 1fr; }
+.member-profile-push {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border-radius: 12px;
+  background: rgba(255, 250, 241, 0.3);
+  padding: 7px 10px;
+  color: var(--coffee);
+  text-align: left;
+}
+.member-profile-push > i { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: rgba(183, 119, 61, 0.1); }
+.member-profile-push > span { min-width: 0; display: grid; gap: 2px; }
+.member-profile-push strong { font-size: 0.67rem; }
+.member-profile-push small { color: var(--muted); font-size: 0.59rem; }
+.member-profile-push b { border-radius: 9px; background: var(--coffee); color: var(--paper); padding: 8px 10px; font-size: 0.63rem; white-space: nowrap; }
+.member-profile-push.is-enabled b { background: rgba(59, 110, 52, 0.12); color: #315f2d; }
+
+.member-notifications-read-all {
+  width: auto !important;
+  min-height: 40px;
+  border-radius: 11px !important;
+  padding: 8px 12px;
+  font-size: 0.68rem !important;
+}
+
+.member-notification-status { color: var(--muted); text-align: center; font-size: 0.74rem; }
+.member-notification-feed { min-height: 0; display: grid; align-content: start; gap: 10px; overflow-y: auto; padding: 8px 4px 4px; }
+.member-notification-item { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 10px; border: 1px solid rgba(90, 47, 29, 0.12); border-radius: 14px; background: rgba(255, 250, 243, 0.72); padding: 12px; }
+.member-notification-item.is-unread { border-color: rgba(90, 47, 29, 0.36); background: #fffaf3; }
+.member-notification-item__open { min-width: 0; display: grid; gap: 4px; color: var(--coffee); text-align: left; }
+.member-notification-item__open span { color: var(--muted); font-size: 0.74rem; line-height: 1.45; }
+.member-notification-item__open time { color: var(--muted); font-size: 0.64rem; }
+.member-notification-item__archive { width: 44px; height: 44px; border-radius: 12px; background: rgba(90, 47, 29, 0.07); color: var(--coffee); }
+
+body.legal-open { overflow: hidden !important; }
+
+@media (max-width: 780px) {
+  .member-topbar { grid-template-columns: 70px minmax(0, 1fr) 46px; grid-template-areas: "brand user notifications" "tabs tabs tabs"; }
+  .member-notification-button { grid-area: notifications; }
+  .member-brand img { width: 50px; height: 50px; }
+  .member-drawer__head { grid-template-columns: minmax(92px, auto) minmax(0, 1fr) 44px; }
+  .member-notifications-read-all { white-space: normal; line-height: 1.2; }
+  .mudavim-legal-actions { display: grid; grid-template-columns: 1fr; }
+  .mudavim-legal-actions button { width: 100%; }
+}
+
 @media (max-width: 1220px) {
   .member-topbar { grid-template-columns: minmax(130px, 0.7fr) auto minmax(200px, 0.7fr); gap: 12px; }
   .member-tabs button { padding-inline: 12px; }
@@ -2336,6 +2610,12 @@ body.profile-open .mudavim-app {
 }
 
 @media (max-width: 480px) {
+  .mudavim-header { gap: 4px; padding-inline: 8px; }
+  .mudavim-logo { min-height: 42px; font-size: 1.05rem; }
+  .mudavim-nav a,
+  .mudavim-nav button { padding-inline: 4px; font-size: 0.64rem; }
+  .mudavim-nav .mudavim-nav__register { min-width: 58px; padding-inline: 6px; }
+
   .member-user-chip { grid-template-columns: 40px minmax(0, 1fr) auto; padding-right: 9px; }
   .member-avatar { width: 40px; height: 40px; }
   .member-user-chip small { display: none; }
@@ -2369,4 +2649,13 @@ body.profile-open .mudavim-app {
   .announcement-block-media { min-height: 130px; border-radius: 12px; }
   .announcement-block-media img { min-height: 130px; }
   .announcement-layout-block.is-image .announcement-block-media.is-portrait { width: min(88%, 330px); }
+}
+
+@media (max-width: 1220px) and (min-width: 781px) {
+  .member-topbar { grid-template-columns: minmax(110px, .7fr) auto 48px minmax(190px, .7fr); gap: 10px; }
+}
+
+@media (max-width: 780px) {
+  .member-topbar { grid-template-columns: 70px minmax(0, 1fr) 46px; grid-template-areas: "brand user notifications" "tabs tabs tabs"; }
+  .member-notification-button { grid-area: notifications; }
 }

@@ -16,6 +16,7 @@
   const workerUrl = String(root.dataset.pwaWorker || "").trim();
   const workerScope = String(root.dataset.pwaScope || "").trim();
   const isBackOffice = appId === "personel" || appId === "yonetici" || appId === "fatura";
+  const supportsNotificationIntro = isBackOffice || appId === "mudavim";
   const updateCheckKey = `tahmisci:pwa-update-check:${appId}`;
   const notificationIntroKey = `tahmisci:pwa-notification-intro:${appId}:v1`;
   const updateCheckIntervalMs = 6 * 60 * 60 * 1000;
@@ -40,8 +41,10 @@
   window.addEventListener("appinstalled", handleAppInstalled);
   document.addEventListener("personel:session-started", scheduleNotificationIntro);
   document.addEventListener("tahmisci:admin-session-started", scheduleNotificationIntro);
+  document.addEventListener("mudavim:session-started", scheduleNotificationIntro);
   document.addEventListener("personel:session-ended", dismissNotificationIntro);
   document.addEventListener("tahmisci:admin-session-ended", dismissNotificationIntro);
+  document.addEventListener("mudavim:session-ended", dismissNotificationIntro);
 
   document.addEventListener("DOMContentLoaded", () => {
     bindConnectivityState();
@@ -57,7 +60,7 @@
     canInstall: () => Boolean(deferredInstallPrompt && !isStandalone()),
     promptInstall: requestInstall,
     registerNotificationPrompt(config) {
-      if (!isBackOffice || !config || typeof config.onEnable !== "function") return false;
+      if (!supportsNotificationIntro || !config || typeof config.onEnable !== "function") return false;
       notificationPromptConfig = config;
       scheduleNotificationIntro();
       return true;
@@ -143,7 +146,7 @@
   }
 
   async function showNotificationIntroIfEligible() {
-    if (!document.body || notificationIntroNotice || !notificationPromptConfig || !isBackOffice || !isStandalone()) return;
+    if (!document.body || notificationIntroNotice || !notificationPromptConfig || !supportsNotificationIntro || !isStandalone()) return;
     if (!("Notification" in window) || window.Notification.permission !== "default") return;
     try {
       if (window.localStorage.getItem(notificationIntroKey)) return;
@@ -154,7 +157,9 @@
     notificationIntroNotice = createNotice({
       kind: "push-intro",
       title: "Telefon bildirimleri",
-      message: "Görev, sevkiyat ve vardiya bildirimlerini telefonundan al.",
+      message: appId === "mudavim"
+        ? "Tahmisçi Müdavim duyurularını ve hesap bildirimlerini telefonundan al."
+        : "Görev, sevkiyat ve vardiya bildirimlerini telefonundan al.",
       actionLabel: "Bildirimleri Aç",
       onAction: enableNotificationsFromIntro,
       secondaryActionLabel: "Şimdi Değil",
@@ -356,7 +361,9 @@
         title: "Bağlantı yok",
         message: isBackOffice
           ? "Bağlantı yok, veriler güncellenemiyor. Yazma işlemleri tamamlanmış sayılmaz."
-          : "Menü bilgileri çevrimdışıyken güncel olmayabilir.",
+          : appId === "mudavim"
+            ? "Bağlantı gerekli. Hesap işlemleri çevrimdışıyken yapılamaz."
+            : "Menü bilgileri çevrimdışıyken güncel olmayabilir.",
         dismissible: false
       });
     }

@@ -26,10 +26,12 @@ function registerNotificationRoutes(options) {
   } = options;
   const personelGuards = [requireAdminOrMainRequestOrigin, auth.requireActivePersonel];
   const adminGuards = [requireAdminRequestOrigin, auth.requireAdmin];
+  const mudavimGuards = [requireAdminOrMainRequestOrigin, auth.requireMudavim];
   let notificationEventRevision = 0;
 
   registerRecipientRoutes({ prefix: "/api/notifications", guards: personelGuards, role: "personnel" });
   registerRecipientRoutes({ prefix: "/api/admin/notifications", guards: adminGuards, role: "manager", admin: true });
+  registerRecipientRoutes({ prefix: "/api/mudavim/notifications", guards: mudavimGuards, role: "mudavim" });
 
   function registerRecipientRoutes({ prefix, guards, role, admin = false }) {
     app.get(prefix, ...guards, async (req, res, next) => {
@@ -321,7 +323,7 @@ function registerNotificationRoutes(options) {
 
           const notification = {
             id: `push-test-${crypto.randomUUID()}`,
-            recipientRole: "personnel",
+            recipientRole: owner.role,
             recipientId: owner.id,
             category: "system",
             eventType: "notification_test",
@@ -476,6 +478,15 @@ function registerNotificationRoutes(options) {
 
 function recipientFromRequest(req, role) {
   if (role === "manager") return { role: "manager", id: "manager" };
+  if (role === "mudavim") {
+    const id = String(req.mudavimUser && req.mudavimUser.id || req.mudavim && req.mudavim.userId || "").trim();
+    if (!id) {
+      const error = new Error("Aktif Müdavim hesabı gerekli.");
+      error.status = 403;
+      throw error;
+    }
+    return { role: "mudavim", id };
+  }
   const id = String(req.recipeUser && req.recipeUser.id || req.recipe && req.recipe.userId || "").trim();
   if (!id) {
     const error = new Error("Aktif personel hesabı gerekli.");

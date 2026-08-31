@@ -13,7 +13,9 @@ function normalizeAppTarget(value, deepLink = "", recipientRole = "personnel") {
   const path = String(deepLink || "");
   const fromPath = Object.entries(APP_ROOTS).find(([, root]) => path === root.slice(0, -1) || path.startsWith(root));
   if (fromPath) return fromPath[0];
-  return String(recipientRole || "").toLocaleLowerCase("tr-TR") === "manager" ? "yonetici" : "personel";
+  const role = String(recipientRole || "").toLocaleLowerCase("tr-TR");
+  if (["mudavim", "member", "customer"].includes(role)) return "mudavim";
+  return role === "manager" ? "yonetici" : "personel";
 }
 
 function safeAppDeepLink(value, appTarget, fallback = "") {

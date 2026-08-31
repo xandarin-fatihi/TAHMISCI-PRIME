@@ -9,14 +9,74 @@
     resetChallengeId: "",
     resetCode: "",
     busy: false,
-    activePanel: "welcome"
+    activePanel: "welcome",
+    legalVersions: { membershipTerms: "", privacyNotice: "", commercialConsent: "" },
+    activeLegal: "",
+    legalTarget: null,
+    legalReturnFocus: null,
+    resendTimer: 0,
+    resendInterval: 0,
+    notifications: [],
+    notificationPreferences: null,
+    notificationCapabilities: null,
+    notificationEvents: null
   };
   const elements = {};
   const featureCopy = {
-    qr: ["fa-qrcode", "Dijital QR kart", "Müdavim kartın hesabına güvenle bağlıdır ve gelecekteki ziyaret akışına hazırdır."],
+    account: ["fa-user-shield", "Güvenli hesap", "E-posta doğrulaması, güvenli oturum ve hesap kurtarma seçenekleriyle Müdavim hesabını yönetirsin."],
     visits: ["fa-clock-rotate-left", "Ziyaret takibi", "Gerçek ziyaret kayıtların oluştuğunda geçmişin burada gösterilir."],
     mobile: ["fa-mobile-screen-button", "Mobil arayüz", "Mobil cihaz ve masaüstünde aynı güvenli Müdavim hesabını kullanırsın."],
     profile: ["fa-user-shield", "Profil yönetimi", "Profil ve e-posta güvenliği doğrudan backend hesabında saklanır."]
+  };
+  const legalDocuments = {
+    terms: {
+      title: "Üyelik Sözleşmesi",
+      approve: "Okudum ve Onaylıyorum",
+      sections: [
+        ["1. Taraflar ve Kapsam", "Bu sözleşme, Tahmisçi markası tarafından sunulan Müdavim hesabının kullanım koşullarını ve üyeyle Tahmisçi arasındaki temel hak ve yükümlülükleri düzenler."],
+        ["2. Müdavim Hesabı", "Müdavim hesabı kişiye özeldir. Üye, hesabını doğru bilgilerle oluşturur ve hesabın başkası tarafından kullanılmasına izin vermez."],
+        ["3. Üyelik Bilgileri", "Ad soyad, e-posta, profil adı ve isteğe bağlı doğum tarihi üyelik işlemlerinin yürütülmesi için işlenir; bilgilerin güncel tutulması üyenin sorumluluğundadır."],
+        ["4. Hesap Güvenliği", "Şifre, doğrulama kodu ve oturum bilgileri gizli tutulmalıdır. Şüpheli kullanım halinde üye şifresini yenilemeli ve Tahmisçi ile iletişime geçmelidir."],
+        ["5. Hizmetlerin Kullanımı", "Hizmet hukuka, dürüstlük kurallarına ve uygulama içi yönlendirmelere uygun kullanılmalıdır. Teknik güvenliği veya diğer kullanıcıları etkileyen kullanımlar yasaktır."],
+        ["6. Üyelik Avantajları", "Müdavim avantajları sistemde aktif edildiği ölçüde ve ilan edilen kurallar doğrultusunda uygulanır; her özellik her zaman kullanılabilir olmayabilir."],
+        ["7. Puan / Ödül Özellikleri", "Puan, ödül veya benzeri sadakat özellikleri ancak ayrıca devreye alınıp koşulları ilan edildiğinde geçerlilik kazanır. Bu sözleşme belirli bir ödül taahhüdü oluşturmaz."],
+        ["8. Kötüye Kullanım", "Sahte hesap, yetkisiz erişim, otomatik kötüye kullanım veya avantajları haksız biçimde elde etmeye yönelik işlemler engellenebilir ve incelenebilir."],
+        ["9. Hesabın Askıya Alınması veya Sonlandırılması", "Güvenlik, mevzuat veya sözleşmeye aykırılık halinde hesap geçici olarak askıya alınabilir ya da sonlandırılabilir. Kullanıcı da hesabının kapatılmasını talep edebilir."],
+        ["10. Hizmet Değişiklikleri", "Tahmisçi, hizmeti güvenlik ve işletim gereksinimleri doğrultusunda güncelleyebilir. Önemli değişiklikler uygun kanallardan duyurulur."],
+        ["11. Elektronik İletişim", "Hesap doğrulama, güvenlik ve hizmet mesajları üyeliğin yürütülmesi için gönderilebilir. Kampanya iletileri ayrı ve isteğe bağlı onaya tabidir."],
+        ["12. Kişisel Veriler", "Kişisel veriler KVKK Aydınlatma Metni'nde açıklanan amaç, yöntem ve hukuki sebeplerle işlenir."],
+        ["13. Sorumluluk ve Güvenlik", "Tahmisçi makul teknik ve idari tedbirleri uygular. Kullanıcının cihazı, bağlantısı veya şifresini korumamasından doğan riskler kullanıcı sorumluluğundadır."],
+        ["14. İletişim", "Üyelik ve veri koruma konularındaki talepler Tahmisçi'nin resmi internet sitesinde yayımlanan güncel iletişim kanallarından iletilebilir."],
+        ["15. Yürürlük", "Sözleşme, kullanıcı tarafından elektronik ortamda kabul edildiği tarihte yürürlüğe girer ve üyelik sürdüğü müddetçe uygulanır."]
+      ]
+    },
+    privacy: {
+      title: "KVKK Aydınlatma Metni",
+      approve: "Okudum ve Anladım",
+      sections: [
+        ["1. Veri Sorumlusu", "Müdavim hizmeti kapsamında kişisel veriler, Tahmisçi markası tarafından veri sorumlusu sıfatıyla işlenir."],
+        ["2. İşlenen Kişisel Veriler", "Ad soyad, e-posta, profil adı, verilmişse doğum tarihi, üyelik durumu, kampanya tercihi, doğrulama kayıtları, oturum ve güvenlik kayıtları, cihaz/push aboneliği ile gerekli teknik kullanım kayıtları işlenebilir."],
+        ["3. İşleme Amaçları", "Hesabın oluşturulması ve güvenli işletilmesi, e-posta doğrulama, şifre sıfırlama, bildirim tercihleri, duyuruların gösterilmesi, kötüye kullanımın önlenmesi ve yasal yükümlülüklerin yerine getirilmesi amaçlanır."],
+        ["4. Kişisel Veri Toplama Yöntemi", "Veriler üyelik ve profil formları, güvenli sunucu oturumları, doğrulama işlemleri, bildirim tercihleri ve uygulamanın teknik kayıtları üzerinden elektronik ortamda elde edilir."],
+        ["5. Hukuki Sebepler", "Veriler sözleşmenin kurulması ve ifası, hukuki yükümlülükler, hakkın tesisi ve meşru menfaat sebeplerine dayanılarak; pazarlama iletileri ise ayrı tercihiniz kapsamında işlenir."],
+        ["6. Aktarım / Hizmet Sağlayıcıları", "Veriler yalnız hizmetin işletilmesi için gerekli barındırma, e-posta ve push bildirim sağlayıcılarıyla, uygun güvenlik ve gizlilik tedbirleri altında paylaşılabilir; yetkili kurum talepleri kanuni sınırlar içinde karşılanır."],
+        ["7. Saklama ve Güvenlik", "Veriler amaç için gerekli süre ve yasal saklama dönemleri boyunca tutulur; erişim kontrolü, kayıt izleme ve teknik güvenlik tedbirleri uygulanır."],
+        ["8. Hesap Güvenliği Verileri", "Şifreler geri döndürülemez özetlerle saklanır. Doğrulama kodları, oturumlar ve güvenlik denetim kayıtları yetkisiz erişimi önlemek amacıyla sınırlı sürelerle işlenir."],
+        ["9. Push / Cihaz Verileri", "Bildirimleri kullanıcı isteğiyle açmanız halinde cihaz abonelik uç noktası, uygulama hedefi ve teslim durumu kaydedilebilir. Tarayıcı izni verilmeden push aboneliği oluşturulmaz."],
+        ["10. Pazarlama Tercihleri", "Kampanya ve fırsat iletileri isteğe bağlıdır. Tercih profilinizden kapatılabilir; bu değişiklik üyelik, doğrulama veya güvenlik mesajlarını engellemez."],
+        ["11. İlgili Kişinin Hakları", "KVKK'nın 11. maddesi kapsamındaki bilgi talep etme, düzeltme, silme, işlemeye itiraz ve zararın giderilmesini isteme haklarınızı kullanabilirsiniz."],
+        ["12. Başvuru ve İletişim", "Başvurularınızı kimliğinizi doğrulamaya elverişli bilgilerle Tahmisçi'nin resmi internet sitesinde yayımlanan güncel iletişim kanalından iletebilirsiniz."]
+      ]
+    },
+    commercial: {
+      title: "Ticari Elektronik İleti Onayı",
+      approve: "Okudum ve Onaylıyorum",
+      sections: [
+        ["İsteğe Bağlı Onay", "Tahmisçi'nin kampanya, fırsat, ürün duyurusu, Müdavim avantajı ve marka duyurularını e-posta ve push bildirimi kanallarından iletmesine isteğe bağlı olarak onay verirsiniz."],
+        ["Üyelikten Bağımsızlık", "Bu onay Müdavim hesabı oluşturmak veya hesabı kullanmak için zorunlu değildir. Onay vermemeniz hesap doğrulama, şifre sıfırlama ve güvenlik iletilerini engellemez."],
+        ["Onayın Geri Alınması", "Tercihinizi dilediğiniz zaman Müdavim profilinden kapatabilirsiniz. Geri alma işlemi gelecekteki kampanya teslimlerini durdurur ve kayıt zamanı güvenli biçimde saklanır."]
+      ]
+    }
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initialise, { once: true });
@@ -33,10 +93,14 @@
     [
       "gate", "app", "mudavimAuthOverlay", "memberProfileOverlay", "memberProfileTrigger", "memberProfileForm",
       "memberProfileSave", "memberProfileFullName", "memberProfileAlias", "memberProfileBirthDate",
-      "memberProfileCampaignConsent", "memberProfileStatus", "memberAvatar", "memberFullName", "memberWelcomeName",
+      "memberProfileCampaignConsent", "memberProfileMudavimNotifications", "memberPushToggle", "memberPushState", "memberInstallButton",
+      "memberProfileStatus", "memberAvatar", "memberFullName", "memberWelcomeName",
       "progressCount", "rewardTarget", "progressText", "visitSummaryLabel", "visitSegments", "memberLevel",
       "tierTrack", "centerMemberLevel", "centerVisitCount", "centerRemaining", "latestVisit", "compactVisitHistory",
-      "memberHistoryPanel", "memberAnnouncementFeed", "featurePopover", "featurePopoverTitle", "featurePopoverText"
+      "memberHistoryPanel", "memberAnnouncementFeed", "featurePopover", "featurePopoverTitle", "featurePopoverText",
+      "mudavimLegalOverlay", "mudavimLegalTitle", "mudavimLegalCopy", "mudavimLegalClose", "mudavimLegalCancel",
+      "mudavimLegalApprove", "registerResend", "memberNotificationButton", "memberNotificationBadge",
+      "memberNotificationFeed", "memberNotificationStatus", "memberNotificationsReadAll"
     ].forEach((id) => { elements[id] = document.getElementById(id); });
     elements.authClose = document.querySelector(".mudavim-auth-close");
   }
@@ -54,6 +118,8 @@
     document.querySelector('[data-auth-step="verify-reset"]')?.addEventListener("submit", acceptResetCode);
     document.querySelector('[data-auth-step="new-password"]')?.addEventListener("submit", confirmPasswordReset);
     document.querySelector("[data-auth-finish]")?.addEventListener("click", () => showAuthStep("login"));
+    elements.registerResend?.addEventListener("click", resendRegistrationCode);
+    bindLegalControls();
     document.querySelectorAll('[inputmode="numeric"][maxlength="6"]').forEach((input) => {
       input.addEventListener("input", () => { input.value = input.value.replace(/\D/g, "").slice(0, 6); });
     });
@@ -66,6 +132,10 @@
       if (event.target === elements.memberProfileOverlay) closeProfile();
     });
     elements.memberProfileSave?.addEventListener("click", saveProfile);
+    elements.memberPushToggle?.addEventListener("click", togglePushNotifications);
+    elements.memberInstallButton?.addEventListener("click", installMudavimApp);
+    elements.memberNotificationsReadAll?.addEventListener("click", markAllNotificationsRead);
+    elements.memberNotificationFeed?.addEventListener("click", handleNotificationAction);
     document.querySelector("[data-profile-password-reset]")?.addEventListener("click", () => {
       closeProfile();
       openAuth("forgot");
@@ -74,6 +144,11 @@
     });
     document.querySelector("[data-logout]")?.addEventListener("click", logout);
     document.addEventListener("keydown", (event) => {
+      if (!elements.mudavimLegalOverlay?.hidden) {
+        if (event.key === "Escape") closeLegal();
+        else if (event.key === "Tab") trapLegalFocus(event);
+        return;
+      }
       if (event.key !== "Escape") return;
       if (elements.memberProfileOverlay && !elements.memberProfileOverlay.hidden) closeProfile();
       else if (elements.mudavimAuthOverlay && !elements.mudavimAuthOverlay.hidden) closeAuth();
@@ -85,6 +160,9 @@
     try {
       const payload = await request("/api/public/mudavim", { method: "GET" });
       state.announcements = Array.isArray(payload.mudavim && payload.mudavim.announcements) ? payload.mudavim.announcements : [];
+      state.legalVersions = payload.legalVersions && typeof payload.legalVersions === "object"
+        ? payload.legalVersions
+        : state.legalVersions;
     } catch (_error) {
       state.announcements = [];
     }
@@ -124,16 +202,34 @@
       password: value("registerPassword"),
       passwordConfirm: value("registerPasswordConfirm"),
       termsAccepted: Boolean(document.getElementById("registerTerms")?.checked),
-      campaignConsent: Boolean(document.getElementById("registerCampaigns")?.checked)
+      privacyAcknowledged: Boolean(document.getElementById("registerPrivacy")?.checked),
+      campaignConsent: Boolean(document.getElementById("registerCampaigns")?.checked),
+      membershipTermsVersion: state.legalVersions.membershipTerms,
+      privacyNoticeVersion: state.legalVersions.privacyNotice,
+      commercialConsentVersion: state.legalVersions.commercialConsent
     };
     if (!body.fullName || !validEmail(body.email)) return setAuthMessage(form, "Ad soyad ve geçerli e-posta gerekli.");
     if (body.password !== body.passwordConfirm) return setAuthMessage(form, "Şifreler eşleşmiyor.");
+    if (!body.termsAccepted || !body.privacyAcknowledged) return setAuthMessage(form, "Üyelik Sözleşmesi ve KVKK Aydınlatma Metni incelenmelidir.");
+    if (!body.membershipTermsVersion || !body.privacyNoticeVersion || !body.commercialConsentVersion) {
+      return setAuthMessage(form, "Yasal metinler yüklenemedi. Bağlantınızı kontrol edip yeniden deneyin.");
+    }
     await withBusy(form, async () => {
       const payload = await request("/api/mudavim/register", { method: "POST", body });
       state.registerChallengeId = payload.challengeId || "";
       showAuthStep("verify-email");
+      startResendCountdown(payload.resendAfterSeconds || 60);
       focus("registerVerificationCode");
     });
+  }
+
+  async function resendRegistrationCode() {
+    if (state.busy || state.resendTimer > 0) return;
+    const form = document.querySelector('[data-auth-step="register"]');
+    if (!form) return;
+    await submitRegister({ preventDefault() {}, currentTarget: form });
+    const message = form.querySelector("[data-auth-message]")?.textContent || "";
+    if (message) setAuthMessage(document.querySelector('[data-auth-step="verify-email"]'), message, "error");
   }
 
   async function confirmRegistration(event) {
@@ -201,12 +297,19 @@
     if (elements.gate) elements.gate.hidden = true;
     if (elements.app) elements.app.hidden = false;
     renderMember();
+    void loadNotificationPreferences();
+    void loadNotifications();
+    connectNotificationEvents();
+    registerPwaNotificationPrompt();
     document.dispatchEvent(new CustomEvent("mudavim:session-started", { detail: { member: state.member } }));
   }
 
   function renderGuest() {
     state.member = null;
     state.loyalty = emptyLoyalty();
+    state.notifications = [];
+    closeNotificationEvents();
+    renderNotificationBadge(0);
     document.body.classList.add("is-guest");
     document.body.classList.remove("is-member");
     if (elements.gate) elements.gate.hidden = false;
@@ -301,10 +404,11 @@
   }
 
   function showMemberPanel(panel) {
-    const target = ["welcome", "announcements", "history"].includes(panel) ? panel : "welcome";
+    const target = ["welcome", "announcements", "history", "notifications"].includes(panel) ? panel : "welcome";
     state.activePanel = target;
     document.querySelectorAll("[data-member-view]").forEach((view) => { view.hidden = view.dataset.memberView !== target; });
     document.querySelectorAll("[data-member-panel]").forEach((button) => button.setAttribute("aria-pressed", button.dataset.memberPanel === target ? "true" : "false"));
+    if (target === "notifications") void loadNotifications();
   }
 
   function openProfile() {
@@ -313,6 +417,10 @@
     elements.memberProfileAlias.value = state.member.alias || "";
     elements.memberProfileBirthDate.value = state.member.birthDate || "";
     elements.memberProfileCampaignConsent.checked = state.member.campaignConsent === true;
+    if (elements.memberProfileMudavimNotifications) {
+      elements.memberProfileMudavimNotifications.checked = state.notificationPreferences?.mudavimNotifications !== false;
+    }
+    renderPushState();
     elements.memberProfileOverlay.hidden = false;
     elements.memberProfileTrigger?.setAttribute("aria-expanded", "true");
     document.body.classList.add("auth-open");
@@ -344,6 +452,12 @@
       const payload = await request("/api/mudavim/profile", { method: "PATCH", body });
       state.member = payload.member;
       renderMember();
+      try {
+        await saveNotificationPreferences();
+      } catch (_notificationError) {
+        setProfileMessage("Profil kaydedildi; bildirim tercihleri güncellenemedi.", "error");
+        return;
+      }
       setProfileMessage(payload.message || "Profil güncellendi.", "success");
     } catch (error) {
       setProfileMessage(error.message || "Profil güncellenemedi.", "error");
@@ -404,21 +518,379 @@
     document.querySelectorAll("[data-feature]").forEach((button) => button.setAttribute("aria-expanded", "false"));
   }
 
+  function bindLegalControls() {
+    document.querySelectorAll("[data-legal-open]").forEach((button) => {
+      button.addEventListener("click", () => openLegal(button.dataset.legalOpen, legalInput(button.dataset.legalOpen)));
+    });
+    for (const kind of ["terms", "privacy"]) {
+      const input = legalInput(kind);
+      input?.addEventListener("click", (event) => {
+        event.preventDefault();
+        openLegal(kind, input);
+      });
+    }
+    bindOptionalConsent(document.getElementById("registerCampaigns"), "commercial");
+    bindOptionalConsent(elements.memberProfileCampaignConsent, "commercial");
+    elements.mudavimLegalClose?.addEventListener("click", closeLegal);
+    elements.mudavimLegalCancel?.addEventListener("click", closeLegal);
+    elements.mudavimLegalApprove?.addEventListener("click", approveLegal);
+    elements.mudavimLegalOverlay?.addEventListener("click", (event) => {
+      if (event.target === elements.mudavimLegalOverlay) closeLegal();
+    });
+  }
+
+  function bindOptionalConsent(input, kind) {
+    input?.addEventListener("click", (event) => {
+      if (!event.isTrusted || !input.checked) return;
+      event.preventDefault();
+      input.checked = false;
+      openLegal(kind, input);
+    });
+  }
+
+  function legalInput(kind) {
+    return document.getElementById(kind === "terms" ? "registerTerms" : kind === "privacy" ? "registerPrivacy" : "registerCampaigns");
+  }
+
+  function openLegal(kind, target) {
+    const documentConfig = legalDocuments[kind];
+    if (!documentConfig || !elements.mudavimLegalOverlay) return;
+    state.activeLegal = kind;
+    state.legalTarget = target || legalInput(kind);
+    state.legalReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setText(elements.mudavimLegalTitle, documentConfig.title);
+    setText(elements.mudavimLegalApprove, documentConfig.approve);
+    const fragment = document.createDocumentFragment();
+    documentConfig.sections.forEach(([heading, copy]) => {
+      const section = document.createElement("section");
+      const title = document.createElement("h3");
+      const paragraph = document.createElement("p");
+      title.textContent = heading;
+      paragraph.textContent = copy;
+      section.append(title, paragraph);
+      fragment.appendChild(section);
+    });
+    elements.mudavimLegalCopy.replaceChildren(fragment);
+    elements.mudavimLegalCopy.scrollTop = 0;
+    elements.mudavimLegalOverlay.hidden = false;
+    document.body.classList.add("legal-open");
+    window.setTimeout(() => elements.mudavimLegalClose?.focus(), 20);
+  }
+
+  function approveLegal() {
+    if (state.legalTarget instanceof HTMLInputElement) {
+      state.legalTarget.checked = true;
+      state.legalTarget.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    closeLegal();
+  }
+
+  function closeLegal() {
+    if (!elements.mudavimLegalOverlay || elements.mudavimLegalOverlay.hidden) return;
+    elements.mudavimLegalOverlay.hidden = true;
+    document.body.classList.remove("legal-open");
+    state.activeLegal = "";
+    state.legalTarget = null;
+    const target = state.legalReturnFocus;
+    state.legalReturnFocus = null;
+    if (target && document.contains(target)) target.focus({ preventScroll: true });
+  }
+
+  function trapLegalFocus(event) {
+    const modal = elements.mudavimLegalOverlay?.querySelector(".mudavim-legal-modal");
+    if (!modal) return;
+    const focusable = Array.from(modal.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
+
+  function startResendCountdown(seconds) {
+    window.clearInterval(state.resendInterval);
+    state.resendTimer = Math.max(0, Math.ceil(Number(seconds || 0)));
+    renderResendCountdown();
+    if (!state.resendTimer) return;
+    state.resendInterval = window.setInterval(() => {
+      state.resendTimer = Math.max(0, state.resendTimer - 1);
+      renderResendCountdown();
+      if (!state.resendTimer) {
+        window.clearInterval(state.resendInterval);
+        state.resendInterval = 0;
+      }
+    }, 1000);
+  }
+
+  function renderResendCountdown() {
+    if (!elements.registerResend) return;
+    elements.registerResend.disabled = state.resendTimer > 0 || state.busy;
+    elements.registerResend.textContent = state.resendTimer > 0
+      ? `Yeni kod gönder — ${state.resendTimer} sn`
+      : "Kodu yeniden gönder";
+  }
+
+  async function loadNotificationPreferences() {
+    if (!state.member) return null;
+    try {
+      const payload = await request("/api/mudavim/notifications/preferences");
+      state.notificationPreferences = payload.preferences || null;
+      state.notificationCapabilities = payload.capabilities || null;
+      if (elements.memberProfileMudavimNotifications) {
+        elements.memberProfileMudavimNotifications.checked = state.notificationPreferences?.mudavimNotifications !== false;
+      }
+      renderPushState();
+      return payload;
+    } catch (_error) {
+      state.notificationPreferences = null;
+      renderPushState();
+      return null;
+    }
+  }
+
+  async function saveNotificationPreferences() {
+    if (!state.member) return;
+    const payload = await request("/api/mudavim/notifications/preferences", {
+      method: "PATCH",
+      body: {
+        mudavimNotifications: elements.memberProfileMudavimNotifications?.checked !== false,
+        campaignNotifications: elements.memberProfileCampaignConsent?.checked === true,
+        systemNotifications: true
+      }
+    });
+    state.notificationPreferences = payload.preferences || state.notificationPreferences;
+    state.notificationCapabilities = payload.capabilities || state.notificationCapabilities;
+    renderPushState();
+  }
+
+  function renderPushState() {
+    if (!elements.memberPushToggle) return;
+    const enabled = state.notificationPreferences?.pushEnabled === true && window.Notification?.permission === "granted";
+    elements.memberPushToggle.classList.toggle("is-enabled", enabled);
+    elements.memberPushToggle.querySelector("b").textContent = enabled ? "Kapat" : "Bildirimleri Aç";
+    setText(elements.memberPushState, enabled ? "Bu cihazda açık" : "Bu cihazda kapalı");
+  }
+
+  async function togglePushNotifications() {
+    if (state.busy || !state.member) return;
+    state.busy = true;
+    elements.memberPushToggle.disabled = true;
+    try {
+      if (state.notificationPreferences?.pushEnabled === true) {
+        const payload = await request("/api/mudavim/notifications/preferences", { method: "PATCH", body: { pushEnabled: false } });
+        state.notificationPreferences = payload.preferences;
+        renderPushState();
+        setProfileMessage("Push bildirimleri bu cihaz için kapatıldı.", "success");
+        return;
+      }
+      await enablePushNotifications();
+      setProfileMessage("Push bildirimleri bu cihaz için açıldı.", "success");
+    } catch (error) {
+      setProfileMessage(error.message || "Push bildirimleri güncellenemedi.", "error");
+    } finally {
+      state.busy = false;
+      elements.memberPushToggle.disabled = false;
+    }
+  }
+
+  async function enablePushNotifications() {
+    if (!("Notification" in window) || !("PushManager" in window)) throw new Error("Bu tarayıcı push bildirimlerini desteklemiyor.");
+    const preferencesPayload = state.notificationCapabilities ? null : await loadNotificationPreferences();
+    const capabilities = preferencesPayload?.capabilities || state.notificationCapabilities;
+    if (!capabilities?.pushSupported || !capabilities.vapidPublicKey) throw new Error("Telefon bildirimleri sunucuda henüz etkin değil.");
+    const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+    if (permission !== "granted") throw new Error("Bildirim izni verilmedi.");
+    const registration = await window.TahmisciPWA?.ensureServiceWorker();
+    if (!registration) throw new Error("Uygulama bildirim servisi başlatılamadı.");
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64UrlBytes(capabilities.vapidPublicKey)
+    });
+    await request("/api/mudavim/notifications/push-subscriptions", {
+      method: "POST",
+      headers: { "x-tahmisci-app-id": "mudavim", "x-tahmisci-device-id": notificationDeviceId() },
+      body: { subscription: subscription.toJSON(), appTarget: "mudavim", deviceId: notificationDeviceId(), deviceName: navigator.platform || "Bu cihaz" }
+    });
+    const payload = await request("/api/mudavim/notifications/preferences", { method: "PATCH", body: { pushEnabled: true } });
+    state.notificationPreferences = payload.preferences;
+    state.notificationCapabilities = payload.capabilities;
+    renderPushState();
+    return true;
+  }
+
+  function registerPwaNotificationPrompt() {
+    window.TahmisciPWA?.registerNotificationPrompt({
+      canShow: async () => Boolean(state.member && (await loadNotificationPreferences())?.capabilities?.pushSupported),
+      onEnable: enablePushNotifications
+    });
+  }
+
+  async function installMudavimApp() {
+    if (window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true) {
+      setProfileMessage("Tahmisçi Müdavim zaten uygulama olarak açık.", "success");
+      return;
+    }
+    if (window.TahmisciPWA?.canInstall()) {
+      const installed = await window.TahmisciPWA.promptInstall();
+      setProfileMessage(installed ? "Uygulama yükleme işlemi başlatıldı." : "Yükleme tamamlanmadı.", installed ? "success" : "error");
+      return;
+    }
+    const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) || navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+    setProfileMessage(isIos ? "Safari'de Paylaş → Ana Ekrana Ekle seçeneğini kullanın." : "Tarayıcınız yükleme seçeneğini henüz sunmuyor.", "error");
+  }
+
+  async function loadNotifications() {
+    if (!state.member) return;
+    try {
+      const payload = await request("/api/mudavim/notifications?limit=50");
+      state.notifications = Array.isArray(payload.notifications) ? payload.notifications : [];
+      renderNotificationBadge(payload.unreadCount);
+      renderNotifications();
+    } catch (error) {
+      setText(elements.memberNotificationStatus, error.message || "Bildirimler alınamadı.");
+    }
+  }
+
+  function renderNotifications() {
+    if (!elements.memberNotificationFeed) return;
+    setText(elements.memberNotificationStatus, "");
+    if (!state.notifications.length) {
+      elements.memberNotificationFeed.innerHTML = '<div class="member-empty member-empty--panel"><strong>Yeni bildirim yok</strong><p>Hesap ve Müdavim duyuruları burada kalıcı olarak görünür.</p></div>';
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    state.notifications.forEach((notification) => {
+      const article = document.createElement("article");
+      article.className = `member-notification-item${notification.readAt ? "" : " is-unread"}`;
+      article.dataset.notificationId = notification.id;
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "member-notification-item__open";
+      open.dataset.notificationAction = "open";
+      const title = document.createElement("strong");
+      const body = document.createElement("span");
+      const time = document.createElement("time");
+      title.textContent = notification.title || "Bildirim";
+      body.textContent = notification.body || "";
+      time.textContent = formatDate(notification.createdAt);
+      open.append(title, body, time);
+      const archive = document.createElement("button");
+      archive.type = "button";
+      archive.className = "member-notification-item__archive";
+      archive.dataset.notificationAction = "archive";
+      archive.setAttribute("aria-label", "Bildirimi arşivle");
+      archive.innerHTML = '<i class="fas fa-box-archive" aria-hidden="true"></i>';
+      article.append(open, archive);
+      fragment.appendChild(article);
+    });
+    elements.memberNotificationFeed.replaceChildren(fragment);
+  }
+
+  async function handleNotificationAction(event) {
+    const button = event.target.closest("[data-notification-action]");
+    const article = button?.closest("[data-notification-id]");
+    if (!button || !article) return;
+    const notification = state.notifications.find((item) => item.id === article.dataset.notificationId);
+    if (!notification) return;
+    if (button.dataset.notificationAction === "archive") {
+      const payload = await request(`/api/mudavim/notifications/${encodeURIComponent(notification.id)}/archive`, { method: "PATCH" });
+      state.notifications = state.notifications.filter((item) => item.id !== notification.id);
+      renderNotificationBadge(payload.unreadCount);
+      renderNotifications();
+      return;
+    }
+    if (!notification.readAt) {
+      const payload = await request(`/api/mudavim/notifications/${encodeURIComponent(notification.id)}/read`, { method: "PATCH" });
+      notification.readAt = payload.notification?.readAt || new Date().toISOString();
+      renderNotificationBadge(payload.unreadCount);
+      renderNotifications();
+    }
+    if (String(notification.deepLink || "").startsWith("/mudavim/")) window.location.assign(notification.deepLink);
+  }
+
+  async function markAllNotificationsRead() {
+    const payload = await request("/api/mudavim/notifications/read-all", { method: "POST", body: {} });
+    const timestamp = new Date().toISOString();
+    state.notifications = state.notifications.map((item) => ({ ...item, readAt: item.readAt || timestamp }));
+    renderNotificationBadge(payload.unreadCount);
+    renderNotifications();
+  }
+
+  function renderNotificationBadge(value) {
+    const count = Math.max(0, Number(value || 0));
+    if (elements.memberNotificationBadge) {
+      elements.memberNotificationBadge.hidden = count < 1;
+      elements.memberNotificationBadge.textContent = count > 99 ? "99+" : String(count);
+    }
+    window.TahmisciPWA?.updateBadge(count);
+  }
+
+  function connectNotificationEvents() {
+    if (!state.member || state.notificationEvents || !("EventSource" in window)) return;
+    const source = new EventSource("/api/mudavim/notifications/events", { withCredentials: true });
+    source.addEventListener("ready", (event) => updateNotificationEvent(event));
+    source.addEventListener("notification", (event) => updateNotificationEvent(event));
+    state.notificationEvents = source;
+  }
+
+  function updateNotificationEvent(event) {
+    try {
+      const payload = JSON.parse(event.data || "{}");
+      renderNotificationBadge(payload.unreadCount);
+      if (payload.notification && !state.notifications.some((item) => item.id === payload.notification.id)) state.notifications.unshift(payload.notification);
+      if (state.activePanel === "notifications" || payload.requiresRefetch) void loadNotifications();
+    } catch (_error) {}
+  }
+
+  function closeNotificationEvents() {
+    state.notificationEvents?.close();
+    state.notificationEvents = null;
+  }
+
+  function notificationDeviceId() {
+    const key = "tahmisci.notifications.mudavim.device.v1";
+    try {
+      let id = window.localStorage.getItem(key);
+      if (!id) {
+        id = window.crypto?.randomUUID ? window.crypto.randomUUID() : `mudavim-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        window.localStorage.setItem(key, id);
+      }
+      return id;
+    } catch (_error) { return ""; }
+  }
+
+  function base64UrlBytes(value) {
+    const padding = "=".repeat((4 - String(value).length % 4) % 4);
+    const decoded = atob((String(value) + padding).replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+  }
+
   async function withBusy(form, operation) {
     state.busy = true;
+    renderResendCountdown();
     setAuthMessage(form, "İşlem yapılıyor…");
     form.querySelectorAll("button, input").forEach((control) => { control.disabled = true; });
     try { await operation(); }
-    catch (error) { setAuthMessage(form, error.message || "İşlem tamamlanamadı.", "error"); }
+    catch (error) {
+      if (error.retryAfterSeconds) startResendCountdown(error.retryAfterSeconds);
+      if (error.code === "LEGAL_DOCUMENT_VERSION_CHANGED") {
+        ["registerTerms", "registerPrivacy", "registerCampaigns"].forEach((id) => { const input = document.getElementById(id); if (input) input.checked = false; });
+        void loadPublicMudavim();
+      }
+      setAuthMessage(form, error.message || "İşlem tamamlanamadı.", "error");
+    }
     finally {
       state.busy = false;
       form.querySelectorAll("button, input").forEach((control) => { control.disabled = false; });
+      renderResendCountdown();
     }
   }
 
   async function request(path, options = {}) {
     const method = String(options.method || "GET").toUpperCase();
-    const headers = { Accept: "application/json" };
+    if (method !== "GET" && method !== "HEAD" && navigator.onLine === false) throw new Error("Bağlantı gerekli.");
+    const headers = { Accept: "application/json", ...(options.headers || {}) };
     const init = { method, credentials: "include", cache: "no-store", headers };
     if (options.body !== undefined) { headers["Content-Type"] = "application/json"; init.body = JSON.stringify(options.body); }
     const response = await fetch(path, init);
@@ -427,6 +899,7 @@
       const error = new Error(payload.message || "İşlem tamamlanamadı.");
       error.status = response.status;
       error.code = payload.code || "";
+      error.retryAfterSeconds = Math.max(0, Number(payload.retryAfterSeconds || response.headers.get("Retry-After") || 0));
       throw error;
     }
     return payload;

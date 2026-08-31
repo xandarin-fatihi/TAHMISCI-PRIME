@@ -12,6 +12,7 @@ const { migrateSiteState } = require("./site-state");
 const { isSafeMediaResource } = require("./validators");
 const categoryIcons = require("../../../shared/scripts/category-icons");
 const menuDesignSchema = require("../../../shared/scripts/menu-design-schema");
+const { MUDAVIM_LEGAL_VERSIONS } = require("./mudavim-legal");
 
 const BRAND_PLACEHOLDER_IMAGE = "/assets/brand/logo-large.png";
 const DEFAULT_CATEGORY_IMAGES = Object.freeze({
@@ -149,11 +150,12 @@ function buildPublicMudavim(storeData) {
   const updatedAt = data.siteUpdatedAt || data.publishUpdatedAt || null;
   return {
     schemaVersion: 1,
-    version: publicVersion({ updatedAt, publishRevision: revisions.publish, mudavim }),
+    version: publicVersion({ updatedAt, publishRevision: revisions.publish, mudavim, legalVersions: MUDAVIM_LEGAL_VERSIONS }),
     revision: revisions.publish,
     revisions,
     updatedAt,
-    mudavim
+    mudavim,
+    legalVersions: MUDAVIM_LEGAL_VERSIONS
   };
 }
 

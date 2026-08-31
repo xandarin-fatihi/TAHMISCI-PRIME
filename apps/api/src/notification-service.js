@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const { EventEmitter } = require("events");
 const { normalizeAppTarget, safeAppDeepLink } = require("./app-targets");
 
-const NOTIFICATION_CATEGORIES = Object.freeze(["task", "shipment", "shift", "stock", "system"]);
+const NOTIFICATION_CATEGORIES = Object.freeze(["task", "shipment", "shift", "stock", "mudavim", "campaign", "system"]);
 const NOTIFICATION_SEVERITIES = Object.freeze(["info", "success", "warning", "critical"]);
 const MAX_NOTIFICATIONS = 10000;
 const MAX_OUTBOX_ITEMS = 20000;
@@ -31,7 +31,8 @@ function createNotificationInStore(data, input, options = {}) {
   }
 
   const preference = getNotificationPreferences(data, normalized.recipientRole, normalized.recipientId);
-  const categoryEnabled = preferenceCategoryEnabled(preference, normalized.category);
+  const categoryEnabled = preferenceCategoryEnabled(preference, normalized.category)
+    && campaignDeliveryAllowed(data, normalized);
   const mandatory = isMandatoryNotification(normalized);
   const createdAt = normalized.createdAt || nowIso(options.now);
   const notification = {
@@ -114,6 +115,8 @@ function getNotificationPreferences(data, ownerRole, ownerId) {
     shiftNotifications: preferenceFlag(existing, "shiftNotifications", categories.shift ?? categories.shifts, true),
     stockNotifications: preferenceFlag(existing, "stockNotifications", categories.stock, true),
     systemNotifications: preferenceFlag(existing, "systemNotifications", categories.system, true),
+    mudavimNotifications: preferenceFlag(existing, "mudavimNotifications", categories.mudavim, true),
+    campaignNotifications: preferenceFlag(existing, "campaignNotifications", categories.campaign, true),
     reminderNotifications: masterReminder,
     taskReminder24h: preferenceFlag(existing, "taskReminder24h", reminders.task24h, masterReminder),
     taskReminder2h: preferenceFlag(existing, "taskReminder2h", reminders.task2h, masterReminder),
@@ -157,6 +160,8 @@ function updateNotificationPreferencesInStore(data, ownerRole, ownerId, input, o
     shiftNotifications: booleanValue(source.shiftNotifications, booleanValue(categories.shift ?? categories.shifts, current.shiftNotifications)),
     stockNotifications: booleanValue(source.stockNotifications, booleanValue(categories.stock, current.stockNotifications)),
     systemNotifications: booleanValue(source.systemNotifications, booleanValue(categories.system, current.systemNotifications)),
+    mudavimNotifications: booleanValue(source.mudavimNotifications, booleanValue(categories.mudavim, current.mudavimNotifications)),
+    campaignNotifications: booleanValue(source.campaignNotifications, booleanValue(categories.campaign, current.campaignNotifications)),
     reminderNotifications: masterReminder,
     taskReminder24h: booleanValue(source.taskReminder24h, booleanValue(reminders.task24h, masterWasExplicit ? masterReminder : current.taskReminder24h)),
     taskReminder2h: booleanValue(source.taskReminder2h, booleanValue(reminders.task2h, masterWasExplicit ? masterReminder : current.taskReminder2h)),
@@ -288,6 +293,8 @@ function preferenceCategoryEnabled(preference, category) {
     case "shift": return preference.shiftNotifications;
     case "training": return false;
     case "stock": return preference.stockNotifications;
+    case "mudavim": return preference.mudavimNotifications;
+    case "campaign": return preference.campaignNotifications;
     default: return preference.systemNotifications;
   }
 }
@@ -299,6 +306,8 @@ function normalizeNotificationCategory(value) {
   if (["shift", "shifts", "vardiya", "izin"].some((term) => key.includes(term))) return "shift";
   if (["training", "trainings", "egitim", "sinav", "recete"].some((term) => key.includes(term))) return "training";
   if (["stock", "stok"].some((term) => key.includes(term))) return "stock";
+  if (["campaign", "kampanya", "firsat", "pazarlama"].some((term) => key.includes(term))) return "campaign";
+  if (["mudavim", "member", "customer", "duyuru"].some((term) => key.includes(term))) return "mudavim";
   return "system";
 }
 
@@ -313,6 +322,7 @@ function normalizeRole(value) {
   const role = normalizeLookup(value);
   if (["manager", "admin", "yonetici"].includes(role)) return "manager";
   if (["personnel", "personel", "recipe"].includes(role)) return "personnel";
+  if (["mudavim", "member", "customer"].includes(role)) return "mudavim";
   return "";
 }
 
@@ -372,11 +382,21 @@ function getVerifiedAccountEmail(data, ownerRole, ownerId) {
   const role = normalizeRole(ownerRole);
   const account = role === "manager"
     ? data && data.admin
+    : role === "mudavim"
+      ? (Array.isArray(data && data.mudavimAccounts) ? data.mudavimAccounts : [])
+        .find((item) => item && String(item.id || "") === String(ownerId || ""))
     : (Array.isArray(data && data.recipeUsers) ? data.recipeUsers : [])
       .find((item) => item && String(item.id || "") === String(ownerId || ""));
-  if (!account || !account.emailVerifiedAt) return "";
+  if (!account || !account.emailVerifiedAt || role === "mudavim" && (account.status !== "active" || account.disabledAt)) return "";
   const email = normalizeEmail(account.emailNormalized || account.email);
   return isValidEmail(email) ? email : "";
+}
+
+function campaignDeliveryAllowed(data, notification) {
+  if (!notification || notification.recipientRole !== "mudavim" || notification.category !== "campaign") return true;
+  const account = (Array.isArray(data && data.mudavimAccounts) ? data.mudavimAccounts : [])
+    .find((item) => item && String(item.id || "") === String(notification.recipientId || ""));
+  return Boolean(account && account.status === "active" && !account.disabledAt && account.campaignConsent === true);
 }
 
 function normalizeClock(value, fallback) {

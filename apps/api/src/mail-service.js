@@ -69,11 +69,9 @@ function createMailService(config, options = {}) {
     }
     const purpose = input.purpose === "email_verification" ? "email_verification" : "password_reset";
     const accountLabel = String(input.accountLabel || "Tahmisçi hesabı").replace(/[\r\n]+/g, " ").slice(0, 120);
+    const isMudavimAccount = /müdavim/i.test(accountLabel);
     const ttlMinutes = Math.max(1, Math.min(60, Number(input.ttlMinutes || 15)));
-    const title = purpose === "email_verification" ? "E-posta doğrulama" : "Parola sıfırlama";
-    const action = purpose === "email_verification"
-      ? "e-posta adresinizi doğrulamak"
-      : "parolanızı güvenli biçimde sıfırlamak";
+    const title = purpose === "email_verification" ? "E-posta Doğrulama" : "Şifre Sıfırlama";
     return getTransporter().sendMail({
       from: config.smtpFrom || config.smtpUser,
       to,
@@ -81,20 +79,23 @@ function createMailService(config, options = {}) {
       disableUrlAccess: true,
       subject: `Tahmisçi | ${title} kodu`,
       text: [
-        `Tahmisçi ${accountLabel} için ${action} üzere tek kullanımlık kodunuz:`,
+        purpose === "email_verification" && isMudavimAccount
+          ? "Müdavim hesabını tamamlamak için doğrulama kodun:"
+          : purpose === "email_verification" ? `${accountLabel} için doğrulama kodun:` : `${accountLabel} için şifre sıfırlama kodun:`,
         "",
         code,
         "",
-        `Kod ${ttlMinutes} dakika geçerlidir. Bu isteği siz yapmadıysanız e-postayı yok sayın.`
+        `Kod ${ttlMinutes} dakika geçerlidir. Bu işlemi sen yapmadıysan mesajı yok sayabilirsin.`
       ].join("\n"),
       html: [
         "<div style=\"margin:0;background:#fbf6ee;padding:24px;font-family:Arial,sans-serif;color:#2c1609\">",
         "<div style=\"max-width:520px;margin:auto;background:#fffaf3;border:1px solid rgba(90,47,29,.18);border-radius:14px;padding:24px\">",
-        `<p style=\"margin:0 0 8px;color:#806b5b;font-size:12px;letter-spacing:.12em\">TAHMİSÇİ</p>`,
-        `<h2 style=\"margin:0 0 16px;font-family:Georgia,serif\">${escapeHtml(title)}</h2>`,
-        `<p>${escapeHtml(accountLabel)} için ${escapeHtml(action)} üzere tek kullanımlık kodunuz:</p>`,
+        `<p style=\"margin:0;color:#5a2f1d;font-size:13px;font-weight:700;letter-spacing:.15em\">TAHMİSÇİ</p>`,
+        isMudavimAccount ? `<p style=\"margin:2px 0 18px;color:#5a2f1d;font-size:11px;font-weight:700;letter-spacing:.24em\">MÜDAVİM</p>` : "",
+        `<h2 style=\"margin:0 0 16px;font-family:Arial,sans-serif\">${escapeHtml(title)}</h2>`,
+        `<p>${purpose === "email_verification" && isMudavimAccount ? "Müdavim hesabını tamamlamak için doğrulama kodun:" : purpose === "email_verification" ? `${escapeHtml(accountLabel)} için doğrulama kodun:` : `${escapeHtml(accountLabel)} için şifre sıfırlama kodun:`}</p>`,
         `<p style=\"margin:20px 0;padding:14px;text-align:center;background:#f7ecdf;border-radius:10px;font-size:30px;font-weight:800;letter-spacing:.2em\">${code}</p>`,
-        `<p style=\"color:#806b5b\">Kod ${ttlMinutes} dakika geçerlidir. Bu isteği siz yapmadıysanız hiçbir işlem yapmanız gerekmez.</p>`,
+        `<p style=\"color:#806b5b\">Kod ${ttlMinutes} dakika geçerlidir. Bu işlemi sen yapmadıysan mesajı yok sayabilirsin.</p>`,
         "</div></div>"
       ].join("")
     });
@@ -120,7 +121,8 @@ function escapeHtml(value) {
 function absoluteNotificationLink(notification, config) {
   const path = String(notification && notification.deepLink || "").trim();
   if (!path.startsWith("/") || path.startsWith("//") || /[\r\n]/.test(path)) return "";
-  const role = notification && notification.recipientRole === "manager" ? "manager" : "personnel";
+  const requestedRole = String(notification && notification.recipientRole || "").toLowerCase();
+  const role = requestedRole === "manager" ? "manager" : requestedRole === "mudavim" ? "mudavim" : "personnel";
   const candidate = role === "manager"
     ? config.adminDomain || config.publicSiteUrl || config.mainDomain
     : config.publicSiteUrl || config.mainDomain;

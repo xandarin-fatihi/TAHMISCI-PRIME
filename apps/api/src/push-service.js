@@ -27,7 +27,8 @@ function createPushService(config = {}, options = {}) {
       error.permanent = true;
       throw error;
     }
-    const role = notification && notification.recipientRole === "manager" ? "manager" : "personnel";
+    const requestedRole = String(notification && notification.recipientRole || "").toLowerCase();
+    const role = requestedRole === "manager" ? "manager" : requestedRole === "mudavim" ? "mudavim" : "personnel";
     const appTarget = normalizeAppTarget(notification && notification.appTarget, notification && notification.deepLink, role);
     const fallbackLink = APP_ROOTS[appTarget];
     const deepLink = safeAppDeepLink(notification && notification.deepLink, appTarget, fallbackLink);

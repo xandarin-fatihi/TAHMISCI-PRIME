@@ -335,6 +335,8 @@ function normalizeNotificationPreferences(value) {
       shipmentNotifications: notificationPreferenceFlag(item, "shipmentNotifications", "shipments", true),
       stockNotifications: notificationPreferenceFlag(item, "stockNotifications", "stock", true),
       systemNotifications: notificationPreferenceFlag(item, "systemNotifications", "system", true),
+      mudavimNotifications: notificationPreferenceFlag(item, "mudavimNotifications", "mudavim", true),
+      campaignNotifications: notificationPreferenceFlag(item, "campaignNotifications", "campaign", true),
       reminderNotifications: notificationPreferenceFlag(item, "reminderNotifications", "reminders", true),
       taskReminder24h: notificationReminderFlag(item, "taskReminder24h", "task24h"),
       taskReminder2h: notificationReminderFlag(item, "taskReminder2h", "task2h"),
@@ -358,8 +360,11 @@ function reconcileNotificationPreferenceEmails(preferences, data) {
     if (!preference) return preference;
     const account = preference.ownerRole === "manager"
       ? data && data.admin
-      : (Array.isArray(data && data.recipeUsers) ? data.recipeUsers : [])
-        .find((item) => item && String(item.id || "") === String(preference.ownerId || ""));
+      : preference.ownerRole === "mudavim"
+        ? (Array.isArray(data && data.mudavimAccounts) ? data.mudavimAccounts : [])
+          .find((item) => item && String(item.id || "") === String(preference.ownerId || ""))
+        : (Array.isArray(data && data.recipeUsers) ? data.recipeUsers : [])
+          .find((item) => item && String(item.id || "") === String(preference.ownerId || ""));
     const candidate = account && account.emailVerifiedAt
       ? String(account.emailNormalized || account.email || "").trim().toLowerCase().slice(0, 254)
       : "";
@@ -576,6 +581,7 @@ function normalizeNotificationRole(value) {
   const role = normalizeNotificationLookup(value);
   if (["manager", "admin", "yonetici"].includes(role)) return "manager";
   if (["personnel", "personel", "recipe"].includes(role)) return "personnel";
+  if (["mudavim", "member", "customer"].includes(role)) return "mudavim";
   return "";
 }
 
@@ -586,6 +592,8 @@ function normalizeNotificationCategory(value) {
   if (["shift", "vardiya", "izin"].some((term) => key.includes(term))) return "shift";
   if (["training", "egitim", "sinav", "recete"].some((term) => key.includes(term))) return "training";
   if (["stock", "stok"].some((term) => key.includes(term))) return "stock";
+  if (["campaign", "kampanya", "firsat", "pazarlama"].some((term) => key.includes(term))) return "campaign";
+  if (["mudavim", "member", "customer", "duyuru"].some((term) => key.includes(term))) return "mudavim";
   return "system";
 }
 
@@ -910,6 +918,13 @@ function normalizeMudavimAccounts(value) {
       alias: String(item.alias || "").trim().slice(0, 60),
       birthDate: /^\d{4}-\d{2}-\d{2}$/.test(String(item.birthDate || "")) ? String(item.birthDate) : "",
       campaignConsent: item.campaignConsent === true,
+      membershipTermsVersion: String(item.membershipTermsVersion || "").slice(0, 40),
+      membershipTermsAcceptedAt: item.membershipTermsAcceptedAt ? normalizeStoredDate(item.membershipTermsAcceptedAt, new Date(0).toISOString()) : null,
+      privacyNoticeVersion: String(item.privacyNoticeVersion || "").slice(0, 40),
+      privacyNoticeAcknowledgedAt: item.privacyNoticeAcknowledgedAt ? normalizeStoredDate(item.privacyNoticeAcknowledgedAt, new Date(0).toISOString()) : null,
+      campaignConsentVersion: String(item.campaignConsentVersion || "").slice(0, 40),
+      campaignConsentAt: item.campaignConsentAt ? normalizeStoredDate(item.campaignConsentAt, new Date(0).toISOString()) : null,
+      campaignConsentRevokedAt: item.campaignConsentRevokedAt ? normalizeStoredDate(item.campaignConsentRevokedAt, new Date(0).toISOString()) : null,
       createdAt: normalizeStoredDate(item.createdAt, new Date().toISOString()),
       updatedAt: normalizeStoredDate(item.updatedAt || item.createdAt, new Date().toISOString()),
       status
