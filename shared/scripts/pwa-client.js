@@ -19,7 +19,7 @@
   const supportsNotificationIntro = isBackOffice || appId === "mudavim";
   const updateCheckKey = `tahmisci:pwa-update-check:${appId}`;
   const notificationIntroKey = `tahmisci:pwa-notification-intro:${appId}:v1`;
-  const updateCheckIntervalMs = 6 * 60 * 60 * 1000;
+  const updateCheckIntervalMs = 60 * 1000;
   const isLocalhostDevelopment = isLocalHostname(location.hostname);
   const dirtyForms = new WeakSet();
   let registrationPromise = null;
@@ -39,6 +39,11 @@
 
   window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
   window.addEventListener("appinstalled", handleAppInstalled);
+  window.addEventListener("focus", () => { void checkForPwaUpdate(); });
+  window.addEventListener("online", () => { void checkForPwaUpdate(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void checkForPwaUpdate();
+  });
   document.addEventListener("personel:session-started", scheduleNotificationIntro);
   document.addEventListener("tahmisci:admin-session-started", scheduleNotificationIntro);
   document.addEventListener("mudavim:session-started", scheduleNotificationIntro);
@@ -55,7 +60,7 @@
   });
 
   window.TahmisciPWA = Object.freeze({
-    checkForUpdate: () => ensureServiceWorkerRegistration().then((registration) => registration && registration.update()),
+    checkForUpdate: () => checkForPwaUpdate({ force: true }),
     ensureServiceWorker: ensureServiceWorkerRegistration,
     getRegistration: () => ensureServiceWorkerRegistration(),
     canInstall: () => Boolean(deferredInstallPrompt && !isStandalone()),
@@ -304,6 +309,20 @@
     }
   }
 
+  async function checkForPwaUpdate(options = {}) {
+    if (isLocalhostDevelopment) {
+      const registration = await ensureServiceWorkerRegistration();
+      return registration && registration.update();
+    }
+    let lastCheckedAt = 0;
+    try { lastCheckedAt = Number(window.localStorage.getItem(updateCheckKey) || 0); } catch (_error) {}
+    if (!options.force && Date.now() - lastCheckedAt < updateCheckIntervalMs) return null;
+    const registration = await ensureServiceWorkerRegistration();
+    if (!registration) return null;
+    try { window.localStorage.setItem(updateCheckKey, String(Date.now())); } catch (_error) {}
+    return registration.update().catch(() => null);
+  }
+
   function watchRegistration(registration) {
     if (registration.waiting && navigator.serviceWorker.controller) showUpdateReady(registration.waiting);
 
@@ -336,8 +355,19 @@
   function requestUpdate(button) {
     if (!waitingWorker) return;
     if (hasUnsavedChanges()) {
-      const approved = window.confirm("Kaydedilmemiş değişiklikleriniz var. Güncelleme sayfayı yenileyecek. Yine de devam edilsin mi?");
-      if (!approved) return;
+      if (button.dataset.confirmDirtyUpdate !== "true") {
+        button.dataset.confirmDirtyUpdate = "true";
+        button.textContent = "Yine de Güncelle";
+        const message = updateNotice && updateNotice.querySelector(".pwa-notice__copy span");
+        if (message) message.textContent = "Kaydedilmemiş değişiklikler var. Devam etmek için düğmeye tekrar basın.";
+        window.setTimeout(() => {
+          if (!button.isConnected || button.disabled) return;
+          delete button.dataset.confirmDirtyUpdate;
+          button.textContent = "Şimdi Güncelle";
+        }, 5000);
+        return;
+      }
+      delete button.dataset.confirmDirtyUpdate;
     }
 
     updateRequested = true;
@@ -358,7 +388,11 @@
         message: "Kaydedilmemiş değişiklikleriniz korundu. Hazır olduğunuzda sayfayı yenileyin.",
         actionLabel: "Sayfayı Yenile",
         onAction(button) {
-          if (hasUnsavedChanges() && !window.confirm("Kaydedilmemiş değişiklikler kaybolabilir. Sayfa yenilensin mi?")) return;
+          if (hasUnsavedChanges() && button.dataset.confirmDirtyReload !== "true") {
+            button.dataset.confirmDirtyReload = "true";
+            button.textContent = "Yine de Yenile";
+            return;
+          }
           button.disabled = true;
           window.location.reload();
         },

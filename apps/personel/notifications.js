@@ -78,7 +78,7 @@
       "personelNotificationTrigger", "personelNotificationBadge", "personelNotificationDrawer",
       "personelNotificationBackdrop", "personelNotificationClose", "personelNotificationUnreadText",
       "personelNotificationReadAll", "personelNotificationUnreadOnly", "personelNotificationFilters",
-      "personelNotificationViews", "personelNotificationClearArchive",
+      "personelNotificationViews",
       "personelNotificationMessage", "personelNotificationList", "personelNotificationLoadMore",
       "personelNotificationPreferencesForm", "personelNotificationPreferencesState",
       "personelNotificationEmail", "personelNotificationEmailSummary", "personelNotificationQuietTimes",
@@ -117,7 +117,6 @@
     elements.personelNotificationFilters?.addEventListener("click", handleFilterClick);
     elements.personelNotificationList?.addEventListener("click", handleListClick);
     elements.personelNotificationReadAll?.addEventListener("click", markAllRead);
-    elements.personelNotificationClearArchive?.addEventListener("click", clearArchive);
     elements.personelNotificationLoadMore?.addEventListener("click", () => loadNotifications({ append: true }));
     elements.personelNotificationPreferencesForm?.addEventListener("submit", savePreferences);
     elements.personelPushToggle?.addEventListener("click", togglePushSubscription);
@@ -281,7 +280,7 @@
     const button = event.target.closest("[data-notification-view]");
     if (!button) return;
     const requested = String(button.dataset.notificationView || "inbox");
-    state.view = ["unread", "archived"].includes(requested) ? requested : "inbox";
+    state.view = requested === "unread" ? "unread" : "inbox";
     state.unreadOnly = state.view === "unread";
     if (elements.personelNotificationUnreadOnly) elements.personelNotificationUnreadOnly.checked = state.unreadOnly;
     syncNotificationViews();
@@ -294,10 +293,7 @@
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-pressed", active ? "true" : "false");
     });
-    if (elements.personelNotificationReadAll) elements.personelNotificationReadAll.hidden = state.view === "archived";
-    const unreadLabel = elements.personelNotificationUnreadOnly?.closest("label");
-    if (unreadLabel) unreadLabel.hidden = state.view === "archived";
-    if (elements.personelNotificationClearArchive) elements.personelNotificationClearArchive.hidden = state.view !== "archived";
+    if (elements.personelNotificationReadAll) elements.personelNotificationReadAll.hidden = false;
   }
 
   function handleFilterClick(event) {
@@ -319,17 +315,13 @@
     setListBusy(true, append);
     showMessage("");
     try {
-      const parameters = new URLSearchParams({ limit: String(state.view === "archived" ? 100 : PAGE_SIZE) });
+      const parameters = new URLSearchParams({ limit: String(PAGE_SIZE) });
       if (state.category !== "all") parameters.set("category", state.category);
       if (state.unreadOnly) parameters.set("unread", "true");
-      if (state.view === "archived") {
-        parameters.set("includeArchived", "true");
-        parameters.set("archived", "true");
-      }
       if (append) parameters.set("cursor", state.nextCursor);
       const result = await request(`${API_ROOT}?${parameters.toString()}`);
       const listed = notificationArray(result).map(normalizeNotification).filter((item) => item.id);
-      const incoming = state.view === "archived" ? listed.filter((item) => item.archivedAt) : listed.filter((item) => !item.archivedAt);
+      const incoming = listed.filter((item) => !item.archivedAt);
       state.notifications = append ? mergeUnique(state.notifications, incoming) : incoming;
       state.nextCursor = String(result.nextCursor || result.cursor && result.cursor.next || "");
       applyUnreadCount(result);
@@ -416,7 +408,7 @@
         ? "Bildirimleri kapat"
         : count ? `Bildirimleri aç, ${count} okunmamış bildirim` : "Bildirimleri aç");
     }
-    if (elements.personelNotificationReadAll) elements.personelNotificationReadAll.disabled = count === 0 || state.pending.has("read-all") || state.view === "archived";
+    if (elements.personelNotificationReadAll) elements.personelNotificationReadAll.disabled = count === 0 || state.pending.has("read-all");
     document.title = count ? `(${count > 99 ? "99+" : count}) Tahmisçi Personel` : "Tahmisçi Personel";
   }
 
@@ -459,8 +451,8 @@
       node.append(title, text, retry);
       return node;
     } else {
-      title.textContent = state.view === "archived" ? "Arşivlenmiş bildirim yok" : state.unreadOnly ? "Okunmamış bildirim yok" : "Henüz bildirim yok";
-      text.textContent = state.view === "archived" ? "Arşivlediğiniz bildirimler burada görünür." : "Yeni görev, sevkiyat ve vardiya gelişmeleri burada görünecek.";
+      title.textContent = state.unreadOnly ? "Okunmamış bildirim yok" : "Henüz bildirim yok";
+      text.textContent = "Yeni görev, sevkiyat ve vardiya gelişmeleri burada görünecek.";
     }
     node.append(title, text);
     return node;
@@ -468,7 +460,7 @@
 
   function createNotificationCard(notification) {
     const card = document.createElement("article");
-    card.className = `personel-notification-card is-${notification.severity}${notification.readAt ? "" : " is-unread"}${notification.archivedAt ? " is-archived" : ""}`;
+    card.className = `personel-notification-card is-${notification.severity}${notification.readAt ? "" : " is-unread"}`;
     card.dataset.notificationId = notification.id;
 
     const iconNode = document.createElement("span");
@@ -493,14 +485,10 @@
 
     const actions = document.createElement("div");
     actions.className = "personel-notification-card__actions";
-    if (notification.archivedAt) {
-      actions.append(actionButton("restore", "Gelen kutusuna geri yükle"), actionButton("delete", "Kalıcı olarak sil"));
-    } else {
-      actions.append(
-        actionButton(notification.readAt ? "unread" : "read", notification.readAt ? "Okunmadı işaretle" : "Okundu işaretle"),
-        actionButton("archive", "Arşivle")
-      );
-    }
+    actions.append(
+      actionButton(notification.readAt ? "unread" : "read", notification.readAt ? "Okunmadı işaretle" : "Okundu işaretle"),
+      actionButton("delete", "Bildirimi sil")
+    );
     card.append(iconNode, copy, actions);
     return card;
   }
@@ -511,7 +499,7 @@
     button.dataset.notificationAction = action;
     button.setAttribute("aria-label", label);
     button.title = label;
-    button.innerHTML = icon(action === "archive" ? "archive" : action === "restore" ? "restore" : action === "delete" ? "delete" : action === "read" ? "check" : "dot");
+    button.innerHTML = icon(action === "delete" ? "delete" : action === "read" ? "check" : "dot");
     return button;
   }
 
@@ -524,8 +512,6 @@
     if (action.dataset.notificationAction === "open") void openNotification(notification, action);
     if (action.dataset.notificationAction === "read") void setNotificationRead(notification, true, action);
     if (action.dataset.notificationAction === "unread") void setNotificationRead(notification, false, action);
-    if (action.dataset.notificationAction === "archive") void archiveNotification(notification, action);
-    if (action.dataset.notificationAction === "restore") void restoreNotification(notification, action);
     if (action.dataset.notificationAction === "delete") void deleteNotification(notification, action);
   }
 
@@ -561,47 +547,16 @@
     }
   }
 
-  async function archiveNotification(notification, button) {
-    const key = `archive:${notification.id}`;
-    if (state.pending.has(key)) return;
-    state.pending.add(key);
-    setButtonBusy(button, true);
-    try {
-      const result = await request(`${API_ROOT}/${encodeURIComponent(notification.id)}/archive`, { method: "PATCH" });
-      state.notifications = state.notifications.filter((item) => item.id !== notification.id);
-      applyUnreadCount(result);
-      renderNotificationList();
-      showMessage("Bildirim arşivlendi.");
-    } catch (error) {
-      showMessage(error.message || "Bildirim arşivlenemedi.", true);
-    } finally {
-      state.pending.delete(key);
-      setButtonBusy(button, false);
-    }
-  }
-
-  async function restoreNotification(notification, button) {
-    const key = `restore:${notification.id}`;
-    if (state.pending.has(key)) return;
-    state.pending.add(key);
-    setButtonBusy(button, true);
-    try {
-      const result = await request(`${API_ROOT}/${encodeURIComponent(notification.id)}/restore`, { method: "PATCH" });
-      state.notifications = state.notifications.filter((item) => item.id !== notification.id);
-      applyUnreadCount(result);
-      renderNotificationList();
-      showMessage("Bildirim gelen kutusuna geri yüklendi.");
-    } catch (error) {
-      showMessage(error.message || "Bildirim geri yüklenemedi.", true);
-    } finally {
-      state.pending.delete(key);
-      setButtonBusy(button, false);
-    }
-  }
-
   async function deleteNotification(notification, button) {
     const key = `delete:${notification.id}`;
-    if (state.pending.has(key) || !window.confirm("Bu arşivlenmiş bildirim kalıcı olarak silinsin mi?")) return;
+    if (state.pending.has(key)) return;
+    if (button.dataset.confirmDelete !== "true") {
+      button.dataset.confirmDelete = "true";
+      showMessage("Bildirimi silmek için Sil düğmesine tekrar basın.");
+      window.setTimeout(() => { if (button && button.isConnected) delete button.dataset.confirmDelete; }, 4000);
+      return;
+    }
+    delete button.dataset.confirmDelete;
     state.pending.add(key);
     setButtonBusy(button, true);
     try {
@@ -615,27 +570,6 @@
     } finally {
       state.pending.delete(key);
       setButtonBusy(button, false);
-    }
-  }
-
-  async function clearArchive() {
-    const button = elements.personelNotificationClearArchive;
-    if (!button || button.disabled || state.pending.has("clear-archive") || !window.confirm("Arşivdeki tüm bildirimler kalıcı olarak silinsin mi?")) return;
-    state.pending.add("clear-archive");
-    setButtonBusy(button, true, "Temizleniyor…");
-    try {
-      const result = await request(`${API_ROOT}/archive`, { method: "DELETE" });
-      state.notifications = [];
-      state.nextCursor = "";
-      applyUnreadCount(result);
-      renderNotificationList();
-      showMessage(`${Number(result.deletedCount || 0)} arşiv kaydı kalıcı olarak silindi.`);
-    } catch (error) {
-      showMessage(error.message || "Bildirim arşivi temizlenemedi.", true);
-    } finally {
-      state.pending.delete("clear-archive");
-      setButtonBusy(button, false);
-      button.disabled = !state.notifications.length;
     }
   }
 
@@ -891,7 +825,21 @@
     const button = event.target.closest("[data-notification-device-remove]");
     if (!button || button.disabled) return;
     const id = String(button.dataset.notificationDeviceRemove || "");
-    if (!id || !window.confirm("Bu cihazın anlık bildirim bağlantısı kaldırılsın mı?")) return;
+    if (!id) return;
+    if (button.dataset.confirmRemove !== "true") {
+      button.dataset.confirmRemove = "true";
+      button.dataset.defaultLabel = button.textContent || "Kaldır";
+      button.textContent = "Tekrar tıklayın";
+      setPreferencesMessage("Bu cihazın bildirim bağlantısını kaldırmak için düğmeye tekrar tıklayın.");
+      window.setTimeout(() => {
+        if (!button.isConnected || button.dataset.confirmRemove !== "true") return;
+        delete button.dataset.confirmRemove;
+        button.textContent = button.dataset.defaultLabel || "Kaldır";
+      }, 4000);
+      return;
+    }
+    delete button.dataset.confirmRemove;
+    button.textContent = button.dataset.defaultLabel || "Kaldır";
     button.disabled = true;
     try {
       await request(`${API_ROOT}/push-subscriptions/${encodeURIComponent(id)}`, { method: "DELETE", headers: notificationDeviceHeaders() });
@@ -1399,8 +1347,6 @@
       truck: '<path d="M3 6h11v10H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/>',
       calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 2v6M17 2v6M3 10h18"/>',
       box: '<path d="m4 7 8-4 8 4-8 4zM4 7v10l8 4 8-4V7M12 11v10"/>',
-      archive: '<path d="M4 8h16v12H4zM3 4h18v4H3zM9 12h6"/>',
-      restore: '<path d="M4 8h16v12H4zM3 4h18v4H3zM8 14h8M11 11l-3 3 3 3"/>',
       delete: '<path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/>',
       check: '<path d="m5 12 4 4L19 6"/>',
       dot: '<circle cx="12" cy="12" r="4"/>',

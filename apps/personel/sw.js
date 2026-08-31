@@ -1,7 +1,8 @@
 /* Tahmisçi Personel PWA — scope: /personel/ */
+importScripts("/shared/scripts/pwa-release.js");
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "personel",
-  version: "2026.08.31.1",
+  version: self.TAHMISCI_PWA_RELEASE.id,
   scopePath: "/personel/",
   offlineUrl: "/personel/offline.html",
   offlineAssets: [
@@ -10,13 +11,13 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
     "/assets/app-icons/personel/notification-badge-96.png"
   ],
   precache: [
-    "/personel/personel.css",
+    "/personel/personel.css?v=20260831-panel-access",
     "/personel/personel-compact.css?v=20260831-profile-compact",
-    "/personel/personel.js",
+    "/personel/personel.js?v=20260831-panel-access",
     "/shared/styles/panel-foundation.css",
     "/shared/scripts/save-coordinator.js",
     "/shared/scripts/live-preview-receiver.js",
-    "/shared/scripts/pwa-client.js",
+    "/shared/scripts/pwa-client.js?v=20260831-panel-access",
     "/assets/fonts/poppins-regular.ttf",
     "/assets/fonts/poppins-semibold.ttf",
     "/assets/fonts/poppins-bold.ttf",

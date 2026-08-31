@@ -1,7 +1,8 @@
 /* Tahmisçi Yönetici PWA — scope: /yonetici/ */
+importScripts("/shared/scripts/pwa-release.js");
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "yonetici",
-  version: "2026.08.29.1",
+  version: self.TAHMISCI_PWA_RELEASE.id,
   scopePath: "/yonetici/",
   offlineUrl: "/yonetici/offline.html",
   offlineAssets: [
@@ -9,14 +10,14 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
     "/assets/app-icons/yonetici/icon-192.png"
   ],
   precache: [
-    "/yonetici/styles/admin.css?v=20260829-nav-icons",
+    "/yonetici/styles/admin.css?v=20260831-panel-access",
     "/yonetici/styles/admin-compact.css",
     "/yonetici/styles/admin-components.css",
     "/yonetici/styles/notifications.css",
-    "/yonetici/scripts/app.js",
+    "/yonetici/scripts/app.js?v=20260831-panel-access",
     "/shared/styles/panel-foundation.css",
     "/shared/scripts/save-coordinator.js",
-    "/shared/scripts/pwa-client.js",
+    "/shared/scripts/pwa-client.js?v=20260831-panel-access",
     "/assets/fonts/poppins-regular.ttf",
     "/assets/fonts/poppins-semibold.ttf",
     "/assets/fonts/poppins-bold.ttf",

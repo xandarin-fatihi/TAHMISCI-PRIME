@@ -1076,11 +1076,20 @@ body.is-member main {
 }
 
 .member-brand {
-  width: 112px;
+  width: auto;
+  min-width: 190px;
   height: 60px;
   display: inline-flex;
   align-items: center;
   overflow: hidden;
+}
+
+.member-brand span {
+  color: #5a2f1d;
+  font-family: "Magnolia Script", cursive;
+  font-size: clamp(1.5rem, 2.2vw, 2.15rem);
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .member-brand img {
@@ -1816,7 +1825,10 @@ body.is-member main {
   display: grid;
   align-content: start;
   gap: 13px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 2px 2px 8px;
 }
 
@@ -2325,7 +2337,8 @@ body.profile-open .mudavim-app {
 .member-notification-item__open { min-width: 0; display: grid; gap: 4px; color: var(--coffee); text-align: left; }
 .member-notification-item__open span { color: var(--muted); font-size: 0.74rem; line-height: 1.45; }
 .member-notification-item__open time { color: var(--muted); font-size: 0.64rem; }
-.member-notification-item__archive { width: 44px; height: 44px; border-radius: 12px; background: rgba(90, 47, 29, 0.07); color: var(--coffee); }
+.member-notification-item__actions { display: grid; gap: 6px; align-content: center; }
+.member-notification-item__actions button { min-width: 70px; min-height: 36px; padding: 6px 9px; border: 1px solid rgba(90, 47, 29, 0.14); border-radius: 10px; background: rgba(255, 250, 243, 0.9); color: var(--coffee); font: 700 .68rem/1.2 var(--font-body); cursor: pointer; }
 
 body.legal-open { overflow: hidden !important; }
 
@@ -2854,4 +2867,13 @@ body.guest-card-open { overflow: hidden; }
   .mudavim-logo { font-size: 1.25rem; }
   .mudavim-gate { width: min(100% - 18px, 360px); }
   .mudavim-hero-brand__mark { width: min(72vw, 260px); }
+}
+
+@media (max-width: 780px) {
+  .member-topbar { grid-template-columns: minmax(138px, 1fr) 46px minmax(0, 1fr); grid-template-areas: "brand notifications user" "tabs tabs tabs"; }
+  .member-brand { width: auto; min-width: 0; height: 54px; overflow: visible; }
+  .member-brand span { font-size: clamp(1.18rem, 5.2vw, 1.52rem); }
+  .member-notification-button { display: grid; grid-area: notifications; }
+  .member-notification-item { grid-template-columns: minmax(0, 1fr); }
+  .member-notification-item__actions { display: flex; justify-content: flex-end; }
 }

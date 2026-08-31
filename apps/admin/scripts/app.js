@@ -43,8 +43,93 @@
   const MEDIA_REF_PREFIX = "media:";
   const SESSION_REQUIRED_MESSAGE = "Oturum geçersiz. Lütfen tekrar giriş yapın.";
   const MENU_DESIGN_SCHEMA = window.TahmisciMenuDesignSchema;
+  let adminDialogPending = null;
+  window.TahmisciAdminDialogs = Object.freeze({
+    confirm: adminConfirm,
+    alert: adminNotice,
+    prompt: adminPrompt
+  });
   if (!MENU_DESIGN_SCHEMA || typeof MENU_DESIGN_SCHEMA.normalizeMenuState !== "function") {
     throw new Error("Ortak menü tasarım şeması yüklenemedi. Yönetici paneli güvenli biçimde başlatılamadı.");
+  }
+
+  function ensureAdminApplicationDialog() {
+    let layer = document.getElementById("adminApplicationDialog");
+    if (layer) return layer;
+    layer = document.createElement("div");
+    layer.id = "adminApplicationDialog";
+    layer.className = "admin-application-dialog";
+    layer.hidden = true;
+    layer.innerHTML = `
+      <button class="admin-application-dialog__backdrop" type="button" data-admin-dialog-cancel aria-label="İletişim kutusunu kapat"></button>
+      <section class="admin-application-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="adminApplicationDialogTitle" aria-describedby="adminApplicationDialogDescription">
+        <header><div><p class="eyebrow">TAHMİSÇİ YÖNETİCİ</p><h2 id="adminApplicationDialogTitle">İşlemi onaylayın</h2></div><button type="button" data-admin-dialog-cancel aria-label="Kapat">×</button></header>
+        <div class="admin-application-dialog__body"><p id="adminApplicationDialogDescription"></p><label data-admin-dialog-input-wrap hidden><span data-admin-dialog-input-label>Değer</span><input type="text" data-admin-dialog-input maxlength="2048"></label></div>
+        <footer><button class="ui-button ui-button--secondary" type="button" data-admin-dialog-cancel>Vazgeç</button><button class="ui-button ui-button--primary" type="button" data-admin-dialog-confirm>Onayla</button></footer>
+      </section>`;
+    document.body.appendChild(layer);
+    layer.addEventListener("click", (event) => {
+      if (event.target.closest("[data-admin-dialog-cancel]")) return closeAdminApplicationDialog(null);
+      if (!event.target.closest("[data-admin-dialog-confirm]")) return;
+      const input = layer.querySelector("[data-admin-dialog-input]");
+      closeAdminApplicationDialog(layer.dataset.mode === "prompt" ? input.value : true);
+    });
+    layer.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeAdminApplicationDialog(null);
+      }
+      if (event.key === "Enter" && layer.dataset.mode === "prompt" && event.target.matches("[data-admin-dialog-input]")) {
+        event.preventDefault();
+        closeAdminApplicationDialog(event.target.value);
+      }
+    });
+    return layer;
+  }
+
+  function openAdminApplicationDialog(options = {}) {
+    const layer = ensureAdminApplicationDialog();
+    if (adminDialogPending) adminDialogPending(null);
+    const mode = options.mode === "prompt" ? "prompt" : options.mode === "alert" ? "alert" : "confirm";
+    layer.dataset.mode = mode;
+    layer.querySelector("#adminApplicationDialogTitle").textContent = options.title || (mode === "alert" ? "Bilgi" : "İşlemi onaylayın");
+    layer.querySelector("#adminApplicationDialogDescription").textContent = options.description || "";
+    const inputWrap = layer.querySelector("[data-admin-dialog-input-wrap]");
+    const input = layer.querySelector("[data-admin-dialog-input]");
+    inputWrap.hidden = mode !== "prompt";
+    layer.querySelector("[data-admin-dialog-input-label]").textContent = options.label || "Değer";
+    input.value = mode === "prompt" ? String(options.value || "") : "";
+    input.type = options.inputType || "text";
+    const cancel = layer.querySelector("footer [data-admin-dialog-cancel]");
+    cancel.hidden = mode === "alert";
+    const confirm = layer.querySelector("[data-admin-dialog-confirm]");
+    confirm.textContent = options.confirmLabel || (mode === "alert" ? "Tamam" : "Onayla");
+    confirm.classList.toggle("ui-button--danger", options.danger === true);
+    layer.hidden = false;
+    document.body.classList.add("is-admin-dialog-open");
+    window.setTimeout(() => (mode === "prompt" ? input : confirm).focus(), 0);
+    return new Promise((resolve) => { adminDialogPending = resolve; });
+  }
+
+  function closeAdminApplicationDialog(value) {
+    const layer = document.getElementById("adminApplicationDialog");
+    if (layer) layer.hidden = true;
+    document.body.classList.remove("is-admin-dialog-open");
+    const resolve = adminDialogPending;
+    adminDialogPending = null;
+    if (resolve) resolve(value);
+  }
+
+  function adminConfirm(description, options = {}) {
+    return openAdminApplicationDialog({ ...options, mode: "confirm", description: String(description || "") });
+  }
+
+  function adminNotice(description, options = {}) {
+    return openAdminApplicationDialog({ ...options, mode: "alert", description: String(description || "") });
+  }
+
+  function adminPrompt(label, value = "", options = {}) {
+    return openAdminApplicationDialog({ ...options, mode: "prompt", label, value, description: options.description || "" });
   }
   const SITE_DESIGN_VERSION = "site-20260523a";
   const BRAND_TITLE_FONT = '"Magnolia Script", "Dancing Script", cursive';
@@ -355,6 +440,8 @@
       revision: 0
     },
     selectedStaffUserId: "",
+    staffSectionAccessUserId: "",
+    staffSectionAccessMessage: "",
     staffUserFilter: "active",
     staffActivityTab: "login",
     staffMessage: "",
@@ -572,6 +659,7 @@
       "deleteRecipeProductButton", "recipeCategoryName", "recipeProductName", "recipeSizeList",
       "staffOverviewGrid", "staffRefreshButton", "staffUserName", "staffUsername", "staffUserEmail", "staffUserEmailStatus", "staffPassword", "staffUserActive",
       "staffUserSaveButton", "staffUserResetButton", "staffUserMessage", "staffUserList", "staffUserCount", "staffUserFilter",
+      "staffSectionAccessUser", "staffSectionAccessGrid", "staffSectionAccessSummary", "staffSectionAccessSave", "staffSectionAccessMessage",
       "staffDeleteModal", "staffDeleteName", "staffDeleteUsername", "staffDeleteError", "staffDeleteConsent", "staffDeleteCloseButton", "staffDeleteCancelButton", "staffDeleteConfirmButton",
       "staffAssignmentUser", "staffAssignmentKind", "staffScopeType", "staffAssignmentCategory",
       "staffAssignmentProduct", "staffAssignmentSize", "staffQuestionCount", "staffPassingScore",
@@ -881,6 +969,13 @@
     });
     if (els.staffUserList) els.staffUserList.addEventListener("click", handleStaffUserListClick);
     if (els.staffUserFilter) els.staffUserFilter.addEventListener("click", handleStaffUserFilterClick);
+    if (els.staffSectionAccessUser) els.staffSectionAccessUser.addEventListener("change", () => {
+      state.staffSectionAccessUserId = els.staffSectionAccessUser.value;
+      state.staffSectionAccessMessage = "";
+      renderStaffSectionAccess(state.recipeAccess.users || []);
+    });
+    if (els.staffSectionAccessGrid) els.staffSectionAccessGrid.addEventListener("change", renderStaffSectionAccessSummary);
+    if (els.staffSectionAccessSave) els.staffSectionAccessSave.addEventListener("click", saveStaffSectionAccess);
     if (els.staffDeleteModal) els.staffDeleteModal.addEventListener("click", handleStaffDeleteModalClick);
     if (els.staffDeleteConsent) els.staffDeleteConsent.addEventListener("change", syncStaffDeleteConsent);
     if (els.staffDeleteConfirmButton) els.staffDeleteConfirmButton.addEventListener("click", confirmPermanentStaffDelete);
@@ -1784,7 +1879,7 @@
   }
 
   async function logoutAdminSession() {
-    if (shouldConfirmLogout() && !window.confirm("Oturumu kapatmak istiyor musunuz?")) return;
+    if (shouldConfirmLogout() && !await adminConfirm("Oturumu kapatmak istiyor musunuz?", { title: "Oturumu kapat", confirmLabel: "Çıkış yap", danger: true })) return;
     await detachAdminPushSubscription().catch(() => null);
     try {
       await backendRequest("/api/admin/logout", {
@@ -2063,10 +2158,10 @@
 
   function ensureSectionModule(section) {
     if (["bulkPrice", "product"].includes(section)) {
-      return loadScriptOnce("pricing", "scripts/pricing.js?v=20260815-performance");
+      return loadScriptOnce("pricing", "scripts/pricing.js?v=20260831-panel-access");
     }
     if (section === "staffAccess") {
-      return loadScriptOnce("workforce", "scripts/workforce.js?v=20260828-canonical-ownership");
+      return loadScriptOnce("workforce", "scripts/workforce.js?v=20260831-panel-access");
     }
     if (section === "settings") {
       return Promise.all([
@@ -2185,7 +2280,6 @@
     if (els.adminNotificationList) els.adminNotificationList.addEventListener("click", handleAdminNotificationListClick);
     if (els.adminNotificationLoadMore) els.adminNotificationLoadMore.addEventListener("click", () => loadAdminNotifications({ append: true }));
     if (els.adminNotificationReadAll) els.adminNotificationReadAll.addEventListener("click", markAllAdminNotificationsRead);
-    if (els.adminNotificationClearArchive) els.adminNotificationClearArchive.addEventListener("click", clearAdminNotificationArchive);
     if (els.adminNotificationCategory) {
       els.adminNotificationCategory.addEventListener("change", () => {
         state.notificationCenter.category = els.adminNotificationCategory.value || "all";
@@ -2195,7 +2289,7 @@
     document.querySelectorAll("[data-notification-filter]").forEach((button) => {
       button.addEventListener("click", () => {
         const requested = String(button.dataset.notificationFilter || "all");
-        state.notificationCenter.filter = ["unread", "archived"].includes(requested) ? requested : "all";
+        state.notificationCenter.filter = requested === "unread" ? "unread" : "all";
         syncAdminNotificationFilters();
         loadAdminNotifications().catch(() => {});
       });
@@ -2338,19 +2432,15 @@
     if (els.adminNotificationList) els.adminNotificationList.setAttribute("aria-busy", "true");
     if (!append) setAdminNotificationMessage("Bildirimler yükleniyor.");
     try {
-      const query = new URLSearchParams({ limit: center.filter === "archived" ? "100" : "20" });
+      const query = new URLSearchParams({ limit: "20" });
       if (center.filter === "unread") query.set("unread", "true");
-      if (center.filter === "archived") {
-        query.set("includeArchived", "true");
-        query.set("archived", "true");
-      }
       if (center.category !== "all") query.set("category", center.category);
       if (append && center.nextCursor) query.set("cursor", center.nextCursor);
       const result = await backendRequest(`${ADMIN_NOTIFICATION_API}?${query.toString()}`);
       const listed = Array.isArray(result.notifications)
         ? result.notifications.filter((item) => !isRetiredAdminNotification(item))
         : [];
-      const incoming = center.filter === "archived" ? listed.filter((item) => Boolean(item && item.archivedAt)) : listed.filter((item) => !item || !item.archivedAt);
+      const incoming = listed.filter((item) => !item || !item.archivedAt);
       const merged = append ? center.items.concat(incoming) : incoming;
       center.items = uniqueAdminNotifications(merged);
       center.nextCursor = String(result.nextCursor || "");
@@ -2391,22 +2481,13 @@
       return;
     }
     if (!center.items.length) {
-      const label = center.filter === "unread"
-        ? "Okunmamış bildiriminiz yok."
-        : center.filter === "archived" ? "Arşivlenmiş bildiriminiz yok." : "Henüz bildiriminiz yok.";
+      const label = center.filter === "unread" ? "Okunmamış bildiriminiz yok." : "Henüz bildiriminiz yok.";
       els.adminNotificationList.innerHTML = `<div class="admin-notification-empty"><div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z"></path><path d="M9 17a3 3 0 0 0 6 0"></path></svg><br>${escapeHTML(label)}</div></div>`;
     } else {
       els.adminNotificationList.innerHTML = center.items.map(renderAdminNotificationCard).join("");
     }
     if (els.adminNotificationLoadMore) els.adminNotificationLoadMore.hidden = !center.nextCursor;
-    if (els.adminNotificationReadAll) {
-      els.adminNotificationReadAll.hidden = center.filter === "archived";
-      els.adminNotificationReadAll.disabled = center.unreadCount < 1 || center.loading || center.filter === "archived";
-    }
-    if (els.adminNotificationClearArchive) {
-      els.adminNotificationClearArchive.hidden = center.filter !== "archived";
-      els.adminNotificationClearArchive.disabled = center.loading || !center.items.length;
-    }
+    if (els.adminNotificationReadAll) els.adminNotificationReadAll.disabled = center.unreadCount < 1 || center.loading;
   }
 
   function renderAdminNotificationCard(notification) {
@@ -2414,14 +2495,13 @@
     const category = normalizeAdminNotificationCategory(notification.category || notification.type || notification.kind);
     const severity = normalizeAdminNotificationSeverity(notification.severity);
     const read = adminNotificationIsRead(notification);
-    const archived = Boolean(notification.archivedAt);
     const title = notification.title || notification.subject || adminNotificationCategoryLabel(category);
     const body = notification.body || notification.message || notification.description || "Bildirim ayrıntısını açın.";
     const createdAt = notification.createdAt || notification.timestamp || notification.sentAt;
     const readAction = read ? "unread" : "read";
     const readLabel = read ? "Okunmamış yap" : "Okundu yap";
     return `
-      <article class="admin-notification-card is-${escapeAttribute(severity)} ${read ? "" : "is-unread"} ${archived ? "is-archived" : ""}" data-notification-id="${escapeAttribute(id)}" data-severity="${escapeAttribute(severity)}">
+      <article class="admin-notification-card is-${escapeAttribute(severity)} ${read ? "" : "is-unread"}" data-notification-id="${escapeAttribute(id)}" data-severity="${escapeAttribute(severity)}">
         <span class="admin-notification-kind" data-kind="${escapeAttribute(category)}" aria-hidden="true">${adminNotificationIcon(category)}</span>
         <div class="admin-notification-copy">
           <button type="button" data-notification-open="${escapeAttribute(id)}">
@@ -2431,11 +2511,8 @@
           <div class="admin-notification-meta"><span>${escapeHTML(adminNotificationCategoryLabel(category))}</span><span class="admin-notification-severity" data-severity="${escapeAttribute(severity)}">${escapeHTML(adminNotificationSeverityLabel(severity))}</span><time datetime="${escapeAttribute(createdAt || "")}">${escapeHTML(formatDateTime(createdAt) || "Az önce")}</time></div>
         </div>
         <div class="admin-notification-actions">
-          ${archived ? `
-          <button type="button" data-notification-action="restore" data-notification-id="${escapeAttribute(id)}" aria-label="Gelen kutusuna geri yükle" title="Geri yükle">${adminNotificationIcon("restore")}</button>
-          <button type="button" data-notification-action="delete" data-notification-id="${escapeAttribute(id)}" aria-label="Kalıcı olarak sil" title="Kalıcı olarak sil">${adminNotificationIcon("delete")}</button>` : `
           <button type="button" data-notification-action="${readAction}" data-notification-id="${escapeAttribute(id)}" aria-label="${readLabel}" title="${readLabel}">${read ? adminNotificationIcon("unread") : adminNotificationIcon("read")}</button>
-          <button type="button" data-notification-action="archive" data-notification-id="${escapeAttribute(id)}" aria-label="Arşivle" title="Arşivle">${adminNotificationIcon("archive")}</button>`}
+          <button type="button" data-notification-action="delete" data-notification-id="${escapeAttribute(id)}" aria-label="Bildirimi sil" title="Bildirimi sil">${adminNotificationIcon("delete")}</button>
         </div>
       </article>`;
   }
@@ -2493,7 +2570,7 @@
     if (els.adminNotificationSummary) {
       els.adminNotificationSummary.textContent = count ? `${count} okunmamış bildiriminiz var.` : "Tüm bildirimleriniz güncel.";
     }
-    if (els.adminNotificationReadAll) els.adminNotificationReadAll.disabled = count < 1 || state.notificationCenter.filter === "archived";
+    if (els.adminNotificationReadAll) els.adminNotificationReadAll.disabled = count < 1;
   }
 
   function setAdminNotificationMessage(message, tone = "") {
@@ -2508,8 +2585,6 @@
       button.setAttribute("aria-pressed", String(button.dataset.notificationFilter === state.notificationCenter.filter));
     });
     if (els.adminNotificationCategory) els.adminNotificationCategory.value = state.notificationCenter.category;
-    if (els.adminNotificationReadAll) els.adminNotificationReadAll.hidden = state.notificationCenter.filter === "archived";
-    if (els.adminNotificationClearArchive) els.adminNotificationClearArchive.hidden = state.notificationCenter.filter !== "archived";
   }
 
   async function handleAdminNotificationListClick(event) {
@@ -2531,8 +2606,14 @@
 
   async function mutateAdminNotification(id, action, button, options = {}) {
     const center = state.notificationCenter;
-    if (!["read", "unread", "archive", "restore", "delete"].includes(action)) return false;
-    if (action === "delete" && !window.confirm("Bu arşivlenmiş bildirim kalıcı olarak silinsin mi?")) return false;
+    if (!["read", "unread", "delete"].includes(action)) return false;
+    if (action === "delete" && button && button.dataset.confirmDelete !== "true") {
+      button.dataset.confirmDelete = "true";
+      setAdminNotificationMessage("Bildirimi silmek için Sil düğmesine tekrar basın.");
+      window.setTimeout(() => { if (button && button.isConnected) delete button.dataset.confirmDelete; }, 4000);
+      return false;
+    }
+    if (button) delete button.dataset.confirmDelete;
     const key = `${id}:${action}`;
     if (!id || center.mutationKeys.has(key)) return false;
     center.mutationKeys.add(key);
@@ -2546,12 +2627,10 @@
       if (result.notification) {
         center.items = center.items.map((item) => String(item.id || item.notificationId) === String(id) ? result.notification : item);
       }
-      if (["archive", "restore", "delete"].includes(action)) center.items = center.items.filter((item) => String(item.id || item.notificationId) !== String(id));
+      if (action === "delete") center.items = center.items.filter((item) => String(item.id || item.notificationId) !== String(id));
       setAdminNotificationUnreadCount(result.unreadCount ?? center.unreadCount);
       const message = {
-        archive: "Bildirim arşivlendi.",
-        restore: "Bildirim gelen kutusuna geri yüklendi.",
-        delete: "Bildirim kalıcı olarak silindi."
+        delete: "Bildirim silindi."
       }[action] || "Bildirim durumu güncellendi.";
       setAdminNotificationMessage(message, "success");
       if (options.refresh !== false) await loadAdminNotifications();
@@ -2563,27 +2642,6 @@
     } finally {
       center.mutationKeys.delete(key);
       if (button && button.isConnected) button.disabled = false;
-    }
-  }
-
-  async function clearAdminNotificationArchive() {
-    const button = els.adminNotificationClearArchive;
-    if (!button || button.disabled || !window.confirm("Arşivdeki tüm bildirimler kalıcı olarak silinsin mi?")) return;
-    button.disabled = true;
-    const previous = button.textContent;
-    button.textContent = "Temizleniyor...";
-    try {
-      const result = await backendRequest(`${ADMIN_NOTIFICATION_API}/archive`, { method: "DELETE" });
-      state.notificationCenter.items = [];
-      state.notificationCenter.nextCursor = "";
-      setAdminNotificationUnreadCount(result.unreadCount ?? state.notificationCenter.unreadCount);
-      setAdminNotificationMessage(`${Number(result.deletedCount || 0)} arşiv kaydı kalıcı olarak silindi.`, "success");
-      renderAdminNotifications();
-    } catch (error) {
-      setAdminNotificationMessage(error.message || "Bildirim arşivi temizlenemedi.", "error");
-    } finally {
-      button.textContent = previous;
-      button.disabled = state.notificationCenter.loading || !state.notificationCenter.items.length;
     }
   }
 
@@ -2965,7 +3023,21 @@
     const button = event.target.closest("[data-notification-device-remove]");
     if (!button || button.disabled) return;
     const id = String(button.dataset.notificationDeviceRemove || "");
-    if (!id || !window.confirm("Bu cihazın anlık bildirim bağlantısı kaldırılsın mı?")) return;
+    if (!id) return;
+    if (button.dataset.confirmRemove !== "true") {
+      button.dataset.confirmRemove = "true";
+      button.dataset.defaultLabel = button.textContent || "Kaldır";
+      button.textContent = "Tekrar tıklayın";
+      setAdminNotificationMessage("Bu cihazın bildirim bağlantısını kaldırmak için düğmeye tekrar tıklayın.");
+      window.setTimeout(() => {
+        if (!button.isConnected || button.dataset.confirmRemove !== "true") return;
+        delete button.dataset.confirmRemove;
+        button.textContent = button.dataset.defaultLabel || "Kaldır";
+      }, 4000);
+      return;
+    }
+    delete button.dataset.confirmRemove;
+    button.textContent = button.dataset.defaultLabel || "Kaldır";
     button.disabled = true;
     try {
       await backendRequest(`${ADMIN_NOTIFICATION_API}/push-subscriptions/${encodeURIComponent(id)}`, {
@@ -3404,12 +3476,12 @@
           console.warn("Yayın kabul edildi ancak doğrulanamadı:", error);
           state.saveStatus = "unverified";
           updateSaveControls(error.message || "Yayın doğrulanamadı. Değişiklikleriniz korunuyor.");
-          alert(error.message || "Yayın sunucu tarafından kabul edildi ancak doğrulanamadı. Değişiklikleriniz korunuyor.");
+          void adminNotice(error.message || "Yayın sunucu tarafından kabul edildi ancak doğrulanamadı. Değişiklikleriniz korunuyor.", { title: "Yayın doğrulanamadı" });
         } else {
           console.error("Kaydetme başarısız:", error);
           state.saveStatus = Number(error && error.status) === 409 ? "conflict" : "error";
           updateSaveControls();
-          alert(error.message || "Kayıt tamamlanamadı. Değişiklikleriniz korunuyor.");
+          void adminNotice(error.message || "Kayıt tamamlanamadı. Değişiklikleriniz korunuyor.", { title: "Kayıt tamamlanamadı" });
         }
         throw error;
       } finally {
@@ -3488,7 +3560,7 @@
         return await verifyPendingPublishReadback();
       } catch (error) {
         console.warn("Yayın readback doğrulaması başarısız:", error);
-        alert(error.message || "Yayın henüz doğrulanamadı. Değişiklikleriniz korunuyor.");
+        void adminNotice(error.message || "Yayın henüz doğrulanamadı. Değişiklikleriniz korunuyor.", { title: "Yayın doğrulanamadı" });
         throw error;
       } finally {
         state.saving = false;
@@ -4756,15 +4828,15 @@
       renderMudavimAnnouncements();
       updateSaveControls("Duyuru görseli yüklendi, yayın bekliyor");
     } catch (error) {
-      alert(`Duyuru görseli yüklenemedi. ${error.message || "Dosyayı kontrol edin."}`);
+      void adminNotice(`Duyuru görseli yüklenemedi. ${error.message || "Dosyayı kontrol edin."}`, { title: "Görsel yüklenemedi" });
       input.disabled = false;
     }
   }
 
-  function handleMudavimAnnouncementEditorClick(event) {
+  async function handleMudavimAnnouncementEditorClick(event) {
     const formatButton = event.target.closest("[data-mudavim-format]");
     if (formatButton) {
-      applyMudavimTextFormat(formatButton);
+      await applyMudavimTextFormat(formatButton);
       return;
     }
     const button = event.target.closest("[data-mudavim-announcement-action]");
@@ -4774,7 +4846,7 @@
     const announcement = selectedMudavimAnnouncement();
     if (!announcement) return;
     if (action === "delete-announcement") {
-      if (!confirm("Bu duyuruyu silmek istiyor musunuz?")) return;
+      if (!await adminConfirm("Bu duyuru kalıcı olarak silinecek.", { title: "Duyuruyu sil", confirmLabel: "Sil", danger: true })) return;
       state.site.mudavim.announcements = announcements.filter((item) => item.id !== announcement.id)
         .map((item, index) => ({ ...item, order: index }));
       state.selectedMudavimAnnouncementId = state.site.mudavim.announcements[0]?.id || "";
@@ -4818,7 +4890,7 @@
     renderMudavimAnnouncements();
   }
 
-  function applyMudavimTextFormat(button) {
+  async function applyMudavimTextFormat(button) {
     const announcement = selectedMudavimAnnouncement();
     const card = button.closest("[data-mudavim-block-id]");
     const textarea = card ? card.querySelector("textarea[data-mudavim-block-field='body']") : null;
@@ -4835,7 +4907,7 @@
     if (type === "underline") replacement = `<u>${selected}</u>`;
     if (type === "bullet") replacement = selected.split("\n").map((line) => `• ${line.replace(/^•\\s*/, "")}`).join("\n");
     if (type === "link") {
-      const url = prompt("Bağlantı adresi", "https://");
+      const url = await adminPrompt("Bağlantı adresi", "https://", { title: "Bağlantı ekle", confirmLabel: "Ekle" });
       if (!url) return;
       replacement = `[${selected}](${url})`;
     }
@@ -5076,8 +5148,8 @@
     renderFeedbackInbox();
   }
 
-  function clearFeedbackItems() {
-    if (!confirm("Dilek, istek, şikayet ve favori kayıtları sıfırlansın mı? Puanlamalar korunacak.")) return;
+  async function clearFeedbackItems() {
+    if (!await adminConfirm("Dilek, istek, şikayet ve favori kayıtları sıfırlanacak; puanlamalar korunacak.", { title: "Kayıtları sıfırla", confirmLabel: "Sıfırla", danger: true })) return;
     const preservedRatings = loadFeedbackItems()
       .filter((item) => Number(item.rating || 0) > 0)
       .map((item) => ({
@@ -5115,6 +5187,7 @@
     const access = state.recipeAccess || { users: [], assignments: [], activity: [] };
     renderStaffOverview(access);
     renderStaffUsers(access.users || []);
+    renderStaffSectionAccess(access.users || []);
     // PASİF MODÜL: Eğitim / Görev / Sınav Atama — yeniden etkinleştirilmek üzere korunuyor.
     // renderStaffAssignmentOptions();
     // renderStaffAssignments(access.assignments || []);
@@ -5202,6 +5275,69 @@
     `;
   }
 
+  const PERSONEL_SECTION_ACCESS_KEYS = ["recipe", "stock", "tasks", "shipment", "shift"];
+
+  function normalizePersonelSectionAccess(value) {
+    const source = value && typeof value === "object" ? value : {};
+    return PERSONEL_SECTION_ACCESS_KEYS.reduce((result, key) => {
+      result[key] = source[key] !== false;
+      return result;
+    }, {});
+  }
+
+  function renderStaffSectionAccess(users) {
+    if (!els.staffSectionAccessUser || !els.staffSectionAccessGrid) return;
+    const list = (Array.isArray(users) ? users : []).filter((user) => user && user.id);
+    if (!list.some((user) => user.id === state.staffSectionAccessUserId)) state.staffSectionAccessUserId = "";
+    els.staffSectionAccessUser.innerHTML = list.length
+      ? `<option value="">Personel seçin</option>${list.map((user) => `<option value="${escapeAttribute(user.id)}">${escapeHTML(user.name || user.username)} · @${escapeHTML(user.username)}</option>`).join("")}`
+      : '<option value="">Personel bulunamadı</option>';
+    els.staffSectionAccessUser.value = state.staffSectionAccessUserId;
+    const user = list.find((item) => item.id === state.staffSectionAccessUserId);
+    const access = normalizePersonelSectionAccess(user && user.personelSectionAccess);
+    els.staffSectionAccessGrid.querySelectorAll("[data-personel-section-access]").forEach((input) => {
+      input.checked = access[input.dataset.personelSectionAccess] !== false;
+      input.disabled = !user;
+    });
+    if (els.staffSectionAccessSave) els.staffSectionAccessSave.disabled = !user;
+    if (els.staffSectionAccessMessage) els.staffSectionAccessMessage.textContent = state.staffSectionAccessMessage || (user ? "" : "Yetkilerini düzenlemek için personel seçin.");
+    renderStaffSectionAccessSummary();
+  }
+
+  function renderStaffSectionAccessSummary() {
+    if (!els.staffSectionAccessGrid || !els.staffSectionAccessSummary) return;
+    const inputs = Array.from(els.staffSectionAccessGrid.querySelectorAll("[data-personel-section-access]"));
+    if (!state.staffSectionAccessUserId) {
+      els.staffSectionAccessSummary.textContent = "Personel seçin";
+      return;
+    }
+    const enabled = inputs.filter((input) => input.checked).length;
+    els.staffSectionAccessSummary.textContent = `${enabled}/${inputs.length || 5} bölüm açık`;
+  }
+
+  async function saveStaffSectionAccess() {
+    const id = String(state.staffSectionAccessUserId || "");
+    const user = (state.recipeAccess.users || []).find((item) => item.id === id);
+    if (!user || !els.staffSectionAccessGrid) return;
+    const personelSectionAccess = {};
+    els.staffSectionAccessGrid.querySelectorAll("[data-personel-section-access]").forEach((input) => {
+      personelSectionAccess[input.dataset.personelSectionAccess] = Boolean(input.checked);
+    });
+    try {
+      const mutation = staffMutationOptions("personnel-section-access", { personelSectionAccess });
+      const result = await runStaffImmediateOperation(`staff-section-access:${id}`, els.staffSectionAccessSave, () => backendRequest(`/api/admin/recipe-users/${encodeURIComponent(id)}/section-access`, {
+        method: "PATCH",
+        ...mutation
+      }), { busyText: "Kaydediliyor…" });
+      applyStaffAccessResponse(result);
+      state.staffSectionAccessMessage = "Personel arayüz yetkileri güncellendi.";
+      renderStaffAccess();
+    } catch (error) {
+      state.staffSectionAccessMessage = error.message || "Arayüz yetkileri kaydedilemedi";
+      renderStaffAccess();
+    }
+  }
+
   function staffUserEmailValue(user) {
     return String(user && (user.pendingEmail || user.email) || "").trim().toLowerCase();
   }
@@ -5234,6 +5370,7 @@
     const user = (state.recipeAccess.users || []).find((item) => item.id === button.dataset.staffUser);
     if (!user) return;
     state.selectedStaffUserId = user.id;
+    state.staffSectionAccessUserId = user.id;
     if (els.staffUserName) els.staffUserName.value = user.name || "";
     if (els.staffUsername) els.staffUsername.value = user.username || "";
     if (els.staffUserEmail) els.staffUserEmail.value = staffUserEmailValue(user);
@@ -5284,7 +5421,7 @@
     const user = (state.recipeAccess.users || []).find((item) => item.id === id);
     if (!user) return;
 
-    if (!nextActive && !confirm("Bu kullanıcının reçete erişim yetkisi kaldırılacak. Geçmiş görev ve aktivite kayıtları korunacak. Devam edilsin mi?")) {
+    if (!nextActive && !await adminConfirm("Bu kullanıcının reçete erişim yetkisi kaldırılacak. Geçmiş görev ve aktivite kayıtları korunacak.", { title: "Personeli pasifleştir", confirmLabel: "Pasifleştir", danger: true })) {
       return;
     }
 
@@ -5771,7 +5908,7 @@
 
     const button = event.target.closest("[data-delete-assignment]");
     if (!button) return;
-    if (!confirm("Bu ödev silinsin mi?")) return;
+    if (!await adminConfirm("Bu ödev kalıcı olarak silinecek.", { title: "Ödevi sil", confirmLabel: "Sil", danger: true })) return;
     try {
       const result = await backendRequest(`/api/admin/recipe-assignments/${encodeURIComponent(button.dataset.deleteAssignment)}`, {
         method: "DELETE"
@@ -6441,7 +6578,7 @@
       renderSiteEditorForm();
       updateSaveControls("Medya yüklendi, yayın bekliyor");
     } catch (error) {
-      alert(`Medya yüklenemedi. ${error.message || "Dosyayı kontrol edin."}`);
+      void adminNotice(`Medya yüklenemedi. ${error.message || "Dosyayı kontrol edin."}`, { title: "Medya yüklenemedi" });
     } finally {
       input.value = "";
       input.disabled = false;
@@ -6472,7 +6609,7 @@
 
   async function handleSiteRevisionRestore(event) {
     const button = event.target.closest("[data-site-revision-id]");
-    if (!button || !confirm("Bu site yayınını geri yüklemek istiyor musunuz?")) return;
+    if (!button || !await adminConfirm("Seçili site yayını geri yüklenecek.", { title: "Site yayınını geri yükle", confirmLabel: "Geri yükle" })) return;
     try {
       const result = await backendRequest(`/api/admin/site/revisions/${encodeURIComponent(button.dataset.siteRevisionId)}/restore`, { method: "POST" });
       state.site = normalizeSiteSettings(result.siteState);
@@ -6481,7 +6618,7 @@
       await loadSiteRevisions();
       updateSaveControls("Revizyon geri yüklendi");
     } catch (error) {
-      alert(`Revizyon geri yüklenemedi. ${error.message || ""}`);
+      void adminNotice(`Revizyon geri yüklenemedi. ${error.message || ""}`, { title: "Geri yükleme başarısız" });
     }
   }
 
@@ -7066,7 +7203,7 @@
     saveMenuOutputState(true);
   }
 
-  function handleMenuOutputSectionClick(event) {
+  async function handleMenuOutputSectionClick(event) {
     const container = event.target.closest("[data-menu-output-section]");
     if (container) state.selectedMenuOutputSectionId = container.dataset.menuOutputSection;
     const menuOutput = ensureMenuOutputState();
@@ -7089,7 +7226,7 @@
     }
     if (event.target.closest("[data-menu-output-delete]")) {
       if (section.locked) return;
-      if (!confirm("Bu menü çıktı alanı silinsin mi?")) return;
+      if (!await adminConfirm("Bu menü çıktı alanı silinecek.", { title: "Alanı sil", confirmLabel: "Sil", danger: true })) return;
       deleteMenuOutputSection(menuOutput, section);
       saveMenuOutputState(true);
       return;
@@ -7161,7 +7298,7 @@
     `).join("") : `<div class="empty-mini">Henüz katman yok.</div>`;
   }
 
-  function handleMenuOutputLayerClick(event) {
+  async function handleMenuOutputLayerClick(event) {
     const row = event.target.closest("[data-menu-output-layer]");
     const button = event.target.closest("[data-layer-action]");
     if (!row || !button) return;
@@ -7181,7 +7318,7 @@
       if (section.locked) return;
       moveMenuOutputSectionLayer(menuOutput, section, action);
     } else if (action === "delete") {
-      if (section.locked || !confirm("Bu menü çıktı alanı silinsin mi?")) return;
+      if (section.locked || !await adminConfirm("Bu menü çıktı alanı silinecek.", { title: "Alanı sil", confirmLabel: "Sil", danger: true })) return;
       deleteMenuOutputSection(menuOutput, section);
     }
     saveMenuOutputState(true);
@@ -7304,11 +7441,11 @@
     saveMenuOutputState(true);
   }
 
-  function deleteMenuOutputTemplate(templateId) {
+  async function deleteMenuOutputTemplate(templateId) {
     const menuOutput = ensureMenuOutputState();
     const targetId = templateId || menuOutput.currentTemplateId;
     if (!targetId) return;
-    if (!confirm("Seçili Menü Çıktısı şablonu silinsin mi?")) return;
+    if (!await adminConfirm("Seçili Menü Çıktısı şablonu silinecek.", { title: "Şablonu sil", confirmLabel: "Sil", danger: true })) return;
     const deletingCurrent = menuOutput.currentTemplateId === targetId;
     menuOutput.templates = menuOutput.templates.filter((item) => item.id !== targetId);
     if (menuOutput.defaultTemplateId === targetId) {
@@ -7350,14 +7487,14 @@
   function openMenuOutputCanva() {
     const link = ensureMenuOutputState().canvaLink || "";
     if (!link) {
-      alert("Canva referans linki yok.");
+      void adminNotice("Canva referans linki yok.", { title: "Bağlantı bulunamadı" });
       return;
     }
     window.open(link, "_blank", "noopener,noreferrer");
   }
 
-  function resetMenuOutputDesign() {
-    if (!confirm("Menü Çıktısı tasarımı varsayılan değerlere alınsın mı? Şablon kütüphanesi korunur.")) return;
+  async function resetMenuOutputDesign() {
+    if (!await adminConfirm("Menü Çıktısı tasarımı varsayılan değerlere alınacak. Şablon kütüphanesi korunur.", { title: "Tasarımı sıfırla", confirmLabel: "Sıfırla", danger: true })) return;
     const current = ensureMenuOutputState();
     state.data.settings.menuOutput = normalizeMenuOutput(Object.assign({}, DEFAULT_MENU_OUTPUT, {
       templates: current.templates,
@@ -8128,7 +8265,7 @@
     const confirmationMessage = requiresArchiveConfirmation
       ? `${domainConfirmation}\n\nBu aktarım ${archived} kaydı arşivleyecek ve ilgili canlı veri revizyonlarını güncelleyecek. Önizlemeyi kontrol ettiniz mi; atomik uygulamaya devam edilsin mi?`
       : `${domainConfirmation}\n\nÖnizlenen Excel değişiklikleri kalıcı store'a atomik olarak uygulansın mı?`;
-    if (!window.confirm(confirmationMessage)) return;
+    if (!await adminConfirm(confirmationMessage, { title: "Excel değişikliklerini uygula", confirmLabel: "Atomik uygula" })) return;
     const requestId = createRequestId("data-import-apply");
     setDataImportBusy("apply");
     center.message = "Onaylanan analiz backend üzerinde atomik olarak uygulanıyor…";
@@ -8203,7 +8340,7 @@
     if (!button || center.busy || button.disabled) return;
     const operationId = button.dataset.dataImportUndo;
     const operation = center.history.find((item) => String(dataImportOperationId(item)) === String(operationId));
-    if (!operation || !window.confirm("Bu Excel aktarımı güvenli bir geri alma işlemiyle geri alınsın mı?")) return;
+    if (!operation || !await adminConfirm("Bu Excel aktarımı güvenli bir geri alma işlemiyle geri alınacak.", { title: "Excel aktarımını geri al", confirmLabel: "Geri al", danger: true })) return;
     const requestId = createRequestId("data-import-undo");
     setDataImportBusy("undo");
     try {
@@ -8973,7 +9110,7 @@
     const nextName = input.value.trim() || oldName;
     const sizes = selectedRecipeSizes();
     if (nextName !== oldName && Object.prototype.hasOwnProperty.call(sizes, nextName)) {
-      alert("Bu ölçü adı zaten var.");
+      void adminNotice("Bu ölçü adı zaten var.", { title: "Ölçü adı kullanılıyor" });
       input.value = oldName;
       return;
     }
@@ -8985,13 +9122,13 @@
     saveRecipes({ render: true });
   }
 
-  function handleRecipeSizeClick(event) {
+  async function handleRecipeSizeClick(event) {
     const button = event.target.closest("[data-delete-recipe-size]");
     if (!button) return;
     const size = button.dataset.deleteRecipeSize;
     const sizes = selectedRecipeSizes();
     if (!Object.prototype.hasOwnProperty.call(sizes, size)) return;
-    if (!confirm(`${state.selectedRecipeProduct} / ${size} reçetesi silinsin mi?`)) return;
+    if (!await adminConfirm(`${state.selectedRecipeProduct} / ${size} reçetesi silinecek.`, { title: "Reçeteyi sil", confirmLabel: "Sil", danger: true })) return;
     delete sizes[size];
     if (state.selectedRecipePreviewSize === size) state.selectedRecipePreviewSize = "";
     saveRecipes({ render: true });
@@ -9045,11 +9182,11 @@
     saveRecipes({ render: true });
   }
 
-  function deleteSelectedRecipeCategory() {
+  async function deleteSelectedRecipeCategory() {
     if (!state.selectedRecipeCategory || recipeCategoryNames().length <= 1) return;
     const ids = state.recipeCatalog.filter((item) => item.category === state.selectedRecipeCategory).map((item) => item.id);
     const linkedCount = linkedMenuProductsForRecipeIds(ids).length;
-    if (!confirm(`${state.selectedRecipeCategory} kategorisi ve içindeki reçeteler silinsin mi?${linkedCount ? ` ${linkedCount} menü ürünü manuel/boş içerik fallback'ine geçecek.` : ""}`)) return;
+    if (!await adminConfirm(`${state.selectedRecipeCategory} kategorisi ve içindeki reçeteler silinecek.${linkedCount ? ` ${linkedCount} menü ürünü manuel/boş içerik fallback'ine geçecek.` : ""}`, { title: "Reçete kategorisini sil", confirmLabel: "Sil", danger: true })) return;
     state.recipeCatalog = state.recipeCatalog.filter((item) => item.category !== state.selectedRecipeCategory);
     delete state.recipes[state.selectedRecipeCategory];
     state.selectedRecipeCategory = "";
@@ -9059,11 +9196,11 @@
     saveRecipes({ render: true });
   }
 
-  function deleteSelectedRecipeProduct() {
+  async function deleteSelectedRecipeProduct() {
     if (!state.selectedRecipeCategory || !state.selectedRecipeProduct) return;
     const catalogItem = state.recipeCatalog.find((item) => item.category === state.selectedRecipeCategory && item.product === state.selectedRecipeProduct);
     const linkedCount = linkedMenuProductsForRecipeIds(catalogItem ? [catalogItem.id] : []).length;
-    if (!confirm(`${state.selectedRecipeProduct} ürünü ve ölçüleri silinsin mi?${linkedCount ? ` ${linkedCount} bağlı menü ürünü manuel/boş içerik fallback'ine geçecek.` : ""}`)) return;
+    if (!await adminConfirm(`${state.selectedRecipeProduct} ürünü ve ölçüleri silinecek.${linkedCount ? ` ${linkedCount} bağlı menü ürünü manuel/boş içerik fallback'ine geçecek.` : ""}`, { title: "Reçete ürününü sil", confirmLabel: "Sil", danger: true })) return;
     if (catalogItem) state.recipeCatalog = state.recipeCatalog.filter((item) => item.id !== catalogItem.id);
     delete state.recipes[state.selectedRecipeCategory][state.selectedRecipeProduct];
     state.selectedRecipeProduct = "";
@@ -9080,7 +9217,7 @@
       return;
     }
     if (state.recipes[nextName]) {
-      alert("Bu kategori adı zaten var.");
+      void adminNotice("Bu kategori adı zaten var.", { title: "Kategori adı kullanılıyor" });
       els.recipeCategoryName.value = oldName;
       return;
     }
@@ -9102,7 +9239,7 @@
       return;
     }
     if (category[nextName]) {
-      alert("Bu ürün adı zaten var.");
+      void adminNotice("Bu ürün adı zaten var.", { title: "Ürün adı kullanılıyor" });
       els.recipeProductName.value = oldName;
       return;
     }
@@ -9356,7 +9493,7 @@
       saveAndRender();
     } catch (error) {
       console.error("Banner medyası yüklenemedi:", error);
-      alert(`Medya backend'e yüklenemedi. ${error.message || "Dosya türünü, boyutunu ve oturumu kontrol edin."}`);
+      void adminNotice(`Medya backend'e yüklenemedi. ${error.message || "Dosya türünü, boyutunu ve oturumu kontrol edin."}`, { title: "Medya yüklenemedi" });
     } finally {
       input.value = "";
     }
@@ -9662,20 +9799,20 @@
     saveAndRender();
   }
 
-  function deleteSelectedCategory() {
+  async function deleteSelectedCategory() {
     const category = selectedCategory();
     if (!category) return;
-    if (!confirm(`${category.name} kategorisi ve içindeki ürünler silinsin mi?`)) return;
+    if (!await adminConfirm(`${category.name} kategorisi ve içindeki ürünler silinecek.`, { title: "Kategoriyi sil", confirmLabel: "Sil", danger: true })) return;
     state.data.categories = state.data.categories.filter((item) => item.id !== category.id);
     ensureSelection();
     saveAndRender();
   }
 
-  function deleteSelectedProduct() {
+  async function deleteSelectedProduct() {
     const category = selectedCategory();
     const product = selectedProduct();
     if (!category || !product) return;
-    if (!confirm(`${product.name} ürünü silinsin mi?`)) return;
+    if (!await adminConfirm(`${product.name} ürünü silinecek.`, { title: "Ürünü sil", confirmLabel: "Sil", danger: true })) return;
     category.products = category.products.filter((item) => item.id !== product.id);
     state.selectedProductId = category.products[0] ? category.products[0].id : "";
     state.allowEmptyProductSelection = !state.selectedProductId;

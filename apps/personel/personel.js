@@ -7,6 +7,7 @@
   const LAST_SECTION_KEY = "tahmisci.personel.lastSection.v1";
   const MOBILE_SIDEBAR_QUERY = "(max-width: 880px)";
   const WORKFORCE_SECTIONS = new Set(["tasks", "shipment", "shift"]);
+  const PERSONEL_SECTION_KEYS = ["recipe", "stock", "tasks", "shipment", "shift"];
   const lazyResources = new Map();
 
   const sectionMeta = {
@@ -74,6 +75,7 @@
     notificationUnreadLoaded: false,
     notificationUnreadLoadedAt: 0,
     notificationBadgePromise: null,
+    profileWorkspace: "profile",
     logoutPending: false
   };
 
@@ -144,20 +146,17 @@
     if (els.profilePopover) els.profilePopover.addEventListener("click", (event) => {
       const action = event.target.closest("[data-profile-action]");
       if (!action) return;
-      if (action.dataset.profileAction === "photo") {
-        closeProfilePopover();
-        setSection("profile", { updateHash: false });
-        setTimeout(() => els.profilePhotoInput && els.profilePhotoInput.click(), 80);
-      }
       if (action.dataset.profileAction === "edit") {
         closeProfilePopover();
+        setProfileWorkspace("profile");
         setSection("profile", { updateHash: false });
       }
       if (action.dataset.profileAction === "notifications") {
         closeProfilePopover();
+        setProfileWorkspace("notifications");
         setSection("profile", { updateHash: false });
         void Promise.all([ensureNotificationsModule(), ensureAccountSecurityModule()]).then(() => {
-          document.getElementById("personelNotificationPreferencesForm")?.scrollIntoView({ block: "start" });
+          document.getElementById("personelNotificationPreferencesForm")?.focus?.({ preventScroll: true });
         }).catch(() => setProfileMenuMessage("Bildirim ayarları yüklenemedi."));
       }
       if (action.dataset.profileAction === "logout") {
@@ -166,6 +165,10 @@
       }
     });
     if (els.profilePopover) els.profilePopover.addEventListener("keydown", handleProfileMenuKeydown);
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest("[data-profile-workspace-back]")) return;
+      setProfileWorkspace("profile");
+    });
 
     document.querySelectorAll(".personel-nav [data-section]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -348,7 +351,7 @@
       activatePersonelSession(session);
       showDashboard();
       history.replaceState(null, "", "/personel/");
-      setSection("recipe", { updateHash: false });
+      setSection(firstAllowedPersonelSection(), { updateHash: false });
     } catch (error) {
       setLoginMessage(error.message || "Giriş yapılamadı.");
     }
@@ -412,6 +415,7 @@
       detail: { userId, preview: state.sessionPreview }
     }));
     setupStockEvents();
+    reconcilePersonelSectionAccess({ redirect: false });
     if (!state.sessionPreview) void loadNotificationUnreadBadge();
   }
 
@@ -624,8 +628,23 @@
     els.profileMenuMessage.hidden = !message;
   }
 
+  function setProfileWorkspace(mode) {
+    state.profileWorkspace = mode === "notifications" ? "notifications" : "profile";
+    document.querySelectorAll("#sectionProfile [data-profile-workspace]").forEach((node) => {
+      node.hidden = node.dataset.profileWorkspace !== state.profileWorkspace;
+    });
+    if (state.section === "profile") {
+      const notifications = state.profileWorkspace === "notifications";
+      if (els.sectionTitle) els.sectionTitle.textContent = notifications ? "Bildirim Ayarları" : "Profil";
+      if (els.sectionDescription) els.sectionDescription.textContent = notifications
+        ? "Uygulama ve e-posta bildirim tercihlerinizi yönetin."
+        : "Kendi personel profilinizi ve hesap güvenliğinizi düzenleyin.";
+    }
+  }
+
   function setSection(section, options) {
-    const next = sectionMeta[section] ? section : "recipe";
+    const requested = sectionMeta[section] ? section : firstAllowedPersonelSection();
+    const next = requested === "profile" || personelSectionAllowed(requested) ? requested : firstAllowedPersonelSection();
     if (next !== "stock" && els.stockDetailModal && !els.stockDetailModal.hidden) {
       closeStockDetail({ restoreFocus: false });
     }
@@ -673,6 +692,7 @@
       });
     }
     if (next === "profile") {
+      setProfileWorkspace(state.profileWorkspace);
       void Promise.all([
         ensureAccountSecurityModule(),
         ensureNotificationsModule()
@@ -683,7 +703,53 @@
 
   function readLastSection() {
     const saved = localStorage.getItem(LAST_SECTION_KEY);
-    return saved && sectionMeta[saved] ? saved : "recipe";
+    return saved && sectionMeta[saved] && (saved === "profile" || personelSectionAllowed(saved)) ? saved : firstAllowedPersonelSection();
+  }
+
+  function normalizedPersonelSectionAccess() {
+    const source = state.user && state.user.personelSectionAccess;
+    return PERSONEL_SECTION_KEYS.reduce((result, key) => {
+      result[key] = !source || typeof source !== "object" || source[key] !== false;
+      return result;
+    }, {});
+  }
+
+  function personelSectionAllowed(section) {
+    return section === "profile" || normalizedPersonelSectionAccess()[section] === true;
+  }
+
+  function firstAllowedPersonelSection() {
+    return PERSONEL_SECTION_KEYS.find((key) => personelSectionAllowed(key)) || "profile";
+  }
+
+  function reconcilePersonelSectionAccess(options = {}) {
+    const access = normalizedPersonelSectionAccess();
+    document.querySelectorAll(".personel-nav [data-section]").forEach((button) => {
+      const allowed = access[button.dataset.section] !== false;
+      button.hidden = !allowed;
+      button.disabled = !allowed;
+      button.setAttribute("aria-hidden", allowed ? "false" : "true");
+    });
+    if (!access.recipe) unloadRecipeFrame();
+    if (!access.stock) {
+      state.stockLoaded = false;
+      if (els.stockDetailModal && !els.stockDetailModal.hidden) closeStockDetail({ restoreFocus: false });
+    }
+    if (options.redirect !== false && !personelSectionAllowed(state.section)) {
+      setSection(firstAllowedPersonelSection(), { updateHash: false, persist: true });
+    }
+  }
+
+  async function refreshPersonelSectionAccess() {
+    if (!state.sessionActive || state.sessionPreview) return;
+    try {
+      const response = await fetch("/api/recipe/me", { credentials: "include", headers: { Accept: "application/json" } });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.user) return;
+      state.user = mergeProfile({ ...state.user, ...payload.user });
+      reconcilePersonelSectionAccess();
+      renderUser();
+    } catch (_error) {}
   }
 
   function compactRecipeFrame() {
@@ -770,6 +836,10 @@
       if (revision && revision <= previous) return;
       if (revision) state.gatewayTopicRevisions[topic] = revision;
       document.dispatchEvent(new CustomEvent("personel:gateway-event", { detail: payload }));
+      if (topic === "workforce" && payload.type === "personel.section-access.updated"
+        && (!payload.entityId || String(payload.entityId) === String(state.user && state.user.id || ""))) {
+        void refreshPersonelSectionAccess();
+      }
       if (topic !== "inventory" && topic !== "catalog") return;
       state.stockLoaded = false;
       if (state.section === "stock") scheduleStockRefresh();
@@ -1000,10 +1070,25 @@
     if (!id || state.stockReversePendingId) return;
     const movement = stockMovements().find((item) => String(item.id) === id);
     if (!canReversePersonnelMovement(movement)) return;
-    if (!window.confirm("Bu işlem silinmeden güvenli bir ters stok hareketi oluşturulacak. Devam edilsin mi?")) return;
+    if (button && button.dataset.confirmReverse !== "true") {
+      button.dataset.confirmReverse = "true";
+      button.dataset.defaultLabel = button.textContent || "Geri al";
+      button.textContent = "Tekrar tıklayın";
+      showStockDetailMessage("Geçmiş hareket silinmeden ters kayıt oluşturmak için düğmeye tekrar tıklayın.", false);
+      window.setTimeout(() => {
+        if (!button.isConnected || button.dataset.confirmReverse !== "true") return;
+        delete button.dataset.confirmReverse;
+        button.textContent = button.dataset.defaultLabel || "Geri al";
+      }, 4000);
+      return;
+    }
+    if (button) {
+      delete button.dataset.confirmReverse;
+      button.textContent = button.dataset.defaultLabel || "Geri al";
+    }
     const requestId = newStockRequestId("personel-stock-reversal");
     state.stockReversePendingId = id;
-    const oldText = button && button.textContent;
+    const oldText = button && (button.dataset.defaultLabel || button.textContent);
     if (button) {
       button.disabled = true;
       button.textContent = "Geri alınıyor…";
@@ -1542,8 +1627,8 @@
   async function ensureNotificationsModule() {
     if (window.TahmisciPersonelNotifications) return window.TahmisciPersonelNotifications;
     await Promise.all([
-      loadLazyStyle("notifications", "/personel/notifications.css?v=20260831-push-vibration"),
-      loadLazyScript("notifications", "/personel/notifications.js?v=20260831-push-vibration")
+      loadLazyStyle("notifications", "/personel/notifications.css?v=20260831-panel-access"),
+      loadLazyScript("notifications", "/personel/notifications.js?v=20260831-panel-access")
     ]);
     const preferencesForm = document.getElementById("personelNotificationPreferencesForm");
     if (preferencesForm) preferencesForm.dataset.moduleReady = "true";
@@ -1618,7 +1703,8 @@
     if (!response.ok || result.ok === false) {
       const error = new Error(result.message || "İstek başarısız.");
       error.status = response.status;
-      if ((response.status === 401 || response.status === 403) && state.sessionActive) {
+      error.code = result.code || "";
+      if ((response.status === 401 || (response.status === 403 && error.code !== "PERSONEL_SECTION_FORBIDDEN")) && state.sessionActive) {
         document.dispatchEvent(new CustomEvent("personel:session-ended", {
           detail: { source: "personel-shell", status: response.status, message: error.message }
         }));

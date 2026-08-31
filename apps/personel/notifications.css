@@ -423,37 +423,15 @@ body.is-personel-notification-open {
 }
 
 /* Profil içindeki kalıcı tercih formu. */
-.personel-dashboard .profile-section {
-  display: grid;
-  gap: 16px;
-  padding: var(--panel-page-padding);
-}
-
 .personel-dashboard .profile-section[hidden] {
   display: none;
 }
 
-.notification-preferences-card {
-  width: min(920px, 100%);
-  padding: 18px;
-  border: 1px solid var(--panel-line);
-  border-radius: var(--panel-card-radius);
-  background: var(--panel-surface);
-  box-shadow: var(--panel-shadow);
-}
-
-.notification-preferences-card > header,
-.notification-preferences-card > footer,
-.notification-push-card {
+.notification-preferences-card > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-}
-
-.notification-preferences-card h3 {
-  margin: 2px 0 3px;
-  font: 700 22px/1.15 var(--panel-font-display);
 }
 
 .notification-preferences-card p {
@@ -473,13 +451,6 @@ body.is-personel-notification-open {
 
 .notification-preferences-state.is-error {
   color: var(--panel-danger);
-}
-
-.notification-preferences-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
 }
 
 .notification-field--wide {
@@ -505,18 +476,6 @@ body.is-personel-notification-open {
   font-size: 11px;
 }
 
-.notification-preference-group {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 12px;
-  min-width: 0;
-  margin: 0;
-  padding: 12px;
-  border: 1px solid var(--panel-line);
-  border-radius: 11px;
-  background: var(--panel-surface-soft);
-}
-
 .notification-preference-group legend {
   padding-inline: 5px;
   color: var(--panel-coffee);
@@ -537,27 +496,6 @@ body.is-personel-notification-open {
 .notification-preference-group .notification-time-field {
   display: grid;
   grid-template-columns: auto minmax(96px, 1fr);
-}
-
-.notification-time-field input {
-  min-height: 36px;
-}
-
-.notification-push-card {
-  min-height: 64px;
-  padding: 11px 12px;
-  border: 1px solid var(--panel-line);
-  border-radius: 11px;
-  background: var(--panel-surface-soft);
-}
-
-.notification-devices-card {
-  display: grid;
-  gap: 9px;
-  padding: 12px;
-  border: 1px solid var(--panel-line);
-  border-radius: 11px;
-  background: var(--panel-surface-soft);
 }
 
 .notification-devices-card > header,
@@ -627,6 +565,7 @@ body.is-personel-notification-open {
   align-items: center;
   justify-content: end;
   gap: 8px;
+  margin-left: auto;
 }
 
 .notification-push-card strong {
@@ -636,12 +575,6 @@ body.is-personel-notification-open {
 .notification-push-card span {
   color: var(--panel-muted);
   font-size: 11px;
-}
-
-.notification-preferences-card > footer {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--panel-line);
 }
 
 @media (max-width: 760px) {
@@ -702,6 +635,7 @@ body.is-personel-notification-open {
 
 /* Profil tercihleri: kompakt, erişilebilir switch düzeni. */
 .personel-dashboard .profile-section {
+  display: grid;
   width: min(960px, 100%);
   gap: 12px;
   align-content: start;
@@ -711,7 +645,9 @@ body.is-personel-notification-open {
 .notification-preferences-card {
   width: 100%;
   padding: 15px 16px;
+  border: 1px solid var(--panel-line);
   border-radius: 14px;
+  background: var(--panel-surface);
   box-shadow: 0 8px 24px rgba(61, 31, 16, .06);
 }
 
@@ -767,8 +703,12 @@ body.is-personel-notification-open {
   grid-template-columns: 140px minmax(0, 1fr);
   align-items: center;
   gap: 8px 12px;
+  min-width: 0;
+  margin: 0;
   padding: 9px 10px;
+  border: 1px solid var(--panel-line);
   border-radius: 10px;
+  background: var(--panel-surface-soft);
 }
 
 .notification-preference-group h4 {
@@ -895,11 +835,16 @@ body.is-personel-notification-open {
 }
 
 .notification-push-card {
+  display: flex;
   min-height: 52px;
+  align-items: center;
   flex-wrap: wrap;
   justify-content: flex-start;
+  gap: 14px;
   padding: 8px 10px;
+  border: 1px solid var(--panel-line);
   border-radius: 10px;
+  background: var(--panel-surface-soft);
 }
 
 .notification-push-card .notification-push-icon {
@@ -921,10 +866,6 @@ body.is-personel-notification-open {
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.notification-push-card .notification-push-actions {
-  margin-left: auto;
 }
 
 .notification-vibration-row {
@@ -957,7 +898,11 @@ body.is-personel-notification-open {
 
 .notification-devices-card {
   display: block;
+  gap: 9px;
   padding: 0;
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  background: var(--panel-surface-soft);
   overflow: hidden;
 }
 
@@ -1012,9 +957,13 @@ body.is-personel-notification-open {
 }
 
 .notification-preferences-card > footer {
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 14px;
   margin-top: 10px;
   padding-top: 10px;
+  border-top: 1px solid var(--panel-line);
 }
 
 @media (max-width: 760px) {

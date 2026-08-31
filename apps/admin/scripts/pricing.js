@@ -604,7 +604,7 @@
     if (state.busy) return operationResult("skipped", "busy");
     const type = state.pricing.types.find((item) => item.id === typeId);
     if (!type) return operationResult("skipped", "missing-type");
-    if (!window.confirm(`“${type.name}” fiyat tipi silinsin veya kullanımdaysa arşivlensin mi?`)) {
+    if (!await window.TahmisciAdminDialogs.confirm(`“${type.name}” fiyat tipi silinecek veya kullanımdaysa arşivlenecek.`, { title: "Fiyat tipini sil", confirmLabel: "Sil / Arşivle", danger: true })) {
       return operationResult("cancelled", "user-cancelled");
     }
     const idempotencyKey = requestId();
@@ -769,7 +769,7 @@
       renderPricingHistory();
       return operationResult("skipped", "pending-menu-changes");
     }
-    if (!window.confirm("Bu fiyat işlemi ters kayıt oluşturarak atomik biçimde geri alınsın mı?")) {
+    if (!await window.TahmisciAdminDialogs.confirm("Bu fiyat işlemi ters kayıt oluşturarak atomik biçimde geri alınacak.", { title: "Fiyat işlemini geri al", confirmLabel: "Geri al", danger: true })) {
       return operationResult("cancelled", "user-cancelled");
     }
     const id = requestId();
@@ -943,7 +943,7 @@
       return operationResult("skipped", "pending-menu-changes");
     }
     const option = selectedBulkOption();
-    const confirmed = window.confirm(`${entries.length} ürünün “${option.label}” fiyatı atomik olarak güncellensin mi?`);
+    const confirmed = await window.TahmisciAdminDialogs.confirm(`${entries.length} ürünün “${option.label}” fiyatı atomik olarak güncellenecek.`, { title: "Toplu fiyat güncelle", confirmLabel: "Güncelle" });
     if (!confirmed) return operationResult("cancelled", "user-cancelled");
     const id = requestId();
     state.busy = true;

@@ -10,7 +10,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/app-icons/yonetici/favicon-32.png">
   <link rel="icon" type="image/png" sizes="48x48" href="/assets/app-icons/yonetici/favicon-48.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/app-icons/yonetici/apple-touch-icon-180.png">
-  <link rel="stylesheet" href="styles/admin.css?v=20260829-nav-icons">
+  <link rel="stylesheet" href="styles/admin.css?v=20260831-panel-access">
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20260801-phase2">
   <link rel="stylesheet" href="styles/admin-compact.css?v=20260809-prephase6-shift-layout">
   <link rel="stylesheet" href="styles/admin-components.css?v=20260827-stock-workspace">
@@ -21,8 +21,8 @@
   <script src="/shared/scripts/category-icons.js?v=20260714"></script>
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
   <script src="/shared/scripts/menu-design-schema.js?v=20260802-prephase4-design-chain"></script>
-  <script src="scripts/app.js?v=20260828-canonical-ownership" defer></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260828-app-target" defer></script>
+  <script src="scripts/app.js?v=20260831-panel-access" defer></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260831-panel-access" defer></script>
 </head>
 <body>
   <section class="login-screen" id="loginScreen">
@@ -1609,11 +1609,42 @@
                 </div>
               </details>
 
+              <details class="staff-accordion" id="staffSectionAccessAccordion">
+                <summary class="staff-accordion-head">
+                  <span class="staff-step">2</span>
+                  <div>
+                    <h4>Personel Arayüz Yetkileri</h4>
+                    <p>Personellerin Personel Paneli içinde görebileceği bölümleri yönetin.</p>
+                  </div>
+                  <strong class="staff-section-access-summary" id="staffSectionAccessSummary">Personel seçin</strong>
+                  <span class="staff-accordion-chevron" aria-hidden="true"></span>
+                </summary>
+                <div class="staff-accordion-body">
+                  <section class="staff-box staff-box-wide staff-section-access-box">
+                    <label class="staff-section-access-person">
+                      <span>Personel</span>
+                      <select id="staffSectionAccessUser"></select>
+                    </label>
+                    <div class="staff-section-access-grid" id="staffSectionAccessGrid" aria-label="Personel arayüz yetkileri">
+                      <label class="settings-toggle-row"><span><strong>Reçete</strong><small>Reçete kataloğunu görüntüleme</small></span><input type="checkbox" data-personel-section-access="recipe"></label>
+                      <label class="settings-toggle-row"><span><strong>Stok</strong><small>Yetkili depo stoklarını görüntüleme ve işlem</small></span><input type="checkbox" data-personel-section-access="stock"></label>
+                      <label class="settings-toggle-row"><span><strong>Yapılacaklar</strong><small>Atanan görevleri görüntüleme ve tamamlama</small></span><input type="checkbox" data-personel-section-access="tasks"></label>
+                      <label class="settings-toggle-row"><span><strong>Sevkiyat</strong><small>Sevkiyat bildirme ve geçmişi görüntüleme</small></span><input type="checkbox" data-personel-section-access="shipment"></label>
+                      <label class="settings-toggle-row"><span><strong>Shift</strong><small>Vardiya ve izin taleplerini yönetme</small></span><input type="checkbox" data-personel-section-access="shift"></label>
+                    </div>
+                    <div class="staff-section-access-actions">
+                      <p class="staff-message" id="staffSectionAccessMessage"></p>
+                      <button class="primary-action ui-button ui-button--primary" id="staffSectionAccessSave" type="button">Yetkileri Kaydet</button>
+                    </div>
+                  </section>
+                </div>
+              </details>
+
               <!-- // PASİF MODÜL: Eğitim / Görev / Sınav Atama — yeniden etkinleştirilmek üzere korunuyor. -->
               <template id="inactiveStaffTrainingModule">
               <details class="staff-accordion">
                 <summary class="staff-accordion-head">
-                  <span class="staff-step">2</span>
+                  <span class="staff-step">3</span>
                   <div>
                     <h4>Eğitim / Görev / Sınav Atama</h4>
                     <p>Personel için reçete odaklı program tanımlayın.</p>
@@ -1692,7 +1723,7 @@
 
               <details class="staff-accordion workforce-accordion" id="workforceTasksAccordion">
                 <summary class="staff-accordion-head">
-                  <span class="staff-step">2</span>
+                  <span class="staff-step">3</span>
                   <div>
                     <h4>Yapılacaklar</h4>
                     <p>Bireysel veya toplu görev atayın.</p>
@@ -1708,7 +1739,7 @@
 
               <details class="staff-accordion workforce-accordion" id="workforceShiftsAccordion">
                 <summary class="staff-accordion-head">
-                  <span class="staff-step">3</span>
+                  <span class="staff-step">4</span>
                   <div>
                     <h4>Shift Yönetimi</h4>
                     <p>Haftalık vardiya planlarını ve personel taleplerini yönetin.</p>
@@ -1726,7 +1757,7 @@
 
               <details class="staff-accordion" id="staffRecordsAccordion">
                 <summary class="staff-accordion-head staff-record-head">
-                  <span class="staff-step">4</span>
+                  <span class="staff-step">5</span>
                   <div>
                     <h4>Kayıt Defteri</h4>
                     <p>Atanan programlar ve personel aktiviteleri.</p>
@@ -1996,7 +2027,6 @@
       <div class="admin-notification-filters" role="group" aria-label="Bildirim durumu">
         <button type="button" data-notification-filter="all" aria-pressed="true">Gelen kutusu</button>
         <button type="button" data-notification-filter="unread" aria-pressed="false">Okunmamış</button>
-        <button type="button" data-notification-filter="archived" aria-pressed="false">Arşiv</button>
       </div>
       <label class="admin-notification-category">
         <span class="sr-only">Bildirim kategorisi</span>
@@ -2010,7 +2040,6 @@
         </select>
       </label>
       <button class="ui-button ui-button--ghost ui-button--sm" id="adminNotificationReadAll" type="button">Tümünü okundu yap</button>
-      <button class="ui-button ui-button--ghost ui-button--sm" id="adminNotificationClearArchive" type="button" hidden>Arşivi temizle</button>
     </div>
 
     <p class="admin-notification-message" id="adminNotificationMessage" role="status" aria-live="polite"></p>

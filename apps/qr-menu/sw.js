@@ -1,7 +1,8 @@
 /* Tahmisçi Dijital Menü PWA — scope: / */
+importScripts("/shared/scripts/pwa-release.js");
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "menu",
-  version: "2026.08.27.1",
+  version: self.TAHMISCI_PWA_RELEASE.id,
   scopePath: "/",
   offlineUrl: "/qr-menu/offline.html",
   offlineAssets: [
@@ -12,7 +13,7 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
     "/qr-menu/styles/qr-menu.css",
     "/qr-menu/scripts/app.js",
     "/shared/scripts/menu-design-schema.js",
-    "/shared/scripts/pwa-client.js",
+    "/shared/scripts/pwa-client.js?v=20260831-panel-access",
     "/assets/fonts/poppins-regular.ttf",
     "/assets/fonts/poppins-semibold.ttf",
     "/assets/fonts/poppins-bold.ttf",

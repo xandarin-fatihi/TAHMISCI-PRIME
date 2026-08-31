@@ -23,6 +23,7 @@ const { normalizeProductCode } = require("./store/product-code-registry");
 const stockService = require("./stock-service");
 const { registerStockLocationRoutes } = require("./stock-location-routes");
 const { registerWorkforceRoutes } = require("./workforce-routes");
+const { hasPersonelSectionAccess, normalizePersonelSectionAccess } = require("./personel-section-access");
 const { registerProcurementRoutes, resolveActorFromRequest } = require("./procurement-routes");
 const { hasCapability: hasProcurementCapability } = require("./procurement-service");
 const { createProcurementDocumentService } = require("./procurement-documents");
@@ -833,6 +834,44 @@ app.get("/api/admin/recipe-access", requireAdminRequestOrigin, auth.requireAdmin
   }
 });
 
+app.patch("/api/admin/recipe-users/:id/section-access", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const access = normalizePersonelSectionAccess(req.body && req.body.personelSectionAccess);
+    const now = new Date().toISOString();
+    let updatedUser = null;
+    let revision = 0;
+    const nextStore = await store.update((data) => {
+      updatedUser = (data.recipeUsers || []).find((item) => String(item.id || "") === id) || null;
+      if (!updatedUser) throw Object.assign(new Error("Personel bulunamadı."), { status: 404 });
+      updatedUser.personelSectionAccess = access;
+      updatedUser.updatedAt = now;
+      appendRecipeActivity(data, makeRecipeActivity({ type: "personel_section_access_updated", user: updatedUser, req, createdAt: now }));
+      revision = touchWorkforceRevision(data);
+      return data;
+    });
+    publishAuthenticatedEvent({
+      topic: "workforce",
+      type: "personel.section-access.updated",
+      entityType: "personel",
+      entityId: id,
+      revision,
+      actorId: "admin",
+      targets: ["personel", "yonetici"]
+    });
+    res.json({
+      ok: true,
+      revision,
+      user: publicRecipeUser(updatedUser),
+      users: (nextStore.recipeUsers || []).map(publicRecipeUser),
+      assignments: publicRecipeAssignments(nextStore.recipeAssignments || [], true),
+      activity: publicRecipeActivity(nextStore.recipeActivity || [])
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/admin/recipe-users", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
   try {
     const requestId = workforceLifecycleRequestId(req);
@@ -865,7 +904,8 @@ app.post("/api/admin/recipe-users", requireAdminRequestOrigin, auth.requireAdmin
       lastPasswordResetAt: null,
       createdAt: now,
       updatedAt: now,
-      lastLoginAt: null
+      lastLoginAt: null,
+      personelSectionAccess: normalizePersonelSectionAccess(req.body && req.body.personelSectionAccess)
     };
     let response = null;
     let replayed = false;
@@ -938,6 +978,7 @@ app.put("/api/admin/recipe-users/:id", requireAdminRequestOrigin, auth.requireAd
     const emailSupplied = Boolean(req.body && Object.prototype.hasOwnProperty.call(req.body, "email"));
     const rawEmail = emailSupplied ? String(req.body.email || "").trim() : "";
     const email = normalizeAccountEmail(rawEmail);
+    const sectionAccessSupplied = Boolean(req.body && Object.prototype.hasOwnProperty.call(req.body, "personelSectionAccess"));
 
     const userError = validateRecipeUserInput({ name, username, password, requirePassword: false });
     if (userError) return res.status(400).json({ ok: false, message: userError });
@@ -977,6 +1018,7 @@ app.put("/api/admin/recipe-users/:id", requireAdminRequestOrigin, auth.requireAd
       user.username = username;
       user.active = active;
       user.updatedAt = now;
+      if (sectionAccessSupplied) user.personelSectionAccess = normalizePersonelSectionAccess(req.body.personelSectionAccess);
       if (emailSupplied) {
         const security = assignUnverifiedAccountEmail(data, "personel", user, email, now);
         appendSecurityAudit(data, req, {
@@ -1304,7 +1346,7 @@ app.delete("/api/admin/recipe-assignments/:id", requireAdminRequestOrigin, auth.
   }
 });
 
-app.get("/api/recipe/assignments", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
+app.get("/api/recipe/assignments", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, requirePersonelSection("recipe"), async (req, res, next) => {
   try {
     const payload = req.recipe || {};
     if (payload.role !== "recipe" || !payload.userId) {
@@ -1323,7 +1365,7 @@ app.get("/api/recipe/assignments", requireAdminOrMainRequestOrigin, auth.require
   }
 });
 
-app.post("/api/recipe/assignments/:id/start", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
+app.post("/api/recipe/assignments/:id/start", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, requirePersonelSection("recipe"), async (req, res, next) => {
   try {
     const payload = req.recipe || {};
     if (payload.role !== "recipe" || !payload.userId) {
@@ -1377,7 +1419,7 @@ app.post("/api/recipe/assignments/:id/start", requireAdminOrMainRequestOrigin, a
   }
 });
 
-app.post("/api/recipe/assignments/:id/submit", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
+app.post("/api/recipe/assignments/:id/submit", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, requirePersonelSection("recipe"), async (req, res, next) => {
   try {
     const payload = req.recipe || {};
     if (payload.role !== "recipe" || !payload.userId) {
@@ -1524,7 +1566,7 @@ app.post("/api/recipe/assignments/:id/submit", requireAdminOrMainRequestOrigin, 
   }
 });
 
-app.post("/api/recipe/activity", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
+app.post("/api/recipe/activity", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, requirePersonelSection("recipe"), async (req, res, next) => {
   try {
     const payload = req.recipe || {};
     if (payload.role !== "recipe" || !payload.userId) {
@@ -1738,7 +1780,7 @@ app.get("/api/menu/events", async (req, res, next) => {
   }
 });
 
-app.get("/api/recipes", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (req, res, next) => {
+app.get("/api/recipes", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, requirePersonelSection("recipe"), async (req, res, next) => {
   try {
     const data = req.storeSnapshot || await store.read();
     res.json({
@@ -1801,7 +1843,7 @@ app.put("/api/recipes", requireAdminRequestOrigin, auth.requireAdmin, async (req
 
 app.post("/api/admin/recipes/import-excel", requireAdminRequestOrigin, auth.requireAdmin, retiredExcelImportHandler);
 
-app.get("/api/recipes/events", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, async (req, res, next) => {
+app.get("/api/recipes/events", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, requirePersonelSection("recipe"), async (req, res, next) => {
   try {
     const data = req.storeSnapshot || await store.read();
     openRevisionStream(req, res, recipeSseClients, "recipes", data, {
@@ -1887,7 +1929,7 @@ app.get("/api/feedback/events", requireAdminRequestOrigin, auth.requireAdmin, as
   }
 });
 
-app.get("/api/stock", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, requireNonPreviewRecipeSession, async (req, res, next) => {
+app.get("/api/stock", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, requirePersonelSection("stock"), requireNonPreviewRecipeSession, async (req, res, next) => {
   try {
     const data = req.storeSnapshot || await store.read();
     const fullState = normalizeStockState(data.stockState);
@@ -1913,7 +1955,7 @@ app.get("/api/stock", requireAdminOrMainRequestOrigin, auth.requireRecipe, requi
   }
 });
 
-app.get("/api/stock/events", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, requireNonPreviewRecipeSession, async (req, res, next) => {
+app.get("/api/stock/events", requireAdminOrMainRequestOrigin, auth.requireRecipe, requireActiveRecipeUser, requirePersonelSection("stock"), requireNonPreviewRecipeSession, async (req, res, next) => {
   try {
     const data = req.storeSnapshot || await store.read();
     openRevisionStream(req, res, stockSseClients, "stock", data);
@@ -1932,7 +1974,7 @@ app.put("/api/admin/stock", requireAdminRequestOrigin, auth.requireAdmin, (_req,
 
 app.post("/api/admin/stock/import-excel", requireAdminRequestOrigin, auth.requireAdmin, retiredExcelImportHandler);
 
-app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
+app.post("/api/stock/movements", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, requirePersonelSection("stock"), async (req, res, next) => {
   try {
     const actor = stockActorFromRequest(req);
     const submitted = req.body && req.body.movement || req.body || {};
@@ -2564,6 +2606,21 @@ function requireNonPreviewRecipeSession(req, res, next) {
     return res.status(403).json({ ok: false, message: "Önizleme oturumu bu özel veri akışına erişemez." });
   }
   return next();
+}
+
+function requirePersonelSection(section) {
+  return (req, res, next) => {
+    const payload = req.recipe || req.admin || {};
+    if (payload.role === "admin" || payload.role === "preview") return next();
+    if (!req.recipeUser && payload.role === "recipe" && String(payload.userId || payload.sub || "") === "recipe") return next();
+    if (req.recipeUser && hasPersonelSectionAccess(req.recipeUser, section)) return next();
+    return res.status(403).json({
+      ok: false,
+      code: "PERSONEL_SECTION_FORBIDDEN",
+      section,
+      message: "Bu Personel bölümü için erişim yetkiniz bulunmuyor."
+    });
+  };
 }
 
 function requireAuthenticatedEventSession(req, res, next) {
@@ -4307,6 +4364,7 @@ function publicRecipeUser(user) {
     emailVerifiedAt: security.emailVerifiedAt,
     emailVerificationRequired: security.emailVerificationRequired,
     lastPasswordResetAt: security.lastPasswordResetAt,
+    personelSectionAccess: normalizePersonelSectionAccess(user.personelSectionAccess),
     security
   };
 }

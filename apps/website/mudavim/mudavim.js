@@ -1000,13 +1000,18 @@
       body.textContent = notification.body || "";
       time.textContent = formatDate(notification.createdAt);
       open.append(title, body, time);
-      const archive = document.createElement("button");
-      archive.type = "button";
-      archive.className = "member-notification-item__archive";
-      archive.dataset.notificationAction = "archive";
-      archive.setAttribute("aria-label", "Bildirimi arşivle");
-      archive.innerHTML = '<i class="fas fa-box-archive" aria-hidden="true"></i>';
-      article.append(open, archive);
+      const actions = document.createElement("span");
+      actions.className = "member-notification-item__actions";
+      const read = document.createElement("button");
+      read.type = "button";
+      read.dataset.notificationAction = notification.readAt ? "unread" : "read";
+      read.textContent = notification.readAt ? "Okunmadı" : "Okundu";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.dataset.notificationAction = "delete";
+      remove.textContent = "Sil";
+      actions.append(read, remove);
+      article.append(open, actions);
       fragment.appendChild(article);
     });
     elements.memberNotificationFeed.replaceChildren(fragment);
@@ -1018,9 +1023,24 @@
     if (!button || !article) return;
     const notification = state.notifications.find((item) => item.id === article.dataset.notificationId);
     if (!notification) return;
-    if (button.dataset.notificationAction === "archive") {
-      const payload = await request(`/api/mudavim/notifications/${encodeURIComponent(notification.id)}/archive`, { method: "PATCH" });
+    if (button.dataset.notificationAction === "delete") {
+      if (button.dataset.confirmDelete !== "true") {
+        button.dataset.confirmDelete = "true";
+        setText(elements.memberNotificationStatus, "Bildirimi silmek için Sil düğmesine tekrar basın.");
+        setTimeout(() => { if (button.isConnected) delete button.dataset.confirmDelete; }, 4000);
+        return;
+      }
+      delete button.dataset.confirmDelete;
+      const payload = await request(`/api/mudavim/notifications/${encodeURIComponent(notification.id)}`, { method: "DELETE" });
       state.notifications = state.notifications.filter((item) => item.id !== notification.id);
+      renderNotificationBadge(payload.unreadCount);
+      renderNotifications();
+      return;
+    }
+    if (button.dataset.notificationAction === "read" || button.dataset.notificationAction === "unread") {
+      const action = button.dataset.notificationAction;
+      const payload = await request(`/api/mudavim/notifications/${encodeURIComponent(notification.id)}/${action}`, { method: "PATCH" });
+      notification.readAt = action === "read" ? (payload.notification?.readAt || new Date().toISOString()) : null;
       renderNotificationBadge(payload.unreadCount);
       renderNotifications();
       return;

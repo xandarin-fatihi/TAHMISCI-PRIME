@@ -3,6 +3,7 @@
 
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const { hasPersonelSectionAccess } = require("../personel-section-access");
 
 const COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;
 const SESSION_ROLES = new Set(["admin", "personel", "mudavim"]);
@@ -151,6 +152,18 @@ function createAuthMiddleware(config, store) {
     } catch (error) {
       return next(error);
     }
+  }
+
+  function requirePersonelSection(section) {
+    return (req, res, next) => {
+      if (req.recipeUser && hasPersonelSectionAccess(req.recipeUser, section)) return next();
+      return res.status(403).json({
+        ok: false,
+        code: "PERSONEL_SECTION_FORBIDDEN",
+        section,
+        message: "Bu Personel bölümü için erişim yetkiniz bulunmuyor."
+      });
+    };
   }
 
   async function requireMudavim(req, res, next) {
@@ -493,6 +506,7 @@ function createAuthMiddleware(config, store) {
     requireActivePersonel,
     requireMudavim,
     requirePersonel: requireActivePersonel,
+    requirePersonelSection,
     requirePersonelOrPreview,
     requireRecipe,
     revokeRequestSession,

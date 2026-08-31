@@ -18,6 +18,7 @@ const {
   FATURA_ROLES,
   normalizeSectionAccess
 } = require("../procurement-access");
+const { normalizePersonelSectionAccess } = require("../personel-section-access");
 
 const STORE_SCHEMA_VERSION = 21;
 const PROCUREMENT_SCHEMA_VERSION = 1;
@@ -888,6 +889,7 @@ function normalizeRecipeUsers(value) {
       faturaTemplate: template,
       faturaCapabilities: accessEnabled ? capabilities : [],
       faturaSectionAccess: sectionAccess,
+      personelSectionAccess: normalizePersonelSectionAccess(item.personelSectionAccess),
       // Stok lokasyonu yalnızca sunucu tarafındaki oturumdan çözülür. Eski
       // personel kayıtları güvenli başlangıç olarak Kafe Deposuna bağlanır.
       stockLocationId: String(item.stockLocationId || item.locationId || "stock-location-cafe").trim() || "stock-location-cafe"

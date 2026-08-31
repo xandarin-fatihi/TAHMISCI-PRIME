@@ -3,6 +3,7 @@
 const { normalizeProductCode } = require("./store/product-code-registry");
 const stockService = require("./stock-service");
 const { hasSectionAccess } = require("./procurement-access");
+const { normalizePersonelSectionAccess } = require("./personel-section-access");
 
 const SHIPMENT_UNITS = new Set(["koli", "paket", "adet", "kg", "gr", "litre", "ml", "şişe"]);
 const SHIFT_TYPES = new Set(["morning", "evening", "leave", "custom", "unassigned"]);
@@ -445,7 +446,8 @@ function registerWorkforceRoutes(deps) {
       name: user.name,
       username: user.username,
       active: user.active !== false,
-      profile: user.profile || {}
+      profile: user.profile || {},
+      personelSectionAccess: normalizePersonelSectionAccess(user.personelSectionAccess)
     };
   }
 
@@ -540,13 +542,21 @@ function registerWorkforceRoutes(deps) {
         );
         const stockState = normalizeStockState(data.stockState);
         const scopes = requestedScopes(req);
+        const allowedScopes = previewMode ? null : normalizePersonelSectionAccess(staff && staff.personelSectionAccess);
+        if (scopes && allowedScopes) {
+          const denied = (scopes.has("tasks") && !allowedScopes.tasks)
+            || (scopes.has("shipments") && !allowedScopes.shipment)
+            || (scopes.has("shift") && !allowedScopes.shift)
+            || (scopes.has("stock") && !allowedScopes.stock);
+          if (denied) return res.status(403).json({ ok: false, code: "PERSONEL_SECTION_FORBIDDEN", message: "İstenen Personel bölümü için erişim yetkiniz bulunmuyor." });
+        }
         const payload = {
           ok: true,
           preview: previewMode,
           user: staff ? publicUser(staff) : null,
           revision: workforceRevision(data)
         };
-        if (includesScope(scopes, "tasks")) {
+        if (includesScope(scopes, "tasks") && (!allowedScopes || allowedScopes.tasks)) {
           payload.tasks = (data.workforceTasks || [])
             .filter((task) => assignmentTaskIds.has(task.id) && task.status !== "archived")
             .map((task) => ({
@@ -554,20 +564,20 @@ function registerWorkforceRoutes(deps) {
               assignedUserIds: [userId]
             }));
         }
-        if (includesScope(scopes, "shipments")) {
+        if (includesScope(scopes, "shipments") && (!allowedScopes || allowedScopes.shipment)) {
           payload.shipments = (data.workforceShipments || [])
             .filter((shipment) => shipment.userId === userId)
             .map((shipment) => publicShipment(shipment, stockState))
             .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
         }
-        if (includesScope(scopes, "shift")) {
+        if (includesScope(scopes, "shift") && (!allowedScopes || allowedScopes.shift)) {
           payload.shiftRequests = (data.workforceShiftRequests || [])
             .filter((request) => request.personId === userId)
             .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
           payload.shiftPlans = plans.sort((a, b) => String(a.date).localeCompare(String(b.date)));
           payload.shiftSettings = normalizeShiftSettings(data.workforceShiftSettings);
         }
-        if (includesScope(scopes, "stock")) payload.stockState = stockState;
+        if (includesScope(scopes, "stock") && (!allowedScopes || allowedScopes.stock)) payload.stockState = stockState;
         res.json(payload);
       } catch (error) {
         next(error);
@@ -921,6 +931,7 @@ function registerWorkforceRoutes(deps) {
     "/api/workforce/tasks/:taskId/items/:itemId",
     requireAdminOrMainRequestOrigin,
     auth.requireActivePersonel,
+    auth.requirePersonelSection("tasks"),
     async (req, res, next) => {
       try {
         if (!requireStaff(req, res)) return;
@@ -1010,6 +1021,7 @@ function registerWorkforceRoutes(deps) {
     "/api/workforce/shipments",
     requireAdminOrMainRequestOrigin,
     auth.requireActivePersonel,
+    auth.requirePersonelSection("shipment"),
     async (req, res, next) => {
       try {
         if (!requireStaff(req, res)) return;
@@ -1413,6 +1425,7 @@ function registerWorkforceRoutes(deps) {
     "/api/workforce/shift-requests",
     requireAdminOrMainRequestOrigin,
     auth.requireActivePersonel,
+    auth.requirePersonelSection("shift"),
     async (req, res, next) => {
       try {
         if (!requireStaff(req, res)) return;
@@ -1504,6 +1517,7 @@ function registerWorkforceRoutes(deps) {
     "/api/workforce/shift-requests/:id",
     requireAdminOrMainRequestOrigin,
     auth.requireActivePersonel,
+    auth.requirePersonelSection("shift"),
     async (req, res, next) => {
       try {
         if (!requireStaff(req, res)) return;

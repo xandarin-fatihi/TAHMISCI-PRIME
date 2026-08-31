@@ -865,7 +865,7 @@
   }
 
   async function autoDraft() {
-    if (currentPlans().some((plan) => plan.status === "draft") && !window.confirm("Mevcut taslağın yerine yeni bir temel vardiya önerisi oluşturulsun mu?")) {
+    if (currentPlans().some((plan) => plan.status === "draft") && !await window.TahmisciAdminDialogs.confirm("Mevcut taslağın yerine yeni bir temel vardiya önerisi oluşturulacak.", { title: "Vardiya taslağını yenile", confirmLabel: "Yeni öneri oluştur" })) {
       return operationSkipped("cancelled");
     }
     try {

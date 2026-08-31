@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="/assets/app-icons/fatura/apple-touch-icon-180.png" sizes="180x180">
   <link rel="manifest" href="/fatura/manifest.webmanifest">
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css">
-  <link rel="stylesheet" href="/fatura/styles/fatura.css">
+  <link rel="stylesheet" href="/fatura/styles/fatura.css?v=20260831-panel-access">
   <link rel="stylesheet" href="/fatura/styles/stock.css?v=20260831-fatura-ui">
   <link rel="stylesheet" href="/fatura/styles/product-analysis.css?v=20260829-product-analysis">
 </head>
@@ -99,7 +99,7 @@
   <template id="stockViewTemplate">
     <section class="stock-fatura-view" aria-label="Stok yönetimi">
       <section class="stock-location-workspace" id="stockLocationWorkspace" aria-label="Depo bazlı stok yönetimi" aria-busy="true">
-        <div class="stock-location-workspace__head"><div><button class="stock-warehouse-back" id="stockWarehouseBackButton" type="button" hidden>← Stok Yönetimine Dön</button><p class="eyebrow">DEPO BAZLI STOK</p><h2 id="stockActiveLocationTitle">Stok Yönetimi</h2><p id="stockLocationFreshness">Veri güncelliği denetleniyor…</p></div><div class="stock-head-actions"><button class="ui-button ui-button--secondary" id="stockQuickActionsButton" type="button" aria-controls="stockQuickDrawer" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg><span>Hızlı İşlemler</span></button><button class="ui-button ui-button--secondary" id="stockLocationRefreshButton" type="button">Yenile</button></div></div>
+        <div class="stock-location-workspace__head"><div><button class="workspace-back-button stock-warehouse-back" id="stockWarehouseBackButton" type="button" hidden>← Stok Yönetimine Dön</button><p class="eyebrow">DEPO BAZLI STOK</p><h2 id="stockActiveLocationTitle">Stok Yönetimi</h2><p id="stockLocationFreshness">Veri güncelliği denetleniyor…</p></div><div class="stock-head-actions"><button class="ui-button ui-button--secondary" id="stockQuickActionsButton" type="button" aria-controls="stockQuickDrawer" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg><span>Hızlı İşlemler</span></button><button class="ui-button ui-button--secondary" id="stockLocationRefreshButton" type="button">Yenile</button></div></div>
         <div class="stock-location-message" id="stockLocationMessage" role="status" aria-live="polite" hidden></div>
         <div id="stockOverviewWorkspace" class="stock-overview-workspace">
           <div class="stock-command-kpis" id="stockKpiGrid" aria-live="polite"><div class="stock-kpi-loading">Stok özeti hazırlanıyor…</div></div>
@@ -180,7 +180,7 @@
   </template>
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
-  <script type="module" src="/fatura/scripts/app.js?v=20260831-fatura-ui"></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260828-app-target" defer></script>
+  <script type="module" src="/fatura/scripts/app.js?v=20260831-panel-access"></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260831-panel-access" defer></script>
 </body>
 </html>

@@ -1,10 +1,10 @@
 import { api, ApiError, login, logout, requestId, uploadDocument } from "./api.js";
 import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, updateRevision, value } from "./state.js";
 import { renderDashboard } from "./dashboard.js";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260831-panel-access";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
 import { documentFormBody, renderDocuments } from "./documents.js";
-import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderSettingsAudit, renderUsers, userAccessFormBody } from "./accounting.js";
+import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderSettingsAudit, renderUsers, userAccessFormBody } from "./accounting.js?v=20260831-panel-access";
 import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260831-fatura-ui";
 import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260829-product-analysis";
 import { confirmAction, requestText } from "./ui-dialogs.js";
@@ -374,7 +374,7 @@ function renderNotificationState() {
   document.getElementById("markAllNotificationsRead").disabled = count === 0;
   if (notificationDrawer.hidden) return;
   const list = document.getElementById("notificationList");
-  list.innerHTML = state.notifications.length ? state.notifications.map((item) => `<button class="notification-item ${item.readAt ? "" : "is-unread"}" type="button" data-notification-id="${escapeHtml(item.id)}"><i class="notification-item-dot" aria-hidden="true"></i><span><strong>${escapeHtml(item.title || "Bildirim")}</strong><span>${escapeHtml(item.body || "")}</span><time datetime="${escapeHtml(item.createdAt || "")}">${trDate(item.createdAt, true)}</time></span></button>`).join("") : '<div class="notification-empty"><div><strong>Yeni bildirim yok</strong><p>Sevkiyat, belge, ödeme ve yetki bildirimleri burada kalıcı olarak görünür.</p></div></div>';
+  list.innerHTML = state.notifications.length ? state.notifications.map((item) => `<article class="notification-item ${item.readAt ? "" : "is-unread"}" data-notification-card="${escapeHtml(item.id)}"><i class="notification-item-dot" aria-hidden="true"></i><button class="notification-item-open" type="button" data-notification-id="${escapeHtml(item.id)}"><strong>${escapeHtml(item.title || "Bildirim")}</strong><span>${escapeHtml(item.body || "")}</span><time datetime="${escapeHtml(item.createdAt || "")}">${trDate(item.createdAt, true)}</time></button><span class="notification-item-actions"><button type="button" data-notification-action="${item.readAt ? "unread" : "read"}" data-notification-id="${escapeHtml(item.id)}">${item.readAt ? "Okunmadı" : "Okundu"}</button><button type="button" data-notification-action="delete" data-notification-id="${escapeHtml(item.id)}">Sil</button></span></article>`).join("") : '<div class="notification-empty"><div><strong>Yeni bildirim yok</strong><p>Sevkiyat, belge, ödeme ve yetki bildirimleri burada kalıcı olarak görünür.</p></div></div>';
 }
 
 async function openNotifications() {
@@ -447,6 +447,32 @@ async function openNotification(notificationId) {
   toast("Bu bildirimin bağlı olduğu bölüm için erişiminiz bulunmuyor.", true);
 }
 
+async function mutateNotification(button) {
+  const id = String(button.dataset.notificationId || "");
+  const action = String(button.dataset.notificationAction || "");
+  if (!id || !["read", "unread", "delete"].includes(action)) return;
+  if (action === "delete" && button.dataset.confirmDelete !== "true") {
+    button.dataset.confirmDelete = "true";
+    toast("Bildirimi silmek için Sil düğmesine tekrar basın.");
+    setTimeout(() => { if (button.isConnected) delete button.dataset.confirmDelete; }, 4000);
+    return;
+  }
+  delete button.dataset.confirmDelete;
+  button.disabled = true;
+  try {
+    const payload = await api(`${notificationApiRoot()}/${encodeURIComponent(id)}${action === "delete" ? "" : `/${action}`}`, {
+      method: action === "delete" ? "DELETE" : "PATCH",
+      body: action === "delete" ? undefined : {}
+    });
+    if (action === "delete") state.notifications = state.notifications.filter((item) => item.id !== id);
+    else state.notifications = state.notifications.map((item) => item.id === id ? { ...item, ...(payload.notification || {}), readAt: action === "read" ? (payload.notification?.readAt || new Date().toISOString()) : null } : item);
+    state.unreadCount = Math.max(0, Number(payload.unreadCount || 0));
+    state.loaded.delete("notifications");
+    renderNotificationState();
+  } catch (error) { toast(error.message || "Bildirim güncellenemedi.", true); }
+  finally { if (button.isConnected) button.disabled = false; }
+}
+
 async function handleClick(event) {
   const button = event.target.closest("button,a");
   if (!button) return;
@@ -460,6 +486,7 @@ async function handleClick(event) {
   if (button.id === "notificationButton" || button.dataset.profileAction === "notifications") return openNotifications();
   if (button.id === "notificationScrim" || button.classList.contains("notification-close")) return closeNotifications();
   if (button.id === "markAllNotificationsRead") return markAllNotificationsRead(button);
+  if (button.dataset.notificationAction) return mutateNotification(button);
   if (button.dataset.notificationId) return openNotification(button.dataset.notificationId);
   if (button.dataset.profileAction === "install") return installApp(button);
   if (button.id === "logoutButton" || button.dataset.profileAction === "logout") return performLogout(button);
@@ -634,6 +661,7 @@ function updatePermissionSectionCard(card) {
   if (!fieldset) return;
   fieldset.hidden = !open;
   fieldset.disabled = !enabled || !open;
+  fieldset.querySelectorAll('input[type="radio"]').forEach((radio) => { radio.disabled = !enabled || !open; });
   if (open && !fieldset.querySelector("input:checked")) {
     const first = fieldset.querySelector("input[value=view], input");
     if (first) first.checked = true;
@@ -708,7 +736,13 @@ function openShipmentForm() { openEntityDialog({ mode: "shipment-create", title:
 function openDocumentForm(shipmentId = "") { openEntityDialog({ mode: "document-upload", entityId: shipmentId, title: "Özel belge yükle", description: "Dosya private depoda tutulur; stok ve cari otomatik etkilenmez.", submitLabel: "Belgeyi güvenli yükle", body: documentFormBody(shipmentId) }); }
 function openPaymentForm() { openEntityDialog({ mode: "payment-create", title: "Tedarikçi ödemesi", description: "Ödeme stoktan bağımsız pozitif cari harekettir.", submitLabel: "Ödemeyi kaydet", body: paymentFormBody() }); }
 function openLedgerEntryForm() { openEntityDialog({ mode: "ledger-create", title: "Bağımsız cari hareket", description: "Mali geçmiş düzenlenmez; gerekirse ters kayıtla dengelenir.", submitLabel: "Cari hareketi kaydet", body: ledgerEntryFormBody() }); }
-function openUserAccess(userId) { const user = state.users.find((item) => item.id === userId); if (!user) return; openEntityDialog({ mode: "user-access", entityId: user.id, title: `${user.name} · yetkiler`, description: "Yeni kullanıcı veya parola oluşturulmaz; mevcut personel hesabı kullanılır.", submitLabel: "Yetkileri kaydet", body: userAccessFormBody(user) }); }
+async function openUserAccess(userId) {
+  try { await loadUsers(true); } catch (_error) {}
+  const user = state.users.find((item) => item.id === userId);
+  if (!user) return toast("Personel yetkileri güncellenemedi.", true);
+  openEntityDialog({ mode: "user-access", entityId: user.id, title: `${user.name} · yetkiler`, description: "Yeni kullanıcı veya parola oluşturulmaz; mevcut personel hesabı kullanılır.", submitLabel: "Yetkileri kaydet", body: userAccessFormBody(user) });
+  updateAllPermissionSectionCards();
+}
 
 async function submitEntityForm(event) {
   event.preventDefault();

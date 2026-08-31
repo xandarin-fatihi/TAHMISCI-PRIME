@@ -1300,7 +1300,7 @@ function registerStockLocationRoutes(deps) {
     } catch (error) { next(error); }
   });
 
-  app.get("/api/workforce/stock", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
+  app.get("/api/workforce/stock", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, auth.requirePersonelSection("stock"), async (req, res, next) => {
     try {
       const data = req.storeSnapshot || await store.read();
       const actor = personnelActor(req);
@@ -1311,7 +1311,7 @@ function registerStockLocationRoutes(deps) {
     } catch (error) { next(error); }
   });
 
-  app.get("/api/workforce/stock/movements", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
+  app.get("/api/workforce/stock/movements", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, auth.requirePersonelSection("stock"), async (req, res, next) => {
     try {
       const data = req.storeSnapshot || await store.read();
       const actor = personnelActor(req);
@@ -1340,7 +1340,7 @@ function registerStockLocationRoutes(deps) {
     } catch (error) { next(error); }
   });
 
-  app.post("/api/workforce/stock/movements/:id/reverse", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
+  app.post("/api/workforce/stock/movements/:id/reverse", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, auth.requirePersonelSection("stock"), async (req, res, next) => {
     try {
       const body = req.body || {};
       const operationId = requestId(req, true);
@@ -1380,7 +1380,7 @@ function registerStockLocationRoutes(deps) {
     } catch (error) { next(error); }
   });
 
-  app.get("/api/workforce/stock/transfer-requests", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
+  app.get("/api/workforce/stock/transfer-requests", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, auth.requirePersonelSection("stock"), async (req, res, next) => {
     try {
       res.status(403).json({
         ok: false,
@@ -1389,7 +1389,7 @@ function registerStockLocationRoutes(deps) {
     } catch (error) { next(error); }
   });
 
-  app.post("/api/workforce/stock/transfer-requests", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, async (req, res, next) => {
+  app.post("/api/workforce/stock/transfer-requests", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, auth.requirePersonelSection("stock"), async (req, res, next) => {
     try {
       res.status(403).json({
         ok: false,
