@@ -22,12 +22,6 @@
     notificationEvents: null
   };
   const elements = {};
-  const featureCopy = {
-    account: ["fa-user-shield", "Güvenli hesap", "E-posta doğrulaması, güvenli oturum ve hesap kurtarma seçenekleriyle Müdavim hesabını yönetirsin."],
-    visits: ["fa-clock-rotate-left", "Ziyaret takibi", "Gerçek ziyaret kayıtların oluştuğunda geçmişin burada gösterilir."],
-    mobile: ["fa-mobile-screen-button", "Mobil arayüz", "Mobil cihaz ve masaüstünde aynı güvenli Müdavim hesabını kullanırsın."],
-    profile: ["fa-user-shield", "Profil yönetimi", "Profil ve e-posta güvenliği doğrudan backend hesabında saklanır."]
-  };
   const legalDocuments = {
     terms: {
       title: "Üyelik Sözleşmesi",
@@ -97,7 +91,7 @@
       "memberProfileStatus", "memberAvatar", "memberFullName", "memberWelcomeName",
       "progressCount", "rewardTarget", "progressText", "visitSummaryLabel", "visitSegments", "memberLevel",
       "tierTrack", "centerMemberLevel", "centerVisitCount", "centerRemaining", "latestVisit", "compactVisitHistory",
-      "memberHistoryPanel", "memberAnnouncementFeed", "featurePopover", "featurePopoverTitle", "featurePopoverText",
+      "memberHistoryPanel", "memberAnnouncementFeed", "guestMenuButton", "guestMenu", "guestAboutOverlay", "guestAboutClose",
       "mudavimLegalOverlay", "mudavimLegalTitle", "mudavimLegalCopy", "mudavimLegalClose", "mudavimLegalCancel",
       "mudavimLegalApprove", "registerResend", "memberNotificationButton", "memberNotificationBadge",
       "memberNotificationFeed", "memberNotificationStatus", "memberNotificationsReadAll"
@@ -107,6 +101,20 @@
 
   function bindEvents() {
     document.querySelectorAll("[data-auth-open]").forEach((button) => button.addEventListener("click", () => openAuth(button.dataset.authOpen)));
+    elements.guestMenuButton?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleGuestMenu();
+    });
+    elements.guestMenu?.addEventListener("click", (event) => event.stopPropagation());
+    document.querySelectorAll("[data-guest-nav]").forEach((item) => item.addEventListener("click", closeGuestMenu));
+    document.querySelector("[data-about-open]")?.addEventListener("click", openAbout);
+    elements.guestAboutClose?.addEventListener("click", closeAbout);
+    elements.guestAboutOverlay?.addEventListener("click", (event) => {
+      if (event.target === elements.guestAboutOverlay) closeAbout();
+    });
+    document.addEventListener("click", (event) => {
+      if (!elements.guestMenu?.hidden && !event.target.closest(".mudavim-header")) closeGuestMenu();
+    });
     elements.authClose?.addEventListener("click", closeAuth);
     elements.mudavimAuthOverlay?.addEventListener("click", (event) => {
       if (event.target === elements.mudavimAuthOverlay) closeAuth();
@@ -150,9 +158,11 @@
         return;
       }
       if (event.key !== "Escape") return;
-      if (elements.memberProfileOverlay && !elements.memberProfileOverlay.hidden) closeProfile();
+      if (elements.guestAboutOverlay && !elements.guestAboutOverlay.hidden) closeAbout();
+      else if (elements.guestMenu && !elements.guestMenu.hidden) closeGuestMenu();
+      else if (elements.memberProfileOverlay && !elements.memberProfileOverlay.hidden) closeProfile();
       else if (elements.mudavimAuthOverlay && !elements.mudavimAuthOverlay.hidden) closeAuth();
-      else if (elements.featurePopover && !elements.featurePopover.hidden) closeFeature();
+      else if (document.querySelector('[data-feature][aria-expanded="true"]')) closeFeature();
     });
   }
 
@@ -479,6 +489,8 @@
 
   function openAuth(step) {
     if (!elements.mudavimAuthOverlay) return;
+    closeGuestMenu();
+    closeAbout();
     elements.mudavimAuthOverlay.hidden = false;
     document.body.classList.add("auth-open");
     showAuthStep(step || "login");
@@ -501,21 +513,55 @@
   }
 
   function toggleFeature(button) {
-    const selected = featureCopy[button.dataset.feature];
-    if (!selected || !elements.featurePopover) return;
-    const alreadyOpen = !elements.featurePopover.hidden && button.getAttribute("aria-expanded") === "true";
+    const alreadyOpen = button.getAttribute("aria-expanded") === "true";
     closeFeature();
     if (alreadyOpen) return;
-    elements.featurePopover.hidden = false;
-    elements.featurePopover.querySelector("i").className = `fas ${selected[0]}`;
-    setText(elements.featurePopoverTitle, selected[1]);
-    setText(elements.featurePopoverText, selected[2]);
     button.setAttribute("aria-expanded", "true");
+    syncFeatureChevron(button, true);
   }
 
   function closeFeature() {
-    if (elements.featurePopover) elements.featurePopover.hidden = true;
-    document.querySelectorAll("[data-feature]").forEach((button) => button.setAttribute("aria-expanded", "false"));
+    document.querySelectorAll("[data-feature]").forEach((button) => {
+      button.setAttribute("aria-expanded", "false");
+      syncFeatureChevron(button, false);
+    });
+  }
+
+  function syncFeatureChevron(button, open) {
+    const icon = button.querySelector(".feature-row__chevron");
+    if (icon) icon.className = `fas ${open ? "fa-chevron-up" : "fa-chevron-right"} feature-row__chevron`;
+  }
+
+  function toggleGuestMenu() {
+    if (!elements.guestMenu || !elements.guestMenuButton) return;
+    const open = elements.guestMenu.hidden;
+    elements.guestMenu.hidden = !open;
+    elements.guestMenuButton.setAttribute("aria-expanded", String(open));
+    elements.guestMenuButton.setAttribute("aria-label", open ? "Menüyü kapat" : "Menüyü aç");
+    elements.guestMenuButton.classList.toggle("is-open", open);
+  }
+
+  function closeGuestMenu() {
+    if (!elements.guestMenu || !elements.guestMenuButton) return;
+    elements.guestMenu.hidden = true;
+    elements.guestMenuButton.setAttribute("aria-expanded", "false");
+    elements.guestMenuButton.setAttribute("aria-label", "Menüyü aç");
+    elements.guestMenuButton.classList.remove("is-open");
+  }
+
+  function openAbout() {
+    closeGuestMenu();
+    if (!elements.guestAboutOverlay) return;
+    elements.guestAboutOverlay.hidden = false;
+    document.body.classList.add("guest-card-open");
+    window.setTimeout(() => elements.guestAboutClose?.focus(), 20);
+  }
+
+  function closeAbout() {
+    if (!elements.guestAboutOverlay || elements.guestAboutOverlay.hidden) return;
+    elements.guestAboutOverlay.hidden = true;
+    document.body.classList.remove("guest-card-open");
+    document.querySelector("[data-about-open]")?.focus({ preventScroll: true });
   }
 
   function bindLegalControls() {
