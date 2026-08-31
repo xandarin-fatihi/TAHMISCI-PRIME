@@ -1,7 +1,7 @@
 /* Tahmisçi Fatura PWA — scope: /fatura/ */
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "fatura",
-  version: "2026.08.29.1",
+  version: "2026.08.31.1",
   scopePath: "/fatura/",
   offlineUrl: "/fatura/offline.html",
   offlineAssets: [
@@ -10,9 +10,9 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
   ],
   precache: [
     "/fatura/styles/fatura.css",
-    "/fatura/styles/stock.css?v=20260829-stock-analytics",
+    "/fatura/styles/stock.css?v=20260831-fatura-ui",
     "/fatura/styles/product-analysis.css?v=20260829-product-analysis",
-    "/fatura/scripts/app.js?v=20260829-stock-analytics",
+    "/fatura/scripts/app.js?v=20260831-fatura-ui",
     "/fatura/scripts/api.js",
     "/fatura/scripts/state.js",
     "/fatura/scripts/dashboard.js",
@@ -20,7 +20,8 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
     "/fatura/scripts/receipts.js",
     "/fatura/scripts/documents.js",
     "/fatura/scripts/accounting.js",
-    "/fatura/scripts/stock.js?v=20260829-stock-analytics",
+    "/fatura/scripts/ui-dialogs.js",
+    "/fatura/scripts/stock.js?v=20260831-fatura-ui",
     "/fatura/scripts/product-analysis.js?v=20260829-product-analysis",
     "/shared/styles/panel-foundation.css",
     "/shared/scripts/pwa-client.js",

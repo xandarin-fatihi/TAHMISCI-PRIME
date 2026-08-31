@@ -17,6 +17,7 @@ export const state = {
   suppliers: [], productLinks: [], shipments: [], documents: [], ledgerEntries: [], payments: [], users: [], auditEvents: [],
   notifications: [], unreadCount: 0,
   dashboard: null, settings: null, accessTemplates: [], sectionDefinitions: [], sectionAccess: Object.create(null), filters: Object.create(null), detail: null,
+  supplierWorkspace: { supplierId: "", productLinks: [], independentProducts: [], loading: false, returnScrollY: 0 },
   revisions: { procurement: 0, workforce: 0, stock: 0, inventory: 0, shipment: 0, catalog: 0, notification: 0 },
   stock: {
     revision: 0, inventoryRevision: 0, catalogRevision: 0,
@@ -26,8 +27,9 @@ export const state = {
     selectedProductId: "", viewMode: "overview", drawerReturnFocus: null, inventoryController: null,
     loadSequence: 0, updatedAt: "", loaded: false, stale: true, loadPromise: null, busyKeys: new Set(),
     bound: false, boundWorkspace: null, confirmResolver: null, thresholdInitial: null, pendingUnitMigration: null, catalogStock: null,
+    quickDrawerReturnFocus: null, popstateHandler: null,
     catalogLoaded: false, catalogLoading: false, catalogCategoryId: "", catalogProductId: "", catalogBusy: false,
-    appliedIntentKey: "", activeAccordion: "management", planning: null, planningStale: true,
+    appliedIntentKey: "", activeAccordion: "", planning: null, planningStale: true,
     planningError: "", planningLoadPromise: null
   },
   productAnalysis: {

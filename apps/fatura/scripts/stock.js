@@ -1,6 +1,6 @@
 import { api as faturaApi, requestId as createRequestId } from "./api.js";
 import { CAPABILITIES, has, hasSection, state as faturaState, updateRevision as syncRevision } from "./state.js";
-import { renderShipments } from "./receipts.js";
+import { requestText } from "./ui-dialogs.js";
 
 "use strict";
 
@@ -97,8 +97,6 @@ import { renderShipments } from "./receipts.js";
       const node = $(selector);
       if (node) node.hidden = !can(capability) || selector === "#stockQuickShipmentButton" && !hasSection("shipments");
     }
-    const shipmentPanel = $(".stock-shipment-panel");
-    if (shipmentPanel) shipmentPanel.hidden = !hasSection("shipments");
   }
 
   function formatNumber(value) {
@@ -382,7 +380,7 @@ import { renderShipments } from "./receipts.js";
       state.stale = false;
       renderAll();
       setMessage("");
-      void refreshPlanning({ signal: controller.signal });
+      if (state.activeAccordion === "planning") void refreshPlanning({ signal: controller.signal });
     })().catch((error) => {
       if (error && error.name === "AbortError") return;
       setMessage(error.message, "error");
@@ -430,7 +428,7 @@ import { renderShipments } from "./receipts.js";
   function renderLocations() {
     const host = $("#stockLocationSelector");
     if (!host) return;
-    const options = [{ id: "total", name: "Tüm Depolar", code: "TOPLAM", active: true }, ...state.locations.filter((item) => item.active !== false || String(item.id) === String(state.selectedLocationId))];
+    const options = state.locations.filter((item) => item.active !== false || String(item.id) === String(state.selectedLocationId));
     host.innerHTML = options.map((location) => `
       <button type="button" role="tab" aria-selected="${String(location.id) === String(state.selectedLocationId)}"
         class="stock-location-tab${String(location.id) === String(state.selectedLocationId) ? " is-active" : ""}"
@@ -476,17 +474,19 @@ import { renderShipments } from "./receipts.js";
     const planning = state.planning || {};
     const planningUnavailable = Boolean(state.planningError);
     const kpis = planning.kpis || {};
-    const pendingShipmentCount = faturaState.shipments.filter((item) => ["onay_bekliyor", "pending"].includes(String(item.status))).length;
+    const activeLocations = state.locations.filter((item) => item.active !== false);
+    const pendingTransferCount = state.transfers.filter((item) => ["onay_bekliyor", "pending", "submitted"].includes(String(item.status))).length;
+    const derivedStockItems = Math.max(0, ...activeLocations.map((item) => Number(item.inventorySummary?.totalProducts || 0)), Number(state.summary.productCount || state.balances.length || 0));
+    const derivedCritical = activeLocations.reduce((sum, item) => sum + Number(item.inventorySummary?.criticalProducts || 0), 0);
+    const derivedSuggestions = activeLocations.reduce((sum, item) => sum + Number(item.inventorySummary?.openSuggestions || 0), 0);
     const cards = [
       planning.financialVisible
         ? ["Toplam Stok Değeri", planningUnavailable ? "—" : formatMoney(kpis.totalStockValueKurus), planningUnavailable ? "Veri yok" : "Bu depolardaki son alış değeri", "value"]
-        : ["Aktif Depolar", formatNumber(kpis.activeLocationCount ?? state.locations.filter((item) => item.active !== false).length), "Yetkili olduğunuz operasyon alanları", "location"],
-      ["Bekleyen Sevkiyat", formatNumber(planningUnavailable ? pendingShipmentCount : kpis.pendingShipmentCount ?? pendingShipmentCount), "Onay bekleyen gerçek kayıt", "shipment"],
-      ["Stok Kalemleri", formatNumber(planningUnavailable ? state.summary.productCount ?? state.balances.length : kpis.stockItemCount ?? state.summary.productCount ?? state.balances.length), "Canonical ürün kataloğu", "product"],
-      planning.financialVisible
-        ? ["Bu Ay Alım Tutarı", planningUnavailable ? "—" : formatMoney(kpis.monthPurchaseKurus), planningUnavailable ? "Veri yok" : "Onaylanmış alımlar", "purchase"]
-        : ["Bekleyen Transfer", formatNumber(state.transfers.filter((item) => ["pending", "onay_bekliyor"].includes(String(item.status))).length), "Depolar arası talepler", "transfer"],
-      ["Kritik Stoklar", planningUnavailable ? "—" : formatNumber(kpis.criticalStockCount ?? 0), planningUnavailable ? "Veri yok" : "Depo eşiklerine göre", "critical"]
+        : ["Aktif Depolar", formatNumber(kpis.activeLocationCount ?? activeLocations.length), "Yetkili olduğunuz operasyon alanları", "location"],
+      ["Stok Kalemleri", formatNumber(kpis.stockItemCount ?? derivedStockItems), "Canonical ürün kataloğu", "product"],
+      ["Kritik Stoklar", formatNumber(kpis.criticalStockCount ?? derivedCritical), "Depo eşiklerine göre", "critical"],
+      ["Bekleyen Transfer", formatNumber(pendingTransferCount), "Depolar arası onay akışı", "transfer"],
+      ["Açık Öneri", formatNumber(kpis.openSuggestionCount ?? derivedSuggestions), "Transfer ve sipariş önerileri", "purchase"]
     ];
     const symbols = {
       value: '<path d="M4 8h16v10H4zM7 5h10v3M8 13h8M12 10v6"/>',
@@ -573,32 +573,19 @@ import { renderShipments } from "./receipts.js";
     if (shipmentBadge) shipmentBadge.textContent = `${formatNumber(pending)} Bekleyen`;
   }
 
-  function organizeWorkspace() {
-    const catalog = $("#stockManagementAccordion");
-    const host = $("#stockManagementWorkspace");
-    if (catalog && host && catalog.parentElement !== host) host.appendChild(catalog);
-  }
-
   function renderWarehouseCards() {
     const host = $("#stockWarehouseCards");
     if (!host) return;
-    const activeLocations = state.locations.filter((location) => location.active !== false);
     const orderedLocations = state.locations.slice().sort((left, right) => Number(left.active === false) - Number(right.active === false));
-    const totalProducts = Math.max(0, ...activeLocations.map((location) => Number(location.inventorySummary?.totalProducts || 0)));
-    const totalCritical = activeLocations.reduce((sum, location) => sum + Number(location.inventorySummary?.criticalProducts || 0), 0);
-    const cards = [{
-      id: "total", name: "Tüm Depolar", code: "TOPLAM", type: "overview",
-      description: "Bütün depo bakiyelerinin birleşik görünümü",
-      inventorySummary: { totalProducts, criticalProducts: totalCritical, sufficientProducts: Math.max(0, totalProducts - totalCritical), pendingTransfers: state.transfers.length, lastMovementAt: state.updatedAt }
-    }, ...orderedLocations];
+    const cards = orderedLocations;
     host.innerHTML = cards.length ? cards.map((location, index) => {
       const summary = location.inventorySummary || {};
-      const type = location.id === "total" ? "GENEL BAKIŞ" : location.type === "cafe" ? "KAFE" : location.type === "central" ? "GENEL" : "DİĞER";
+      const type = location.type === "cafe" ? "KAFE" : location.type === "central" ? "GENEL" : "DİĞER";
       const assigned = Array.isArray(location.assignedPersonnelIds) ? location.assignedPersonnelIds.length : Number(summary.assignedPersonnelCount || 0);
       return `<article class="stock-warehouse-card" data-location-status="${location.active === false ? "passive" : "active"}">
         <div class="stock-warehouse-card__index">${String(index + 1).padStart(2, "0")}</div>
-        <div class="stock-warehouse-card__identity"><span>${esc(type)}</span><h5>${esc(location.name)}</h5><div class="stock-warehouse-card__meta"><b>${esc(location.code || "Kod yok")}</b><i class="is-${location.active === false ? "passive" : "active"}">${location.id === "total" ? "Birleşik" : location.active === false ? "Pasif" : "Aktif"}</i></div><p>${esc(location.description || (location.active === false ? "Geçmiş kayıtlar salt okunur görüntülenebilir." : "Depo bakiyeleri ve hareketleri"))}</p></div>
-        ${location.id !== "total" && can(CAPABILITIES.inventoryLocationManage) ? `<button class="stock-warehouse-card__edit" type="button" data-stock-warehouse-edit="${esc(location.id)}" aria-label="${esc(location.name)} deposunu düzenle">Düzenle</button>` : ""}
+        <div class="stock-warehouse-card__identity"><span>${esc(type)}</span><h5>${esc(location.name)}</h5><div class="stock-warehouse-card__meta"><b>${esc(location.code || "Kod yok")}</b><i class="is-${location.active === false ? "passive" : "active"}">${location.active === false ? "Pasif" : "Aktif"}</i></div><p>${esc(location.description || (location.active === false ? "Geçmiş kayıtlar salt okunur görüntülenebilir." : "Depo bakiyeleri ve hareketleri"))}</p></div>
+        ${can(CAPABILITIES.inventoryLocationManage) ? `<button class="stock-warehouse-card__edit" type="button" data-stock-warehouse-edit="${esc(location.id)}" aria-label="${esc(location.name)} deposunu düzenle">Düzenle</button>` : ""}
         <dl><div><dt>Ürün</dt><dd>${esc(summary.totalProducts || 0)}</dd></div><div><dt>Kritik</dt><dd>${esc(summary.criticalProducts || 0)}</dd></div><div><dt>Personel</dt><dd>${esc(assigned)}</dd></div><div><dt>Son hareket</dt><dd>${esc(summary.lastMovementAt ? formatDate(summary.lastMovementAt) : "Henüz yok")}</dd></div></dl>
         <button class="ui-button ui-button--primary ui-button--block" type="button" data-stock-warehouse-open="${esc(location.id)}">Depoyu Aç <span aria-hidden="true">→</span></button>
       </article>`;
@@ -606,10 +593,14 @@ import { renderShipments } from "./receipts.js";
   }
 
   function renderViewMode() {
-    const overview = $("#stockWarehouseOverview");
+    const overview = $("#stockOverviewWorkspace");
     const inventory = $("#stockLocationInventoryView");
     if (overview) overview.hidden = state.viewMode !== "overview";
     if (inventory) inventory.hidden = state.viewMode !== "inventory";
+    const quickButton = $("#stockQuickActionsButton");
+    if (quickButton) quickButton.hidden = state.viewMode !== "overview";
+    const backButton = $("#stockWarehouseBackButton");
+    if (backButton) backButton.hidden = state.viewMode !== "inventory";
   }
 
   function filteredBalances() {
@@ -647,7 +638,8 @@ import { renderShipments } from "./receipts.js";
     const meta = $("#stockLocationInventoryMeta");
     if (!host) return;
     const balances = filteredBalances();
-    if (meta) meta.textContent = `${locationName(state.selectedLocationId)} · ${balances.length} ürün · ${state.updatedAt ? formatDate(state.updatedAt) : "güncel"}`;
+    const criticalCount = state.balances.filter((balance) => ["critical", "empty"].includes(balanceStatus(balance))).length;
+    if (meta) meta.textContent = `${locationName(state.selectedLocationId)} · ${state.balances.length} ürün · ${criticalCount} kritik`;
     host.innerHTML = balances.length ? balances.map((balance) => {
       const product = productOf(balance);
       const rawStatus = balanceStatus(balance);
@@ -865,12 +857,7 @@ import { renderShipments } from "./receipts.js";
       const preferred = state.locations.find((location) => location.active !== false && (location.type === "cafe" || location.isDefault))
         || state.locations.find((location) => location.active !== false);
       if (!preferred) return setMessage("İşlem yapılabilecek aktif depo bulunamadı.", "error");
-      state.selectedLocationId = String(preferred.id);
-      state.viewMode = "inventory";
-      state.secondaryLoaded = false;
-      state.stale = true;
-      try { localStorage.setItem(LOCATION_STORAGE_KEY, state.selectedLocationId); } catch (_error) {}
-      await loadAll({ force: true });
+      await enterWarehouse(preferred.id);
     }
     const balance = state.balances[0];
     if (!balance) return setMessage("İşlem yapılabilecek stok ürünü bulunamadı.", "error");
@@ -1134,12 +1121,6 @@ import { renderShipments } from "./receipts.js";
     dialog?.querySelector("[data-stock-unit-input]")?.focus();
   }
 
-  function renderShipmentWorkspace() {
-    const host = $("#stockShipmentWorkspace");
-    if (!host) return;
-    host.innerHTML = hasSection("shipments") ? renderShipments() : "";
-  }
-
   function setCatalogMessage(message, isError = false) {
     const node = $("#stockCatalogMessage");
     if (!node) return;
@@ -1282,7 +1263,7 @@ import { renderShipments } from "./receipts.js";
 
   async function addCatalogCategory() {
     await loadCatalog();
-    const name = String(window.prompt("Yeni stok kategorisinin adı") || "").trim();
+    const name = await requestText({ title: "Yeni stok kategorisi", label: "Kategori adı", confirmLabel: "Kategoriyi ekle", maxLength: 120 });
     if (!name) return;
     await runCatalogMutation(async () => {
       const result = await api("/api/procurement/v1/stock/catalog/categories", mutation("POST", { name, active: true }, "fatura-stock-category-create", "catalog"));
@@ -1296,7 +1277,7 @@ import { renderShipments } from "./receipts.js";
     await loadCatalog();
     const category = selectedCatalogCategory();
     if (!category) throw new Error("Önce bir stok kategorisi oluşturun.");
-    const name = String(window.prompt(`“${category.name}” kategorisine eklenecek ürünün adı`) || "").trim();
+    const name = await requestText({ title: "Yeni stok ürünü", description: `“${category.name}” kategorisine eklenecek ürün.`, label: "Ürün adı", confirmLabel: "Ürünü ekle", maxLength: 160 });
     if (!name) return;
     const baseUnit = state.unitDefinitions.base[0] || "adet";
     await runCatalogMutation(async () => {
@@ -1333,7 +1314,6 @@ import { renderShipments } from "./receipts.js";
   }
 
   function renderAll() {
-    organizeWorkspace();
     applyCapabilityVisibility();
     renderCommandKpis();
     renderLocations();
@@ -1347,7 +1327,6 @@ import { renderShipments } from "./receipts.js";
     renderMovements();
     renderLocationManagement();
     renderUnitSettings();
-    renderShipmentWorkspace();
     renderPlanning();
     renderCriticalAlerts();
     renderAccordionState();
@@ -1770,6 +1749,77 @@ import { renderShipments } from "./receipts.js";
     document.dispatchEvent(new CustomEvent("tahmisci:stock-locations-ready", { detail }));
   }
 
+  function openQuickDrawer(trigger) {
+    const layer = $("#stockQuickDrawerLayer");
+    const drawer = $("#stockQuickDrawer");
+    if (!layer || !drawer) return;
+    state.quickDrawerReturnFocus = trigger instanceof HTMLElement ? trigger : document.activeElement;
+    layer.hidden = false;
+    $("#stockQuickActionsButton")?.setAttribute("aria-expanded", "true");
+    document.body.classList.add("dialog-open");
+    requestAnimationFrame(() => drawer.focus());
+  }
+
+  function closeQuickDrawer(options = {}) {
+    const layer = $("#stockQuickDrawerLayer");
+    if (!layer || layer.hidden) return;
+    layer.hidden = true;
+    $("#stockQuickActionsButton")?.setAttribute("aria-expanded", "false");
+    if (!document.querySelector("dialog[open]") && $("#stockProductDrawerLayer")?.hidden !== false) document.body.classList.remove("dialog-open");
+    if (options.restoreFocus !== false && state.quickDrawerReturnFocus instanceof HTMLElement) state.quickDrawerReturnFocus.focus();
+    state.quickDrawerReturnFocus = null;
+  }
+
+  function stockWorkspaceUrl(locationId = "") {
+    const url = new URL("/fatura/", location.origin);
+    url.searchParams.set("view", "stock");
+    if (locationId) url.searchParams.set("locationId", locationId);
+    return `${url.pathname}${url.search}`;
+  }
+
+  function enterWarehouse(locationId, options = {}) {
+    const resolved = state.locations.find((item) => String(item.id) === String(locationId));
+    if (!resolved) return;
+    state.selectedLocationId = String(resolved.id);
+    state.viewMode = "inventory";
+    state.secondaryLoaded = false;
+    state.stale = true;
+    try { localStorage.setItem(LOCATION_STORAGE_KEY, state.selectedLocationId); } catch (_error) {}
+    const stockOverviewBack = options.replaceHistory
+      ? Boolean(history.state && history.state.stockOverviewBack)
+      : options.skipHistory === true ? Boolean(history.state && history.state.stockOverviewBack) : true;
+    const historyState = { ...(history.state || {}), faturaView: "stock", stockWorkspace: true, stockOverviewBack, locationId: state.selectedLocationId };
+    if (options.replaceHistory) history.replaceState(historyState, "", stockWorkspaceUrl(state.selectedLocationId));
+    else if (options.skipHistory !== true) history.pushState(historyState, "", stockWorkspaceUrl(state.selectedLocationId));
+    return loadAll({ force: true });
+  }
+
+  function leaveWarehouse(options = {}) {
+    closeProductDrawer({ restoreFocus: false });
+    state.viewMode = "overview";
+    renderAll();
+    if (options.fromPopstate) return;
+    if (history.state && history.state.stockWorkspace && history.state.stockOverviewBack) history.back();
+    else {
+      const nextState = { ...(history.state || {}), faturaView: "stock", stockWorkspace: false, stockOverviewBack: false };
+      delete nextState.locationId;
+      history.replaceState(nextState, "", stockWorkspaceUrl());
+    }
+  }
+
+  function trapQuickDrawerFocus(event) {
+    if (event.key !== "Tab") return;
+    const drawer = $("#stockQuickDrawer");
+    if (!drawer) return;
+    const items = $$('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])', drawer)
+      .filter((item) => !item.hidden && item.offsetParent !== null);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
+
   function bindEvents() {
     const workspace = $("#stockLocationWorkspace");
     if (!workspace) return;
@@ -1778,22 +1828,27 @@ import { renderShipments } from "./receipts.js";
     state.bound = true;
     state.boundWorkspace = workspace;
     workspace.addEventListener("click", (event) => {
-      const shipmentsLink = event.target.closest("[data-stock-go-shipments]");
-      if (shipmentsLink) {
-        document.querySelector('[data-view="shipments"]')?.click();
-        return;
-      }
+      const quickDrawerOpen = event.target.closest("#stockQuickActionsButton");
+      if (quickDrawerOpen) { openQuickDrawer(quickDrawerOpen); return; }
+      if (event.target.closest("[data-stock-quick-close]")) { closeQuickDrawer(); return; }
       const quickAction = event.target.closest("[data-stock-quick]");
       if (quickAction) {
+        closeQuickDrawer({ restoreFocus: false });
         openQuickAction(quickAction.dataset.stockQuick).catch((error) => setMessage(error.message, "error"));
         return;
       }
       const alert = event.target.closest("[data-stock-alert-target]");
       if (alert) {
         const target = alert.dataset.stockAlertTarget;
-        state.activeAccordion = target === "shipments" ? "shipments" : "planning";
+        if (target === "shipments") {
+          closeQuickDrawer({ restoreFocus: false });
+          document.dispatchEvent(new CustomEvent("tahmisci:fatura:navigate", { detail: { view: "shipments" } }));
+          return;
+        }
+        closeQuickDrawer({ restoreFocus: false });
+        state.activeAccordion = "planning";
         renderAccordionState();
-        $(target === "shipments" ? "#stockShipmentAccordion" : "#stockPlanningAccordion")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        $("#stockPlanningAccordion")?.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
       const analysis = event.target.closest("[data-stock-analysis-product]");
@@ -1807,10 +1862,7 @@ import { renderShipments } from "./receipts.js";
       if (planningRetry) { refreshPlanning({ force: true }).catch(() => {}); return; }
       const warehouseOpen = event.target.closest("[data-stock-warehouse-open]");
       if (warehouseOpen) {
-        state.selectedLocationId = warehouseOpen.dataset.stockWarehouseOpen;
-        state.viewMode = "inventory";
-        try { localStorage.setItem(LOCATION_STORAGE_KEY, state.selectedLocationId); } catch (_error) {}
-        loadAll({ force: true }).catch(() => {});
+        enterWarehouse(warehouseOpen.dataset.stockWarehouseOpen).catch(() => {});
         return;
       }
       const warehouseEdit = event.target.closest("[data-stock-warehouse-edit]");
@@ -1820,12 +1872,8 @@ import { renderShipments } from "./receipts.js";
       }
       const locationButton = event.target.closest("[data-stock-location-select]");
       if (locationButton) {
-        state.selectedLocationId = locationButton.dataset.stockLocationSelect;
-        try { localStorage.setItem(LOCATION_STORAGE_KEY, state.selectedLocationId); } catch (_error) {}
         closeProductDrawer({ restoreFocus: false });
-        state.secondaryLoaded = false;
-        state.stale = true;
-        loadAll({ force: true }).catch(() => {});
+        enterWarehouse(locationButton.dataset.stockLocationSelect, { replaceHistory: true }).catch(() => {});
         return;
       }
       const category = event.target.closest("[data-stock-category]");
@@ -1923,18 +1971,6 @@ import { renderShipments } from "./receipts.js";
       event.preventDefault();
       openProductDrawer(card.dataset.stockProductCard, card);
     });
-    workspace.addEventListener("input", (event) => {
-      if (event.target.id === "shipment-search") {
-        faturaState.filters.shipments = event.target.value;
-        renderShipmentWorkspace();
-      }
-    });
-    workspace.addEventListener("change", (event) => {
-      if (event.target.id === "shipment-status") {
-        faturaState.filters.shipmentStatus = event.target.value;
-        renderShipmentWorkspace();
-      }
-    });
     $("#stockLocationSearch")?.addEventListener("input", renderInventory);
     $("#stockLocationStatusFilter")?.addEventListener("change", renderInventory);
     $("#stockTransferTo")?.addEventListener("change", updateTransferPreview);
@@ -1960,7 +1996,7 @@ import { renderShipments } from "./receipts.js";
     $("#stockMovementTypeFilter")?.addEventListener("change", () => loadMovements().then(renderMovements).catch((error) => setMessage(error.message, "error")));
     $("#stockMovementProductFilter")?.addEventListener("change", () => loadMovements().then(renderMovements).catch((error) => setMessage(error.message, "error")));
     $("#stockLocationRefreshButton")?.addEventListener("click", (event) => runOperation("refresh", event.currentTarget, () => loadAll({ force: true })).catch(() => {}));
-    $("#stockWarehouseBackButton")?.addEventListener("click", () => { closeProductDrawer({ restoreFocus: false }); state.viewMode = "overview"; renderAll(); });
+    $("#stockWarehouseBackButton")?.addEventListener("click", () => leaveWarehouse());
     $("#stockLocationOverviewAddButton")?.addEventListener("click", () => { const dialog = $("#stockLocationManagementDialog"); if (dialog && !dialog.open) dialog.showModal(); });
     $("#stockLocationNewProductButton")?.addEventListener("click", () => {
       openCatalogEditor("new-product").catch((error) => setCatalogMessage(error.message, true));
@@ -2010,6 +2046,7 @@ import { renderShipments } from "./receipts.js";
       if (dialog && !dialog.open) dialog.showModal();
     });
     $("#stockMovementHistoryButton")?.addEventListener("click", () => loadMovements().then(() => {
+      closeQuickDrawer({ restoreFocus: false });
       renderMovements();
       const dialog = $("#stockHistoryDialog");
       if (dialog && !dialog.open) dialog.showModal();
@@ -2030,6 +2067,7 @@ import { renderShipments } from "./receipts.js";
     }));
     $("#stockCountStartButton")?.addEventListener("click", async (event) => {
       try {
+        closeQuickDrawer({ restoreFocus: false });
         await loadCounts();
         await openOrStartCount(event.currentTarget);
       } catch (error) {
@@ -2049,9 +2087,22 @@ import { renderShipments } from "./receipts.js";
     $$('[data-stock-dialog-close]').forEach((button) => button.addEventListener("click", () => closeDialog(button.dataset.stockDialogClose)));
     if (stockKeydownHandler) document.removeEventListener("keydown", stockKeydownHandler);
     stockKeydownHandler = (event) => {
+      if (!$("#stockQuickDrawerLayer")?.hidden) {
+        if (event.key === "Escape") { closeQuickDrawer(); return; }
+        trapQuickDrawerFocus(event);
+      }
       if (event.key === "Escape" && !$("#stockProductDrawerLayer")?.hidden && !document.querySelector("dialog[open]")) closeProductDrawer();
     };
     document.addEventListener("keydown", stockKeydownHandler);
+    if (state.popstateHandler) window.removeEventListener("popstate", state.popstateHandler);
+    state.popstateHandler = () => {
+      if (activeSection() !== "stock") return;
+      const url = new URL(location.href);
+      const locationId = url.searchParams.get("locationId") || "";
+      if (locationId && state.locations.some((item) => String(item.id) === locationId)) enterWarehouse(locationId, { skipHistory: true }).catch(() => {});
+      else leaveWarehouse({ fromPopstate: true });
+    };
+    window.addEventListener("popstate", state.popstateHandler);
   }
 
 let stockEventTimer = null;
@@ -2080,13 +2131,8 @@ export async function loadStockView({ force = false } = {}) {
 export async function applyStockIntent(intent = {}) {
   if (activeSection() !== "stock") return false;
   const locationId = String(intent.locationId || "");
-  if (locationId && (locationId === "total" || state.locations.some((item) => String(item.id) === locationId)) && String(state.selectedLocationId) !== locationId) {
-    state.selectedLocationId = locationId;
-    state.viewMode = locationId === "total" ? "overview" : "inventory";
-    state.secondaryLoaded = false;
-    state.stale = true;
-    try { localStorage.setItem(LOCATION_STORAGE_KEY, locationId); } catch (_error) {}
-    await loadAll({ force: true });
+  if (locationId && state.locations.some((item) => String(item.id) === locationId)) {
+    await enterWarehouse(locationId, { replaceHistory: true });
   }
   const productIdValue = String(intent.productId || intent.stockProductId || "");
   if (productIdValue) {
@@ -2107,10 +2153,7 @@ export async function applyStockIntent(intent = {}) {
     } else setMessage("Bağlantıdaki transfer mevcut filtrede bulunamadı.", "error");
   }
   if (String(intent.workforce || "") === "shipments") {
-    state.activeAccordion = "shipments";
-    renderAccordionState();
-    renderShipmentWorkspace();
-    $("#stockShipmentWorkspace")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+    document.dispatchEvent(new CustomEvent("tahmisci:fatura:navigate", { detail: { view: "shipments", entityId: intent.entityId || "" } }));
   }
   return true;
 }
@@ -2152,6 +2195,9 @@ export function disconnectStockEvents() {
   state.loadPromise = null;
   if (stockKeydownHandler) document.removeEventListener("keydown", stockKeydownHandler);
   stockKeydownHandler = null;
+  if (state.popstateHandler) window.removeEventListener("popstate", state.popstateHandler);
+  state.popstateHandler = null;
+  closeQuickDrawer({ restoreFocus: false });
   state.bound = false;
   state.boundWorkspace = null;
 }
@@ -2191,5 +2237,7 @@ export function resetStockState() {
   state.planningStale = true;
   state.planningError = "";
   state.planningLoadPromise = null;
-  state.activeAccordion = "management";
+  state.activeAccordion = "";
+  state.quickDrawerReturnFocus = null;
+  state.popstateHandler = null;
 }

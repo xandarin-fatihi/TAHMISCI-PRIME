@@ -273,6 +273,48 @@ function createProcurementService(options = {}) {
     });
   }
 
+  async function listSupplierIndependentProducts(actor, supplierId, filters = {}) {
+    requireAnyCapability(actor, ["supplier.read", "supplier.manage", "supplierProduct.manage"]);
+    const { procurement } = await readSnapshot();
+    const supplier = findSupplier(procurement, supplierId);
+    const activeFilter = parseActiveFilter(filters.active);
+    const items = procurement.supplierIndependentProducts
+      .filter((item) => item.supplierId === supplier.id)
+      .filter((item) => activeFilter === null || item.active === activeFilter)
+      .map(publicIndependentProduct)
+      .sort((left, right) => left.name.localeCompare(right.name, "tr"));
+    return { ok: true, revision: procurement.revision, supplierId: supplier.id, independentProducts: items };
+  }
+
+  async function createSupplierIndependentProduct(actor, supplierId, input, mutation) {
+    requireAnyCapability(actor, ["supplier.manage", "supplierProduct.manage"]);
+    return mutate("supplier-independent-product.create", actor, mutation, (data, procurement, helpers) => {
+      const supplier = findSupplier(procurement, supplierId, { active: true });
+      const values = validateIndependentProductInput(input, { partial: false });
+      assertUniqueIndependentProduct(procurement.supplierIndependentProducts, supplier.id, values);
+      const timestamp = isoNow(now);
+      const item = {
+        id: createId("supplier-independent-product"), supplierId: supplier.id, ...values,
+        active: true, createdAt: timestamp, updatedAt: timestamp, createdBy: actor.id, updatedBy: actor.id
+      };
+      procurement.supplierIndependentProducts.push(item);
+      return helpers.result("supplierIndependentProduct", item.id, { independentProduct: publicIndependentProduct(item) });
+    });
+  }
+
+  async function updateSupplierIndependentProduct(actor, supplierId, itemId, input, mutation) {
+    requireAnyCapability(actor, ["supplier.manage", "supplierProduct.manage"]);
+    return mutate("supplier-independent-product.update", actor, mutation, (data, procurement, helpers) => {
+      const supplier = findSupplier(procurement, supplierId);
+      const item = findById(procurement.supplierIndependentProducts, itemId, "Bağımsız tedarikçi ürünü");
+      if (item.supplierId !== supplier.id) throw fail("Bağımsız ürün bu tedarikçiye ait değil.", 404, "SUPPLIER_INDEPENDENT_PRODUCT_NOT_FOUND");
+      const values = validateIndependentProductInput(input, { partial: true });
+      assertUniqueIndependentProduct(procurement.supplierIndependentProducts, supplier.id, { ...item, ...values }, item.id);
+      Object.assign(item, values, { updatedAt: isoNow(now), updatedBy: actor.id });
+      return helpers.result("supplierIndependentProduct", item.id, { independentProduct: publicIndependentProduct(item) });
+    });
+  }
+
   async function listShipments(actor, filters = {}) {
     requireAnyCapability(actor, ["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]);
     const { data, procurement } = await readSnapshot();
@@ -1341,6 +1383,7 @@ function createProcurementService(options = {}) {
     createPayment,
     createLedgerEntry,
     createProductLink,
+    createSupplierIndependentProduct,
     createShipment,
     createSupplier,
     dashboard,
@@ -1354,6 +1397,7 @@ function createProcurementService(options = {}) {
     listDocuments,
     listLedger,
     listProductLinks,
+    listSupplierIndependentProducts,
     listShipments,
     listSuppliers,
     listUsers,
@@ -1366,6 +1410,7 @@ function createProcurementService(options = {}) {
     submitShipment,
     subscribe,
     updateProductLink,
+    updateSupplierIndependentProduct,
     updateSettings,
     updateShipment,
     updateSupplier,
@@ -1580,6 +1625,22 @@ function publicProductLink(link, productIndex) {
   };
 }
 
+function publicIndependentProduct(item) {
+  return {
+    id: String(item.id || ""),
+    supplierId: String(item.supplierId || ""),
+    name: String(item.name || ""),
+    code: String(item.code || ""),
+    purchaseUnit: String(item.purchaseUnit || ""),
+    defaultPurchasePriceKurus: Math.max(0, Number(item.defaultPurchasePriceKurus || 0)),
+    lastPurchasePriceKurus: Math.max(0, Number(item.lastPurchasePriceKurus || 0)),
+    note: String(item.note || ""),
+    active: item.active !== false,
+    createdAt: item.createdAt || null,
+    updatedAt: item.updatedAt || item.createdAt || null
+  };
+}
+
 function publicStockProduct(product) {
   return {
     id: String(product.id || ""),
@@ -1698,6 +1759,36 @@ function validateProductLinkInput(input, options = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(source, "active")) result.active = source.active !== false;
   return result;
+}
+
+function validateIndependentProductInput(input, options = {}) {
+  const source = input && typeof input === "object" ? input : {};
+  const result = {};
+  const maybe = (key, value) => {
+    if (!options.partial || Object.prototype.hasOwnProperty.call(source, key)) result[key] = value;
+  };
+  maybe("name", text(source.name, 180));
+  maybe("code", text(source.code, 100).toLocaleUpperCase("tr-TR"));
+  maybe("purchaseUnit", text(source.purchaseUnit, 40));
+  maybe("note", text(source.note, 1000));
+  if (!options.partial || Object.prototype.hasOwnProperty.call(source, "defaultPurchasePriceKurus")) {
+    result.defaultPurchasePriceKurus = nonNegativeInteger(source.defaultPurchasePriceKurus || 0, "Varsayılan alış fiyatı");
+  }
+  if (!options.partial || Object.prototype.hasOwnProperty.call(source, "lastPurchasePriceKurus")) {
+    result.lastPurchasePriceKurus = nonNegativeInteger(source.lastPurchasePriceKurus || 0, "Son alış fiyatı");
+  }
+  if (Object.prototype.hasOwnProperty.call(source, "active")) result.active = source.active !== false;
+  if ((!options.partial || Object.prototype.hasOwnProperty.call(source, "name")) && !result.name) throw fail("Bağımsız ürün adı zorunludur.", 422, "INDEPENDENT_PRODUCT_NAME_REQUIRED");
+  if ((!options.partial || Object.prototype.hasOwnProperty.call(source, "purchaseUnit")) && !result.purchaseUnit) throw fail("Satın alma birimi zorunludur.", 422, "INDEPENDENT_PRODUCT_UNIT_REQUIRED");
+  return result;
+}
+
+function assertUniqueIndependentProduct(items, supplierId, values, ignoredId = "") {
+  const code = normalizeLookup(values.code);
+  const name = normalizeLookup(values.name);
+  const duplicate = (Array.isArray(items) ? items : []).find((item) => item.id !== ignoredId && item.supplierId === supplierId
+    && (code ? normalizeLookup(item.code) === code : normalizeLookup(item.name) === name));
+  if (duplicate) throw fail("Bu tedarikçi için aynı bağımsız ürün zaten kayıtlı.", 409, "SUPPLIER_INDEPENDENT_PRODUCT_EXISTS");
 }
 
 function validateShipmentItems(stockStateInput, requestedItems, createId) {

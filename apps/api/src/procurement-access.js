@@ -16,7 +16,7 @@ const FATURA_SECTION_DEFINITIONS = Object.freeze([
   section("dashboard", "Genel Bakış", "Tedarik ve operasyon özeti", ["off", "view"], {
     view: ["procurement.read"]
   }),
-  section("stock", "Stok & Sevkiyat", "Depolar, stok ve transferler", ["off", "view", "operate", "full"], {
+  section("stock", "Stok", "Depoları, stok bakiyelerini, transferleri, sayımları ve stok planlamasını yönetin.", ["off", "view", "operate", "full"], {
     view: ["inventory.read"],
     operate: ["inventory.read", "inventory.movement.create", "inventory.transfer.create", "inventory.count.manage"],
     full: ["inventory.read", "inventory.manage", "inventory.movement.create", "inventory.movement.reverse", "inventory.transfer.create", "inventory.transfer.approve", "inventory.count.manage", "inventory.location.manage", "inventory.catalog.manage"]
@@ -24,7 +24,7 @@ const FATURA_SECTION_DEFINITIONS = Object.freeze([
   section("productAnalysis", "Ürün Analizi", "Ürün fiyat, alım ve tüketim analizi", ["off", "view"], {
     view: ["inventory.read", "procurement.read"]
   }),
-  section("shipments", "Mal Kabul", "Sevkiyat ve mal kabul işlemleri", ["off", "view", "operate", "full"], {
+  section("shipments", "Sevkiyat / Mal Kabul", "Sevkiyat, mal kabul, stok onayı ve muhasebe süreçlerini yönetin.", ["off", "view", "operate", "full"], {
     view: ["procurement.read"],
     operate: ["procurement.read", "receipt.create", "receipt.submit"],
     full: ["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject"]

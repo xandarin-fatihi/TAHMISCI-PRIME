@@ -105,6 +105,25 @@ function registerProcurementRoutes(deps = {}) {
     res.json(await service.deactivateSupplier(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
+  app.get(`${API_ROOT}/suppliers/:id/independent-products`, ...authenticated,
+    anySectionAccess(["suppliers", "links"]), anyCapability(["supplier.read", "supplier.manage", "supplierProduct.manage"]),
+    asyncRoute(async (req, res) => {
+      res.json(await service.listSupplierIndependentProducts(req.procurementActor, req.params.id, req.query));
+    }));
+
+  app.post(`${API_ROOT}/suppliers/:id/independent-products`, ...mutationMiddlewares,
+    anySectionAccess(["suppliers", "links"], "full"), anyCapability(["supplier.manage", "supplierProduct.manage"]),
+    asyncRoute(async (req, res) => {
+      const result = await service.createSupplierIndependentProduct(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req));
+      res.status(result.idempotent ? 200 : 201).json(result);
+    }));
+
+  app.put(`${API_ROOT}/suppliers/:id/independent-products/:itemId`, ...mutationMiddlewares,
+    anySectionAccess(["suppliers", "links"], "full"), anyCapability(["supplier.manage", "supplierProduct.manage"]),
+    asyncRoute(async (req, res) => {
+      res.json(await service.updateSupplierIndependentProduct(req.procurementActor, req.params.id, req.params.itemId, jsonBody(req), mutationInput(req)));
+    }));
+
   app.get(`${API_ROOT}/product-links`, ...authenticated, sectionAccess("links", "view"), anyCapability(["procurement.read", "receipt.create", "supplierProduct.manage"]), asyncRoute(async (req, res) => {
     res.json(await service.listProductLinks(req.procurementActor, req.query));
   }));

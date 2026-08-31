@@ -1756,6 +1756,7 @@ function normalizeProcurement(value) {
     revision: Math.max(0, Math.trunc(finiteNumber(source.revision, 0))),
     suppliers: normalizeProcurementEntities(source.suppliers, normalizeProcurementSupplier),
     supplierProductLinks: normalizeProcurementEntities(source.supplierProductLinks, normalizeSupplierProductLink),
+    supplierIndependentProducts: normalizeProcurementEntities(source.supplierIndependentProducts, normalizeSupplierIndependentProduct),
     documents: normalizeProcurementEntities(source.documents, normalizeProcurementDocument),
     ledgerEntries: normalizeProcurementEntities(source.ledgerEntries, normalizeLedgerEntry),
     payments: normalizeProcurementEntities(source.payments, normalizeProcurementPayment),
@@ -1850,6 +1851,30 @@ function normalizeSupplierProductLink(item) {
     active: item.active !== false,
     createdAt: item.createdAt || null,
     updatedAt: item.updatedAt || item.createdAt || null
+  };
+}
+
+function normalizeSupplierIndependentProduct(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const id = procurementText(item.id, 180);
+  const supplierId = procurementText(item.supplierId, 180);
+  const name = procurementText(item.name, 180);
+  if (!id || !supplierId || !name) return null;
+  return {
+    ...item,
+    id,
+    supplierId,
+    name,
+    code: procurementText(item.code, 100),
+    purchaseUnit: procurementText(item.purchaseUnit, 40),
+    defaultPurchasePriceKurus: Math.max(0, normalizeKurus(item.defaultPurchasePriceKurus, 0)),
+    lastPurchasePriceKurus: Math.max(0, normalizeKurus(item.lastPurchasePriceKurus, 0)),
+    note: procurementText(item.note, 1000),
+    active: item.active !== false,
+    createdAt: item.createdAt || null,
+    updatedAt: item.updatedAt || item.createdAt || null,
+    createdBy: procurementText(item.createdBy, 180),
+    updatedBy: procurementText(item.updatedBy || item.createdBy, 180)
   };
 }
 

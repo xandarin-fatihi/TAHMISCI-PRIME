@@ -496,6 +496,7 @@ function defaultStore(passwordHash, recipePasswordHash) {
       revision: 0,
       suppliers: [],
       supplierProductLinks: [],
+      supplierIndependentProducts: [],
       documents: [],
       ledgerEntries: [],
       payments: [],
