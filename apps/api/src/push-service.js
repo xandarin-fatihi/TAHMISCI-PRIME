@@ -18,7 +18,7 @@ function createPushService(config = {}, options = {}) {
     }
   }
 
-  async function sendNotificationPush(notification, subscription) {
+  async function sendNotificationPush(notification, subscription, options = {}) {
     if (!configured) {
       const error = new Error(configurationError
         ? "Web Push yapılandırması geçersiz."
@@ -34,14 +34,18 @@ function createPushService(config = {}, options = {}) {
     const deepLink = safeAppDeepLink(notification && notification.deepLink, appTarget, fallbackLink);
     const iconRoot = `/assets/app-icons/${appTarget}`;
     const notificationId = String(notification && notification.id || "").replace(/[\r\n\u0000-\u001f\u007f]+/g, "").slice(0, 180);
-    const payload = JSON.stringify({
+    const vibrationEnabled = options.vibrationEnabled !== false;
+    const vibrate = notification && notification.severity === "critical"
+      ? [300, 120, 300, 120, 420]
+      : [220, 80, 220];
+    const payloadData = {
       title: String(notification && notification.title || "Tahmisçi bildirimi").replace(/[\r\n]+/g, " ").slice(0, 180),
       body: String(notification && notification.body || "").replace(/[\r\n]+/g, " ").slice(0, 500),
       icon: `${iconRoot}/icon-192.png`,
-      badge: `${iconRoot}/icon-192.png`,
+      badge: appTarget === "personel" ? `${iconRoot}/notification-badge-96.png` : `${iconRoot}/icon-192.png`,
       tag: `tahmisci-${role}-${notificationId || "notification"}`.slice(0, 240),
       renotify: false,
-      vibrate: notification && notification.severity === "critical" ? [180, 80, 180, 80, 240] : [120, 60, 120],
+      vibrationEnabled,
       requireInteraction: notification && notification.severity === "critical",
       deepLink,
       appTarget,
@@ -50,10 +54,13 @@ function createPushService(config = {}, options = {}) {
         notificationId,
         deepLink,
         appTarget,
+        vibrationEnabled,
         category: String(notification && notification.category || "system").slice(0, 40),
         recipientRole: role
       }
-    });
+    };
+    if (vibrationEnabled) payloadData.vibrate = vibrate;
+    const payload = JSON.stringify(payloadData);
     return webPush.sendNotification(subscription, payload, { TTL: 60 * 60, urgency: notification && notification.severity === "critical" ? "high" : "normal" });
   }
 

@@ -8,11 +8,13 @@
   const BOOLEAN_PREFERENCES = [
     "inAppEnabled", "emailEnabled", "taskNotifications", "shipmentNotifications",
     "shiftNotifications", "taskReminder24h", "taskReminder2h",
-    "overdueReminder", "shiftReminder12h", "shiftReminder2h", "quietHoursEnabled"
+    "overdueReminder", "shiftReminder12h", "shiftReminder2h", "quietHoursEnabled",
+    "pushVibrationEnabled"
   ];
   const DEFAULT_PREFERENCES = Object.freeze({
     inAppEnabled: true,
     pushEnabled: false,
+    pushVibrationEnabled: true,
     emailEnabled: false,
     emailAddress: "",
     taskNotifications: true,

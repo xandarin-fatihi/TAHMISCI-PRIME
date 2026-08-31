@@ -45,6 +45,7 @@
   document.addEventListener("personel:session-ended", dismissNotificationIntro);
   document.addEventListener("tahmisci:admin-session-ended", dismissNotificationIntro);
   document.addEventListener("mudavim:session-ended", dismissNotificationIntro);
+  if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", handleServiceWorkerMessage);
 
   document.addEventListener("DOMContentLoaded", () => {
     bindConnectivityState();
@@ -72,6 +73,35 @@
       if (form instanceof HTMLFormElement) dirtyForms.delete(form);
     }
   });
+
+  function handleServiceWorkerMessage(event) {
+    const data = event && event.data;
+    if (!data || data.type !== "TAHMISCI_PUSH_VIBRATE") return;
+    const responsePort = event.ports && event.ports[0];
+    let handled = false;
+    if (document.visibilityState === "visible" && typeof navigator.vibrate === "function") {
+      const pattern = normalizeClientVibration(data.pattern);
+      if (pattern.length) {
+        try { handled = navigator.vibrate(pattern) !== false; } catch (_error) {}
+      }
+    }
+    try { responsePort?.postMessage({ handled }); } catch (_error) {}
+  }
+
+  function normalizeClientVibration(value) {
+    if (!Array.isArray(value) || !value.length || value.length > 12) return [];
+    const pattern = [];
+    let total = 0;
+    for (const item of value) {
+      const duration = Number(item);
+      if (!Number.isFinite(duration) || duration <= 0 || duration > 2000) return [];
+      const rounded = Math.round(duration);
+      total += rounded;
+      if (total > 8000) return [];
+      pattern.push(rounded);
+    }
+    return pattern;
+  }
 
   async function updateAppBadge(value) {
     const count = Math.max(0, Math.trunc(Number(value || 0)));

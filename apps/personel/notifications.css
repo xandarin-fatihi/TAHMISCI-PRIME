@@ -896,6 +896,7 @@ body.is-personel-notification-open {
 
 .notification-push-card {
   min-height: 52px;
+  flex-wrap: wrap;
   justify-content: flex-start;
   padding: 8px 10px;
   border-radius: 10px;
@@ -924,6 +925,34 @@ body.is-personel-notification-open {
 
 .notification-push-card .notification-push-actions {
   margin-left: auto;
+}
+
+.notification-vibration-row {
+  flex: 0 0 100%;
+  min-height: 42px;
+  margin-top: 1px;
+  padding: 8px 2px 0;
+  border-width: 1px 0 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.notification-vibration-row > span {
+  display: grid;
+  gap: 2px;
+}
+
+.notification-vibration-row > span strong {
+  color: var(--panel-ink);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.notification-vibration-row > span small {
+  color: var(--panel-muted);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 .notification-devices-card {

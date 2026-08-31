@@ -1,16 +1,17 @@
 /* Tahmisçi Personel PWA — scope: /personel/ */
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "personel",
-  version: "2026.08.29.1",
+  version: "2026.08.31.1",
   scopePath: "/personel/",
   offlineUrl: "/personel/offline.html",
   offlineAssets: [
     "/shared/styles/pwa-ui.css",
-    "/assets/app-icons/personel/icon-192.png"
+    "/assets/app-icons/personel/icon-192.png",
+    "/assets/app-icons/personel/notification-badge-96.png"
   ],
   precache: [
     "/personel/personel.css",
-    "/personel/personel-compact.css?v=20260829-notification-shell",
+    "/personel/personel-compact.css?v=20260831-profile-compact",
     "/personel/personel.js",
     "/shared/styles/panel-foundation.css",
     "/shared/scripts/save-coordinator.js",
@@ -28,7 +29,7 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
   fallbackRoot: "/personel/",
   allowedRoots: ["/personel/"],
   icon: "/assets/app-icons/personel/icon-192.png",
-  badge: "/assets/app-icons/personel/favicon-48.png",
+  badge: "/assets/app-icons/personel/notification-badge-96.png",
   notificationTitle: "Tahmisçi Personel"
 });
 importScripts("/shared/scripts/pwa-sw-runtime.js");

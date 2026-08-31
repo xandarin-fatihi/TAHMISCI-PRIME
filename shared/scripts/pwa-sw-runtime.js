@@ -213,16 +213,21 @@
     const sourceData = source.data && typeof source.data === "object" ? source.data : {};
     const deepLink = safeDeepLink(source.deepLink || sourceData.deepLink);
     const unreadCount = Math.max(0, Math.trunc(Number(source.unreadCount ?? sourceData.unreadCount ?? 0)));
-    await globalScope.registration.showNotification(String(source.title || config.notificationTitle || "Tahmisçi").slice(0, 120), {
+    const vibrationEnabled = source.vibrationEnabled !== false && sourceData.vibrationEnabled !== false;
+    const vibration = vibrationEnabled ? normalizeVibration(source.vibrate || sourceData.vibrate) : [];
+    const foregroundClient = vibration.length ? await findForegroundAppClient() : null;
+    const foregroundVibrated = foregroundClient ? await requestForegroundVibration(foregroundClient, vibration) : false;
+    const notificationOptions = {
       body: String(source.body || "Yeni bir bildiriminiz var.").slice(0, 240),
-      icon: config.icon || `/assets/app-icons/${config.appId}/icon-192.png`,
-      badge: config.badge || `/assets/app-icons/${config.appId}/favicon-48.png`,
+      icon: source.icon || sourceData.icon || config.icon || `/assets/app-icons/${config.appId}/icon-192.png`,
+      badge: source.badge || sourceData.badge || config.badge || `/assets/app-icons/${config.appId}/icon-192.png`,
       tag: source.id ? `tahmisci-${config.appId}-${String(source.id).slice(0, 100)}` : undefined,
       renotify: source.renotify === true,
-      vibrate: normalizeVibration(source.vibrate || sourceData.vibrate),
       requireInteraction: source.requireInteraction === true,
       data: { ...sourceData, deepLink, appTarget: config.appId }
-    });
+    };
+    if (!foregroundVibrated && vibration.length) notificationOptions.vibrate = vibration;
+    await globalScope.registration.showNotification(String(source.title || config.notificationTitle || "Tahmisçi").slice(0, 120), notificationOptions);
     if (unreadCount && typeof globalScope.registration.setAppBadge === "function") {
       await globalScope.registration.setAppBadge(unreadCount).catch(() => {});
     }
@@ -236,8 +241,52 @@
   }
 
   function normalizeVibration(value) {
-    if (!Array.isArray(value)) return [120, 60, 120];
-    return value.slice(0, 12).map((item) => Math.max(0, Math.min(2000, Number(item) || 0)));
+    if (!Array.isArray(value)) return [];
+    const pattern = [];
+    let total = 0;
+    for (const item of value.slice(0, 12)) {
+      const duration = Number(item);
+      if (!Number.isFinite(duration) || duration <= 0) continue;
+      const safeDuration = Math.min(2000, Math.round(duration));
+      if (total + safeDuration > 8000) break;
+      pattern.push(safeDuration);
+      total += safeDuration;
+    }
+    return pattern;
+  }
+
+  async function findForegroundAppClient() {
+    const windows = await globalScope.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const visible = windows.filter((client) => {
+      try {
+        const pathname = new URL(client.url).pathname;
+        return pathBelongsToRoot(pathname, config.scopePath) && (client.visibilityState === "visible" || client.focused === true);
+      } catch (_error) {
+        return false;
+      }
+    });
+    return visible.find((client) => client.focused === true) || visible[0] || null;
+  }
+
+  function requestForegroundVibration(client, pattern) {
+    return new Promise((resolve) => {
+      if (!client || typeof client.postMessage !== "function" || typeof MessageChannel !== "function") return resolve(false);
+      const channel = new MessageChannel();
+      let settled = false;
+      const finish = (handled) => {
+        if (settled) return;
+        settled = true;
+        resolve(handled === true);
+      };
+      channel.port1.onmessage = (event) => finish(Boolean(event.data && event.data.handled));
+      try {
+        client.postMessage({ type: "TAHMISCI_PUSH_VIBRATE", pattern }, [channel.port2]);
+      } catch (_error) {
+        finish(false);
+        return;
+      }
+      setTimeout(() => finish(false), 250);
+    });
   }
 
   function safeDeepLink(value) {

@@ -135,7 +135,9 @@ function createNotificationDeliveryWorker(options) {
           && pushSubscriptionBelongsToDelivery(entry, item)
           && (entry.id === item.subscriptionId || entry.endpoint === item.destination));
         if (!subscription) throw permanentError("Push aboneliği bulunamadı.", "PUSH_SUBSCRIPTION_MISSING");
-        await pushService.sendNotificationPush(notification, subscription.subscription || subscription);
+        await pushService.sendNotificationPush(notification, subscription.subscription || subscription, {
+          vibrationEnabled: preference.pushVibrationEnabled !== false
+        });
         await recordPushSuccess(subscription.id);
       } else {
         throw permanentError("Desteklenmeyen bildirim kanalı.", "UNSUPPORTED_CHANNEL");

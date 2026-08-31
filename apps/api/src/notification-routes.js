@@ -310,6 +310,7 @@ function registerNotificationRoutes(options) {
           if (requestedSubscriptionId) validateId(requestedSubscriptionId, "Cihaz kimliği");
           const requestedDeviceId = normalizedDeviceId(req.body && req.body.deviceId || req.get("x-tahmisci-device-id"));
           const data = req.storeSnapshot || await store.read();
+          const preference = getNotificationPreferences(data, owner.role, owner.id);
           const subscriptions = (data.pushSubscriptions || [])
             .filter((item) => pushSubscriptionMatches(item, owner, appTarget) && !item.disabledAt && !item.revokedAt)
             .sort((left, right) => String(right.lastSeenAt || right.updatedAt || right.createdAt || "")
@@ -334,7 +335,9 @@ function registerNotificationRoutes(options) {
             appTarget
           };
           try {
-            await pushService.sendNotificationPush(notification, subscription.subscription || subscription);
+            await pushService.sendNotificationPush(notification, subscription.subscription || subscription, {
+              vibrationEnabled: preference.pushVibrationEnabled !== false
+            });
           } catch (error) {
             const statusCode = Number(error && (error.statusCode || error.status) || 0);
             if ([404, 410].includes(statusCode)) {

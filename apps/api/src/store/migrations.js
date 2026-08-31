@@ -329,6 +329,7 @@ function normalizeNotificationPreferences(value) {
       inAppEnabled: item.inAppEnabled !== undefined ? item.inAppEnabled !== false : item.inApp !== false,
       emailEnabled: item.emailEnabled !== undefined ? item.emailEnabled === true : item.email === true,
       pushEnabled: item.pushEnabled !== undefined ? item.pushEnabled === true : item.push === true,
+      pushVibrationEnabled: item.pushVibrationEnabled !== false,
       emailAddress: String(item.emailAddress || "").trim().toLowerCase().slice(0, 254),
       taskNotifications: notificationPreferenceFlag(item, "taskNotifications", "tasks", true),
       shiftNotifications: notificationPreferenceFlag(item, "shiftNotifications", "shifts", true),

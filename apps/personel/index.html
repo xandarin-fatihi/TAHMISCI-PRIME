@@ -16,9 +16,9 @@
   <meta name="tahmisci-lazy-style" content="/shared/styles/account-security.css">
   <meta name="tahmisci-lazy-script" content="/shared/scripts/account-security.js">
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
-  <script src="/personel/personel.js?v=20260831-personal-email" defer></script>
+  <script src="/personel/personel.js?v=20260831-push-vibration" defer></script>
   <script src="/shared/scripts/live-preview-receiver.js?v=20260801-phase3" defer></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260828-app-target" defer></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260831-push-vibration" defer></script>
 </head>
 <body>
   <main class="personel-app" id="personelApp" data-view="booting">
@@ -210,6 +210,10 @@
                   <button class="ui-button ui-button--ghost" id="personelPushTest" type="button" hidden>Test bildirimi gönder</button>
                   <button class="ui-button ui-button--secondary" id="personelPushToggle" type="button">Bildirimleri Aç</button>
                 </div>
+                <label class="notification-toggle-row notification-vibration-row">
+                  <span><strong>Bildirimlerde titreşim</strong><small>Desteklenen cihazlarda push bildirimi geldiğinde telefonu titreştir.</small></span>
+                  <input name="pushVibrationEnabled" type="checkbox" role="switch" checked>
+                </label>
               </section>
               <details class="notification-devices-card notification-field--wide" id="personelNotificationDevicesPanel">
                 <summary><span id="personelNotificationDevicesTitle">Bağlı cihazlar <b id="personelNotificationDevicesCount">(…)</b></span><span aria-hidden="true">›</span></summary>
