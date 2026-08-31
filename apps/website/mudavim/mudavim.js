@@ -19,9 +19,81 @@
     notifications: [],
     notificationPreferences: null,
     notificationCapabilities: null,
-    notificationEvents: null
+    notificationEvents: null,
+    infoReturnFocus: null,
+    activeInfoItem: ""
   };
   const elements = {};
+  const INFO_ITEM_DEFINITIONS = Object.freeze([
+    Object.freeze({
+      id: "account",
+      title: "Güvenli hesap",
+      eyebrow: "HESAP GÜVENLİĞİ",
+      icon: "shield",
+      landing: true,
+      description: "Müdavim hesabın e-posta doğrulaması ve güvenli oturum sistemiyle korunur. Şifreni unuttuğunda doğrulanmış e-posta adresin üzerinden hesabını kurtarabilirsin.",
+      details: ["E-posta doğrulama", "Güvenli oturum", "Şifre sıfırlama", "Hesap kontrolü"]
+    }),
+    Object.freeze({
+      id: "app",
+      title: "Tahmisçi Müdavim uygulaması",
+      eyebrow: "MOBİL UYGULAMA",
+      icon: "phone",
+      landing: true,
+      description: "Tahmisçi Müdavim’i telefonuna ekleyerek tarayıcıdan bağımsız bir uygulama gibi kullan. Hesabına tek dokunuşla ulaş.",
+      details: ["Ana ekrana ekleme", "Standalone uygulama deneyimi", "Hızlı erişim", "Güncel sürüm desteği"],
+      action: "install"
+    }),
+    Object.freeze({
+      id: "notifications",
+      title: "Bildirimler ve duyurular",
+      eyebrow: "BİLDİRİMLER",
+      icon: "bell",
+      landing: true,
+      description: "Tahmisçi duyurularını, hesap bildirimlerini ve izin verdiğin kampanyaları Müdavim üzerinden takip et.",
+      details: ["Hesap bildirimleri", "Müdavim duyuruları", "Uygulama bildirimleri", "Kampanya tercihleri"],
+      action: "notifications"
+    }),
+    Object.freeze({
+      id: "profile",
+      title: "Profil ve tercihler",
+      eyebrow: "HESABIN",
+      icon: "profile",
+      landing: true,
+      description: "Müdavim profilini ve iletişim tercihlerini tek yerden yönet.",
+      details: ["Profil bilgileri", "Doğum tarihi", "Kampanya tercihi", "Bildirim tercihleri"]
+    }),
+    Object.freeze({
+      id: "campaigns",
+      title: "Kampanyalar",
+      eyebrow: "TAHMİSÇİ DUYURULARI",
+      icon: "tag",
+      landing: true,
+      description: "Tahmisçi’nin aktif Müdavim kampanyalarını ve duyurularını tek yerden incele.",
+      details: ["Aktif kampanyalar", "Müdavim duyuruları", "Kampanya tercihleri"]
+    }),
+    Object.freeze({
+      id: "about",
+      title: "Tahmisçi Hakkında",
+      eyebrow: "HAKKIMIZDA",
+      icon: "coffee",
+      landing: false,
+      description: "Kurtuluş Savaşı'nın ardından büyük dedem Hüseyin Tünaydın, 1926'da Torbalı'da kahve çekirdeklerini zeytin odununda kavurup taş dibekte döverek satmaya başladı. Kahvesinin kokusu kısa sürede köyleri sardı ve herkes “Tahmisçi Hüseyin Efendi”nin kahvesini içmeden gününü tamamlamaz oldu.",
+      paragraphs: [
+        "Bu ustalık dolu mesleği dedem Ahmet Zeki Tünaydın devraldı. 1957'den itibaren aynı özenle sürdürdü; kahveyi bir içecekten çok bir kültür, bir sabır ve ustalık işi olarak gördü. Daha sonra babam Mustafa Aygün Tünaydın ve kardeşleri bu geleneği yaşattı.",
+        "Bugün ben, hem dedemden hem babamdan öğrendiğim bu ilkelerle, geçmişin emek dolu zanaatini yeni nesil kahve anlayışıyla birleştiriyorum. Her fincanda dört neslin emeği, dürüstlüğü ve tutkusu var."
+      ],
+      details: []
+    })
+  ]);
+  const INFO_ICON_PATHS = Object.freeze({
+    shield: '<path d="M12 3 5 6v5c0 4.6 2.9 8.4 7 10 4.1-1.6 7-5.4 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/>',
+    phone: '<rect x="6" y="2.5" width="12" height="19" rx="2.2"/><path d="M10 5h4M11 18.5h2"/>',
+    bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z"/><path d="M10 21h4"/>',
+    profile: '<circle cx="9" cy="8" r="3.25"/><path d="M3.5 20v-1.7A4.3 4.3 0 0 1 7.8 14h2.4a4.3 4.3 0 0 1 3.1 1.3"/><circle cx="17.5" cy="17.5" r="2.5"/><path d="M17.5 13.4v1.1m0 6v1.1m4.1-4.1h-1.1m-6 0h-1.1m7-2.9-.8.8m-4.2 4.2-.8.8m5.8 0-.8-.8m-4.2-4.2-.8-.8"/>',
+    tag: '<path d="M20.5 13.5 13.7 20a2 2 0 0 1-2.8 0L4 13.1V4h9.1l7.4 6.7a2 2 0 0 1 0 2.8Z"/><circle cx="8.5" cy="8.5" r="1.25"/>',
+    coffee: '<path d="M4 9h13v5.5A5.5 5.5 0 0 1 11.5 20h-2A5.5 5.5 0 0 1 4 14.5V9Z"/><path d="M17 11h1.5a2.5 2.5 0 0 1 0 5H17M7 5c0 1 1 1.5 1 2.5M11 4c0 1 1 1.5 1 2.5"/>'
+  });
   const legalDocuments = {
     terms: {
       title: "Üyelik Sözleşmesi",
@@ -78,6 +150,7 @@
 
   function initialise() {
     collectElements();
+    renderInfoItems();
     bindEvents();
     renderGuest();
     void Promise.all([loadPublicMudavim(), restoreSession()]);
@@ -91,7 +164,8 @@
       "memberProfileStatus", "memberAvatar", "memberFullName", "memberWelcomeName",
       "progressCount", "rewardTarget", "progressText", "visitSummaryLabel", "visitSegments", "memberLevel",
       "tierTrack", "centerMemberLevel", "centerVisitCount", "centerRemaining", "latestVisit", "compactVisitHistory",
-      "memberHistoryPanel", "memberAnnouncementFeed", "guestMenuButton", "guestMenu", "guestAboutOverlay", "guestAboutClose",
+      "memberHistoryPanel", "memberAnnouncementFeed", "guestMenuButton", "guestMenu", "guestInfoList", "guestInfoOverlay",
+      "guestInfoClose", "guestInfoIcon", "guestInfoEyebrow", "guestInfoTitle", "guestInfoDescription", "guestInfoDetails", "guestInfoActions",
       "mudavimLegalOverlay", "mudavimLegalTitle", "mudavimLegalCopy", "mudavimLegalClose", "mudavimLegalCancel",
       "mudavimLegalApprove", "registerResend", "memberNotificationButton", "memberNotificationBadge",
       "memberNotificationFeed", "memberNotificationStatus", "memberNotificationsReadAll"
@@ -107,10 +181,12 @@
     });
     elements.guestMenu?.addEventListener("click", (event) => event.stopPropagation());
     document.querySelectorAll("[data-guest-nav]").forEach((item) => item.addEventListener("click", closeGuestMenu));
-    document.querySelector("[data-about-open]")?.addEventListener("click", openAbout);
-    elements.guestAboutClose?.addEventListener("click", closeAbout);
-    elements.guestAboutOverlay?.addEventListener("click", (event) => {
-      if (event.target === elements.guestAboutOverlay) closeAbout();
+    document.querySelectorAll("[data-info-open]").forEach((button) => {
+      button.addEventListener("click", () => openInfoModal(button.dataset.infoOpen, button));
+    });
+    elements.guestInfoClose?.addEventListener("click", closeInfoModal);
+    elements.guestInfoOverlay?.addEventListener("click", (event) => {
+      if (event.target === elements.guestInfoOverlay) closeInfoModal();
     });
     document.addEventListener("click", (event) => {
       if (!elements.guestMenu?.hidden && !event.target.closest(".mudavim-header")) closeGuestMenu();
@@ -131,7 +207,6 @@
     document.querySelectorAll('[inputmode="numeric"][maxlength="6"]').forEach((input) => {
       input.addEventListener("input", () => { input.value = input.value.replace(/\D/g, "").slice(0, 6); });
     });
-    document.querySelectorAll("[data-feature]").forEach((button) => button.addEventListener("click", () => toggleFeature(button)));
     document.querySelectorAll("[data-member-panel]").forEach((button) => button.addEventListener("click", () => showMemberPanel(button.dataset.memberPanel)));
     document.querySelectorAll("[data-member-panel-close]").forEach((button) => button.addEventListener("click", () => showMemberPanel("welcome")));
     elements.memberProfileTrigger?.addEventListener("click", openProfile);
@@ -157,12 +232,15 @@
         else if (event.key === "Tab") trapLegalFocus(event);
         return;
       }
+      if (!elements.guestInfoOverlay?.hidden) {
+        if (event.key === "Escape") closeInfoModal();
+        else if (event.key === "Tab") trapInfoFocus(event);
+        return;
+      }
       if (event.key !== "Escape") return;
-      if (elements.guestAboutOverlay && !elements.guestAboutOverlay.hidden) closeAbout();
-      else if (elements.guestMenu && !elements.guestMenu.hidden) closeGuestMenu();
+      if (elements.guestMenu && !elements.guestMenu.hidden) closeGuestMenu();
       else if (elements.memberProfileOverlay && !elements.memberProfileOverlay.hidden) closeProfile();
       else if (elements.mudavimAuthOverlay && !elements.mudavimAuthOverlay.hidden) closeAuth();
-      else if (document.querySelector('[data-feature][aria-expanded="true"]')) closeFeature();
     });
   }
 
@@ -490,7 +568,7 @@
   function openAuth(step) {
     if (!elements.mudavimAuthOverlay) return;
     closeGuestMenu();
-    closeAbout();
+    closeInfoModal({ restoreFocus: false });
     elements.mudavimAuthOverlay.hidden = false;
     document.body.classList.add("auth-open");
     showAuthStep(step || "login");
@@ -512,24 +590,113 @@
     window.setTimeout(() => first?.focus(), 30);
   }
 
-  function toggleFeature(button) {
-    const alreadyOpen = button.getAttribute("aria-expanded") === "true";
-    closeFeature();
-    if (alreadyOpen) return;
-    button.setAttribute("aria-expanded", "true");
-    syncFeatureChevron(button, true);
-  }
+  function renderInfoItems() {
+    if (!elements.guestInfoList) return;
+    elements.guestInfoList.replaceChildren();
+    INFO_ITEM_DEFINITIONS.filter((item) => item.landing).forEach((item) => {
+      const button = document.createElement("button");
+      button.className = "feature-row";
+      button.type = "button";
+      button.dataset.infoOpen = item.id;
+      button.setAttribute("aria-haspopup", "dialog");
+      button.setAttribute("aria-controls", "guestInfoOverlay");
 
-  function closeFeature() {
-    document.querySelectorAll("[data-feature]").forEach((button) => {
-      button.setAttribute("aria-expanded", "false");
-      syncFeatureChevron(button, false);
+      const icon = document.createElement("span");
+      icon.className = "feature-row__icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = infoIconMarkup(item.icon);
+
+      const title = document.createElement("strong");
+      title.className = "feature-row__title";
+      title.textContent = item.title;
+
+      const chevron = document.createElement("span");
+      chevron.className = "feature-row__chevron";
+      chevron.setAttribute("aria-hidden", "true");
+      chevron.innerHTML = '<svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg>';
+
+      button.append(icon, title, chevron);
+      elements.guestInfoList.append(button);
     });
   }
 
-  function syncFeatureChevron(button, open) {
-    const icon = button.querySelector(".feature-row__chevron");
-    if (icon) icon.className = `fas ${open ? "fa-chevron-up" : "fa-chevron-right"} feature-row__chevron`;
+  function infoIconMarkup(icon) {
+    const paths = INFO_ICON_PATHS[icon] || INFO_ICON_PATHS.coffee;
+    return `<svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">${paths}</svg>`;
+  }
+
+  function openInfoModal(itemId, trigger) {
+    const item = INFO_ITEM_DEFINITIONS.find((definition) => definition.id === itemId);
+    if (!item || !elements.guestInfoOverlay) return;
+    closeGuestMenu();
+    state.activeInfoItem = item.id;
+    state.infoReturnFocus = trigger instanceof HTMLElement
+      ? trigger
+      : document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    elements.guestInfoIcon.innerHTML = infoIconMarkup(item.icon);
+    setText(elements.guestInfoEyebrow, item.eyebrow);
+    setText(elements.guestInfoTitle, item.title);
+    elements.guestInfoDescription.replaceChildren();
+    [item.description].concat(item.paragraphs || []).filter(Boolean).forEach((copy) => {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = copy;
+      elements.guestInfoDescription.append(paragraph);
+    });
+    elements.guestInfoDetails.replaceChildren();
+    (item.details || []).forEach((detail) => {
+      const row = document.createElement("li");
+      row.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
+      const label = document.createElement("span");
+      label.textContent = detail;
+      row.append(label);
+      elements.guestInfoDetails.append(row);
+    });
+    elements.guestInfoDetails.hidden = !(item.details || []).length;
+    renderInfoAction(item);
+
+    elements.guestInfoOverlay.hidden = false;
+    document.body.classList.add("guest-card-open");
+    window.setTimeout(() => elements.guestInfoClose?.focus(), 20);
+  }
+
+  function renderInfoAction(item) {
+    if (!elements.guestInfoActions) return;
+    elements.guestInfoActions.replaceChildren();
+    let label = "";
+    if (item.action === "install" && window.TahmisciPWA?.canInstall()) label = "Uygulamaya Ekle";
+    if (item.action === "notifications" && state.member && "Notification" in window && Notification.permission === "default") {
+      label = "Bildirimleri Aç";
+    }
+    elements.guestInfoActions.hidden = !label;
+    if (!label) return;
+    const button = document.createElement("button");
+    button.className = "mudavim-info-modal__action";
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", () => runInfoAction(item, button));
+    elements.guestInfoActions.append(button);
+  }
+
+  async function runInfoAction(item, button) {
+    button.disabled = true;
+    const original = button.textContent;
+    button.textContent = "Açılıyor…";
+    try {
+      if (item.action === "install") {
+        const installed = await window.TahmisciPWA?.promptInstall();
+        if (!installed) throw new Error("Yükleme tamamlanmadı.");
+        closeInfoModal();
+        return;
+      }
+      if (item.action === "notifications") {
+        await enablePushNotifications();
+        closeInfoModal();
+      }
+    } catch (_error) {
+      button.disabled = false;
+      button.textContent = original;
+    }
   }
 
   function toggleGuestMenu() {
@@ -549,19 +716,31 @@
     elements.guestMenuButton.classList.remove("is-open");
   }
 
-  function openAbout() {
-    closeGuestMenu();
-    if (!elements.guestAboutOverlay) return;
-    elements.guestAboutOverlay.hidden = false;
-    document.body.classList.add("guest-card-open");
-    window.setTimeout(() => elements.guestAboutClose?.focus(), 20);
+  function closeInfoModal(options = {}) {
+    if (!elements.guestInfoOverlay || elements.guestInfoOverlay.hidden) return;
+    elements.guestInfoOverlay.hidden = true;
+    document.body.classList.remove("guest-card-open");
+    state.activeInfoItem = "";
+    const returnFocus = state.infoReturnFocus;
+    state.infoReturnFocus = null;
+    const focusTarget = returnFocus?.closest("#guestMenu") ? elements.guestMenuButton : returnFocus;
+    if (options.restoreFocus !== false && focusTarget?.isConnected) focusTarget.focus({ preventScroll: true });
   }
 
-  function closeAbout() {
-    if (!elements.guestAboutOverlay || elements.guestAboutOverlay.hidden) return;
-    elements.guestAboutOverlay.hidden = true;
-    document.body.classList.remove("guest-card-open");
-    document.querySelector("[data-about-open]")?.focus({ preventScroll: true });
+  function trapInfoFocus(event) {
+    const modal = elements.guestInfoOverlay?.querySelector(".mudavim-info-modal");
+    if (!modal) return;
+    const focusable = Array.from(modal.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   function bindLegalControls() {

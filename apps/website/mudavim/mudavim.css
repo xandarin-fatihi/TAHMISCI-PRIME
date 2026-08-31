@@ -241,53 +241,7 @@ h2 {
   line-height: 1.72;
 }
 
-.gate-feature-layout {
-  width: min(680px, 100%);
-  display: grid;
-  grid-template-columns: minmax(220px, 300px) minmax(250px, 340px);
-  align-items: center;
-  gap: 24px;
-  margin-top: 23px;
-  scroll-margin-top: 100px;
-}
-
-.gate-benefits { display: grid; }
-
-.feature-row {
-  width: 100%;
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  border-bottom: 1px solid rgba(159, 107, 66, 0.36);
-  background: transparent;
-  color: var(--coffee);
-  padding: 10px 1px;
-  text-align: left;
-  font-size: clamp(0.98rem, 1.02vw, 1.08rem);
-  font-weight: 650;
-  line-height: 1.45;
-  transition: color 0.2s ease, padding 0.2s ease;
-}
-
-.feature-row i {
-  color: var(--copper);
-  font-size: 1.15rem;
-  font-style: normal;
-  transition: transform 0.2s ease;
-}
-
-.feature-row:hover,
-.feature-row[aria-expanded="true"] {
-  color: var(--espresso);
-  padding-left: 5px;
-}
-
-.feature-row:hover i,
-.feature-row[aria-expanded="true"] i {
-  transform: translateX(3px);
-}
+.gate-feature-layout { scroll-margin-top: 100px; }
 
 .mudavim-auth-cta:hover,
 .mudavim-auth-social:hover {
@@ -334,14 +288,6 @@ h2 {
     line-height: 1.58;
   }
 
-  .gate-feature-layout { margin-top: 14px; }
-
-  .feature-row {
-    min-height: 42px;
-    padding-block: 6px;
-    font-size: clamp(1.02rem, 1.08vw, 1.12rem);
-  }
-
   .mudavim-gate .mudavim-gate__visual { height: clamp(350px, 52dvh, 470px); }
 }
 
@@ -363,14 +309,6 @@ h2 {
     margin-top: 12px;
     font-size: clamp(0.98rem, 1vw, 1.05rem);
     line-height: 1.5;
-  }
-
-  .gate-feature-layout { margin-top: 10px; }
-
-  .feature-row {
-    min-height: 40px;
-    padding-block: 4px;
-    font-size: clamp(1rem, 1.04vw, 1.08rem);
   }
 
   .mudavim-gate .mudavim-gate__visual { height: clamp(330px, 50dvh, 410px); }
@@ -894,12 +832,6 @@ input:focus {
     gap: 38px;
   }
 
-  .gate-feature-layout {
-    width: min(370px, 100%);
-    grid-template-columns: 1fr;
-    gap: 16px;
-  }
-
   .mudavim-gate__visual { height: clamp(410px, 56vh, 540px); }
 }
 
@@ -941,12 +873,6 @@ input:focus {
   .mudavim-hero-brand { width: min(100%, 460px); }
 
   .gate-lead { max-width: 680px; text-align: center; }
-
-  .gate-feature-layout {
-    width: min(680px, 100%);
-    grid-template-columns: minmax(220px, 300px) minmax(250px, 340px);
-    gap: 28px;
-  }
 
   .mudavim-gate__visual {
     width: 100%;
@@ -1033,12 +959,6 @@ input:focus {
   .mudavim-hero-brand strong {
     font-size: 0.78rem;
     letter-spacing: 0.18em;
-  }
-
-  .gate-feature-layout {
-    grid-template-columns: 1fr;
-    gap: 16px;
-    margin-top: 24px;
   }
 
   .mudavim-gate__visual {
@@ -2573,7 +2493,7 @@ body.legal-open { overflow: hidden !important; }
   .member-notification-button { grid-area: notifications; }
 }
 
-/* Müdavim landing menüsü, bilgi kartları ve aynı sayfa marka hikâyesi. */
+/* Müdavim landing menüsü, premium bilgi satırları ve ortak detay modalı. */
 .mudavim-menu-toggle {
   width: 48px;
   height: 48px;
@@ -2663,111 +2583,129 @@ body.legal-open { overflow: hidden !important; }
   color: var(--paper);
 }
 
-.gate-feature-layout { width: min(640px, 100%); display: block; }
+.gate-title {
+  max-width: 650px;
+  margin-top: clamp(18px, 2.6vh, 28px);
+  color: var(--espresso);
+  font-size: clamp(1.7rem, 2.45vw, 2.8rem);
+  font-weight: 700;
+  line-height: 1.16;
+  letter-spacing: -0.045em;
+}
+
+.gate-lead { margin-top: 13px; }
+
+.gate-support {
+  max-width: 620px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: clamp(0.78rem, 0.9vw, 0.9rem);
+  font-weight: 500;
+  line-height: 1.55;
+}
+
+.gate-feature-layout { width: min(640px, 100%); display: block; margin-top: 17px; }
 
 .gate-benefits {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: 1fr;
+  gap: 0;
+  border-top: 1px solid rgba(159, 107, 66, 0.25);
 }
 
 .gate-benefits .feature-row {
-  min-height: 76px;
+  width: 100%;
+  min-height: 58px;
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) 22px;
+  grid-template-columns: 42px minmax(0, 1fr) 24px;
   align-items: center;
-  gap: 12px;
-  border: 1px solid rgba(159, 107, 66, 0.28);
-  border-radius: 18px;
-  background: rgba(255, 250, 243, 0.72);
-  padding: 11px 13px;
+  gap: 13px;
+  border: 0;
+  border-bottom: 1px solid rgba(159, 107, 66, 0.25);
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 4px;
   color: var(--espresso);
-  box-shadow: 0 9px 24px rgba(48, 26, 12, 0.05);
+  box-shadow: none;
+  text-align: left;
+  transition: color 0.18s ease, padding 0.18s ease, background 0.18s ease;
 }
 
-.gate-benefits .feature-row:hover,
-.gate-benefits .feature-row[aria-expanded="true"] {
-  border-color: rgba(159, 107, 66, 0.58);
-  background: rgba(255, 250, 243, 0.97);
-  padding-left: 13px;
+.gate-benefits .feature-row:hover {
+  background: rgba(159, 107, 66, 0.055);
+  color: var(--copper);
+  padding-left: 8px;
 }
 
 .feature-row__icon {
-  width: 48px;
-  height: 48px;
+  width: 40px;
+  height: 40px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(159, 107, 66, 0.36);
-  border-radius: 50%;
-  background: linear-gradient(145deg, rgba(242, 232, 220, 0.88), rgba(255, 250, 243, 0.98));
+  border: 1px solid rgba(159, 107, 66, 0.26);
+  border-radius: 13px;
+  background: rgba(242, 232, 220, 0.68);
   color: var(--espresso);
-  font-size: 1.05rem;
 }
 
-.gate-benefits .feature-row .feature-row__icon i,
-.gate-benefits .feature-row .feature-row__chevron {
-  color: inherit;
-  font-style: normal;
-  transform: none;
+.feature-row__icon svg,
+.feature-row__chevron svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.feature-row__copy { min-width: 0; display: grid; gap: 4px; text-align: left; }
-.feature-row__copy strong { font-size: 0.94rem; line-height: 1.35; }
-.feature-row__copy small { display: none; color: var(--coffee); font-size: 0.75rem; font-weight: 500; line-height: 1.55; }
-.feature-row[aria-expanded="true"] .feature-row__copy small { display: block; }
-.feature-row__chevron { justify-self: end; font-size: 0.82rem !important; }
+.feature-row__title { min-width: 0; font-size: 0.94rem; font-weight: 650; line-height: 1.35; }
+.feature-row__chevron { justify-self: end; color: var(--copper); transition: transform 0.18s ease; }
+.feature-row__chevron svg { width: 18px; height: 18px; }
+.feature-row:hover .feature-row__chevron { transform: translateX(3px); }
 
 .mudavim-gate__epilogue {
   display: none;
   color: var(--espresso);
-  font-family: "Magnolia Script", cursive;
   text-align: center;
 }
 
+.mudavim-gate__epilogue p { font-family: "Magnolia Script", cursive; }
 .mudavim-gate__epilogue span,
 .mudavim-gate__epilogue strong { display: block; font-weight: 400; }
+.mudavim-gate__epilogue small { display: block; margin-top: 12px; color: var(--coffee); font-size: 0.72rem; font-weight: 500; line-height: 1.55; }
 
-.mudavim-about-overlay {
+.mudavim-info-overlay {
   position: fixed;
   inset: 0;
   z-index: 80;
   display: grid;
   place-items: center;
-  overflow: hidden;
-  background: rgba(35, 20, 11, 0.5);
-  backdrop-filter: blur(10px);
-  padding: clamp(12px, 3vw, 34px);
+  overflow: auto;
+  background: rgba(35, 20, 11, 0.46);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: clamp(14px, 3vw, 34px);
 }
 
-.mudavim-about-overlay[hidden] { display: none; }
+.mudavim-info-overlay[hidden] { display: none; }
 
-.mudavim-about-card {
+.mudavim-info-modal {
   position: relative;
-  width: min(900px, 100%);
-  max-height: min(720px, calc(100dvh - 24px));
-  display: grid;
-  grid-template-columns: minmax(240px, 0.78fr) minmax(0, 1.22fr);
-  overflow: hidden;
-  border: 1px solid rgba(159, 107, 66, 0.34);
-  border-radius: 28px;
-  background: #fffaf3;
-  box-shadow: 0 32px 90px rgba(35, 20, 11, 0.3);
-}
-
-.mudavim-about-card > img { width: 100%; height: 100%; min-height: 440px; object-fit: cover; }
-
-.mudavim-about-card > div {
-  min-width: 0;
+  width: min(580px, calc(100vw - 32px));
+  max-height: min(760px, calc(100dvh - 28px));
+  overflow-x: hidden;
   overflow-y: auto;
-  padding: clamp(28px, 4vw, 50px);
+  border: 1px solid rgba(159, 107, 66, 0.3);
+  border-radius: 26px;
+  background: linear-gradient(145deg, #fffaf3, #fbf3e9);
+  box-shadow: 0 28px 78px rgba(35, 20, 11, 0.27);
+  padding: clamp(28px, 5vw, 46px);
+  animation: mudavimInfoIn 0.2s ease both;
 }
 
-.mudavim-about-card small { color: var(--copper); font-weight: 800; letter-spacing: 0.2em; }
-.mudavim-about-card h2 { margin: 8px 0 20px; color: var(--espresso); font-size: clamp(1.9rem, 3.2vw, 3rem); }
-.mudavim-about-card p { color: var(--coffee); font-size: 0.92rem; font-weight: 500; line-height: 1.72; }
-.mudavim-about-card p + p { margin-top: 14px; }
-
-.mudavim-about-close {
+.mudavim-info-modal__close {
   position: absolute;
   z-index: 2;
   top: 14px;
@@ -2776,10 +2714,59 @@ body.legal-open { overflow: hidden !important; }
   height: 44px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(90, 47, 29, 0.16);
-  border-radius: 50%;
+  border: 1px solid rgba(90, 47, 29, 0.18);
+  border-radius: 14px;
   background: rgba(255, 250, 243, 0.94);
   color: var(--espresso);
+  transition: background 0.18s ease, transform 0.18s ease;
+}
+
+.mudavim-info-modal__close:hover { background: var(--cream); transform: rotate(2deg); }
+.mudavim-info-modal__close svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+
+.mudavim-info-modal__icon {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 18px;
+  border: 1px solid rgba(159, 107, 66, 0.3);
+  border-radius: 18px;
+  background: rgba(242, 232, 220, 0.78);
+  color: var(--espresso);
+}
+
+.mudavim-info-modal__icon svg { width: 29px; height: 29px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.mudavim-info-modal__eyebrow { padding-right: 54px; color: var(--copper); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.18em; }
+.mudavim-info-modal h2 { margin: 6px 50px 14px 0; color: var(--espresso); font-size: clamp(1.65rem, 3.2vw, 2.35rem); line-height: 1.18; }
+.mudavim-info-modal__description { color: var(--coffee); font-size: 0.9rem; font-weight: 500; line-height: 1.72; }
+.mudavim-info-modal__description p + p { margin-top: 13px; }
+
+.mudavim-info-modal__details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 18px;
+  margin: 22px 0 0;
+  padding: 18px 0 0;
+  border-top: 1px solid rgba(159, 107, 66, 0.22);
+  list-style: none;
+}
+
+.mudavim-info-modal__details[hidden] { display: none; }
+.mudavim-info-modal__details li { min-width: 0; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 8px; color: var(--coffee); font-size: 0.82rem; font-weight: 600; line-height: 1.45; }
+.mudavim-info-modal__details svg { width: 18px; height: 18px; fill: none; stroke: var(--copper); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.mudavim-info-modal__actions { margin-top: 24px; }
+.mudavim-info-modal__actions[hidden] { display: none; }
+.mudavim-info-modal__action {
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--espresso);
+  color: var(--paper);
+  padding: 11px 20px;
+  font-weight: 700;
 }
 
 body.guest-card-open { overflow: hidden; }
@@ -2789,17 +2776,25 @@ body.guest-card-open { overflow: hidden; }
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes mudavimInfoIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 @media (min-width: 901px) and (max-height: 800px) {
-  .gate-benefits .feature-row { min-height: 66px; padding-block: 8px; }
-  .feature-row__icon { width: 42px; height: 42px; }
-  .gate-benefits .feature-row { grid-template-columns: 42px minmax(0, 1fr) 20px; }
-  .feature-row__copy small { font-size: 0.69rem; line-height: 1.4; }
+  .gate-title { margin-top: 10px; font-size: clamp(1.45rem, 2vw, 2.15rem); }
+  .gate-lead { margin-top: 8px; line-height: 1.42; }
+  .gate-support { margin-top: 4px; }
+  .gate-feature-layout { margin-top: 9px; }
+  .gate-benefits .feature-row { min-height: 46px; padding-block: 3px; }
+  .feature-row__icon { width: 36px; height: 36px; }
+  .gate-benefits .feature-row { grid-template-columns: 36px minmax(0, 1fr) 20px; }
 }
 
 @media (max-width: 900px) {
   .mudavim-header .mudavim-nav { right: 20px; }
   .gate-feature-layout { display: block; width: min(680px, 100%); }
-  .gate-benefits { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gate-benefits { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 640px) {
@@ -2813,23 +2808,23 @@ body.guest-card-open { overflow: hidden; }
   .mudavim-hero-brand { width: 100%; }
   .mudavim-hero-brand__mark { width: min(76vw, 300px); }
   .mudavim-hero-brand strong { font-size: 0.82rem; letter-spacing: 0.2em; }
-  .gate-lead { max-width: 520px; margin-top: 24px; font-size: clamp(1rem, 4.5vw, 1.12rem); line-height: 1.62; }
-  .gate-feature-layout { width: 100%; margin-top: 24px; }
-  .gate-benefits { grid-template-columns: 1fr; gap: 10px; }
+  .gate-title { max-width: 440px; margin: 22px auto 0; font-size: clamp(1.6rem, 7.4vw, 2.2rem); line-height: 1.2; text-align: center; }
+  .gate-lead { max-width: 520px; margin: 14px auto 0; font-size: clamp(0.9rem, 4vw, 1rem); line-height: 1.62; text-align: center; }
+  .gate-support { max-width: 480px; margin: 8px auto 0; font-size: 0.76rem; text-align: center; }
+  .gate-feature-layout { width: 100%; margin-top: 25px; }
+  .gate-benefits { grid-template-columns: 1fr; gap: 0; }
 
   .gate-benefits .feature-row {
-    min-height: 72px;
-    grid-template-columns: 52px minmax(0, 1fr) 24px;
+    min-height: 64px;
+    grid-template-columns: 44px minmax(0, 1fr) 24px;
     gap: 14px;
-    border-radius: 20px;
-    padding: 10px 14px;
+    border-radius: 0;
+    padding: 9px 4px;
   }
 
-  .gate-benefits .feature-row:hover,
-  .gate-benefits .feature-row[aria-expanded="true"] { padding-left: 14px; }
-  .feature-row__icon { width: 52px; height: 52px; font-size: 1.1rem; }
-  .feature-row__copy strong { font-size: 1rem; }
-  .feature-row__copy small { font-size: 0.78rem; line-height: 1.55; }
+  .gate-benefits .feature-row:hover { padding-left: 8px; }
+  .feature-row__icon { width: 42px; height: 42px; border-radius: 13px; }
+  .feature-row__title { font-size: 0.93rem; }
 
   .mudavim-gate__visual { display: none; }
 
@@ -2841,15 +2836,17 @@ body.guest-card-open { overflow: hidden; }
     border-radius: 26px;
     background: rgba(255, 250, 243, 0.7);
     padding: 22px 14px;
-    font-size: clamp(1.55rem, 8vw, 2.1rem);
     line-height: 1.12;
   }
 
-  .mudavim-about-card { grid-template-columns: 1fr; max-height: calc(100dvh - 24px); }
-  .mudavim-about-card > img { height: 150px; min-height: 150px; }
-  .mudavim-about-card > div { padding: 24px 20px 30px; }
-  .mudavim-about-card h2 { padding-right: 44px; font-size: 2rem; }
-  .mudavim-about-card p { font-size: 0.84rem; line-height: 1.65; }
+  .mudavim-gate__epilogue p { font-size: clamp(1.55rem, 8vw, 2.1rem); }
+  .mudavim-info-overlay { align-items: center; padding: 14px; }
+  .mudavim-info-modal { width: calc(100vw - 28px); max-height: calc(100dvh - 28px); border-radius: 22px; padding: 26px 20px 28px; }
+  .mudavim-info-modal__icon { width: 50px; height: 50px; margin-bottom: 14px; }
+  .mudavim-info-modal__eyebrow { font-size: 0.65rem; }
+  .mudavim-info-modal h2 { margin-right: 42px; font-size: 1.65rem; }
+  .mudavim-info-modal__description { font-size: 0.83rem; line-height: 1.65; }
+  .mudavim-info-modal__details { grid-template-columns: 1fr; gap: 8px; }
 }
 
 @media (max-width: 380px) {

@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/app-icons/mudavim/apple-touch-icon.png">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link rel="stylesheet" href="/shared/styles/account-security.css?v=20260829-mudavim">
-  <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260830-mudavim">
-  <link rel="stylesheet" href="/mudavim/mudavim.css?v=20260831-mobile-landing">
+  <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260831-mudavim-update">
+  <link rel="stylesheet" href="/mudavim/mudavim.css?v=20260831-landing-modal-pwa">
 </head>
 <body class="is-guest">
   <header class="mudavim-header">
@@ -21,10 +21,10 @@
       <i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i>
     </button>
     <nav class="mudavim-nav" id="guestMenu" aria-label="Müdavim bağlantıları" hidden>
-      <a href="#features" data-guest-nav><i class="fas fa-tags" aria-hidden="true"></i><span>Kampanyalar</span></a>
+      <button type="button" data-info-open="campaigns" data-guest-nav aria-haspopup="dialog" aria-controls="guestInfoOverlay"><i class="fas fa-tags" aria-hidden="true"></i><span>Kampanyalar</span></button>
       <button type="button" data-auth-open="login" data-guest-nav><i class="far fa-user" aria-hidden="true"></i><span>Giriş Yap</span></button>
       <button class="mudavim-nav__register" type="button" data-auth-open="register" data-guest-nav><i class="fas fa-user-plus" aria-hidden="true"></i><span>Kayıt Ol</span></button>
-      <button type="button" data-about-open data-guest-nav><i class="fas fa-mug-hot" aria-hidden="true"></i><span>Hakkımızda</span></button>
+      <button type="button" data-info-open="about" data-guest-nav aria-haspopup="dialog" aria-controls="guestInfoOverlay"><i class="fas fa-mug-hot" aria-hidden="true"></i><span>Hakkımızda</span></button>
     </nav>
   </header>
 
@@ -35,34 +35,18 @@
           <span class="mudavim-hero-brand__mark" aria-hidden="true"><img src="/assets/brand/logo-primary.png" alt=""></span>
           <strong>TAHMİSÇİ MÜDAVİM</strong>
         </div>
-        <p class="gate-lead">Müdavim hesabını e-posta ile güvenle oluştur; Tahmisçi duyurularını, profilini ve bildirim tercihlerini tek yerden yönet.</p>
+        <h1 class="gate-title">Tahmisçi’ye sadece uğrama, Müdavim ol.</h1>
+        <p class="gate-lead">Hesabını oluştur; duyurularını, kampanyalarını, profilini ve uygulama bildirimlerini tek yerden yönet.</p>
+        <p class="gate-support">Müdavim deneyimi geliştikçe yeni avantajların aynı hesabına eklenir.</p>
 
         <div class="gate-feature-layout" id="features">
-          <div class="gate-benefits" aria-label="Müdavim özellikleri">
-            <button class="feature-row" type="button" data-feature="account" aria-expanded="true">
-              <span class="feature-row__icon"><i class="fas fa-shield-halved" aria-hidden="true"></i></span>
-              <span class="feature-row__copy"><strong>Güvenli hesap</strong><small>E-posta doğrulaması, güvenli oturum ve hesap kurtarma seçenekleriyle Müdavim hesabını yönetirsin.</small></span>
-              <i class="fas fa-chevron-up feature-row__chevron" aria-hidden="true"></i>
-            </button>
-            <button class="feature-row" type="button" data-feature="visits" aria-expanded="false">
-              <span class="feature-row__icon"><i class="far fa-calendar-check" aria-hidden="true"></i></span>
-              <span class="feature-row__copy"><strong>Ziyaret takibi</strong><small>Gerçek ziyaret kayıtların oluştuğunda geçmişin burada gösterilir.</small></span>
-              <i class="fas fa-chevron-right feature-row__chevron" aria-hidden="true"></i>
-            </button>
-            <button class="feature-row" type="button" data-feature="mobile" aria-expanded="false">
-              <span class="feature-row__icon"><i class="fas fa-mobile-screen-button" aria-hidden="true"></i></span>
-              <span class="feature-row__copy"><strong>Mobil arayüz</strong><small>Mobil cihaz ve masaüstünde aynı güvenli Müdavim hesabını kullanırsın.</small></span>
-              <i class="fas fa-chevron-right feature-row__chevron" aria-hidden="true"></i>
-            </button>
-            <button class="feature-row" type="button" data-feature="profile" aria-expanded="false">
-              <span class="feature-row__icon"><i class="fas fa-user-gear" aria-hidden="true"></i></span>
-              <span class="feature-row__copy"><strong>Profil yönetimi</strong><small>Profil ve e-posta güvenliği doğrudan backend hesabında saklanır.</small></span>
-              <i class="fas fa-chevron-right feature-row__chevron" aria-hidden="true"></i>
-            </button>
-          </div>
+          <div class="gate-benefits" id="guestInfoList" aria-label="Müdavim özellikleri"></div>
         </div>
 
-        <p class="mudavim-gate__epilogue"><span>Her fincanda</span><strong>bir müdavim hikayesi.</strong></p>
+        <div class="mudavim-gate__epilogue">
+          <p><span>Her fincanda</span><strong>bir müdavim hikâyesi.</strong></p>
+          <small>Tahmisçi’de kahve kadar tanıdık yüzlerin de yeri vardır.</small>
+        </div>
 
       </div>
 
@@ -70,15 +54,17 @@
         <img src="/assets/images/hero/tahmisci-barista-main.jpg" alt="Tahmisçi baristası kahve hazırlarken" width="1440" height="1797">
       </figure>
 
-      <div class="mudavim-about-overlay" id="guestAboutOverlay" hidden>
-        <article class="mudavim-about-card" role="dialog" aria-modal="true" aria-labelledby="guestAboutTitle">
-          <button class="mudavim-about-close" id="guestAboutClose" type="button" aria-label="Hakkımızda kartını kapat"><i class="fas fa-xmark" aria-hidden="true"></i></button>
-          <img src="/assets/images/about/tahmisci-hakkimizda.webp" alt="Tahmisçi kahve sunumu">
-          <div><small>TAHMİSÇİ</small><h2 id="guestAboutTitle">Marka Hikayemiz</h2>
-            <p>Kurtuluş Savaşı'nın ardından büyük dedem Hüseyin Tünaydın, 1926'da Torbalı'da kahve çekirdeklerini zeytin odununda kavurup taş dibekte döverek satmaya başladı. Kahvesinin kokusu kısa sürede köyleri sardı ve herkes “Tahmisçi Hüseyin Efendi”nin kahvesini içmeden gününü tamamlamaz oldu.</p>
-            <p>Bu ustalık dolu mesleği dedem Ahmet Zeki Tünaydın devraldı. 1957'den itibaren aynı özenle sürdürdü; kahveyi bir içecekten çok bir kültür, bir sabır ve ustalık işi olarak gördü. Daha sonra babam Mustafa Aygün Tünaydın ve kardeşleri bu geleneği yaşattı.</p>
-            <p>Bugün ben, hem dedemden hem babamdan öğrendiğim bu ilkelerle, geçmişin emek dolu zanaatini yeni nesil kahve anlayışıyla birleştiriyorum. Her fincanda dört neslin emeği, dürüstlüğü ve tutkusu var.</p>
-          </div>
+      <div class="mudavim-info-overlay" id="guestInfoOverlay" hidden>
+        <article class="mudavim-info-modal" role="dialog" aria-modal="true" aria-labelledby="guestInfoTitle" aria-describedby="guestInfoDescription">
+          <button class="mudavim-info-modal__close" id="guestInfoClose" type="button" aria-label="Kapat">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+          </button>
+          <span class="mudavim-info-modal__icon" id="guestInfoIcon" aria-hidden="true"></span>
+          <p class="mudavim-info-modal__eyebrow" id="guestInfoEyebrow"></p>
+          <h2 id="guestInfoTitle"></h2>
+          <div class="mudavim-info-modal__description" id="guestInfoDescription"></div>
+          <ul class="mudavim-info-modal__details" id="guestInfoDetails"></ul>
+          <div class="mudavim-info-modal__actions" id="guestInfoActions" hidden></div>
         </article>
       </div>
     </section>
@@ -361,7 +347,7 @@
   </div>
 
   <script src="/shared/scripts/account-security.js?v=20260829-mudavim"></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260830-mudavim"></script>
-  <script src="/mudavim/mudavim.js?v=20260830-production-account"></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260831-mudavim-update"></script>
+  <script src="/mudavim/mudavim.js?v=20260831-landing-modal-pwa"></script>
 </body>
 </html>
