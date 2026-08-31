@@ -62,6 +62,12 @@ const config = {
   smtpUser: clean(process.env.SMTP_USER),
   smtpPass: clean(process.env.SMTP_PASS),
   smtpFrom: clean(process.env.SMTP_FROM),
+  mudavimSmtpHost: clean(process.env.MUDAVIM_SMTP_HOST),
+  mudavimSmtpPort: toPort(process.env.MUDAVIM_SMTP_PORT, 465),
+  mudavimSmtpSecure: parseBoolean(process.env.MUDAVIM_SMTP_SECURE, true),
+  mudavimSmtpUser: clean(process.env.MUDAVIM_SMTP_USER),
+  mudavimSmtpPass: clean(process.env.MUDAVIM_SMTP_PASS),
+  mudavimSmtpFrom: clean(process.env.MUDAVIM_SMTP_FROM),
   notificationsEmailEnabled: parseBoolean(process.env.NOTIFICATIONS_EMAIL_ENABLED, false),
   notificationsManagerEmail: clean(process.env.NOTIFICATIONS_MANAGER_EMAIL).toLowerCase(),
   vapidSubject: clean(process.env.VAPID_SUBJECT) || "mailto:notifications@tahmiscicoffee.com",
@@ -196,6 +202,12 @@ function validateConfig() {
 
   if ((config.smtpUser || config.smtpPass) && (!config.smtpUser || !config.smtpPass)) {
     errors.push("SMTP_USER ve SMTP_PASS birlikte tanimlanmali.");
+  }
+
+  const mudavimSmtpIdentityCount = [config.mudavimSmtpUser, config.mudavimSmtpPass, config.mudavimSmtpFrom]
+    .filter(Boolean).length;
+  if (mudavimSmtpIdentityCount > 0 && mudavimSmtpIdentityCount < 3) {
+    errors.push("MUDAVIM_SMTP_USER, MUDAVIM_SMTP_PASS ve MUDAVIM_SMTP_FROM birlikte tanimlanmali.");
   }
 
   if (config.notificationsManagerEmail && !isEmailLike(config.notificationsManagerEmail)) {

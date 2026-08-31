@@ -68,8 +68,24 @@ const store = createFileStore(config.dataFile, {
 });
 const auth = createAuthMiddleware(config, store);
 const mailService = createMailService(config);
+const mudavimMailService = createMailService({
+  ...config,
+  smtpHost: config.mudavimSmtpHost,
+  smtpPort: config.mudavimSmtpPort,
+  smtpSecure: config.mudavimSmtpSecure,
+  smtpUser: config.mudavimSmtpUser,
+  smtpPass: config.mudavimSmtpPass,
+  smtpFrom: config.mudavimSmtpFrom
+});
 const pushService = createPushService(config);
-const notificationDeliveryWorker = createNotificationDeliveryWorker({ store, config, mailService, pushService, logError: logRuntimeError });
+const notificationDeliveryWorker = createNotificationDeliveryWorker({
+  store,
+  config,
+  mailService,
+  mudavimMailService,
+  pushService,
+  logError: logRuntimeError
+});
 const notificationScheduler = createNotificationScheduler({ store, intervalMs: config.notificationReminderIntervalMs, logError: logRuntimeError });
 const procurementImageProcessor = createProcurementImageProcessor();
 const procurementDocumentService = createProcurementDocumentService({
@@ -261,6 +277,7 @@ registerAccountSecurityRoutes({
   auth,
   config,
   mailService,
+  mudavimMailService,
   bcrypt,
   validatePassword,
   requireRequestOrigin: requireAdminOrMainRequestOrigin,
@@ -2389,7 +2406,7 @@ async function shutdownRuntime(server, options = {}) {
     notificationScheduler.stop(),
     notificationDeliveryWorker.stop()
   ]);
-  await mailService.close();
+  await Promise.all([mailService.close(), mudavimMailService.close()]);
   const closePromise = new Promise((resolve) => {
     if (!server || !server.listening) return resolve();
     server.close(() => resolve());

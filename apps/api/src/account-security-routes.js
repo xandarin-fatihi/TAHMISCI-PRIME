@@ -17,6 +17,7 @@ function registerAccountSecurityRoutes(options) {
     auth,
     config,
     mailService,
+    mudavimMailService,
     bcrypt,
     validatePassword,
     requireRequestOrigin,
@@ -24,11 +25,13 @@ function registerAccountSecurityRoutes(options) {
     confirmLimiter
   } = options;
 
-  if (!app || !store || !auth || !config || !mailService || !bcrypt
+  if (!app || !store || !auth || !config || !mailService || !mudavimMailService || !bcrypt
     || typeof validatePassword !== "function" || typeof requireRequestOrigin !== "function"
     || typeof requestLimiter !== "function" || typeof confirmLimiter !== "function") {
     throw new TypeError("Hesap güvenliği rotaları için eksiksiz bağımlılıklar gerekli.");
   }
+
+  const mailServiceForScope = (scope) => scope === "mudavim" ? mudavimMailService : mailService;
 
   const accountAuth = (req, res, next) => {
     const scope = lockedScope(req);
@@ -47,11 +50,12 @@ function registerAccountSecurityRoutes(options) {
       const data = await requestStore(req, store);
       const account = resolveAuthenticatedAccount(data, req, req.accountScope);
       if (!account) return res.status(404).json({ ok: false, message: "Hesap bulunamadı." });
+      const selectedMailService = mailServiceForScope(req.accountScope);
       return res.json({
         ok: true,
         scope: req.accountScope,
         security: publicAccountSecurity(account),
-        smtpConfigured: Boolean(mailService.isConfigured && mailService.isConfigured())
+        smtpConfigured: Boolean(selectedMailService.isConfigured && selectedMailService.isConfigured())
       });
     } catch (error) {
       return next(error);
@@ -88,7 +92,8 @@ function registerAccountSecurityRoutes(options) {
 
   const emailVerificationRequestHandler = async (req, res, next) => {
     try {
-      if (!mailConfigured(config, mailService)) {
+      const selectedMailService = mailServiceForScope(req.accountScope);
+      if (!mailConfigured(config, selectedMailService)) {
         return res.status(503).json({ ok: false, message: "E-posta hizmeti şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin." });
       }
       const snapshot = await requestStore(req, store);
@@ -153,7 +158,7 @@ function registerAccountSecurityRoutes(options) {
       });
 
       try {
-        await sendSecurityCode(mailService, config, {
+        await sendSecurityCode(selectedMailService, config, {
           to: destination,
           code,
           purpose: "email_verification",
@@ -282,7 +287,8 @@ function registerAccountSecurityRoutes(options) {
       if (!bodyScopeMatches(req, scope)) {
         return res.status(400).json({ ok: false, message: "Hesap kapsamı giriş ekranıyla eşleşmiyor." });
       }
-      if (!mailConfigured(config, mailService)) {
+      const selectedMailService = mailServiceForScope(scope);
+      if (!mailConfigured(config, selectedMailService)) {
         return res.status(503).json({ ok: false, message: "E-posta hizmeti şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin." });
       }
       const identifier = normalizeIdentifier(req.body && (req.body.identifier || req.body.username || req.body.email));
@@ -332,7 +338,7 @@ function registerAccountSecurityRoutes(options) {
 
       if (match && destination) {
         try {
-          await sendSecurityCode(mailService, config, {
+          await sendSecurityCode(selectedMailService, config, {
             to: destination,
             code,
             purpose: "password_reset",
@@ -429,7 +435,8 @@ function registerAccountSecurityRoutes(options) {
 
   app.post("/api/mudavim/register", requireRequestOrigin, requestLimiter, async (req, res, next) => {
     try {
-      if (!mailConfigured(config, mailService)) {
+      const selectedMailService = mailServiceForScope("mudavim");
+      if (!mailConfigured(config, selectedMailService)) {
         return res.status(503).json({ ok: false, message: "E-posta hizmeti şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin." });
       }
       const fullName = String(req.body && req.body.fullName || "").trim().replace(/\s+/g, " ").slice(0, 120);
@@ -530,7 +537,7 @@ function registerAccountSecurityRoutes(options) {
       });
 
       try {
-        await sendSecurityCode(mailService, config, {
+        await sendSecurityCode(selectedMailService, config, {
           to: email,
           code,
           purpose: "email_verification",

@@ -10,6 +10,7 @@ function createNotificationDeliveryWorker(options) {
     store,
     config = {},
     mailService,
+    mudavimMailService,
     pushService,
     logError = console.error,
     clock = () => new Date(),
@@ -23,6 +24,7 @@ function createNotificationDeliveryWorker(options) {
   const maxAttempts = Math.max(1, Number(config.notificationMaxAttempts || 5));
   const batchSize = Math.max(1, Math.min(100, Number(config.notificationWorkerBatchSize || 20)));
   const intervalMs = Math.max(1000, Number(config.notificationWorkerIntervalMs || 15000));
+  const mailServiceForRole = (role) => normalizeRole(role) === "mudavim" ? mudavimMailService : mailService;
   let timer = null;
   let running = false;
   let stopped = true;
@@ -115,12 +117,13 @@ function createNotificationDeliveryWorker(options) {
         if (!preference.emailEnabled || !preference.emailAddress || preference.emailAddress !== String(item.destination || "").toLowerCase()) {
           return cancel(item, "E-posta bildirimi alıcı tarafından kapatıldı.");
         }
-        const emailConfigured = mailService && typeof mailService.sendNotificationEmail === "function"
-          && (typeof mailService.isConfigured !== "function" || mailService.isConfigured());
+        const selectedMailService = mailServiceForRole(notification.recipientRole);
+        const emailConfigured = selectedMailService && typeof selectedMailService.sendNotificationEmail === "function"
+          && (typeof selectedMailService.isConfigured !== "function" || selectedMailService.isConfigured());
         if (config.notificationsEmailEnabled === false || !emailConfigured) {
           throw permanentError("E-posta bildirim kanalı yapılandırılmamış.", "EMAIL_NOT_CONFIGURED");
         }
-        await mailService.sendNotificationEmail(notification, item.destination);
+        await selectedMailService.sendNotificationEmail(notification, item.destination);
       } else if (item.channel === "push") {
         if (!preference.pushEnabled) return cancel(item, "Push bildirimi alıcı tarafından kapatıldı.");
         const pushConfigured = pushService && typeof pushService.sendNotificationPush === "function"
