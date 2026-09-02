@@ -98,10 +98,12 @@ function createProcurementService(options = {}) {
     requireCapability(actor, "procurement.read");
     requireSection(actor, "dashboard", "view");
     const { data, procurement } = await readSnapshot();
-    const shipmentVisible = hasSectionAccess(actor, "shipments", "view");
+    const shipmentVisible = hasSectionAccess(actor, "documents", "view")
+      || hasSectionAccess(actor, "shipments", "view")
+      || hasSectionAccess(actor, "suppliers", "view");
     const supplierVisible = hasSectionAccess(actor, "suppliers", "view");
     const ledgerVisible = hasSectionAccess(actor, "ledger", "view");
-    const linkVisible = hasSectionAccess(actor, "links", "view");
+    const linkVisible = hasSectionAccess(actor, "suppliers", "view") || hasSectionAccess(actor, "links", "view");
     const stockVisible = hasSectionAccess(actor, "stock", "view");
     const shipments = shipmentVisible ? visibleShipments(data.workforceShipments, actor) : [];
     const today = dateKey(now());
@@ -1454,6 +1456,7 @@ function hasCapability(actor, capability) {
 function publicActor(actor) {
   const capabilities = actor.type === "admin" ? [...FATURA_CAPABILITIES] : [...new Set(actor.capabilities || [])];
   const sectionAccess = effectiveSectionAccess({ ...actor, capabilities });
+  const exposedSectionAccess = visibleSectionAccess(sectionAccess);
   return {
     type: actor.type,
     id: actor.id,
@@ -1463,7 +1466,7 @@ function publicActor(actor) {
     accessEnabled: actor.type === "admin" || actor.accessEnabled !== false && capabilities.length > 0,
     template: actor.type === "admin" ? "yonetici" : String(actor.template || "ozel"),
     capabilities,
-    sectionAccess,
+    sectionAccess: exposedSectionAccess,
     sections: visibleFaturaSections({ ...actor, capabilities, sectionAccess })
   };
 }
@@ -1476,6 +1479,7 @@ function publicProcurementUser(user) {
     capabilities,
     allowManagement: template === "yonetici" || String(user.faturaRole) === "yönetici"
   });
+  const exposedSectionAccess = visibleSectionAccess(sectionAccess);
   return {
     id: String(user.id || ""),
     username: String(user.username || ""),
@@ -1486,11 +1490,16 @@ function publicProcurementUser(user) {
     faturaRole: String(user.faturaRole || "operasyon"),
     faturaTemplate: template,
     faturaCapabilities: capabilities,
-    faturaSectionAccess: sectionAccess,
+    faturaSectionAccess: exposedSectionAccess,
     faturaSections: accessEnabled
       ? visibleFaturaSections({ type: "personel", template, role: user.faturaRole, capabilities, sectionAccess, accessEnabled })
       : []
   };
+}
+
+function visibleSectionAccess(sectionAccess) {
+  const visibleIds = new Set(canonicalPublicSectionDefinitions({ includeManagement: true }).map((definition) => definition.id));
+  return Object.fromEntries(Object.entries(sectionAccess || {}).filter(([sectionId]) => visibleIds.has(sectionId)));
 }
 
 function visibleShipments(shipments, actor) {
@@ -1586,13 +1595,14 @@ function publicSectionDefinitions() {
 }
 
 function publicAccessTemplates() {
+  const visibleIds = new Set(canonicalPublicSectionDefinitions({ includeManagement: true }).map((definition) => definition.id));
   return Object.values(FATURA_ACCESS_TEMPLATES).map((template) => ({
     key: template.key,
     label: template.label,
     role: template.role,
     capabilities: [...template.capabilities],
-    sectionAccess: { ...template.sectionAccess },
-    sections: Object.entries(template.sectionAccess).filter(([, level]) => level !== "off").map(([sectionId]) => sectionId)
+    sectionAccess: Object.fromEntries(Object.entries(template.sectionAccess).filter(([sectionId]) => visibleIds.has(sectionId))),
+    sections: Object.entries(template.sectionAccess).filter(([sectionId, level]) => visibleIds.has(sectionId) && level !== "off").map(([sectionId]) => sectionId)
   }));
 }
 

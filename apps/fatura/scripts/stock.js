@@ -95,7 +95,7 @@ import { requestText } from "./ui-dialogs.js";
     ];
     for (const [selector, capability] of rules) {
       const node = $(selector);
-      if (node) node.hidden = !can(capability) || selector === "#stockQuickShipmentButton" && !hasSection("shipments");
+      if (node) node.hidden = !can(capability) || selector === "#stockQuickShipmentButton" && !(hasSection("suppliers") || hasSection("documents") || hasSection("shipments"));
     }
   }
 
@@ -492,7 +492,60 @@ import { requestText } from "./ui-dialogs.js";
       critical: '<path d="M12 3 2.8 20h18.4zM12 9v5M12 17h.01"/>'
       ,unit: '<path d="M4 7h16M7 4v6M12 4v3M17 4v6M4 17h16M7 14v6M12 17v3M17 14v6"/>'
     };
-    host.innerHTML = cards.map(([label, value, note, kind]) => `${kind === "unit" ? '<button type="button" data-stock-kpi-unit-center' : '<article'} class="stock-command-kpi is-${kind}"><span class="stock-command-kpi__icon"><svg viewBox="0 0 24 24" aria-hidden="true">${symbols[kind]}</svg></span><span><small>${esc(label)}</small><strong>${esc(value)}</strong><em>${esc(note)}</em></span>${kind === "unit" ? '</button>' : '</article>'}`).join("");
+    host.innerHTML = cards.map(([label, value, note, kind]) => {
+      const action = kind === "unit" ? "data-stock-kpi-unit-center" : `data-stock-kpi-list="${kind}"`;
+      return `<button type="button" ${action} class="stock-command-kpi is-${kind}" aria-haspopup="dialog"><span class="stock-command-kpi__icon"><svg viewBox="0 0 24 24" aria-hidden="true">${symbols[kind]}</svg></span><span><small>${esc(label)}</small><strong>${esc(value)}</strong><em>${esc(note)}</em></span></button>`;
+    }).join("");
+  }
+
+  function renderKpiInventoryList(kind, balances) {
+    const host = $("#stockKpiListBody");
+    const title = $("#stockKpiListTitle");
+    const meta = $("#stockKpiListMeta");
+    if (!host) return;
+    const source = Array.isArray(balances) ? balances : [];
+    const rows = kind === "critical"
+      ? source.filter((balance) => ["critical", "empty"].includes(balanceStatus(balance)))
+      : source;
+    if (title) title.textContent = kind === "critical" ? "Kritik Stoklar" : "Stok Kalemleri";
+    if (meta) meta.textContent = kind === "critical"
+      ? `${formatNumber(rows.length)} kritik ürün`
+      : `${formatNumber(rows.length)} stok ürünü`;
+    if (!rows.length) {
+      host.innerHTML = `<div class="stock-location-empty"><strong>${kind === "critical" ? "Kritik stok bulunmuyor" : "Stok ürünü bulunmuyor"}</strong><span>Güncel depo bakiyelerinde listelenecek kayıt yok.</span></div>`;
+      return;
+    }
+    const groups = new Map();
+    rows.slice().sort((left, right) => {
+      const categoryOrder = String(productOf(left).category || "Kategori yok").localeCompare(String(productOf(right).category || "Kategori yok"), "tr");
+      return categoryOrder || productName(left).localeCompare(productName(right), "tr");
+    }).forEach((balance) => {
+      const category = String(productOf(balance).category || "Kategori yok");
+      if (!groups.has(category)) groups.set(category, []);
+      groups.get(category).push(balance);
+    });
+    host.innerHTML = Array.from(groups, ([category, items]) => `<section class="stock-kpi-category"><header><strong>${esc(category)}</strong><span>${formatNumber(items.length)} ürün</span></header><div>${items.map((balance) => {
+      const status = Number(balance.quantity || 0) <= 0 ? "empty" : balanceStatus(balance);
+      return `<article class="stock-kpi-product-row"><span><strong>${esc(productName(balance))}</strong><small>${esc(unitOf(balance))} bazında güncel stok</small></span><b>${esc(quantityDisplay(balance))}</b><i class="stock-location-status is-${esc(status)}">${esc(statusLabel(status))}</i></article>`;
+    }).join("")}</div></section>`).join("");
+  }
+
+  async function openKpiInventoryList(kind) {
+    const dialog = $("#stockKpiListDialog");
+    const host = $("#stockKpiListBody");
+    if (!dialog || !host) return;
+    if ($("#stockKpiListTitle")) $("#stockKpiListTitle").textContent = kind === "critical" ? "Kritik Stoklar" : "Stok Kalemleri";
+    if ($("#stockKpiListMeta")) $("#stockKpiListMeta").textContent = "Güncel bakiyeler hazırlanıyor…";
+    host.innerHTML = '<div class="stock-location-loading">Stok ürünleri yükleniyor…</div>';
+    if (!dialog.open) dialog.showModal();
+    try {
+      const result = await api("/api/procurement/v1/stock/inventory?locationId=total");
+      updateRevision(result);
+      renderKpiInventoryList(kind, Array.isArray(result.balances) ? result.balances : state.balances);
+    } catch (error) {
+      if (state.balances.length) renderKpiInventoryList(kind, state.balances);
+      else host.innerHTML = `<div class="stock-location-empty"><strong>Stok listesi alınamadı</strong><span>${esc(error.message)}</span></div>`;
+    }
   }
 
   function planningRows(items, value) {
@@ -594,8 +647,26 @@ import { requestText } from "./ui-dialogs.js";
     const pageHeading = document.querySelector(".page-heading");
     if (overview) overview.hidden = state.viewMode !== "overview";
     if (inventory) inventory.hidden = state.viewMode !== "inventory";
-    if (workspaceHead) workspaceHead.hidden = state.viewMode === "overview";
-    if (pageHeading) pageHeading.hidden = state.viewMode === "inventory";
+    if (workspaceHead) workspaceHead.hidden = true;
+    if (pageHeading) pageHeading.hidden = false;
+    const contextBack = document.getElementById("contextBackButton");
+    if (contextBack) {
+      contextBack.hidden = state.viewMode !== "inventory";
+      if (state.viewMode === "inventory") {
+        contextBack.dataset.contextBack = "stock";
+        contextBack.setAttribute("aria-label", "Stok genel bakışına dön");
+      } else {
+        delete contextBack.dataset.contextBack;
+      }
+    }
+    const pageKicker = document.getElementById("pageKicker");
+    const pageTitle = document.getElementById("pageTitle");
+    const pageDescription = document.getElementById("pageDescription");
+    if (pageKicker) pageKicker.textContent = state.viewMode === "inventory" ? "DEPO BAZLI STOK" : "TAHMİSÇİ FATURA";
+    if (pageTitle) pageTitle.textContent = state.viewMode === "inventory" ? locationName(state.selectedLocationId) : "Stok";
+    if (pageDescription) pageDescription.textContent = state.viewMode === "inventory"
+      ? "Depo bakiyelerini, eşikleri ve stok işlemlerini yönetin."
+      : "Depoları ve gerçek stok bakiyelerini yönetin.";
     const quickButton = $("#stockQuickActionsButton");
     if (quickButton) quickButton.hidden = state.viewMode !== "overview";
     const backButton = $("#stockWarehouseBackButton");
@@ -643,10 +714,8 @@ import { requestText } from "./ui-dialogs.js";
       const product = productOf(balance);
       const rawStatus = balanceStatus(balance);
       const status = Number(balance.quantity || 0) <= 0 ? "empty" : rawStatus === "sufficient" ? "sufficient" : "critical";
-      const display = balance.quantityDisplay || {};
       const bulkUnit = textValue(product.bulkUnit || product.caseUnit, "");
       const factor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
-      const bulk = display.bulkQuantity ?? (factor > 0 ? Math.floor(Number(balance.quantity || 0) / factor) : 0);
       const selected = String(state.selectedProductId) === productId(balance) && !$("#stockProductDrawerLayer")?.hidden;
       return `<article class="stock-location-product is-${esc(status)}${selected ? " is-selected" : ""}" data-stock-product-card="${esc(productId(balance))}" role="button" tabindex="0" aria-haspopup="dialog" aria-label="${esc(productName(balance))} stok detayını aç">
         <div class="stock-location-product__top"><span class="stock-location-product__category">${esc(product.category || "Kategori yok")}</span>${selected ? `<span class="stock-location-product__selected" aria-label="Seçili">✓</span>` : ""}</div>
@@ -917,7 +986,7 @@ import { requestText } from "./ui-dialogs.js";
     const product = productOf(balance);
     state.selectedProductId = productId(balance);
     $("#stockThresholdDialogTitle").textContent = productName(balance);
-    $("#stockThresholdDialogMeta").textContent = `${locationName(state.selectedLocationId)} · ${product.productCode || "Kod yok"}`;
+    $("#stockThresholdDialogMeta").textContent = locationName(state.selectedLocationId);
     const currentBaseUnit = textValue(product.baseUnit || product.unit, "adet");
     const currentBulkUnit = textValue(product.bulkUnit || product.caseUnit, "");
     const currentFactor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
@@ -1856,6 +1925,8 @@ import { requestText } from "./ui-dialogs.js";
     state.boundWorkspace = workspace;
     workspace.addEventListener("click", (event) => {
       if (event.target.closest("[data-stock-kpi-unit-center]")) { openUnitSettingsDialog(); return; }
+      const kpiList = event.target.closest("[data-stock-kpi-list]");
+      if (kpiList) { openKpiInventoryList(kpiList.dataset.stockKpiList).catch(() => {}); return; }
       const quickDrawerOpen = event.target.closest("#stockQuickActionsButton");
       if (quickDrawerOpen) { openQuickDrawer(quickDrawerOpen); return; }
       if (event.target.closest("[data-stock-quick-close]")) { closeQuickDrawer(); return; }
@@ -1919,17 +1990,6 @@ import { requestText } from "./ui-dialogs.js";
         if (action === "manual_in" || action === "manual_out" || action === "waste") openMovementDock(state.selectedProductId, action);
         else if (action === "transfer") openTransferDialog(state.selectedProductId);
         else if (action === "settings") openThresholdDialog(state.selectedProductId);
-        else if (action === "history") {
-          if ($("#stockMovementProductFilter")) $("#stockMovementProductFilter").value = state.selectedProductId;
-          loadMovements().then(() => {
-            renderMovements();
-            const dialog = $("#stockHistoryDialog");
-            if (dialog && !dialog.open) dialog.showModal();
-          }).catch((error) => setMessage(error.message, "error"));
-        }
-        else if (action === "analysis") {
-          document.dispatchEvent(new CustomEvent("tahmisci:fatura:navigate", { detail: { view: "productAnalysis", productId: state.selectedProductId } }));
-        }
         return;
       }
       const unitRename = event.target.closest("[data-stock-unit-rename]");

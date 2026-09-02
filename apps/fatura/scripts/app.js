@@ -1,12 +1,12 @@
 import { api, ApiError, login, logout, requestId, uploadDocument } from "./api.js";
 import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, updateRevision, value } from "./state.js";
-import { renderDashboard } from "./dashboard.js?v=20260902-procurement";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260902-procurement";
+import { renderDashboard } from "./dashboard.js?v=20260902-final-ui";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260902-final-ui";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
-import { documentFormBody, printShipmentArchive, renderDocuments, shipmentArchiveDetail } from "./documents.js?v=20260902-procurement";
-import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderSettingsAudit, renderUsers, userAccessFormBody } from "./accounting.js?v=20260831-panel-access";
-import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260902-procurement";
-import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260902-procurement";
+import { documentFormBody, printShipmentArchive, renderDocuments, shipmentArchiveDetail } from "./documents.js?v=20260902-final-ui";
+import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderUsers, userAccessFormBody } from "./accounting.js?v=20260831-panel-access";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260902-final-ui";
+import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260902-final-ui";
 import { confirmAction, requestText } from "./ui-dialogs.js";
 
 const app = document.getElementById("faturaApp");
@@ -49,7 +49,7 @@ const EVENT_SCOPES = {
   ledgerEntry: ["ledger", "suppliers", "dashboard"],
   payment: ["ledger", "suppliers", "dashboard"],
   personel: ["users", "context"],
-  procurementSettings: ["settings", "dashboard"]
+  procurementSettings: ["dashboard"]
 };
 
 document.addEventListener("DOMContentLoaded", bootstrap);
@@ -189,6 +189,7 @@ async function setView(viewId, options = {}) {
   state.activeView = viewId;
   const pageHeading = document.querySelector(".page-heading");
   if (pageHeading) pageHeading.hidden = false;
+  resetContextHeading(view);
   syncSupplierSidebar(viewId);
   if (options.fromPopstate !== true) cleanFaturaUrl();
   safeSessionStorageSet("tahmisci:fatura:view", viewId);
@@ -219,6 +220,32 @@ function syncSupplierSidebar(viewId) {
     app.classList.remove("is-collapsed");
     delete app.dataset.supplierAutoCollapsed;
   }
+}
+
+function resetContextHeading(view = visibleViews.find((item) => item.id === state.activeView)) {
+  const back = document.getElementById("contextBackButton");
+  if (back) {
+    back.hidden = true;
+    delete back.dataset.contextBack;
+  }
+  document.getElementById("pageKicker").textContent = "TAHMİSÇİ FATURA";
+  document.getElementById("pageTitle").textContent = view && view.label || "Tahmisçi Fatura";
+  document.getElementById("pageDescription").textContent = view && view.description || "";
+}
+
+function syncSupplierContextHeading() {
+  const supplierId = String(state.supplierWorkspace && state.supplierWorkspace.supplierId || "");
+  if (!supplierId) return resetContextHeading();
+  const supplier = state.suppliers.find((item) => String(item.id) === supplierId);
+  const back = document.getElementById("contextBackButton");
+  if (back) {
+    back.hidden = false;
+    back.dataset.contextBack = "supplier";
+    back.setAttribute("aria-label", "Tedarikçilere dön");
+  }
+  document.getElementById("pageKicker").textContent = "TEDARİKÇİ";
+  document.getElementById("pageTitle").textContent = supplier && supplier.name || "Tedarikçi";
+  document.getElementById("pageDescription").textContent = "Ürün kalemleri ve sevkiyat işlemleri.";
 }
 
 async function loadView(view, force = false) {
@@ -272,8 +299,6 @@ const loadShipments = (force) => cachedLoad("shipments", () => api("/shipments")
 const loadDocuments = (force) => cachedLoad("documents", () => api("/documents"), (p) => { state.documents = p.documents || []; }, force);
 const loadLedger = (force) => cachedLoad("ledger", () => api("/ledger"), (p) => { state.ledgerEntries = p.entries || []; }, force);
 const loadUsers = (force) => cachedLoad("users", () => api("/users"), (p) => { state.users = p.users || []; state.accessTemplates = p.accessTemplates || []; state.sectionDefinitions = p.sections || []; }, force);
-const loadSettings = (force) => cachedLoad("settings", () => api("/settings"), (p) => { state.settings = p.settings || {}; }, force);
-const loadAudit = (force) => cachedLoad("audit", () => api("/audit?limit=100"), (p) => { state.auditEvents = p.auditEvents || []; }, force);
 
 async function loadSupplierWorkspaceData(supplierId, force = false) {
   const id = String(supplierId || "");
@@ -283,7 +308,7 @@ async function loadSupplierWorkspaceData(supplierId, force = false) {
   if (state.activeView === "suppliers") renderActiveView();
   try {
     const [linkedPayload, independentPayload] = await Promise.all([
-      hasSection("links") ? api(`/product-links?supplierId=${encodeURIComponent(id)}&active=all`, { dedupe: !force }) : Promise.resolve({ productLinks: [] }),
+      (hasSection("suppliers") || hasSection("links")) ? api(`/product-links?supplierId=${encodeURIComponent(id)}&active=all`, { dedupe: !force }) : Promise.resolve({ productLinks: [] }),
       api(`/suppliers/${encodeURIComponent(id)}/independent-products?active=all`, { dedupe: !force })
     ]);
     if (workspace.supplierId !== id) return;
@@ -302,7 +327,8 @@ function loadingSkeleton(label) {
 
 function renderActiveView() {
   const pageHeading = document.querySelector(".page-heading");
-  if (pageHeading) pageHeading.hidden = state.activeView === "suppliers" && Boolean(state.supplierWorkspace.supplierId);
+  if (pageHeading) pageHeading.hidden = false;
+  if (state.activeView === "suppliers") syncSupplierContextHeading();
   if (state.activeView === "stock") return;
   if (state.activeView === "productAnalysis") {
     content.innerHTML = renderProductAnalysis();
@@ -498,6 +524,11 @@ async function handleClick(event) {
   if (button.id === "mobileMenu") return openMobileSidebar();
   if (button.id === "sidebarScrim") return closeMobileSidebar();
   if (button.id === "refreshButton") return state.activeView ? setView(state.activeView, { force: true }) : refreshAccessContext(button);
+  if (button.id === "contextBackButton") {
+    if (button.dataset.contextBack === "supplier") return closeSupplierWorkspace();
+    if (button.dataset.contextBack === "stock") return document.getElementById("stockWarehouseBackButton")?.click();
+    return;
+  }
   if (button.id === "accessRefreshButton") return refreshAccessContext();
   if (button.id === "profileMenuButton") return toggleProfileMenu();
   if (button.id === "notificationButton" || button.dataset.profileAction === "notifications") return openNotifications();
@@ -567,6 +598,9 @@ function handleChange(event) {
     });
     return;
   }
+  if (event.target.name === "shipmentFile") return updateSupplierShipmentSubmitState();
+  if (event.target.id === "archive-supplier-filter") { state.filters.documentsSupplier = event.target.value; return renderActiveView(); }
+  if (event.target.id === "archive-date-filter") { state.filters.documentsDate = event.target.value; return renderActiveView(); }
   if (["bulkUnit", "baseUnit", "conversionFactor"].includes(event.target.name)) return updateSupplierConversionPreview();
   if (event.target.id === "shipment-status") { state.filters.shipmentStatus = event.target.value; return renderActiveView(); }
   if (event.target.id === "shipment-evidence") { state.filters.shipmentEvidence = event.target.value; return renderActiveView(); }
@@ -732,7 +766,7 @@ function openEntityDialog(config) {
   document.getElementById("dialogDescription").textContent = config.description || "";
   document.getElementById("dialogBody").innerHTML = config.body;
   const submitButton = document.getElementById("dialogSubmit");
-  submitButton.disabled = false;
+  submitButton.disabled = config.submitDisabled === true;
   submitButton.removeAttribute("aria-busy");
   submitButton.textContent = config.submitLabel || "Kaydet";
   const cancelButton = entityDialog.querySelector("footer .dialog-close");
@@ -741,7 +775,7 @@ function openEntityDialog(config) {
     cancelButton.hidden = config.hideCancel === true;
   }
   document.getElementById("dialogMessage").textContent = "";
-  entityDialog.classList.toggle("fatura-dialog--receipt", config.mode === "shipment-create");
+  entityDialog.classList.toggle("fatura-dialog--receipt", ["shipment-create", "supplier-shipment-create"].includes(config.mode));
   entityDialog.showModal(); document.body.classList.add("dialog-open");
 }
 function closeEntityDialog() { if (entityDialog.open) entityDialog.close(); cleanupEntityDialog(); }
@@ -773,10 +807,10 @@ function openIndependentProductForm(itemId = "") {
     entityId: item && item.id,
     kicker: "ÜRÜN KAYDI OLUŞTUR",
     title: item ? "Ürün kaydını düzenle" : "Ürün Kaydı Oluştur",
-    description: "Tedarikçi ürününün belge ve birim yapısını tanımlayın.",
+    description: "Tedarikçi ürününün birim yapısını tanımlayın.",
     submitLabel: "Kaydet",
     hideCancel: true,
-    body: `<input type="hidden" name="supplierId" value="${escapeHtml(supplierId)}"><div class="form-grid supplier-product-form"><label class="span-2">Ürün Adı<input name="name" value="${escapeHtml(item && item.name || "")}" maxlength="180" required></label><label>Belge Türü<select name="documentType">${documentTypeOptions(item && item.documentType)}</select></label><label>Toplu Birim<select name="bulkUnit" required>${unitOptions("bulk", item && (item.bulkUnit || item.purchaseUnit))}</select></label><label>Temel Birim<select name="baseUnit" required>${unitOptions("base", item && item.baseUnit)}</select></label><label>Birim Çarpan Miktarı<input name="conversionFactor" value="${Number(item && item.conversionFactor || 1)}" type="number" min="0.001" step="0.001" required></label><output class="supplier-conversion-preview span-2" id="supplierConversionPreview">${conversionText(item && (item.bulkUnit || item.purchaseUnit), item && item.baseUnit, item && item.conversionFactor)}</output></div>`
+    body: `<input type="hidden" name="supplierId" value="${escapeHtml(supplierId)}"><div class="form-grid supplier-product-form"><label class="span-2">Ürün Adı<input name="name" value="${escapeHtml(item && item.name || "")}" maxlength="180" required></label><label>Toplu Birim<select name="bulkUnit" required>${unitOptions("bulk", item && (item.bulkUnit || item.purchaseUnit))}</select></label><label>Temel Birim<select name="baseUnit" required>${unitOptions("base", item && item.baseUnit)}</select></label><label>Birim Çarpan Miktarı<input name="conversionFactor" value="${Number(item && item.conversionFactor || 1)}" type="number" min="0.001" step="0.001" required></label><output class="supplier-conversion-preview span-2" id="supplierConversionPreview">${conversionText(item && (item.bulkUnit || item.purchaseUnit), item && item.baseUnit, item && item.conversionFactor)}</output></div>`
   });
 }
 
@@ -790,7 +824,10 @@ function openSupplierShipmentForm() {
   const supplierId = state.supplierWorkspace.supplierId;
   const supplier = state.suppliers.find((item) => String(item.id) === String(supplierId));
   const products = (state.supplierWorkspace.independentProducts || []).filter((item) => item.active !== false);
+  const locations = (state.context.stockLocations || []).filter((item) => item.active !== false);
   if (!supplier || !products.length) return toast("Önce aktif bir tedarikçi ürünü ekleyin.", true);
+  if (!locations.length) return toast("Sevkiyat için aktif bir hedef depo bulunamadı.", true);
+  const defaultLocation = locations.find((item) => item.isDefault === true || item.default === true) || (locations.length === 1 ? locations[0] : null);
   openEntityDialog({
     mode: "supplier-shipment-create",
     entityId: supplierId,
@@ -798,8 +835,18 @@ function openSupplierShipmentForm() {
     title: `${supplier.name} · Sevkiyat Oluştur`,
     description: "Toplu miktar ve toplam tutarı girin; temel birim fiyatı sunucu tarafından hesaplanır.",
     submitLabel: "Sevkiyatı Oluştur",
-    body: `<div class="supplier-shipment-form"><section class="supplier-shipment-products"><strong>ÜRÜNLER</strong><div class="supplier-shipment-lines" id="supplierShipmentLines">${products.map(supplierShipmentLine).join("")}</div></section><label>Sevkiyat Tarihi<input name="shipmentDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></label><label>Belge Ekle<input name="shipmentFile" type="file" accept="image/jpeg,image/png,image/webp" capture="environment"></label></div>`
+    hideCancel: true,
+    submitDisabled: true,
+    body: `<div class="supplier-shipment-form"><section class="supplier-shipment-products"><strong>ÜRÜNLER</strong><div class="supplier-shipment-lines" id="supplierShipmentLines">${products.map(supplierShipmentLine).join("")}</div></section><label>Hedef Depo<select name="destinationLocationId" required><option value="">Depo seçin</option>${locations.map((location) => `<option value="${escapeHtml(location.id)}" ${defaultLocation && String(defaultLocation.id) === String(location.id) ? "selected" : ""}>${escapeHtml(location.name)}</option>`).join("")}</select></label><label>Sevkiyat Tarihi<input name="shipmentDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></label><label>Belge Türü<select name="shipmentDocumentType" required>${documentTypeOptions("irsaliye")}</select></label><label class="supplier-shipment-file">Belge Ekle<input name="shipmentFile" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" required><small>Sevkiyat oluşturmak için belge eklemek zorunludur.</small></label></div>`
   });
+  updateSupplierShipmentSubmitState();
+}
+
+function updateSupplierShipmentSubmitState() {
+  if (entityForm.dataset.mode !== "supplier-shipment-create") return;
+  const file = entityForm.elements.shipmentFile?.files?.[0];
+  const submit = document.getElementById("dialogSubmit");
+  if (submit && !submit.hasAttribute("aria-busy")) submit.disabled = !(file instanceof File && file.size > 0);
 }
 
 function openSupplierShipmentStockDecision(shipment) {
@@ -818,7 +865,7 @@ function openSupplierShipmentStockDecision(shipment) {
       : "Evet derseniz seçilen hedef depoya tek seferlik stok girişi uygulanır.",
     cancelLabel: "Hayır",
     submitLabel: "Evet, Stoğa Ekle",
-    body: `<div class="form-grid"><label class="span-2">Hedef depo<select name="destinationLocationId" required><option value="">Depo seçin</option>${locations.map((location) => `<option value="${escapeHtml(location.id)}" ${locations.length === 1 ? "selected" : ""}>${escapeHtml(location.name)}</option>`).join("")}</select></label>${unmatchedCount ? '<p class="form-note span-2">Stokla eşleşmeyen ürünler yanlış ürüne otomatik bağlanmaz; yalnız eşleşmiş satırlar uygulanır.</p>' : ""}</div>`
+    body: `<div class="form-grid"><label class="span-2">Hedef depo<select name="destinationLocationId" required><option value="">Depo seçin</option>${locations.map((location) => `<option value="${escapeHtml(location.id)}" ${String(location.id) === String(shipment.destinationLocationId || "") || (!shipment.destinationLocationId && locations.length === 1) ? "selected" : ""}>${escapeHtml(location.name)}</option>`).join("")}</select></label>${unmatchedCount ? '<p class="form-note span-2">Stokla eşleşmeyen ürünler yanlış ürüne otomatik bağlanmaz; yalnız eşleşmiş satırlar uygulanır.</p>' : ""}</div>`
   });
   const submit = document.getElementById("dialogSubmit");
   queueMicrotask(() => { submit.disabled = matchedCount === 0 || !locations.length; });
@@ -885,7 +932,7 @@ async function submitEntityForm(event) {
     if (followUpShipment) openSupplierShipmentStockDecision(followUpShipment);
   } catch (error) {
     document.getElementById("dialogMessage").textContent = error.message || "İşlem tamamlanamadı.";
-  } finally { setBusy(submit, false); }
+  } finally { setBusy(submit, false); updateSupplierShipmentSubmitState(); }
 }
 
 async function saveSupplier(mode, data) {
@@ -904,7 +951,7 @@ async function saveIndependentProduct(mode, data) {
   const supplierId = value(data, "supplierId") || state.supplierWorkspace.supplierId;
   const itemId = entityForm.dataset.entityId;
   const existing = state.supplierWorkspace.independentProducts.find((item) => String(item.id) === String(itemId));
-  const body = { name: value(data,"name"), documentType: value(data,"documentType"), bulkUnit: value(data,"bulkUnit"), baseUnit: value(data,"baseUnit"), purchaseUnit: value(data,"bulkUnit"), conversionFactor: Number(value(data,"conversionFactor") || 1), stockProductId: existing && existing.stockProductId || "", active: existing ? existing.active !== false : true };
+  const body = { name: value(data,"name"), bulkUnit: value(data,"bulkUnit"), baseUnit: value(data,"baseUnit"), purchaseUnit: value(data,"bulkUnit"), conversionFactor: Number(value(data,"conversionFactor") || 1), stockProductId: existing && existing.stockProductId || "", active: existing ? existing.active !== false : true };
   const endpoint = mode === "independent-product-create"
     ? `/suppliers/${encodeURIComponent(supplierId)}/independent-products`
     : `/suppliers/${encodeURIComponent(supplierId)}/independent-products/${encodeURIComponent(itemId)}`;
@@ -924,25 +971,22 @@ async function saveSupplierShipment(data) {
   const products = new Map((state.supplierWorkspace.independentProducts || []).map((item) => [String(item.id), item]));
   const selectedRows = [...document.querySelectorAll("[data-supplier-shipment-line]")].filter((row) => row.querySelector("[data-supplier-line-enabled]")?.checked);
   if (!selectedRows.length) throw new Error("En az bir ürün seçin.");
+  const file = data.get("shipmentFile");
+  if (!(file instanceof File) || file.size <= 0) throw new Error("Sevkiyat oluşturmak için belge ekleyin.");
+  const documentType = value(data, "shipmentDocumentType");
+  const destinationLocationId = value(data, "destinationLocationId");
+  if (!destinationLocationId) throw new Error("Hedef depo seçin.");
   const items = selectedRows.map((row) => {
     const product = products.get(String(row.dataset.productId));
     const quantityBulk = Number(row.querySelector("[data-supplier-line-quantity]").value);
     const lineTotalKurus = integerKurus(row.querySelector("[data-supplier-line-total]").value);
-    return { supplierProductId: product.id, supplierProductName: product.name, stockProductId: product.stockProductId || "", quantity: quantityBulk, quantityBulk, unit: product.bulkUnit || product.purchaseUnit, purchaseUnit: product.bulkUnit || product.purchaseUnit, bulkUnit: product.bulkUnit || product.purchaseUnit, baseUnit: product.baseUnit, conversionFactor: Number(product.conversionFactor || 1), totalKurus: lineTotalKurus, unitPriceKurus: quantityBulk > 0 ? Math.round(lineTotalKurus / quantityBulk) : 0, documentType: product.documentType };
+    return { supplierProductId: product.id, supplierProductName: product.name, stockProductId: product.stockProductId || "", quantity: quantityBulk, quantityBulk, unit: product.bulkUnit || product.purchaseUnit, purchaseUnit: product.bulkUnit || product.purchaseUnit, bulkUnit: product.bulkUnit || product.purchaseUnit, baseUnit: product.baseUnit, conversionFactor: Number(product.conversionFactor || 1), totalKurus: lineTotalKurus, unitPriceKurus: quantityBulk > 0 ? Math.round(lineTotalKurus / quantityBulk) : 0, documentType };
   });
-  const documentTypes = [...new Set(items.map((item) => String(item.documentType || "").trim()).filter(Boolean))];
-  const file = data.get("shipmentFile");
-  if (file instanceof File && file.size > 0 && documentTypes.length > 1) throw new Error("Tek belgeye bağlanan ürünlerin belge türü aynı olmalıdır.");
-  let documentType = documentTypes[0] || "diğer";
-  let payload = await api("/shipments", { method: "POST", body: { supplierId, shipmentDate: value(data,"shipmentDate"), documentDate: value(data,"shipmentDate"), documentType, finalized: true, items }, expectedRevision: state.revision });
+  let payload = await api("/shipments", { method: "POST", body: { supplierId, destinationLocationId, shipmentDate: value(data,"shipmentDate"), documentDate: value(data,"shipmentDate"), documentType, finalized: true, items }, expectedRevision: state.revision });
   mutationComplete(payload, ["shipments","dashboard","documents","productAnalysis"]);
   const shipmentId = payload.shipment.id;
-  const snapshotDocumentTypes = [...new Set((payload.shipment.items || []).map((item) => String(item.documentType || "").trim()).filter(Boolean))];
-  if (snapshotDocumentTypes.length === 1) documentType = snapshotDocumentTypes[0];
-  if (file instanceof File && file.size > 0) {
-    const documentPayload = await uploadDocument(file, { documentType, supplierId, shipmentIds: [shipmentId], documentDate: value(data,"shipmentDate") }, state.revision);
-    mutationComplete(documentPayload, ["documents","shipments","dashboard"]);
-  }
+  const documentPayload = await uploadDocument(file, { documentType, supplierId, shipmentIds: [shipmentId], documentDate: value(data,"shipmentDate") }, state.revision);
+  mutationComplete(documentPayload, ["documents","shipments","dashboard"]);
   payload = await api(`/shipments/${encodeURIComponent(shipmentId)}/submit`, { method: "POST", body: {}, expectedRevision: state.revision });
   mutationComplete(payload, ["shipments","dashboard","documents","productAnalysis"]);
   return payload.shipment;
@@ -1113,12 +1157,6 @@ async function reverseLedger(button, id) {
   const reason = await requestText({ title: "Cari hareketi ters kaydet", description: "Geçmiş silinmez; dengeleyici yeni hareket oluşturulur.", label: "Ters kayıt nedeni", confirmLabel: "Ters kaydı oluştur", danger: true }); if (reason === null) return;
   await runButtonMutation(button, () => api(`/ledger/${encodeURIComponent(id)}/reverse`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["ledger","suppliers","dashboard"], () => setView("ledger", {force:true}));
 }
-
-document.addEventListener("submit", async (event) => {
-  if (event.target.id !== "settingsForm") return;
-  event.preventDefault(); const button = event.target.querySelector('button[type="submit"]'); const data = new FormData(event.target);
-  await runButtonMutation(button, () => api("/settings", { method:"PUT", body:{ dueSoonDays:Number(value(data,"dueSoonDays")), units:value(data,"units").split(",").map((item)=>item.trim()).filter(Boolean) }, expectedRevision:state.revision }), ["settings","dashboard"], () => setView("settings", {force:true}));
-});
 
 async function runButtonMutation(button, operation, scopes, after) {
   if (button.disabled) return; setBusy(button,true,"İşleniyor…");

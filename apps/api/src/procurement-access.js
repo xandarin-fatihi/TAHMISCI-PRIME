@@ -28,18 +28,20 @@ const FATURA_SECTION_DEFINITIONS = Object.freeze([
     view: ["procurement.read"],
     operate: ["procurement.read", "receipt.create", "receipt.submit"],
     full: ["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject"]
-  }, { operate: ["receipt.create", "receipt.submit"], full: ["receipt.approve", "receipt.reject"] }),
-  section("suppliers", "Tedarikçiler", "Tedarikçi kayıtları ve bilgileri", ["off", "view", "full"], {
-    view: ["supplier.read"], full: ["supplier.read", "supplier.manage"]
-  }, { full: ["supplier.manage"] }),
+  }, { operate: ["receipt.create", "receipt.submit"], full: ["receipt.approve", "receipt.reject"] }, false, true),
+  section("suppliers", "Tedarikçiler", "Tedarikçi kayıtları ve bilgileri", ["off", "view", "operate", "full"], {
+    view: ["supplier.read"],
+    operate: ["supplier.read", "procurement.read", "supplierProduct.manage"],
+    full: ["supplier.read", "supplier.manage", "procurement.read", "supplierProduct.manage", "receipt.create", "receipt.submit", "documents.read", "documents.upload"]
+  }, { operate: ["supplierProduct.manage"], full: ["supplier.manage", "receipt.create", "receipt.submit", "documents.upload"] }),
   section("links", "Ürün Eşleşmeleri", "Tedarikçi ve stok ürünü eşlemeleri", ["off", "view", "full"], {
     view: ["procurement.read"], full: ["procurement.read", "supplierProduct.manage"]
-  }, { full: ["supplierProduct.manage"] }),
-  section("documents", "Belgeler", "Fatura ve sevkiyat belgeleri", ["off", "view", "operate", "full"], {
-    view: ["documents.read"],
-    operate: ["documents.read", "documents.upload"],
-    full: ["documents.read", "documents.upload", "documents.archive"]
-  }, { operate: ["documents.upload"], full: ["documents.archive"] }),
+  }, { full: ["supplierProduct.manage"] }, false, true),
+  section("documents", "Sevkiyat Arşivi", "Sevkiyat kayıtları, belgeler ve mal kabul işlemleri", ["off", "view", "operate", "full"], {
+    view: ["documents.read", "procurement.read"],
+    operate: ["documents.read", "documents.upload", "procurement.read", "receipt.create", "receipt.submit"],
+    full: ["documents.read", "documents.upload", "documents.archive", "procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject"]
+  }, { operate: ["documents.upload", "receipt.create", "receipt.submit"], full: ["documents.archive", "receipt.approve", "receipt.reject"] }),
   section("ledger", "Cari Hesap", "Borç, ödeme ve cari hareketler", ["off", "view", "operate", "full"], {
     view: ["accounting.read"],
     operate: ["accounting.read", "accounting.post", "payment.create"],
@@ -50,24 +52,24 @@ const FATURA_SECTION_DEFINITIONS = Object.freeze([
   }, { full: ["procurement.users.manage"] }, true),
   section("settings", "Ayarlar ve Audit", "Fatura ayarları ve işlem geçmişi", ["off", "full"], {
     full: ["procurement.users.manage"]
-  }, { full: ["procurement.users.manage"] }, true)
+  }, { full: ["procurement.users.manage"] }, true, true)
 ]);
 
 const FATURA_TEMPLATE_SECTION_ACCESS = Object.freeze({
   stok_personeli: frozenAccess({ dashboard: "view", stock: "operate", productAnalysis: "view" }),
-  mal_kabul: frozenAccess({ dashboard: "view", shipments: "full", suppliers: "view", documents: "operate" }),
-  satin_alma: frozenAccess({ dashboard: "view", shipments: "operate", suppliers: "full", links: "full", documents: "operate" }),
-  muhasebe: frozenAccess({ dashboard: "view", shipments: "view", suppliers: "view", documents: "view", ledger: "full" }),
+  mal_kabul: frozenAccess({ dashboard: "view", documents: "full", suppliers: "view" }),
+  satin_alma: frozenAccess({ dashboard: "view", suppliers: "full", documents: "operate" }),
+  muhasebe: frozenAccess({ dashboard: "view", suppliers: "view", documents: "view", ledger: "full" }),
   yonetici: frozenAccess(Object.fromEntries(FATURA_SECTION_DEFINITIONS.map((definition) => [definition.id, highestLevel(definition)]))),
   ozel: frozenAccess({})
 });
 
-function section(id, label, description, allowedLevels, bundles, legacySignals = {}, managementOnly = false) {
+function section(id, label, description, allowedLevels, bundles, legacySignals = {}, managementOnly = false, uiHidden = false) {
   const normalizedBundles = {};
   for (const level of allowedLevels) normalizedBundles[level] = Object.freeze([...(bundles[level] || [])]);
   const normalizedSignals = {};
   for (const level of ["view", "operate", "full"]) normalizedSignals[level] = Object.freeze([...(legacySignals[level] || [])]);
-  return Object.freeze({ id, label, description, levels: Object.freeze([...allowedLevels]), bundles: Object.freeze(normalizedBundles), legacySignals: Object.freeze(normalizedSignals), managementOnly });
+  return Object.freeze({ id, label, description, levels: Object.freeze([...allowedLevels]), bundles: Object.freeze(normalizedBundles), legacySignals: Object.freeze(normalizedSignals), managementOnly, uiHidden });
 }
 
 function frozenAccess(value) {
@@ -116,8 +118,12 @@ function deriveSectionAccessFromCapabilities(capabilities, options = {}) {
 function normalizeSectionAccess(value, options = {}) {
   const explicit = value && typeof value === "object" && !Array.isArray(value);
   const fallback = explicit
-    ? value
+    ? { ...value }
     : deriveSectionAccessFromCapabilities(options.capabilities, { allowManagement: options.allowManagement === true });
+  if (explicit) {
+    fallback.documents = strongerVisibleLevel(fallback.documents, fallback.shipments, definitionFor("documents"));
+    fallback.suppliers = strongerVisibleLevel(fallback.suppliers, fallback.links, definitionFor("suppliers"), "operate");
+  }
   const access = {};
   for (const definition of FATURA_SECTION_DEFINITIONS) {
     const allowManagement = options.allowManagement === true;
@@ -126,6 +132,15 @@ function normalizeSectionAccess(value, options = {}) {
       : normalizeLevel(definition, fallback && fallback[definition.id]);
   }
   return access;
+}
+
+function strongerVisibleLevel(current, legacy, definition, legacyCeiling = "full") {
+  const currentRank = SECTION_LEVEL_RANK[normalizeLevel(definition, current)] || 0;
+  const legacyRank = Math.min(SECTION_LEVEL_RANK[String(legacy || "off")] || 0, SECTION_LEVEL_RANK[legacyCeiling] || 0);
+  if (legacyRank <= currentRank) return normalizeLevel(definition, current);
+  if (legacyRank >= SECTION_LEVEL_RANK.full && definition.levels.includes("full")) return "full";
+  if (legacyRank >= SECTION_LEVEL_RANK.operate && definition.levels.includes("operate")) return "operate";
+  return definition.levels.includes("view") ? "view" : normalizeLevel(definition, current);
 }
 
 function templateSectionAccess(templateKey) {
@@ -165,11 +180,11 @@ function hasSectionAccess(actor, sectionId, minimumLevel = "view") {
 
 function visibleFaturaSections(actor) {
   const access = effectiveSectionAccess(actor);
-  return FATURA_SECTION_DEFINITIONS.filter((definition) => (access[definition.id] || "off") !== "off").map((definition) => definition.id);
+  return FATURA_SECTION_DEFINITIONS.filter((definition) => !definition.uiHidden && (access[definition.id] || "off") !== "off").map((definition) => definition.id);
 }
 
 function publicSectionDefinitions(options = {}) {
-  return FATURA_SECTION_DEFINITIONS.filter((definition) => options.includeManagement === true || !definition.managementOnly).map((definition) => ({
+  return FATURA_SECTION_DEFINITIONS.filter((definition) => !definition.uiHidden && (options.includeManagement === true || !definition.managementOnly)).map((definition) => ({
     id: definition.id,
     label: definition.label,
     description: definition.description,

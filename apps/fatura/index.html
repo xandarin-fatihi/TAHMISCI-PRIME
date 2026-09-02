@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/assets/app-icons/fatura/apple-touch-icon-180.png" sizes="180x180">
   <link rel="manifest" href="/fatura/manifest.webmanifest">
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css">
-  <link rel="stylesheet" href="/fatura/styles/fatura.css?v=20260902-procurement">
-  <link rel="stylesheet" href="/fatura/styles/stock.css?v=20260902-procurement">
+  <link rel="stylesheet" href="/fatura/styles/fatura.css?v=20260902-final-ui">
+  <link rel="stylesheet" href="/fatura/styles/stock.css?v=20260902-final-ui">
   <link rel="stylesheet" href="/fatura/styles/product-analysis.css?v=20260829-product-analysis">
 </head>
 <body class="fatura-page">
@@ -67,6 +67,7 @@
           <button class="mobile-menu" id="mobileMenu" type="button" aria-label="Menüyü aç" aria-controls="faturaSidebar" aria-expanded="false">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
           </button>
+          <button class="context-back-button" id="contextBackButton" type="button" aria-label="Önceki görünüme dön" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6M9 12h11"/></svg></button>
           <div class="page-heading"><p class="eyebrow" id="pageKicker">TAHMİSÇİ FATURA</p><h1 id="pageTitle">Genel Bakış</h1><p id="pageDescription">Tedarik ve cari süreçlerin güncel özeti.</p></div>
           <div class="header-actions"><span class="live-state" id="liveState"><i></i> Güncel</span><button class="notification-button" id="notificationButton" type="button" aria-label="Bildirim merkezini aç" aria-controls="notificationDrawer" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><span class="notification-count" id="notificationCount" hidden>0</span></button><button class="ui-button ui-button--secondary ui-button--icon" id="refreshButton" type="button" aria-label="Verileri yenile" title="Verileri yenile"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button></div>
         </header>
@@ -99,7 +100,7 @@
   <template id="stockViewTemplate">
     <section class="stock-fatura-view" aria-label="Stok yönetimi">
       <section class="stock-location-workspace" id="stockLocationWorkspace" aria-label="Depo bazlı stok yönetimi" aria-busy="true">
-        <div class="stock-location-workspace__head"><div><button class="workspace-back-button stock-warehouse-back" id="stockWarehouseBackButton" type="button" hidden aria-label="Depolara dön">←</button><h2 id="stockActiveLocationTitle">Stok</h2><p id="stockLocationFreshness" hidden>Veri güncelliği denetleniyor…</p></div><div class="stock-head-actions" hidden><button class="ui-button ui-button--secondary" id="stockQuickActionsButton" type="button" aria-controls="stockQuickDrawer" aria-expanded="false"><span>Hızlı İşlemler</span></button><button class="ui-button ui-button--secondary" id="stockLocationRefreshButton" type="button">Yenile</button></div></div>
+        <div class="stock-location-workspace__head"><div class="stock-location-workspace__titlebar"><button class="workspace-back-button stock-warehouse-back" id="stockWarehouseBackButton" type="button" hidden aria-label="Stok genel bakışına dön"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6M9 12h11"/></svg></button><div><h2 id="stockActiveLocationTitle">Stok</h2><p id="stockLocationFreshness" hidden>Veri güncelliği denetleniyor…</p></div></div><div class="stock-head-actions" hidden><button class="ui-button ui-button--secondary" id="stockQuickActionsButton" type="button" aria-controls="stockQuickDrawer" aria-expanded="false"><span>Hızlı İşlemler</span></button><button class="ui-button ui-button--secondary" id="stockLocationRefreshButton" type="button">Yenile</button></div></div>
         <div class="stock-location-message" id="stockLocationMessage" role="status" aria-live="polite" hidden></div>
         <div id="stockOverviewWorkspace" class="stock-overview-workspace">
           <div class="stock-command-kpis" id="stockKpiGrid" aria-live="polite"><div class="stock-kpi-loading">Stok özeti hazırlanıyor…</div></div>
@@ -154,7 +155,9 @@
             <section class="stock-alert-panel"><h3>Kritik Uyarılar</h3><div id="stockCriticalAlerts"><div class="stock-location-loading">Uyarılar hazırlanıyor…</div></div></section>
           </div></aside></div>
 
-        <div class="stock-product-drawer-layer" id="stockProductDrawerLayer" hidden><button class="stock-product-drawer-backdrop" type="button" data-stock-drawer-close tabindex="-1" aria-label="Ürün detayını kapat"></button><aside class="stock-product-drawer" id="stockProductDrawer" role="dialog" aria-modal="true" aria-labelledby="stockProductDrawerTitle" tabindex="-1"><header><div><p class="eyebrow">STOK ÜRÜNÜ</p><h3 id="stockProductDrawerTitle">Ürün detayı</h3><span id="stockProductDrawerSubtitle"></span></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-drawer-close aria-label="Ürün detayını kapat">×</button></header><div id="stockProductDrawerMessage" role="status"></div><div class="stock-product-drawer__body" id="stockProductDrawerBody"></div></aside></div>
+        <div class="stock-product-drawer-layer" id="stockProductDrawerLayer" hidden><button class="stock-product-drawer-backdrop" type="button" data-stock-drawer-close tabindex="-1" aria-label="Ürün detayını kapat"></button><aside class="stock-product-drawer" id="stockProductDrawer" role="dialog" aria-modal="true" aria-labelledby="stockProductDrawerTitle" tabindex="-1"><header><div><h3 id="stockProductDrawerTitle">Ürün detayı</h3><span id="stockProductDrawerSubtitle"></span></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-drawer-close aria-label="Ürün detayını kapat">×</button></header><div id="stockProductDrawerMessage" role="status"></div><div class="stock-product-drawer__body" id="stockProductDrawerBody"></div></aside></div>
+
+        <dialog class="stock-admin-dialog stock-admin-dialog--wide stock-kpi-list-dialog" id="stockKpiListDialog"><div class="stock-admin-dialog__shell"><header><div><p class="eyebrow">STOK ÖZETİ</p><h3 id="stockKpiListTitle">Stok kalemleri</h3><span id="stockKpiListMeta"></span></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" data-stock-dialog-close="stockKpiListDialog" aria-label="Listeyi kapat">×</button></header><div class="stock-admin-dialog__body"><div class="stock-kpi-list" id="stockKpiListBody" aria-live="polite"></div></div></div></dialog>
 
         <dialog class="stock-admin-dialog" id="stockMovementDialog"><form id="stockLocationMovementForm" class="stock-admin-dialog__shell" novalidate><header><div><p class="eyebrow" id="stockLocationMovementModeLabel">STOK HAREKETİ</p><h3 id="stockLocationMovementProductName">Ürün seçin</h3><span id="stockLocationMovementCurrent">Mevcut miktar: —</span></div><button class="ui-button ui-button--icon ui-button--secondary" id="stockLocationMovementClose" type="button">×</button></header><div class="stock-admin-dialog__body stock-location-form"><select id="stockLocationMovementProduct" required hidden></select><select id="stockLocationMovementType" hidden><option value="manual_in">Stok girişi</option><option value="manual_out">Stok çıkışı</option><option value="waste">Fire / sarf</option></select><label><span>Miktar</span><div class="stock-operation-stepper"><button type="button" data-stock-quantity-step="-1">−</button><input id="stockLocationMovementQuantity" type="number" min="0.01" step="1" inputmode="decimal" required><button type="button" data-stock-quantity-step="1">+</button></div></label><label><span>Birim</span><select id="stockLocationMovementUnit" required></select></label><div class="stock-operation-quick" id="stockMovementQuickAmounts"></div><label><span>Neden</span><select id="stockLocationMovementReason"><option value="Kullanım">Kullanım</option><option value="Sarf">Sarf</option><option value="Eksiltme">Eksiltme</option><option value="Fire">Fire</option><option value="Sayım düzeltmesi">Sayım düzeltmesi</option><option value="Hasarlı ürün">Hasarlı ürün</option><option value="Son kullanma tarihi">Son kullanma tarihi</option><option value="Diğer">Diğer</option></select></label><label><span>Açıklama</span><input id="stockLocationMovementNote" type="text" maxlength="250"></label><div id="stockLocationMovementConversion"></div><div class="stock-operation-preview"><span>İşlem sonrası stok</span><strong id="stockLocationMovementPreview">—</strong></div><p id="stockMovementDialogMessage" role="alert"></p></div><footer><button class="ui-button ui-button--secondary" type="button" data-stock-dialog-close="stockMovementDialog">Vazgeç</button><button class="ui-button ui-button--primary" id="stockLocationMovementSubmit" type="submit">İşlemi Kaydet</button></footer></form></dialog>
 
@@ -180,7 +183,7 @@
   </template>
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
-  <script type="module" src="/fatura/scripts/app.js?v=20260902-procurement"></script>
+  <script type="module" src="/fatura/scripts/app.js?v=20260902-final-ui"></script>
   <script src="/shared/scripts/pwa-client.js?v=20260831-panel-access" defer></script>
 </body>
 </html>
