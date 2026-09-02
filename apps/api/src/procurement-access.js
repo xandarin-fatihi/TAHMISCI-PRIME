@@ -43,10 +43,13 @@ const FATURA_SECTION_DEFINITIONS = Object.freeze([
     full: ["documents.read", "documents.upload", "documents.archive", "procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject"]
   }, { operate: ["documents.upload", "receipt.create", "receipt.submit"], full: ["documents.archive", "receipt.approve", "receipt.reject"] }),
   section("ledger", "Cari Hesap", "Borç, ödeme ve cari hareketler", ["off", "view", "operate", "full"], {
-    view: ["accounting.read"],
-    operate: ["accounting.read", "accounting.post", "payment.create"],
-    full: ["accounting.read", "accounting.post", "accounting.reverse", "payment.create", "payment.reverse"]
+    view: ["accounting.read", "documents.read"],
+    operate: ["accounting.read", "accounting.post", "payment.create", "documents.read", "documents.upload"],
+    full: ["accounting.read", "accounting.post", "accounting.reverse", "payment.create", "payment.reverse", "documents.read", "documents.upload"]
   }, { operate: ["accounting.post", "payment.create"], full: ["accounting.reverse", "payment.reverse"] }),
+  section("trash", "Çöp Kutusu", "Kaldırılan sevkiyatlar ve ters kayıt denetim geçmişi", ["off", "view"], {
+    view: ["procurement.read"]
+  }),
   section("users", "Kullanıcı ve Yetkiler", "Fatura kullanıcı erişim yönetimi", ["off", "full"], {
     full: ["procurement.users.manage"]
   }, { full: ["procurement.users.manage"] }, true),
@@ -57,9 +60,9 @@ const FATURA_SECTION_DEFINITIONS = Object.freeze([
 
 const FATURA_TEMPLATE_SECTION_ACCESS = Object.freeze({
   stok_personeli: frozenAccess({ dashboard: "view", stock: "operate", productAnalysis: "view" }),
-  mal_kabul: frozenAccess({ dashboard: "view", documents: "full", suppliers: "view" }),
-  satin_alma: frozenAccess({ dashboard: "view", suppliers: "full", documents: "operate" }),
-  muhasebe: frozenAccess({ dashboard: "view", suppliers: "view", documents: "view", ledger: "full" }),
+  mal_kabul: frozenAccess({ dashboard: "view", documents: "full", suppliers: "view", trash: "view" }),
+  satin_alma: frozenAccess({ dashboard: "view", suppliers: "full", documents: "operate", trash: "view" }),
+  muhasebe: frozenAccess({ dashboard: "view", suppliers: "view", documents: "view", ledger: "full", trash: "view" }),
   yonetici: frozenAccess(Object.fromEntries(FATURA_SECTION_DEFINITIONS.map((definition) => [definition.id, highestLevel(definition)]))),
   ozel: frozenAccess({})
 });
@@ -123,6 +126,7 @@ function normalizeSectionAccess(value, options = {}) {
   if (explicit) {
     fallback.documents = strongerVisibleLevel(fallback.documents, fallback.shipments, definitionFor("documents"));
     fallback.suppliers = strongerVisibleLevel(fallback.suppliers, fallback.links, definitionFor("suppliers"), "operate");
+    if (String(fallback.trash || "off") === "off" && ([fallback.documents, fallback.ledger].some((level) => (SECTION_LEVEL_RANK[String(level || "off")] || 0) > 0))) fallback.trash = "view";
   }
   const access = {};
   for (const definition of FATURA_SECTION_DEFINITIONS) {

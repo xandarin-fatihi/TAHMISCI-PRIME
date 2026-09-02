@@ -4,7 +4,7 @@ import { renderDashboard } from "./dashboard.js?v=20260902-final-ui";
 import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260902-final-ui";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
 import { documentFormBody, printShipmentArchive, renderDocuments, shipmentArchiveDetail } from "./documents.js?v=20260902-final-ui";
-import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderUsers, userAccessFormBody } from "./accounting.js?v=20260831-panel-access";
+import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderTrash, renderUsers, userAccessFormBody } from "./accounting.js?v=20260903-ledger-trash";
 import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260902-final-ui";
 import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260902-final-ui";
 import { confirmAction, requestText } from "./ui-dialogs.js";
@@ -27,6 +27,7 @@ const viewDefinitions = [
   { id: "suppliers", label: "Tedarikçiler", description: "Tedarikçi ürünlerini ve sevkiyatlarını yönetin.", any: [CAPABILITIES.supplierRead,CAPABILITIES.supplierManage] },
   { id: "documents", label: "Sevkiyat Arşivi", description: "Tamamlanan tedarikçi sevkiyatlarını ve belgelerini görüntüleyin.", capability: CAPABILITIES.documentsRead },
   { id: "ledger", label: "Cari Hesap", description: "Append-only borç, ödeme ve ters kayıt defteri.", capability: CAPABILITIES.accountingRead },
+  { id: "trash", label: "Çöp Kutusu", description: "Kaldırılan sevkiyat ve ters kayıt denetim geçmişi.", capability: CAPABILITIES.read },
   { id: "users", label: "Kullanıcı ve Yetkiler", description: "Mevcut personel hesaplarına Tahmisçi Fatura yetkileri verin.", capability: CAPABILITIES.users }
 ];
 let visibleViews = [];
@@ -46,8 +47,8 @@ const EVENT_SCOPES = {
   supplierProductLink: ["suppliers", "productAnalysis", "dashboard"],
   supplierIndependentProduct: ["suppliers", "productAnalysis", "dashboard"],
   document: ["documents", "dashboard"],
-  ledgerEntry: ["ledger", "suppliers", "dashboard"],
-  payment: ["ledger", "suppliers", "dashboard"],
+  ledgerEntry: ["ledger", "trash", "suppliers", "dashboard"],
+  payment: ["ledger", "trash", "suppliers", "dashboard"],
   personel: ["users", "context"],
   procurementSettings: ["dashboard"]
 };
@@ -266,6 +267,7 @@ async function loadView(view, force = false) {
       loadDocuments(force)
     ]),
     ledger: () => Promise.all([loadSuppliers(force), loadLedger(force)]),
+    trash: () => loadTrash(force),
     users: () => loadUsers(force),
     stock: () => loadStockView({ force }),
     productAnalysis: () => loadProductAnalysis({ force, productId: state.productAnalysis.selectedProductId })
@@ -297,7 +299,8 @@ const loadStockReferences = (force) => cachedLoad("stock-references", () => api(
 const loadProductLinks = (force) => cachedLoad("links", () => api("/product-links?active=all"), (p) => { state.productLinks = p.productLinks || []; }, force);
 const loadShipments = (force) => cachedLoad("shipments", () => api("/shipments"), (p) => { state.shipments = p.shipments || []; }, force);
 const loadDocuments = (force) => cachedLoad("documents", () => api("/documents"), (p) => { state.documents = p.documents || []; }, force);
-const loadLedger = (force) => cachedLoad("ledger", () => api("/ledger"), (p) => { state.ledgerEntries = p.entries || []; }, force);
+const loadLedger = (force) => cachedLoad("ledger", () => api("/ledger"), (p) => { state.ledgerEntries = p.entries || []; state.payments = p.payments || []; }, force);
+const loadTrash = (force) => cachedLoad("trash", () => api("/trash"), (p) => { state.trash = p.records || []; }, force);
 const loadUsers = (force) => cachedLoad("users", () => api("/users"), (p) => { state.users = p.users || []; state.accessTemplates = p.accessTemplates || []; state.sectionDefinitions = p.sections || []; }, force);
 
 async function loadSupplierWorkspaceData(supplierId, force = false) {
@@ -335,7 +338,7 @@ function renderActiveView() {
     bindProductAnalysisInteractions();
     return;
   }
-  const renderer = { dashboard: renderDashboard, suppliers: renderSuppliers, documents: renderDocuments, ledger: renderLedger, users: renderUsers }[state.activeView];
+  const renderer = { dashboard: renderDashboard, suppliers: renderSuppliers, documents: renderDocuments, ledger: renderLedger, trash: renderTrash, users: renderUsers }[state.activeView];
   content.innerHTML = renderer ? renderer() : '<div class="empty-state"><p>Bu bölüm kullanılamıyor.</p></div>';
 }
 
@@ -540,6 +543,7 @@ async function handleClick(event) {
   if (button.id === "logoutButton" || button.dataset.profileAction === "logout") return performLogout(button);
   if (button.dataset.dashboardView) return navigateFromDashboard(button.dataset.dashboardView, button.dataset.dashboardFilter || "");
   if (button.dataset.view || button.dataset.viewTarget) return setView(button.dataset.view || button.dataset.viewTarget);
+  if (button.dataset.cancelAction === "decline-stock") return declineSupplierShipmentStock(button);
   if (button.classList.contains("dialog-close")) return closeEntityDialog();
   if (button.classList.contains("detail-close")) return closeDetailDialog();
   if (button.dataset.openSupplier) return openSupplier(button.dataset.openSupplier);
@@ -550,6 +554,8 @@ async function handleClick(event) {
   if (button.dataset.openShipment) return openShipment(button.dataset.openShipment);
   if (button.dataset.printShipment) return printShipmentArchive(button.dataset.printShipment);
   if (button.dataset.openDocument) return openDocument(button.dataset.openDocument);
+  if (button.dataset.removeShipment) return removeShipment(button, button.dataset.removeShipment);
+  if (button.dataset.removePayment) return removePayment(button, button.dataset.removePayment);
   if (button.dataset.editLink) return openLinkForm(button.dataset.editLink);
   if (button.dataset.editUser) return openUserAccess(button.dataset.editUser);
   if (button.dataset.reverseLedger) return reverseLedger(button, button.dataset.reverseLedger);
@@ -605,7 +611,7 @@ function handleChange(event) {
   if (event.target.id === "shipment-status") { state.filters.shipmentStatus = event.target.value; return renderActiveView(); }
   if (event.target.id === "shipment-evidence") { state.filters.shipmentEvidence = event.target.value; return renderActiveView(); }
   if (event.target.id === "ledger-supplier") { state.filters.ledgerSupplier = event.target.value; return renderActiveView(); }
-  if (event.target.id === "ledger-due") { state.filters.ledgerDue = event.target.value; return renderActiveView(); }
+  if (event.target.id === "ledger-date") { state.filters.ledgerDate = event.target.value; return renderActiveView(); }
 }
 
 function updateSupplierConversionPreview() {
@@ -620,7 +626,7 @@ async function navigateFromDashboard(view, filter) {
     state.filters.shipmentEvidence = filter === "missing-documents" ? "missing" : filter === "unaccounted" ? "unaccounted" : "";
     view = "documents";
   }
-  if (view === "ledger") state.filters.ledgerDue = filter;
+  if (view === "ledger" && /^\d{4}-\d{2}-\d{2}$/.test(filter)) state.filters.ledgerDate = filter;
   await setView(view);
 }
 
@@ -745,6 +751,8 @@ function handleAction(button, action) {
   if (action === "new-shipment") return openShipmentForm();
   if (action === "upload-document") return openDocumentForm();
   if (action === "new-payment") return openPaymentForm();
+  if (action === "open-payment-history") { state.filters.paymentHistoryOpen = true; return renderActiveView(); }
+  if (action === "close-payment-history") { state.filters.paymentHistoryOpen = false; return renderActiveView(); }
   if (action === "new-ledger-entry") return openLedgerEntryForm();
   if (action === "supplier-add-product") return openIndependentProductForm();
   if (action === "supplier-create-shipment") return openSupplierShipmentForm();
@@ -773,6 +781,8 @@ function openEntityDialog(config) {
   if (cancelButton) {
     cancelButton.textContent = config.cancelLabel || "Vazgeç";
     cancelButton.hidden = config.hideCancel === true;
+    if (config.cancelAction) cancelButton.dataset.cancelAction = config.cancelAction;
+    else delete cancelButton.dataset.cancelAction;
   }
   document.getElementById("dialogMessage").textContent = "";
   entityDialog.classList.toggle("fatura-dialog--receipt", ["shipment-create", "supplier-shipment-create"].includes(config.mode));
@@ -780,7 +790,7 @@ function openEntityDialog(config) {
 }
 function closeEntityDialog() { if (entityDialog.open) entityDialog.close(); cleanupEntityDialog(); }
 function closeDetailDialog() { if (detailDialog.open) detailDialog.close(); cleanupDetailDialog(); }
-function cleanupEntityDialog() { entityForm.reset(); delete entityForm.dataset.mode; delete entityForm.dataset.entityId; const cancelButton = entityDialog.querySelector("footer .dialog-close"); if (cancelButton) { cancelButton.textContent = "Vazgeç"; cancelButton.hidden = false; } entityDialog.classList.remove("fatura-dialog--receipt"); syncDialogOpenState(); }
+function cleanupEntityDialog() { entityForm.reset(); delete entityForm.dataset.mode; delete entityForm.dataset.entityId; const cancelButton = entityDialog.querySelector("footer .dialog-close"); if (cancelButton) { cancelButton.textContent = "Vazgeç"; cancelButton.hidden = false; delete cancelButton.dataset.cancelAction; } entityDialog.classList.remove("fatura-dialog--receipt"); syncDialogOpenState(); }
 function cleanupDetailDialog() { state.detail = null; if (currentObjectUrl) { URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = ""; } syncDialogOpenState(); }
 function syncDialogOpenState() { document.body.classList.toggle("dialog-open", entityDialog.open || detailDialog.open); }
 
@@ -861,14 +871,28 @@ function openSupplierShipmentStockDecision(shipment) {
     kicker: "SEVKİYAT OLUŞTURULDU",
     title: "Sevkiyat stoğa eklensin mi?",
     description: unmatchedCount
-      ? `${matchedCount} eşleşmiş ürün seçilen depoya işlenecek; ${unmatchedCount} eşleşmeyen satır stoktan bağımsız biçimde arşiv ve analizde korunacak.`
-      : "Evet derseniz seçilen hedef depoya tek seferlik stok girişi uygulanır.",
+      ? `${matchedCount} eşleşmiş ürün doğrudan işlenecek; ${unmatchedCount} yeni ürün “Stokta Olmayanlar” kategorisinde oluşturulup aynı depoya eklenecek.`
+      : "Evet derseniz seçilen hedef depoya tek seferlik stok girişi ve ardından tedarikçi cari borcu uygulanır.",
     cancelLabel: "Hayır",
+    cancelAction: "decline-stock",
     submitLabel: "Evet, Stoğa Ekle",
-    body: `<div class="form-grid"><label class="span-2">Hedef depo<select name="destinationLocationId" required><option value="">Depo seçin</option>${locations.map((location) => `<option value="${escapeHtml(location.id)}" ${String(location.id) === String(shipment.destinationLocationId || "") || (!shipment.destinationLocationId && locations.length === 1) ? "selected" : ""}>${escapeHtml(location.name)}</option>`).join("")}</select></label>${unmatchedCount ? '<p class="form-note span-2">Stokla eşleşmeyen ürünler yanlış ürüne otomatik bağlanmaz; yalnız eşleşmiş satırlar uygulanır.</p>' : ""}</div>`
+    body: `<div class="form-grid"><label class="span-2">Hedef depo<select name="destinationLocationId" required><option value="">Depo seçin</option>${locations.map((location) => `<option value="${escapeHtml(location.id)}" ${String(location.id) === String(shipment.destinationLocationId || "") || (!shipment.destinationLocationId && locations.length === 1) ? "selected" : ""}>${escapeHtml(location.name)}</option>`).join("")}</select></label>${unmatchedCount ? '<p class="form-note span-2">Yeni ürünün birim yapısı tedarikçi ürünündeki temel birim, toplu birim ve çarpandan alınır.</p>' : ""}</div>`
   });
   const submit = document.getElementById("dialogSubmit");
-  queueMicrotask(() => { submit.disabled = matchedCount === 0 || !locations.length; });
+  queueMicrotask(() => { submit.disabled = !shipmentItems.length || !locations.length; });
+}
+
+function openStockFailureAccountingDecision(shipmentId, message) {
+  openEntityDialog({
+    mode: "shipment-account-without-stock",
+    entityId: shipmentId,
+    kicker: "SEVKİYAT ARŞİVLENDİ",
+    title: "Stok aktarımı tamamlanamadı",
+    description: "Sevkiyat kaydı ve belgesi arşive kaydedildi. Bu sevkiyat Cari Hesaba borç olarak işlensin mi?",
+    cancelLabel: "Hayır",
+    submitLabel: "Cari Hesaba İşle",
+    body: `<p class="application-dialog-copy">${escapeHtml(userFacingStockError(message))}</p>`
+  });
 }
 
 function supplierShipmentLine(item) {
@@ -911,8 +935,11 @@ async function submitEntityForm(event) {
   if (submit.disabled) return;
   setBusy(submit, true, "Kaydediliyor…");
   const data = new FormData(entityForm);
+  const mode = entityForm.dataset.mode;
+  let deferredStockFailure = null;
+  let completionMessage = "İşlem backend tarafından kaydedildi.";
+  let completionError = false;
   try {
-    const mode = entityForm.dataset.mode;
     let followUpShipment = null;
     if (mode === "supplier-create" || mode === "supplier-edit") await saveSupplier(mode, data);
     else if (mode === "link-create" || mode === "link-edit") await saveLink(mode, data);
@@ -925,14 +952,31 @@ async function submitEntityForm(event) {
     else if (mode === "independent-product-create" || mode === "independent-product-edit") await saveIndependentProduct(mode, data);
     else if (mode === "independent-product-deactivate") await deactivateIndependentProduct(data);
     else if (mode === "supplier-shipment-create") followUpShipment = await saveSupplierShipment(data);
-    else if (mode === "supplier-shipment-stock") await saveSupplierShipmentStock(data);
+    else if (mode === "supplier-shipment-stock") {
+      const payload = await saveSupplierShipmentStock(data);
+      if (payload.accountingStatus === "failed") {
+        completionMessage = payload.accountingMessage || "Stok işlendi; cari kayıt tamamlanamadı.";
+        completionError = true;
+      }
+    }
+    else if (mode === "shipment-account-without-stock") await saveShipmentWithoutStockAccounting(data);
     closeEntityDialog();
-    toast("İşlem backend tarafından kaydedildi.");
+    toast(completionMessage, completionError);
     await setView(state.activeView, { force: true });
     if (followUpShipment) openSupplierShipmentStockDecision(followUpShipment);
   } catch (error) {
-    document.getElementById("dialogMessage").textContent = error.message || "İşlem tamamlanamadı.";
+    const controlledStockFailure = mode === "supplier-shipment-stock"
+      && (error.payload?.stockStatus === "failed" || error.payload?.shipment?.stockStatus === "failed");
+    if (controlledStockFailure) {
+      updateRevision(error.payload || {});
+      deferredStockFailure = { shipmentId: entityForm.dataset.entityId, message: error.message };
+    }
+    else document.getElementById("dialogMessage").textContent = error.message || "İşlem tamamlanamadı.";
   } finally { setBusy(submit, false); updateSupplierShipmentSubmitState(); }
+  if (deferredStockFailure) {
+    closeEntityDialog();
+    openStockFailureAccountingDecision(deferredStockFailure.shipmentId, deferredStockFailure.message);
+  }
 }
 
 async function saveSupplier(mode, data) {
@@ -997,7 +1041,29 @@ async function saveSupplierShipmentStock(data) {
   const destinationLocationId = value(data, "destinationLocationId");
   if (!shipmentId || !destinationLocationId) throw new Error("Stoğa işlemek için hedef depo seçin.");
   const payload = await api(`/shipments/${encodeURIComponent(shipmentId)}/approve-stock`, { method: "POST", body: { workforceExpectedRevision: state.workforceRevision, destinationLocationId, note: "Tedarikçi sevkiyatından stok girişi" }, expectedRevision: state.revision });
-  mutationComplete(payload, ["shipments","dashboard","stock","documents","productAnalysis"]);
+  mutationComplete(payload, ["shipments","dashboard","stock","documents","productAnalysis","ledger","suppliers"]);
+  return payload;
+}
+async function saveShipmentWithoutStockAccounting() {
+  const shipmentId = entityForm.dataset.entityId;
+  if (!shipmentId) throw new Error("Sevkiyat kaydı bulunamadı.");
+  const payload = await api(`/shipments/${encodeURIComponent(shipmentId)}/account-without-stock`, { method: "POST", body: { note: "Stok aktarımı başarısız olduktan sonra kullanıcı onayıyla cari borç" }, expectedRevision: state.revision });
+  mutationComplete(payload, ["shipments","documents","dashboard","ledger","suppliers"]);
+  return payload;
+}
+async function declineSupplierShipmentStock(button) {
+  const shipmentId = entityForm.dataset.entityId;
+  if (!shipmentId || button.disabled) return;
+  setBusy(button, true, "Kaydediliyor…");
+  try {
+    const payload = await api(`/shipments/${encodeURIComponent(shipmentId)}/decline-stock`, { method: "POST", body: {}, expectedRevision: state.revision });
+    mutationComplete(payload, ["shipments","documents","dashboard"]);
+    closeEntityDialog();
+    toast("Sevkiyat arşivlendi; stok ve cari hareketi oluşturulmadı.");
+    await setView(state.activeView, { force: true });
+  } catch (error) {
+    document.getElementById("dialogMessage").textContent = error.message || "Sevkiyat kararı kaydedilemedi.";
+  } finally { setBusy(button, false); }
 }
 async function saveShipment(data) {
   const items = [...document.querySelectorAll("#shipmentLines .shipment-line")].map((line) => ({ stockProductId: line.querySelector('[name="stockProductId"]').value, quantity: Number(line.querySelector('[name="quantity"]').value), unit: line.querySelector('[name="unit"]').value.trim(), unitPriceKurus: integerKurus(line.querySelector('[name="unitPrice"]').value), taxKurus: 0 }));
@@ -1014,8 +1080,14 @@ async function saveDocument(data) {
   mutationComplete(payload, ["documents","shipments","dashboard"]);
 }
 async function savePayment(data) {
-  const payload = await api("/payments", { method: "POST", body: { supplierId: value(data,"supplierId"), amountKurus: integerKurus(value(data,"amount")), paymentDate: value(data,"paymentDate"), reference: value(data,"reference"), note: value(data,"note") }, expectedRevision: state.revision });
-  mutationComplete(payload, ["ledger","suppliers","dashboard"]);
+  const supplierId = value(data,"supplierId");
+  const paymentDate = value(data,"paymentDate");
+  const file = data.get("paymentFile");
+  if (!(file instanceof File) || file.size <= 0) throw new Error("Dekont veya fatura belgesi seçin.");
+  const documentPayload = await uploadDocument(file, { documentType: "diğer", supplierId, documentDate: paymentDate }, state.revision);
+  mutationComplete(documentPayload, ["documents"]);
+  const payload = await api("/payments", { method: "POST", body: { supplierId, amountKurus: integerKurus(value(data,"amount")), paymentDate, documentId: documentPayload.document && documentPayload.document.id || "", note: value(data,"note") }, expectedRevision: state.revision });
+  mutationComplete(payload, ["ledger","suppliers","dashboard","documents"]);
 }
 async function saveLedgerEntry(data) {
   const amount = integerKurus(value(data,"amount"));
@@ -1103,8 +1175,11 @@ async function openDocument(id) {
     const documentMeta = state.documents.find((item) => item.id === id);
     const blob = await api(`/documents/${encodeURIComponent(id)}/content`, { responseType:"blob", dedupe:false });
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = URL.createObjectURL(blob); state.detail = { type:"document", id, document: documentMeta };
+    const mimeType = String(blob.type || documentMeta && documentMeta.mimeType || "").toLowerCase();
+    const isPdf = mimeType === "application/pdf";
+    const fileName = documentMeta && documentMeta.originalName || (isPdf ? "belge.pdf" : "belge");
     document.getElementById("detailKicker").textContent = "ÖZEL BELGE"; document.getElementById("detailTitle").textContent = documentMeta && (documentMeta.documentNumber || documentMeta.originalName) || "Belge"; document.getElementById("detailDescription").textContent = "İçerik yetki kontrolünden sonra yüklendi; public media yolu kullanılmadı.";
-    document.getElementById("detailBody").innerHTML = `<img class="document-preview" src="${escapeHtml(currentObjectUrl)}" alt="Belge önizlemesi">${documentMeta && !documentMeta.archivedAt && has(CAPABILITIES.documentsArchive) ? '<div class="detail-actions detail-actions--spaced"><button class="ui-button ui-button--danger" data-detail-action="archive-document">Belgeyi arşivle</button></div>' : ""}`;
+    document.getElementById("detailBody").innerHTML = `${isPdf ? `<iframe class="document-preview document-preview--pdf" src="${escapeHtml(currentObjectUrl)}#toolbar=1" title="PDF belge önizlemesi" sandbox referrerpolicy="no-referrer"></iframe>` : `<img class="document-preview" src="${escapeHtml(currentObjectUrl)}" alt="Belge önizlemesi">`}<div class="detail-actions detail-actions--spaced"><a class="ui-button ui-button--secondary" href="${escapeHtml(currentObjectUrl)}" download="${escapeHtml(fileName)}">Belgeyi İndir</a>${documentMeta && !documentMeta.archivedAt && has(CAPABILITIES.documentsArchive) ? '<button class="ui-button ui-button--danger" data-detail-action="archive-document">Belgeyi arşivle</button>' : ""}</div>`;
     if (!detailDialog.open) detailDialog.showModal(); document.body.classList.add("dialog-open");
   } catch (error) { toast(error.message, true); }
 }
@@ -1117,6 +1192,7 @@ async function handleDetailAction(button, action) {
   if (action === "approve-stock") return approveStock(button, detail.id);
   if (action === "reject-shipment") return rejectShipment(button, detail.id);
   if (action === "delete-shipment") return deleteShipment(button, detail.id);
+  if (action === "remove-shipment") return removeShipment(button, detail.id);
   if (action === "submit-shipment") return submitShipment(button, detail.id);
   if (action === "account-shipment") return openAccountingForm(detail.payload);
   if (action === "upload-shipment-document") { closeDetailDialog(); return openDocumentForm(detail.id); }
@@ -1128,10 +1204,27 @@ async function deactivateSupplier(button, id) {
   await runButtonMutation(button, () => api(`/suppliers/${encodeURIComponent(id)}/deactivate`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["suppliers","dashboard"], async () => { closeDetailDialog(); await setView("suppliers", {force:true}); });
 }
 async function approveStock(button, id) {
-  if (!await confirmAction({ title: "Stok onayı", description: "Stok yalnız bir kez artırılacak. Muhasebe kaydı oluşturulmayacak.", confirmLabel: "Onayla ve stoğa ekle" })) return;
+  if (!await confirmAction({ title: "Stok onayı", description: "Stok yalnız bir kez artırılacak; başarılı olursa sevkiyat tutarı tedarikçi cari hesabına otomatik borç yazılacak.", confirmLabel: "Onayla ve stoğa ekle" })) return;
   const destinationLocationId = document.getElementById("shipmentDestinationLocation")?.value || state.detail?.payload?.shipment?.destinationLocationId || "";
   if (!destinationLocationId) return toast("Stok onayı için hedef depo seçin.", true);
-  await runButtonMutation(button, () => api(`/shipments/${encodeURIComponent(id)}/approve-stock`, { method:"POST", body:{workforceExpectedRevision:state.workforceRevision,destinationLocationId,note:"Tahmisçi Fatura stok onayı"}, expectedRevision:state.revision }), ["shipments","documents","stock","dashboard"], async () => { closeDetailDialog(); await setView("documents", {force:true}); });
+  if (button.disabled) return;
+  setBusy(button, true, "İşleniyor…");
+  try {
+    const payload = await api(`/shipments/${encodeURIComponent(id)}/approve-stock`, { method:"POST", body:{workforceExpectedRevision:state.workforceRevision,destinationLocationId,note:"Tahmisçi Fatura stok onayı"}, expectedRevision:state.revision });
+    mutationComplete(payload, ["shipments","documents","stock","dashboard","ledger","suppliers"]);
+    closeDetailDialog();
+    toast(payload.accountingStatus === "failed" ? payload.accountingMessage || "Stok işlendi; cari kayıt tamamlanamadı." : "Stok ve cari hareketi tamamlandı.", payload.accountingStatus === "failed");
+    await setView("documents", { force:true });
+  } catch (error) {
+    const controlledFailure = error.payload?.stockStatus === "failed" || error.payload?.shipment?.stockStatus === "failed";
+    if (!controlledFailure) return toast(error.message || "Stok işlemi tamamlanamadı.", true);
+    updateRevision(error.payload || {});
+    invalidate(["shipments","documents","dashboard","stock"]);
+    closeDetailDialog();
+    openStockFailureAccountingDecision(id, error.message);
+  } finally {
+    setBusy(button, false);
+  }
 }
 async function rejectShipment(button, id) {
   const reason = await requestText({ title: "Mal kabulünü reddet", description: "Bu kayıt reddedilecek. Gerekçeyi yazın.", label: "Red nedeni", confirmLabel: "Reddet", danger: true }); if (reason === null) return;
@@ -1140,6 +1233,16 @@ async function rejectShipment(button, id) {
 async function deleteShipment(button, id) {
   if (!await confirmShipmentDeletion()) return;
   await runButtonMutation(button, () => api(`/shipments/${encodeURIComponent(id)}`, { method:"DELETE", body:{}, expectedRevision:state.revision }), ["shipments","documents","dashboard","stock"], async () => { closeDetailDialog(); await setView("documents", {force:true}); });
+}
+async function removeShipment(button, id) {
+  const reason = await requestText({ title: "Sevkiyatı kaldır", description: "Stok ve cari etkileri geçmiş silinmeden ters hareketlerle dengelenecek.", label: "Kaldırma nedeni", value: "", confirmLabel: "Kaldır", danger: true });
+  if (reason === null) return;
+  await runButtonMutation(button, () => api(`/shipments/${encodeURIComponent(id)}/remove`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["shipments","documents","dashboard","stock","ledger","suppliers","trash"], async () => { if (detailDialog.open) closeDetailDialog(); await setView(state.activeView === "trash" ? "trash" : "documents", {force:true}); });
+}
+async function removePayment(button, id) {
+  const reason = await requestText({ title: "Ödemeyi kaldır", description: "Ödeme silinmez; cari hesapta ters kayıt oluşturulur.", label: "Kaldırma nedeni", value: "", confirmLabel: "Kaldır", danger: true });
+  if (reason === null) return;
+  await runButtonMutation(button, () => api(`/payments/${encodeURIComponent(id)}/reverse`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["ledger","suppliers","dashboard","trash"], () => setView("ledger", {force:true}));
 }
 function confirmShipmentDeletion() { return confirmAction({ title: "Mal kabul kaydını sil", description: "Bu taslak kayıt kalıcı olarak silinecek.", confirmLabel: "Evet, sil", danger: true }); }
 async function submitShipment(button, id) {
@@ -1234,7 +1337,7 @@ async function flushEventScopes(){
   const priorView=state.activeView;
   const dataScopes=scopes.filter((scope)=>scope!=="context");
   invalidate(dataScopes);
-  if(["shipments","documents","ledger","suppliers","users"].some((scope)=>scopes.includes(scope))){
+  if(["shipments","documents","ledger","suppliers","users","trash"].some((scope)=>scopes.includes(scope))){
     state.loaded.delete("notifications");
     window.clearTimeout(notificationTimer);
     notificationTimer=window.setTimeout(()=>loadNotifications(true).catch(()=>null),120);
@@ -1250,6 +1353,7 @@ function stopEvents(){window.clearTimeout(eventRefreshTimer);window.clearTimeout
 function updateNetworkState(){const element=document.getElementById("liveState");if(!element)return;element.classList.toggle("is-offline",!navigator.onLine);element.lastChild.textContent=navigator.onLine?" Güncel":" Çevrimdışı";}
 function handleViewError(error){if(error instanceof ApiError&&[401,403].includes(error.status)){if(error.status===401)return showAuth("Oturumunuz sona erdi. Lütfen yeniden giriş yapın.");}content.innerHTML=`<div class="error-state"><div><h2>Veriler alınamadı</h2><p>${escapeHtml(error.message||"Beklenmeyen hata")}</p><button class="ui-button ui-button--secondary" data-view-target="${escapeHtml(state.activeView)}">Yeniden dene</button></div></div>`;}
 function toast(message,error=false){const element=document.getElementById("toast");element.textContent=message;element.classList.toggle("is-error",error);element.classList.add("is-visible");window.clearTimeout(toastTimer);toastTimer=window.setTimeout(()=>element.classList.remove("is-visible"),3600);}
+function userFacingStockError(message){const text=String(message||"").trim();if(!text)return "Stok aktarımı doğrulanamadı. Sevkiyat ve belge arşivde korundu.";if(/unit|birim/i.test(text))return "Ürün birimleri uyuşmadığı için stok aktarımı yapılamadı. Sevkiyat ve belge arşivde korundu.";if(/revision|409|conflict|çakış/i.test(text))return "Stok verisi bu sırada güncellendiği için aktarım tamamlanamadı. Sevkiyat ve belge arşivde korundu.";return text.replace(/\b(409|500)\b/g,"").replace(/stockProductId/gi,"stok ürünü").replace(/\s{2,}/g," ").trim();}
 function roleLabel(role){return ({operasyon:"Operasyon",mal_kabul:"Mal kabul",muhasebe:"Muhasebe",satın_alma:"Satın alma",yönetici:"Yönetici",özel:"Özel yetki"})[role]||role||"Personel"}
 function toggleSidebar(){if(matchMedia("(max-width:820px)").matches)return openMobileSidebar();app.classList.toggle("is-collapsed");const collapsed=app.classList.contains("is-collapsed");safeLocalStorageSet("tahmisci:fatura:sidebar",collapsed?"collapsed":"open");document.getElementById("sidebarToggle").setAttribute("aria-expanded",String(!collapsed));document.getElementById("sidebarToggle").title=collapsed?"Kenar çubuğunu aç":"Kenar çubuğunu kapat";}
 function openMobileSidebar(){app.classList.add("is-mobile-open");document.getElementById("mobileMenu").setAttribute("aria-expanded","true");}

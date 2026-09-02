@@ -1967,6 +1967,7 @@ function normalizeLedgerEntry(item) {
     type,
     amountKurus: normalizeKurus(item.amountKurus, 0),
     balanceAfterKurus: item.balanceAfterKurus === undefined ? undefined : normalizeKurus(item.balanceAfterKurus, 0),
+    transactionDate: procurementText(item.transactionDate || String(item.createdAt || "").slice(0, 10), 10),
     dueDate: procurementText(item.dueDate, 10),
     note: procurementText(item.note, 1000),
     sourceType: procurementText(item.sourceType, 100),
@@ -1999,6 +2000,8 @@ function normalizeProcurementPayment(item) {
     reversalLedgerEntryId: procurementText(item.reversalLedgerEntryId, 180),
     reversedAt: item.reversedAt || null,
     reversedBy: procurementText(item.reversedBy, 180),
+    reversedByName: procurementText(item.reversedByName, 180),
+    reversalReason: procurementText(item.reversalReason, 1000),
     createdAt: item.createdAt || null,
     createdBy: procurementText(item.createdBy, 180)
   };
@@ -2142,11 +2145,9 @@ function normalizeWorkforceShipments(value, stockState, productCodeRegistry) {
       documentType: procurementText(shipment.documentType, 40),
       documentNumber: procurementText(shipment.documentNumber, 120),
       documentDate: procurementText(shipment.documentDate, 10),
-      accountingStatus: shipment.accountingStatus === "reversed"
-        ? "reversed"
-        : accountingEntryIds.length || shipment.accountingPostedAt
-          ? "posted"
-          : "not_posted",
+      accountingStatus: ["not_posted", "posted", "reversed", "failed"].includes(String(shipment.accountingStatus || ""))
+        ? String(shipment.accountingStatus)
+        : accountingEntryIds.length || shipment.accountingPostedAt ? "posted" : "not_posted",
       accountingEntryIds,
       accountingPostedAt: shipment.accountingPostedAt || null,
       accountingPostedBy: procurementText(shipment.accountingPostedBy, 180),
@@ -2157,7 +2158,7 @@ function normalizeWorkforceShipments(value, stockState, productCodeRegistry) {
           : "missing",
       operationalStatus: procurementText(shipment.operationalStatus, 80) || status,
       updatedAt: shipment.updatedAt || shipment.createdAt || null,
-      stockAppliedAt: shipment.stockAppliedAt || (status === "onaylandı" ? shipment.approvedAt || shipment.updatedAt || shipment.createdAt || null : null),
+      stockAppliedAt: shipment.stockAppliedAt || (status === "onaylandı" && stockMovementRefs.length ? shipment.approvedAt || shipment.updatedAt || shipment.createdAt || null : null),
       stockMovementRef: String(shipment.stockMovementRef || stockMovementRefs[0] || "") || null,
       stockMovementRefs,
       destinationLocationId: destination ? destination.id : null,

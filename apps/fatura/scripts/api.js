@@ -87,7 +87,7 @@ export async function logout(scope) {
 }
 
 export async function uploadDocument(file, metadata, expectedRevision) {
-  if (!(file instanceof File)) throw new ApiError("Yüklenecek görsel seçilmedi.", 400);
+  if (!(file instanceof File)) throw new ApiError("Yüklenecek belge seçilmedi.", 400);
   const headers = new Headers({
     "Content-Type": file.type || "application/octet-stream",
     "X-File-Name": encodeURIComponent(file.name || "belge"),

@@ -14,7 +14,7 @@ export const CAPABILITIES = {
 
 export const state = {
   context: null, revision: 0, workforceRevision: 0, activeView: "dashboard", loaded: new Map(), eventSource: null,
-  suppliers: [], productLinks: [], shipments: [], documents: [], ledgerEntries: [], payments: [], users: [], auditEvents: [],
+  suppliers: [], productLinks: [], shipments: [], documents: [], ledgerEntries: [], payments: [], trash: [], users: [], auditEvents: [],
   notifications: [], unreadCount: 0,
   dashboard: null, settings: null, accessTemplates: [], sectionDefinitions: [], sectionAccess: Object.create(null), filters: Object.create(null), detail: null,
   supplierWorkspace: { supplierId: "", productLinks: [], independentProducts: [], loading: false, returnScrollY: 0 },
@@ -150,7 +150,8 @@ export function icon(name) {
     users: '<circle cx="9" cy="8" r="3"/><path d="M3 21v-2a6 6 0 0 1 12 0v2M17 11a4 4 0 0 1 4 4v2"/>',
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/>',
     stock: '<path d="m4 7 8-4 8 4-8 4z"/><path d="m4 7 8 4 8-4v10l-8 4-8-4zM12 11v10"/>',
-    productAnalysis: '<circle cx="9" cy="9" r="5"/><path d="m13 13 4 4M15 20h6M18 17v6M4 20h7"/>'
+    productAnalysis: '<circle cx="9" cy="9" r="5"/><path d="m13 13 4 4M15 20h6M18 17v6M4 20h7"/>',
+    trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 10v7M14 10v7"/>'
   };
   return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.dashboard}</svg>`;
 }

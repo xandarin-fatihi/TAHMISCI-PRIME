@@ -2087,6 +2087,7 @@ procurementRuntime = registerProcurementRoutes({
   config,
   notificationService,
   notifyWorkforceChange: workforceRuntime.invalidateWorkforce,
+  broadcastStockUpdate,
   documentService: procurementDocumentService,
   approveWorkforceShipment: workforceRuntime.approveWorkforceShipment,
   requireRequestOrigin: requireAdminOrMainRequestOrigin,

@@ -9,12 +9,13 @@ const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const DEFAULT_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
 const MAX_IMAGE_PIXELS = 60 * 1000 * 1000;
 const MAX_IMAGE_SIDE = 24_000;
-const PRIVATE_FILE_PATTERN = /^[a-f0-9]{48}\.(?:jpg|png|webp)$/;
+const PRIVATE_FILE_PATTERN = /^[a-f0-9]{48}\.(?:jpg|png|webp|pdf)$/;
 const INDEX_FILE_PATTERN = /^[a-f0-9]{64}\.json$/;
 const MIME_DETAILS = Object.freeze({
   "image/jpeg": { extension: ".jpg", label: "JPEG" },
   "image/png": { extension: ".png", label: "PNG" },
-  "image/webp": { extension: ".webp", label: "WebP" }
+  "image/webp": { extension: ".webp", label: "WebP" },
+  "application/pdf": { extension: ".pdf", label: "PDF" }
 });
 const PUBLIC_DOCUMENT_FIELDS = new Set([
   "id", "type", "documentType", "originalName", "mimeType", "sizeBytes",
@@ -70,16 +71,18 @@ function createProcurementDocumentService(options = {}) {
 
   async function storeUpload({ buffer, originalName, declaredMimeType } = {}) {
     validateUploadBuffer(buffer, maxUploadBytes);
-    const detectedMimeType = detectImageType(buffer);
+    const detectedMimeType = detectDocumentType(buffer);
     if (!detectedMimeType) {
-      throw documentError("UNSUPPORTED_DOCUMENT_TYPE", "Yalnızca geçerli JPEG, PNG veya WebP görselleri yüklenebilir.");
+      throw documentError("UNSUPPORTED_DOCUMENT_TYPE", "Yalnızca geçerli PDF, JPEG, PNG veya WebP belgeleri yüklenebilir.");
     }
     validateDeclaredType(declaredMimeType, detectedMimeType);
     validateFilenameType(originalName, detectedMimeType);
 
     const sanitizedName = sanitizeOriginalFilename(originalName, MIME_DETAILS[detectedMimeType].extension);
-    let processed = sanitizeImage(buffer, detectedMimeType);
-    processed = await optionallyProcessImage(processed, imageProcessor, strictImageProcessing);
+    let processed = sanitizeDocument(buffer, detectedMimeType);
+    processed = detectedMimeType === "application/pdf"
+      ? { ...processed, reencoded: false, thumbnailBuffer: null, thumbnailMimeType: "" }
+      : await optionallyProcessImage(processed, imageProcessor, strictImageProcessing);
     if (processed.buffer.length > maxUploadBytes) {
       throw documentError("DOCUMENT_TOO_LARGE", `Belge en fazla ${maxUploadBytes} bayt olabilir.`, 413);
     }
@@ -249,7 +252,7 @@ function createProcurementDocumentService(options = {}) {
         throw documentError("DOCUMENT_CONTENT_NOT_FOUND", "Belge içeriği bulunamadı.", 404);
       }
       const buffer = await fs.readFile(privatePath(physicalName));
-      const detectedMimeType = detectImageType(buffer);
+      const detectedMimeType = detectDocumentType(buffer);
       const expectedMimeType = thumbnail
         ? String(document.thumbnailMimeType || mimeTypeForPrivateName(physicalName) || document.mimeType || "")
         : String(document.mimeType || "");
@@ -369,7 +372,7 @@ function createProcurementDocumentService(options = {}) {
       if (!validIndexRecord(record, hash)) throw new Error("invalid index");
       if (verifyContent) {
         const content = await fs.readFile(privatePath(record.physicalName));
-        if (content.length !== Number(record.sizeBytes) || sha256Hex(content) !== hash || detectImageType(content) !== record.mimeType) {
+        if (content.length !== Number(record.sizeBytes) || sha256Hex(content) !== hash || detectDocumentType(content) !== record.mimeType) {
           throw new Error("invalid content");
         }
       }
@@ -474,6 +477,24 @@ function sanitizeImage(buffer, expectedMimeType) {
   if (mimeType === "image/jpeg") return sanitizeJpeg(buffer);
   if (mimeType === "image/png") return sanitizePng(buffer);
   return sanitizeWebp(buffer);
+}
+
+function sanitizeDocument(buffer, expectedMimeType) {
+  const mimeType = detectDocumentType(buffer);
+  if (!mimeType || (expectedMimeType && mimeType !== expectedMimeType)) {
+    throw documentError("INVALID_DOCUMENT_SIGNATURE", "Belge içeriği bildirilen dosya formatıyla uyuşmuyor.");
+  }
+  if (mimeType !== "application/pdf") return sanitizeImage(buffer, mimeType);
+  const tail = buffer.subarray(Math.max(0, buffer.length - 2048)).toString("latin1");
+  if (buffer.length < 12 || !buffer.subarray(0, 8).toString("ascii").startsWith("%PDF-") || !tail.includes("%%EOF")) {
+    throw documentError("INVALID_DOCUMENT_STRUCTURE", "PDF belge yapısı geçersiz.");
+  }
+  return { buffer: Buffer.from(buffer), mimeType, extension: ".pdf", width: 0, height: 0, metadataStripped: false, metadataRemoved: false };
+}
+
+function detectDocumentType(buffer) {
+  if (Buffer.isBuffer(buffer) && buffer.length >= 8 && buffer.subarray(0, 5).toString("ascii") === "%PDF-") return "application/pdf";
+  return detectImageType(buffer);
 }
 
 function detectImageType(buffer) {
@@ -752,7 +773,7 @@ function validateFilenameType(value, detectedMimeType) {
   const extension = path.extname(String(value || "").trim()).toLowerCase();
   if (!extension) return;
   const normalized = extension === ".jpeg" ? ".jpg" : extension;
-  if ([".jpg", ".png", ".webp"].includes(normalized) && normalized !== MIME_DETAILS[detectedMimeType].extension) {
+  if ([".jpg", ".png", ".webp", ".pdf"].includes(normalized) && normalized !== MIME_DETAILS[detectedMimeType].extension) {
     throw documentError("DOCUMENT_EXTENSION_MISMATCH", "Belgenin dosya uzantısı ile içeriği uyuşmuyor.");
   }
 }
@@ -783,7 +804,7 @@ function safeDocumentMetadata(document) {
     if (source[field] === undefined) continue;
     safe[field] = Array.isArray(source[field]) ? source[field].map((item) => String(item)) : source[field];
   }
-  safe.thumbnailAvailable = Boolean(source.thumbnailPhysicalName || source.physicalName);
+  safe.thumbnailAvailable = String(source.mimeType || "") !== "application/pdf" && Boolean(source.thumbnailPhysicalName || source.physicalName);
   return safe;
 }
 
@@ -804,7 +825,8 @@ function mimeTypeForPrivateName(value) {
   return {
     ".jpg": "image/jpeg",
     ".png": "image/png",
-    ".webp": "image/webp"
+    ".webp": "image/webp",
+    ".pdf": "application/pdf"
   }[path.extname(String(value || "")).toLowerCase()] || "";
 }
 
@@ -863,6 +885,7 @@ module.exports = {
   DEFAULT_MAX_UPLOAD_BYTES,
   ProcurementDocumentError,
   createProcurementDocumentService,
+  detectDocumentType,
   detectImageType,
   safeDocumentMetadata,
   sanitizeImage,

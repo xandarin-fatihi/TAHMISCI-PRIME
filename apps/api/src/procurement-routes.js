@@ -37,6 +37,7 @@ function registerProcurementRoutes(deps = {}) {
   });
   const documentService = deps.documentService || null;
   const approveWorkforceShipment = deps.approveWorkforceShipment || null;
+  const broadcastStockUpdate = typeof deps.broadcastStockUpdate === "function" ? deps.broadcastStockUpdate : null;
   const requireRequestOrigin = deps.requireRequestOrigin || deps.requireAdminOrMainRequestOrigin || pass;
   const riskOperationLimiter = deps.riskOperationLimiter || pass;
   const resolveActor = typeof deps.resolveActor === "function"
@@ -46,7 +47,7 @@ function registerProcurementRoutes(deps = {}) {
   const mutationMiddlewares = [requireRequestOrigin, ...authenticated, riskOperationLimiter];
   const rawUploadLimit = normalizeUploadLimit(deps.maxUploadBytes || deps.config && deps.config.procurementMaxUploadBytes);
   const rawImageParser = express.raw({
-    type: ["image/jpeg", "image/png", "image/webp", "application/octet-stream"],
+    type: ["image/jpeg", "image/png", "image/webp", "application/pdf", "application/octet-stream"],
     limit: rawUploadLimit
   });
 
@@ -180,23 +181,89 @@ function registerProcurementRoutes(deps = {}) {
     }
     const mutation = mutationInput(req);
     const body = jsonBody(req);
-    const result = await approveWorkforceShipment({
-      shipmentId: req.params.id,
-      requestId: mutation.requestId,
-      expectedRevision: body.workforceExpectedRevision !== undefined ? body.workforceExpectedRevision : body.expectedRevision,
-      procurementExpectedRevision: mutation.expectedRevision,
-      note: String(body.note || "").trim().slice(0, 500),
-      destinationLocationId: String(body.destinationLocationId || "").trim(),
-      actor: req.procurementActor,
-      req
-    });
+    let result;
+    try {
+      result = await approveWorkforceShipment({
+        shipmentId: req.params.id,
+        requestId: mutation.requestId,
+        expectedRevision: body.workforceExpectedRevision !== undefined ? body.workforceExpectedRevision : body.expectedRevision,
+        procurementExpectedRevision: mutation.expectedRevision,
+        note: String(body.note || "").trim().slice(0, 500),
+        destinationLocationId: String(body.destinationLocationId || "").trim(),
+        actor: req.procurementActor,
+        req
+      });
+    } catch (error) {
+      let failure = null;
+      try {
+        const current = await service.context(req.procurementActor);
+        failure = await service.recordShipmentStockFailure(req.procurementActor, req.params.id, {
+          code: error && error.payload && error.payload.code || error && error.code || "STOCK_TRANSFER_FAILED",
+          message: error && error.payload && error.payload.message || error && error.message
+        }, {
+          requestId: `${mutation.requestId.slice(0, 140)}:stock-failed`,
+          expectedRevision: current.revision
+        });
+      } catch (_recordError) { /* Ana hata korunur; sevkiyat zaten kalıcıdır. */ }
+      if (failure) {
+        return res.status(Math.max(400, Math.min(499, Number(error && error.status || 422)))).json({
+          ok: false,
+          message: error && error.payload && error.payload.message || error && error.message || "Stok aktarımı tamamlanamadı.",
+          code: error && error.payload && error.payload.code || error && error.code || "STOCK_TRANSFER_FAILED",
+          revision: failure.revision,
+          workforceRevision: failure.workforceRevision,
+          shipment: failure.shipment,
+          stockStatus: "failed"
+        });
+      }
+      throw error;
+    }
     const current = await service.context(req.procurementActor);
-    res.json({
-      ...(result && typeof result === "object" ? result : {}),
-      ok: true,
-      revision: current.revision,
-      workforceRevision: result && result.revision
-    });
+    try {
+      const accounting = await service.accountShipmentAfterStock(req.procurementActor, req.params.id, {
+        note: "Stok aktarımı sonrası otomatik tedarikçi borcu"
+      }, {
+        requestId: `${mutation.requestId.slice(0, 140)}:auto-ledger`,
+        expectedRevision: current.revision
+      });
+      return res.json({
+        ...(result && typeof result === "object" ? result : {}), ok: true,
+        revision: accounting.revision, workforceRevision: accounting.workforceRevision || result && result.revision,
+        shipment: accounting.shipment || result && result.shipment, ledgerEntry: accounting.ledgerEntry, accountingStatus: "posted"
+      });
+    } catch (error) {
+      let failure = null;
+      try {
+        const latest = await service.context(req.procurementActor);
+        failure = await service.recordShipmentAccountingFailure(req.procurementActor, req.params.id, {
+          code: error && error.code || "ACCOUNTING_POST_FAILED", message: error && error.message
+        }, { requestId: `${mutation.requestId.slice(0, 140)}:ledger-failed`, expectedRevision: latest.revision });
+      } catch (_recordError) { /* Stok sonucu korunur. */ }
+      return res.json({
+        ...(result && typeof result === "object" ? result : {}), ok: true,
+        revision: failure && failure.revision || current.revision,
+        workforceRevision: failure && failure.workforceRevision || result && result.revision,
+        shipment: failure && failure.shipment || result && result.shipment,
+        accountingStatus: "failed", accountingMessage: "Stok işlendi ancak cari kayıt oluşturulamadı. Sevkiyat arşivde korunuyor."
+      });
+    }
+  }));
+
+  app.post(`${API_ROOT}/shipments/:id/decline-stock`, ...mutationMiddlewares, anySectionAccess(["shipments", "documents", "suppliers"], "full"), capability("receipt.approve"), asyncRoute(async (req, res) => {
+    res.json(await service.declineShipmentStock(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
+  }));
+
+  app.post(`${API_ROOT}/shipments/:id/account-without-stock`, ...mutationMiddlewares, anySectionAccess(["shipments", "documents", "ledger"], "operate"), anyCapability(["receipt.approve", "accounting.post"]), asyncRoute(async (req, res) => {
+    const result = await service.accountShipmentWithoutStock(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req));
+    res.status(result.idempotent ? 200 : 201).json(result);
+  }));
+
+  app.post(`${API_ROOT}/shipments/:id/remove`, ...mutationMiddlewares, anySectionAccess(["shipments", "documents"], "full"), capability("receipt.reject"), asyncRoute(async (req, res) => {
+    const result = await service.removeShipment(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req));
+    if (!result.idempotent && result.stockReversalMovementIds?.length && broadcastStockUpdate) {
+      broadcastStockUpdate(null, result.stockUpdatedAt || new Date().toISOString(), result.inventoryRevision, "inventory");
+    }
+    res.json(result);
   }));
 
   app.post(`${API_ROOT}/shipments/:id/reject`, ...mutationMiddlewares, anySectionAccess(["shipments", "documents"], "full"), capability("receipt.reject"), asyncRoute(async (req, res) => {
@@ -217,7 +284,7 @@ function registerProcurementRoutes(deps = {}) {
     res.json(await service.listDocuments(req.procurementActor, req.query));
   }));
 
-  app.post(`${API_ROOT}/documents`, requireRequestOrigin, ...authenticated, riskOperationLimiter, anySectionAccess(["documents", "suppliers"], "operate"), capability("documents.upload"), rawImageParser, asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/documents`, requireRequestOrigin, ...authenticated, riskOperationLimiter, anySectionAccess(["documents", "suppliers", "ledger"], "operate"), capability("documents.upload"), rawImageParser, asyncRoute(async (req, res) => {
     if (!documentService || typeof documentService.storeUpload !== "function") {
       throw fail("Özel belge depolama servisi yapılandırılmamış.", 503, "DOCUMENT_SERVICE_UNAVAILABLE");
     }
@@ -248,7 +315,7 @@ function registerProcurementRoutes(deps = {}) {
     }
   }));
 
-  app.get(`${API_ROOT}/documents/:id/content`, ...authenticated, sectionAccess("documents", "view"), capability("documents.read"), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/documents/:id/content`, ...authenticated, anySectionAccess(["documents", "ledger"], "view"), capability("documents.read"), asyncRoute(async (req, res) => {
     if (!documentService || typeof documentService.resolveContent !== "function") {
       throw fail("Özel belge depolama servisi yapılandırılmamış.", 503, "DOCUMENT_SERVICE_UNAVAILABLE");
     }
@@ -261,7 +328,7 @@ function registerProcurementRoutes(deps = {}) {
       Pragma: "no-cache",
       "Content-Type": String(resolved && resolved.mimeType || document.mimeType || "application/octet-stream"),
       "Content-Length": String(buffer.length),
-      "Content-Disposition": `inline; filename="${safeHeaderFilename(document.originalName || "belge")}"`,
+      "Content-Disposition": `${String(resolved && resolved.mimeType || document.mimeType) === "application/pdf" ? "attachment" : "inline"}; filename="${safeHeaderFilename(document.originalName || "belge")}"`,
       "Cross-Origin-Resource-Policy": "same-origin",
       "X-Content-Type-Options": "nosniff"
     });
@@ -294,6 +361,10 @@ function registerProcurementRoutes(deps = {}) {
   app.post(`${API_ROOT}/payments/:id/reverse`, ...mutationMiddlewares, sectionAccess("ledger", "full"), capability("payment.reverse"), asyncRoute(async (req, res) => {
     const result = await service.reversePayment(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req));
     res.status(result.idempotent ? 200 : 201).json(result);
+  }));
+
+  app.get(`${API_ROOT}/trash`, ...authenticated, sectionAccess("trash", "view"), anyCapability(["procurement.read", "accounting.read", "documents.read"]), asyncRoute(async (req, res) => {
+    res.json(await service.listTrash(req.procurementActor));
   }));
 
   app.get(`${API_ROOT}/audit`, ...authenticated, sectionAccess("settings", "full"), capability("procurement.users.manage"), asyncRoute(async (req, res) => {
