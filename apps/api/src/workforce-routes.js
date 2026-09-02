@@ -426,13 +426,14 @@ function registerWorkforceRoutes(deps) {
         // the target during approval.
         const currentStock = Number(locationBalance ? locationBalance.quantity : product && product.stockQuantity || 0);
         const baseQuantity = Number(line.baseQuantity ?? line.quantity);
+        const unitMismatch = line.stockMatchStatus === "unit_mismatch";
         return {
           ...line,
           productCode: product && product.productCode || lineCode || "",
           stockProductCode: product && product.productCode || lineCode || "",
           currentStock,
           currentStockUnit: product ? product.unit : line.baseUnit,
-          expectedStock: shipment.stockAppliedAt ? currentStock : currentStock + baseQuantity,
+          expectedStock: unitMismatch ? null : shipment.stockAppliedAt ? currentStock : currentStock + baseQuantity,
           destinationLocationId: destinationLocation && destinationLocation.id || shipment && shipment.destinationLocationId || null,
           destinationLocationName: destinationLocation && destinationLocation.name || shipment && shipment.destinationLocationName || null
         };
@@ -1299,15 +1300,71 @@ function registerWorkforceRoutes(deps) {
             id: String(decisionActor.id || "admin"),
             name: String(decisionActor.name || decisionActor.username || "Yönetici")
           };
-          for (let index = 0; index < (shipment.items || []).length; index += 1) {
-            const line = shipment.items[index];
+          const shipmentLines = Array.isArray(shipment.items) ? shipment.items : [];
+          const matchedLines = shipmentLines
+            .map((line, index) => ({ line, index }))
+            .filter(({ line }) => String(line && (line.stockProductId || line.productId || line.stockProductCode || line.productCode) || "").trim());
+          if (!matchedLines.length) {
+            throw fail("Sevkiyatta stoğa uygulanabilecek eşleşmiş ürün bulunamadı.", 409);
+          }
+          const applicableLines = [];
+          const unitMismatchLines = [];
+          for (const entry of matchedLines) {
+            const { line } = entry;
+            const wantedId = String(line.stockProductId || line.productId || "");
+            const wantedCode = normalizeProductCode(line.stockProductCode || line.productCode);
+            const targetProduct = (stockState.products || []).find((product) => String(product.id) === wantedId)
+              || (!wantedId && wantedCode ? (stockState.products || []).find((product) => normalizeProductCode(product.productCode) === wantedCode) : null);
+            if (!targetProduct) {
+              line.stockMatchStatus = "unmatched";
+              continue;
+            }
+            const shipmentBaseUnit = normalizeUnit(line.baseUnitSnapshot || line.baseUnit);
+            const stockBaseUnit = normalizeUnit(targetProduct.baseUnit || targetProduct.unit);
+            if (shipmentBaseUnit && stockBaseUnit && shipmentBaseUnit !== stockBaseUnit) {
+              line.stockMatchStatus = "unit_mismatch";
+              line.stockUnitMismatch = { shipmentBaseUnit, stockBaseUnit, detectedAt: timestamp };
+              unitMismatchLines.push(entry);
+              continue;
+            }
+            line.stockMatchStatus = "matched";
+            delete line.stockUnitMismatch;
+            applicableLines.push({ ...entry, targetProduct, shipmentBaseUnit });
+          }
+          if (!applicableLines.length && unitMismatchLines.length) {
+            shipment.stockStatus = "unit_mismatch";
+            shipment.stockAppliedItemCount = 0;
+            shipment.stockUnmatchedItemCount = shipmentLines.length;
+            shipment.stockUnitMismatchItemCount = unitMismatchLines.length;
+            const procurementRevision = recordProcurementShipmentAudit(data, req, shipment, requestId, "", timestamp, "shipment.stock-unit-mismatch");
+            const revision = touchWorkforceRevision(data);
+            response = {
+              ok: false,
+              code: "STOCK_UNIT_MISMATCH",
+              message: "Sevkiyat ile stok ürününün temel birimi eşleşmedi. Stok girişi uygulanmadı.",
+              requestId,
+              revision,
+              procurementRevision,
+              shipmentRevision: Number(data.revisions && data.revisions.shipment || 0),
+              shipment: publicShipment(shipment, stockState),
+              stockState: null
+            };
+            recordIdempotent(data, "shipment_approve", requestId, shipment.id, revision, { response });
+            return data;
+          }
+          if (!applicableLines.length) {
+            throw fail("Sevkiyatta stoğa uygulanabilecek güncel ürün eşleşmesi bulunamadı.", 409);
+          }
+          for (const { line, index, targetProduct, shipmentBaseUnit } of applicableLines) {
             const lineRequestId = requestId ? `${requestId}:shipment:${index}` : "";
+            const snapshotBaseQuantity = Number(line.baseQuantity);
+            const useSnapshot = Number.isFinite(snapshotBaseQuantity) && snapshotBaseQuantity > 0 && shipmentBaseUnit;
             const applied = stockService.applyStockMovement(stockState, {
               type: "inbound_shipment",
-              productId: line.stockProductId || line.productId,
+              productId: targetProduct.id,
               productCode: line.stockProductCode || line.productCode,
-              quantity: line.quantity,
-              unit: line.unit || line.baseUnit,
+              quantity: useSnapshot ? snapshotBaseQuantity : line.quantity,
+              unit: useSnapshot ? shipmentBaseUnit : line.unit || line.baseUnit,
               locationId: destination.id,
               referenceType: "shipment",
               referenceId: shipment.id,
@@ -1322,12 +1379,17 @@ function registerWorkforceRoutes(deps) {
             stockState = applied.stockState;
             if (applied.movement) stockMovementRefs.push(applied.movement.id);
           }
+          const unmatchedItemCount = Math.max(0, shipmentLines.length - applicableLines.length);
           shipment.status = "onaylandı";
           shipment.approvedBy = String(decisionActor.id);
           shipment.approvedAt = timestamp;
           shipment.stockAppliedAt = timestamp;
           shipment.stockMovementRef = stockMovementRef;
           shipment.stockMovementRefs = stockMovementRefs;
+          shipment.stockAppliedItemCount = applicableLines.length;
+          shipment.stockUnmatchedItemCount = unmatchedItemCount;
+          shipment.stockUnitMismatchItemCount = unitMismatchLines.length;
+          shipment.stockStatus = unitMismatchLines.length ? "partially_applied" : "applied";
           data.stockState = stockState;
           if (typeof queueStockThresholdNotifications === "function") {
             queueStockThresholdNotifications(data, pendingNotifications, previousStockState, stockState, {
@@ -1351,13 +1413,15 @@ function registerWorkforceRoutes(deps) {
             category: "shipment",
             eventType: "shipment_approved",
             title: "Sevkiyat bildirimin onaylandı",
-            body: `${(shipment.items || []).length} ürünlük sevkiyatın onaylandı ve stok güncellendi.`,
+            body: unmatchedItemCount
+              ? `${applicableLines.length} eşleşmiş ürün stoğa işlendi; ${unmatchedItemCount} uygulanamayan satır arşivde korundu.`
+              : `${applicableLines.length} ürünlük sevkiyatın onaylandı ve stok güncellendi.`,
             severity: "success",
             entityType: "shipment",
             entityId: shipment.id,
             deepLink: `/personel/?section=shipment&shipmentId=${encodeURIComponent(shipment.id)}`,
             dedupeKey: `shipment-approved:${shipment.id}:${shipment.userId}`,
-            metadata: { itemCount: (shipment.items || []).length, stockMovementRef }
+            metadata: { itemCount: shipmentLines.length, stockAppliedItemCount: applicableLines.length, stockUnmatchedItemCount: unmatchedItemCount, stockUnitMismatchItemCount: unitMismatchLines.length, stockMovementRef }
           }));
           const revision = touchWorkforceRevision(data);
           response = {
@@ -1377,7 +1441,7 @@ function registerWorkforceRoutes(deps) {
         });
 
         updatedStockState = updatedStockState || (decision === "approve" ? normalizeStockState(saved.stockState) : null);
-        if (decision === "approve" && typeof broadcastStockUpdate === "function") {
+        if (decision === "approve" && response && response.code !== "STOCK_UNIT_MISMATCH" && typeof broadcastStockUpdate === "function") {
           broadcastStockUpdate(
             updatedStockState,
             updatedAt || saved.stockUpdatedAt || shipment.stockAppliedAt,
@@ -1388,7 +1452,7 @@ function registerWorkforceRoutes(deps) {
         publishNotifications(pendingNotifications);
         if (!idempotent && typeof notifyProcurementChange === "function") {
           notifyProcurementChange({
-            type: decision === "approve" ? "shipment.stock-approved" : "shipment.rejected",
+            type: response && response.code === "STOCK_UNIT_MISMATCH" ? "shipment.stock-unit-mismatch" : decision === "approve" ? "shipment.stock-approved" : "shipment.rejected",
             entityType: "shipment",
             entityId: shipment.id,
             revision: response && response.procurementRevision || response && response.revision || 0,
@@ -1408,7 +1472,7 @@ function registerWorkforceRoutes(deps) {
             updatedAt: updatedAt || saved.stockUpdatedAt || null
           };
         }
-        res.json({ ...response, idempotent: idempotent || response.idempotent === true });
+        res.status(response && response.code === "STOCK_UNIT_MISMATCH" ? 409 : 200).json({ ...response, idempotent: idempotent || response.idempotent === true });
       } catch (error) {
         next(error);
       }
@@ -2071,8 +2135,11 @@ function normalizeUnit(value) {
     l: "litre",
     lt: "litre",
     liter: "litre",
+    mililitre: "ml",
+    millilitre: "ml",
     kilogram: "kg",
     gram: "gr",
+    g: "gr",
     tane: "adet",
     kutu: "paket",
     sise: "şişe"

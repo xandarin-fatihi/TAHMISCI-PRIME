@@ -66,6 +66,15 @@ function registerProcurementRoutes(deps = {}) {
       res.json({ ok: true, ...stockAnalytics.searchProducts(data, req.query.query, { limit: req.query.limit }) });
     }));
 
+  app.get(`${API_ROOT}/analytics/price-movements`, ...authenticated,
+    sectionAccess("productAnalysis", "view"), capability("inventory.read"), capability("procurement.read"),
+    asyncRoute(async (req, res) => {
+      const data = req.storeSnapshot || await store.read();
+      const financialVisible = req.procurementActor.type === "admin"
+        || ["accounting.read", "accounting.post", "supplier.manage", "supplierProduct.manage"].some((item) => hasCapability(req.procurementActor, item));
+      res.json({ ok: true, ...stockAnalytics.priceMovements(data, req.query.direction, { financialVisible }) });
+    }));
+
   app.get(`${API_ROOT}/analytics/products/:productId`, ...authenticated,
     sectionAccess("productAnalysis", "view"), capability("inventory.read"), capability("procurement.read"),
     asyncRoute(async (req, res) => {
@@ -137,15 +146,15 @@ function registerProcurementRoutes(deps = {}) {
     res.json(await service.updateProductLink(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.get(`${API_ROOT}/shipments`, ...authenticated, sectionAccess("shipments", "view"), anyCapability(["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/shipments`, ...authenticated, anySectionAccess(["shipments", "documents", "suppliers"], "view"), anyCapability(["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
     res.json(await service.listShipments(req.procurementActor, req.query));
   }));
 
-  app.get(`${API_ROOT}/shipments/:id`, ...authenticated, sectionAccess("shipments", "view"), anyCapability(["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/shipments/:id`, ...authenticated, anySectionAccess(["shipments", "documents", "suppliers"], "view"), anyCapability(["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
     res.json(await service.getShipment(req.procurementActor, req.params.id));
   }));
 
-  app.post(`${API_ROOT}/shipments`, ...mutationMiddlewares, sectionAccess("shipments", "operate"), capability("receipt.create"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/shipments`, ...mutationMiddlewares, anySectionAccess(["shipments", "suppliers"], "operate"), capability("receipt.create"), asyncRoute(async (req, res) => {
     const result = await service.createShipment(req.procurementActor, jsonBody(req), mutationInput(req));
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
@@ -158,11 +167,11 @@ function registerProcurementRoutes(deps = {}) {
     res.json(await service.deleteShipment(req.procurementActor, req.params.id, mutationInput(req)));
   }));
 
-  app.post(`${API_ROOT}/shipments/:id/submit`, ...mutationMiddlewares, sectionAccess("shipments", "operate"), capability("receipt.submit"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/shipments/:id/submit`, ...mutationMiddlewares, anySectionAccess(["shipments", "suppliers"], "operate"), capability("receipt.submit"), asyncRoute(async (req, res) => {
     res.json(await service.submitShipment(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.post(`${API_ROOT}/shipments/:id/approve-stock`, ...mutationMiddlewares, sectionAccess("shipments", "full"), capability("receipt.approve"), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/shipments/:id/approve-stock`, ...mutationMiddlewares, anySectionAccess(["shipments", "stock", "suppliers"], "full"), capability("receipt.approve"), asyncRoute(async (req, res) => {
     if (typeof approveWorkforceShipment !== "function") {
       throw fail("Ortak sevkiyat stok onay servisi yapılandırılmamış.", 503, "STOCK_APPROVAL_SERVICE_UNAVAILABLE");
     }
@@ -407,7 +416,11 @@ function registerStockReferenceProjection(deps) {
         id: String(item.id), code: String(item.code || ""), name: String(item.name || "Depo"),
         type: String(item.type || "other"), active: item.active !== false, isDefault: item.isDefault === true
       }));
-      res.json({ ...responseBase(data), stockProducts, stockLocations });
+      const unitDefinitions = {
+        base: Array.isArray(stock.unitDefinitions && stock.unitDefinitions.base) ? stock.unitDefinitions.base : [],
+        bulk: Array.isArray(stock.unitDefinitions && stock.unitDefinitions.bulk) ? stock.unitDefinitions.bulk : []
+      };
+      res.json({ ...responseBase(data), stockProducts, stockLocations, unitDefinitions });
     }));
 }
 

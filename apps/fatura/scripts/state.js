@@ -34,7 +34,8 @@ export const state = {
   },
   productAnalysis: {
     products: [], selectedProductId: "", detail: null, query: "", range: "30d",
-    resultsOpen: false, loaded: false, loading: false, productsStale: true, detailStale: true
+    resultsOpen: false, loaded: false, loading: false, productsStale: true, detailStale: true,
+    movementMode: "", movementRows: [], movementLoading: false, movementError: "", movementsStale: true
   }
 };
 

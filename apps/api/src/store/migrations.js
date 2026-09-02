@@ -1752,13 +1752,45 @@ function collectWorkforceMigrationArchive(source) {
 
 function normalizeProcurement(value) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const supplierProductLinks = normalizeProcurementEntities(source.supplierProductLinks, normalizeSupplierProductLink);
+  const supplierIndependentProducts = normalizeProcurementEntities(source.supplierIndependentProducts, normalizeSupplierIndependentProduct);
+  const independentKeys = new Set(supplierIndependentProducts.flatMap((item) => [
+    `${item.supplierId}:name:${normalizeName(item.name)}`,
+    item.stockProductId ? `${item.supplierId}:stock:${item.stockProductId}` : ""
+  ].filter(Boolean)));
+  for (const link of supplierProductLinks) {
+    const name = procurementText(link.supplierProductName || link.stockProductName || link.stockProductCode || link.supplierProductCode, 180);
+    const keys = [`${link.supplierId}:name:${normalizeName(name)}`, link.stockProductId ? `${link.supplierId}:stock:${link.stockProductId}` : ""].filter(Boolean);
+    if (!name || keys.some((key) => independentKeys.has(key))) continue;
+    const migrated = normalizeSupplierIndependentProduct({
+      id: `supplier-product-legacy-${link.id}`,
+      supplierId: link.supplierId,
+      name,
+      code: link.supplierProductCode || link.stockProductCode,
+      documentType: link.documentType || "irsaliye",
+      bulkUnit: link.purchaseUnit || link.bulkUnit || "koli",
+      baseUnit: link.baseUnit || link.stockProductUnit || "adet",
+      conversionFactor: link.conversionFactor || 1,
+      stockProductId: link.stockProductId,
+      stockMatchStatus: link.stockProductId ? "matched" : "unmatched",
+      defaultPurchasePriceKurus: link.defaultPurchasePriceKurus,
+      lastPurchasePriceKurus: link.lastPurchasePriceKurus,
+      active: link.active !== false,
+      createdAt: link.createdAt,
+      updatedAt: link.updatedAt,
+      legacyProductLinkId: link.id
+    });
+    if (!migrated) continue;
+    supplierIndependentProducts.push(migrated);
+    keys.forEach((key) => independentKeys.add(key));
+  }
   return {
     ...source,
     version: Math.max(PROCUREMENT_SCHEMA_VERSION, Math.trunc(finiteNumber(source.version, 0))),
     revision: Math.max(0, Math.trunc(finiteNumber(source.revision, 0))),
     suppliers: normalizeProcurementEntities(source.suppliers, normalizeProcurementSupplier),
-    supplierProductLinks: normalizeProcurementEntities(source.supplierProductLinks, normalizeSupplierProductLink),
-    supplierIndependentProducts: normalizeProcurementEntities(source.supplierIndependentProducts, normalizeSupplierIndependentProduct),
+    supplierProductLinks,
+    supplierIndependentProducts,
     documents: normalizeProcurementEntities(source.documents, normalizeProcurementDocument),
     ledgerEntries: normalizeProcurementEntities(source.ledgerEntries, normalizeLedgerEntry),
     payments: normalizeProcurementEntities(source.payments, normalizeProcurementPayment),
@@ -1817,6 +1849,7 @@ function normalizeProcurementSupplier(item) {
     id,
     code: procurementText(item.code, 80),
     name: procurementText(item.name, 180),
+    contactName: procurementText(item.contactName, 180),
     taxNumber: procurementText(item.taxNumber, 32),
     phone: procurementText(item.phone, 40),
     email: procurementText(item.email, 254).toLowerCase(),
@@ -1868,7 +1901,13 @@ function normalizeSupplierIndependentProduct(item) {
     supplierId,
     name,
     code: procurementText(item.code, 100),
-    purchaseUnit: procurementText(item.purchaseUnit, 40),
+    documentType: ["fatura", "irsaliye", "fiş", "makbuz", "diğer"].includes(String(item.documentType || "")) ? String(item.documentType) : "irsaliye",
+    bulkUnit: procurementText(item.bulkUnit || item.purchaseUnit, 40),
+    baseUnit: procurementText(item.baseUnit, 40) || "adet",
+    purchaseUnit: procurementText(item.bulkUnit || item.purchaseUnit, 40),
+    conversionFactor: Math.max(0.001, finiteNumber(item.conversionFactor, 1)),
+    stockProductId: procurementText(item.stockProductId, 180),
+    stockMatchStatus: procurementText(item.stockMatchStatus, 40) || (item.stockProductId ? "matched" : "unmatched"),
     defaultPurchasePriceKurus: Math.max(0, normalizeKurus(item.defaultPurchasePriceKurus, 0)),
     lastPurchasePriceKurus: Math.max(0, normalizeKurus(item.lastPurchasePriceKurus, 0)),
     note: procurementText(item.note, 1000),

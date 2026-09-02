@@ -7,11 +7,14 @@ const RANGE_DAYS = Object.freeze({ "30d": 30, "90d": 90, "6m": 183, "1y": 365, a
 
 function searchProducts(data, query = "", options = {}) {
   const stock = normalizeStockState(data && data.stockState);
+  const procurement = normalizeProcurement(data && data.procurement);
   const needle = searchable(query);
   const limit = clampInteger(options.limit, 1, 500, 250);
-  const products = stock.products
+  const products = [...(procurement.supplierIndependentProducts || [])
     .filter((product) => product && product.active !== false)
-    .map(publicProduct)
+    .map(publicSupplierProduct), ...stock.products
+    .filter((product) => product && product.active !== false)
+    .map(publicProduct)]
     .filter((product) => !needle || searchable(`${product.name} ${product.productCode} ${product.category}`).includes(needle))
     .sort((left, right) => rank(left.name, needle) - rank(right.name, needle) || left.name.localeCompare(right.name, "tr"))
     .slice(0, limit);
@@ -22,7 +25,9 @@ function productAnalytics(data, productId, range = "30d", options = {}) {
   const stock = normalizeStockState(data && data.stockState);
   const procurement = normalizeProcurement(data && data.procurement);
   const index = createAnalyticsIndex(data, stock, procurement);
-  const product = stock.products.find((item) => String(item.id) === String(productId));
+  const supplierProductId = String(productId || "").startsWith("supplier:") ? String(productId).slice(9) : "";
+  const supplierProduct = supplierProductId ? (procurement.supplierIndependentProducts || []).find((item) => String(item.id) === supplierProductId) : null;
+  const product = stock.products.find((item) => String(item.id) === String(productId)) || (supplierProduct ? supplierProductModel(supplierProduct) : null);
   if (!product) throw error("Stok ürünü bulunamadı.", 404, "STOCK_PRODUCT_NOT_FOUND");
   const rangeKey = Object.prototype.hasOwnProperty.call(RANGE_DAYS, range) ? range : "30d";
   const financialVisible = options.financialVisible === true;
@@ -62,6 +67,38 @@ function productAnalytics(data, productId, range = "30d", options = {}) {
     supplierComparison,
     revisions: revisionsOf(data)
   };
+}
+
+function priceMovements(data, direction = "increase", options = {}) {
+  if (options.financialVisible !== true) return { financialVisible: false, direction, movements: [], revisions: revisionsOf(data) };
+  const stock = normalizeStockState(data && data.stockState);
+  const procurement = normalizeProcurement(data && data.procurement);
+  const index = createAnalyticsIndex(data, stock, procurement);
+  const requestedDirection = direction === "decrease" ? "decrease" : "increase";
+  const movements = (procurement.supplierIndependentProducts || []).filter((product) => product && product.active !== false).flatMap((product) => {
+    const rows = (index.purchaseLinesByProductId.get(`supplier:${product.id}`) || [])
+      .filter((row) => Number(row.baseUnitPriceKurus) > 0)
+      .sort((left, right) => new Date(left.date) - new Date(right.date));
+    if (rows.length < 2) return [];
+    const previous = rows[rows.length - 2];
+    const last = rows[rows.length - 1];
+    const delta = Number(last.baseUnitPriceKurus) - Number(previous.baseUnitPriceKurus);
+    if ((requestedDirection === "increase" && delta <= 0) || (requestedDirection === "decrease" && delta >= 0)) return [];
+    let consecutiveIncreaseCount = 0;
+    for (let indexValue = rows.length - 1; indexValue > 0 && rows[indexValue].baseUnitPriceKurus > rows[indexValue - 1].baseUnitPriceKurus; indexValue -= 1) consecutiveIncreaseCount += 1;
+    const supplier = procurement.suppliers.find((item) => String(item.id) === String(product.supplierId));
+    return [{
+      product: publicSupplierProduct(product),
+      supplier: { id: String(product.supplierId || ""), name: String(supplier && supplier.name || last.supplierName || "Tedarikçi belirtilmedi") },
+      previousBaseUnitPriceKurus: Number(previous.baseUnitPriceKurus),
+      lastBaseUnitPriceKurus: Number(last.baseUnitPriceKurus),
+      previousDate: previous.date,
+      lastDate: last.date,
+      changePercent: round(delta / Number(previous.baseUnitPriceKurus) * 100, 2),
+      consecutiveIncreaseCount
+    }];
+  }).sort((left, right) => new Date(right.lastDate) - new Date(left.lastDate) || Math.abs(right.changePercent) - Math.abs(left.changePercent));
+  return { financialVisible: true, direction: requestedDirection, movements, revisions: revisionsOf(data) };
 }
 
 function stockPlanning(data, range = "30d", options = {}) {
@@ -139,6 +176,7 @@ function stockPlanning(data, range = "30d", options = {}) {
 function createAnalyticsIndex(data, stock, procurement) {
   const shipments = canonicalShipments(data);
   const productById = new Map(stock.products.map((item) => [String(item.id), item]));
+  for (const item of procurement.supplierIndependentProducts || []) productById.set(`supplier:${item.id}`, supplierProductModel(item));
   const supplierById = new Map(procurement.suppliers.map((item) => [String(item.id), item]));
   const locationById = new Map(stock.locations.map((item) => [String(item.id), item]));
   const balancesByProductId = groupByProductId(stock.balances);
@@ -148,14 +186,15 @@ function createAnalyticsIndex(data, stock, procurement) {
 
   for (const shipment of shipments) {
     if (!isApprovedShipment(shipment)) continue;
-    const date = shipment.approvedAt || shipment.stockAppliedAt || shipment.updatedAt || shipment.createdAt;
+    const date = shipment.shipmentDate || shipment.documentDate || shipment.approvedAt || shipment.stockAppliedAt || shipment.updatedAt || shipment.createdAt;
     const time = new Date(date || 0).getTime();
     if (!Number.isFinite(time)) continue;
     for (const line of Array.isArray(shipment.items) ? shipment.items : []) {
-      const productId = String(line.stockProductId || line.productId || "");
-      const product = productById.get(productId);
+      const stockProductId = String(line.stockProductId || line.productId || "");
+      const supplierProductId = String(line.supplierProductId || "");
+      const productIds = [...new Set([stockProductId, supplierProductId ? `supplier:${supplierProductId}` : ""].filter((id) => productById.has(id)))];
+      const product = productById.get(stockProductId) || productById.get(supplierProductId ? `supplier:${supplierProductId}` : "");
       if (!product) continue;
-      const rows = purchaseLinesByProductId.get(productId) || [];
       const quantity = positive(line.quantity, 0);
       const unitPrice = integer(line.unitPriceKurus, 0);
       const total = integer(line.totalKurus, quantity > 0 ? Math.round(unitPrice * quantity) : 0);
@@ -170,15 +209,19 @@ function createAnalyticsIndex(data, stock, procurement) {
       const baseUnitPrice = integer(line.baseUnitPriceKurus, baseQuantity > 0 ? Math.round(total / baseQuantity) : 0);
       const bulkUnitPrice = integer(line.bulkUnitPriceKurus, unitsPerBulk > 0 ? Math.round(baseUnitPrice * unitsPerBulk) : 0);
       const supplier = supplierById.get(String(shipment.supplierId || ""));
-      rows.push({
-        id: String(line.id || `${shipment.id}:${rows.length}`), shipmentId: String(shipment.id || ""), productId, date,
+      const row = {
+        id: String(line.id || `${shipment.id}:${supplierProductId || stockProductId}`), shipmentId: String(shipment.id || ""), date,
         supplierId: String(shipment.supplierId || ""), supplierName: String(supplier && supplier.name || shipment.supplierName || "Tedarikçi belirtilmedi"),
         quantity, purchaseUnit, baseUnit, bulkUnit, unitsPerBulkUnit: unitsPerBulk, conversionFactor: factor,
         baseQuantity, unitPriceKurus: unitPrice, baseUnitPriceKurus: baseUnitPrice,
         bulkUnitPriceKurus: bulkUnitPrice, totalKurus: total,
         legacyEstimated: !(line.baseUnitSnapshot && line.purchaseUnitSnapshot && Number(line.baseQuantity) > 0)
-      });
-      purchaseLinesByProductId.set(productId, rows);
+      };
+      for (const productId of productIds) {
+        const rows = purchaseLinesByProductId.get(productId) || [];
+        rows.push({ ...row, productId });
+        purchaseLinesByProductId.set(productId, rows);
+      }
     }
   }
   for (const rows of purchaseLinesByProductId.values()) rows.sort((left, right) => new Date(left.date) - new Date(right.date));
@@ -432,14 +475,27 @@ function canonicalShipments(data) {
 
 function isApprovedShipment(item) {
   const status = searchable(item && item.status);
-  return Boolean(item && !["reddedildi", "rejected", "taslak", "draft", "onay bekliyor", "onay_bekliyor", "pending"].includes(status)
-    && (item.stockAppliedAt || item.approvedAt || ["onaylandi", "approved", "completed", "accepted"].includes(status)));
+  return Boolean(item && !["reddedildi", "rejected", "taslak", "draft"].includes(status)
+    && (item.procurementFinalizedAt || item.stockAppliedAt || item.approvedAt || ["onaylandi", "approved", "completed", "accepted"].includes(status)));
 }
 function isPendingShipment(item) { return ["onay bekliyor", "onay_bekliyor", "pending", "submitted"].includes(searchable(item && item.status)); }
 
 function publicProduct(product) {
   return { id: String(product.id || ""), name: String(product.name || product.productName || "Stok ürünü"), productCode: String(product.productCode || ""), category: String(product.category || "Kategori yok"), categoryId: String(product.categoryId || ""), active: product.active !== false, baseUnit: String(product.baseUnit || product.unit || "adet"), bulkUnit: String(product.bulkUnit || product.caseUnit || ""), unitsPerBulkUnit: positive(product.unitsPerBulkUnit || product.unitsPerCase, 0), imageUrl: String(product.imageUrl || "") };
 }
+function supplierProductModel(product) {
+  return {
+    ...product,
+    id: `supplier:${product.id}`,
+    productCode: String(product.code || ""),
+    category: "Tedarikçi ürünü",
+    baseUnit: String(product.baseUnit || "adet"),
+    bulkUnit: String(product.bulkUnit || product.purchaseUnit || ""),
+    unitsPerBulkUnit: positive(product.conversionFactor, 0),
+    isSupplierProduct: true
+  };
+}
+function publicSupplierProduct(product) { return publicProduct(supplierProductModel(product)); }
 function rangeStart(key) { const days = RANGE_DAYS[key] || 0; return days ? Date.now() - days * DAY_MS : 0; }
 function revisionsOf(data) { return { inventory: revisionOf(data, "inventory"), catalog: revisionOf(data, "catalog"), shipment: revisionOf(data, "shipment"), procurement: Math.max(0, Number(data && data.procurement && data.procurement.revision || 0)) }; }
 function revisionOf(data, key) { return Math.max(0, Number(data && data.revisions && (data.revisions[key] ?? (key === "inventory" ? data.revisions.stock : 0)) || 0)); }
@@ -453,4 +509,4 @@ function round(value, digits = 3) { const factor = 10 ** digits; return Math.rou
 function clampInteger(value, min, max, fallback) { const number = Math.trunc(Number(value)); return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback; }
 function error(message, status, code) { return Object.assign(new Error(message), { status, code }); }
 
-module.exports = { productAnalytics, searchProducts, stockPlanning };
+module.exports = { priceMovements, productAnalytics, searchProducts, stockPlanning };

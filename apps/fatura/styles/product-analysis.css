@@ -13,6 +13,20 @@
 .product-analysis-results strong,.product-analysis-results small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .product-analysis-results small,.product-analysis-results em { color:var(--panel-muted); font-size:11px; font-style:normal; }
 .product-analysis-result-empty { padding:20px; color:var(--panel-muted); text-align:center; }
+.product-analysis-global-actions { display:flex; flex-wrap:wrap; gap:9px; }
+.product-analysis-global-actions button { min-height:44px; padding:9px 16px; border:1px solid var(--panel-line); border-radius:11px; background:var(--panel-surface); color:var(--panel-coffee); font:inherit; font-weight:800; cursor:pointer; }
+.product-analysis-global-actions button:hover,.product-analysis-global-actions button:focus-visible,.product-analysis-global-actions button.is-active { border-color:var(--panel-coffee); outline:none; background:var(--panel-coffee); color:#fffaf3; }
+.product-analysis-global-list { min-width:0; padding:16px; border:1px solid var(--panel-line); border-radius:16px; background:var(--panel-surface); }
+.product-analysis-global-list h2 { margin:0 0 12px; color:var(--panel-ink); font-family:var(--panel-font-display); }
+.product-analysis-global-list>div { display:grid; gap:8px; }
+.product-analysis-global-list>div>button { display:flex; width:100%; min-width:0; min-height:58px; align-items:center; justify-content:space-between; gap:14px; padding:10px 12px; border:1px solid var(--panel-line); border-radius:11px; background:#fffdf9; color:var(--panel-ink); text-align:left; cursor:pointer; }
+.product-analysis-global-list>div>button:hover,.product-analysis-global-list>div>button:focus-visible { border-color:var(--panel-coffee); outline:none; background:var(--panel-surface-soft); }
+.product-analysis-global-list>div>button span { min-width:0; }
+.product-analysis-global-list strong,.product-analysis-global-list small,.product-analysis-global-list em { display:block; overflow-wrap:anywhere; }
+.product-analysis-global-list small { margin-top:3px; color:var(--panel-muted); font-size:10px; }
+.product-analysis-global-prices { flex:0 1 360px; text-align:right; }
+.product-analysis-global-prices em { color:var(--panel-muted); font-size:11px; font-style:normal; }
+.product-analysis-global-prices b { display:block; margin-top:3px; }.product-analysis-global-prices .is-danger{color:var(--panel-danger)}.product-analysis-global-prices .is-success{color:var(--panel-success)}
 .product-analysis-empty { display:grid; min-height:360px; place-items:center; align-content:center; gap:10px; padding:36px; border:1px dashed rgba(90,47,29,.25); border-radius:20px; background:rgba(255,250,243,.65); text-align:center; }
 .product-analysis-empty__icon { display:grid; width:68px; height:68px; place-items:center; border-radius:22px; color:var(--panel-coffee); background:var(--panel-surface-soft); }
 .product-analysis-empty svg { width:32px; fill:none; stroke:currentColor; stroke-width:1.6; }
@@ -69,4 +83,4 @@
 .product-consumption-grid strong { color:var(--panel-ink); font-size:16px; }
 .product-analysis-inline-empty { display:grid; min-height:110px; place-items:center; padding:20px; border:1px dashed var(--panel-line); border-radius:12px; color:var(--panel-muted); text-align:center; }
 @media(max-width:1180px){.product-analysis-overview{grid-template-columns:1fr}.product-analysis-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.product-analysis-kpis article:nth-child(3){border-right:0}.product-analysis-kpis article:nth-child(n+4){border-top:1px solid var(--panel-line)}.product-consumption-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:760px){.product-analysis-search-shell{width:100%}.product-analysis-product-card{grid-template-columns:54px minmax(0,1fr)}.product-analysis-product-icon{width:54px;height:54px}.product-analysis-kpis{grid-template-columns:1fr}.product-analysis-kpis article{border-right:0;border-bottom:1px solid var(--panel-line)}.product-analysis-kpis article:last-child{border-bottom:0}.product-analysis-charts,.product-consumption-grid{grid-template-columns:1fr}.product-analysis-accordion__body{padding:8px}}
+@media(max-width:760px){.product-analysis-search-shell{width:100%}.product-analysis-global-actions{display:grid;grid-template-columns:1fr 1fr}.product-analysis-global-actions button{min-width:0;padding-inline:8px}.product-analysis-global-list>div>button{align-items:flex-start;flex-direction:column}.product-analysis-global-prices{flex:auto;width:100%;text-align:left}.product-analysis-product-card{grid-template-columns:54px minmax(0,1fr)}.product-analysis-product-icon{width:54px;height:54px}.product-analysis-kpis{grid-template-columns:1fr}.product-analysis-kpis article{border-right:0;border-bottom:1px solid var(--panel-line)}.product-analysis-kpis article:last-child{border-bottom:0}.product-analysis-charts,.product-consumption-grid{grid-template-columns:1fr}.product-analysis-accordion__body{padding:8px}}

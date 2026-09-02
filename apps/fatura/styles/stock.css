@@ -582,7 +582,7 @@
 }
 
 /* Stok komuta merkezi: mevcut işlevsel bileşenler yeni Fatura hiyerarşisinde gruplanır. */
-.stock-command-kpis { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; min-width:0; }
+.stock-command-kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; min-width:0; }
 .stock-kpi-loading{grid-column:1/-1;min-height:104px;display:grid;place-items:center;border:1px solid var(--line);border-radius:16px;background:linear-gradient(100deg,#fffaf3 25%,#f4eadc 45%,#fffaf3 65%);background-size:200% 100%;animation:stock-loading-shimmer 1.4s ease-in-out infinite;color:var(--muted);font-weight:700}
 @keyframes stock-loading-shimmer{to{background-position:-200% 0}}
 .stock-command-kpi { display:grid; grid-template-columns:52px minmax(0,1fr); align-items:center; gap:12px; min-width:0; min-height:112px; padding:16px; border:1px solid var(--panel-line); border-radius:16px; background:linear-gradient(145deg,var(--panel-surface),#fffdf9); box-shadow:0 9px 28px rgba(67,37,20,.04); }
@@ -644,7 +644,7 @@
 .stock-warehouse-card__identity p { font-size:11px; }
 .stock-warehouse-card > .ui-button { min-height:48px; border-radius:12px; }
 @media(max-width:1360px){.stock-command-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.stock-command-layout{grid-template-columns:minmax(0,1fr) 270px}.stock-command-kpi{min-height:96px}.stock-command-kpi:nth-child(n+4){grid-column:span 1}}
-@media(max-width:1080px){.stock-command-layout{grid-template-columns:minmax(0,1fr)}.stock-command-sidebar{position:static;grid-template-columns:repeat(2,minmax(0,1fr))}.stock-command-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:1080px){.stock-command-layout{grid-template-columns:minmax(0,1fr)}.stock-command-sidebar{position:static;grid-template-columns:repeat(2,minmax(0,1fr))}.stock-command-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:720px){.stock-command-kpis,.stock-command-sidebar,.stock-planning-grid{grid-template-columns:minmax(0,1fr)}.stock-main-accordion>summary{grid-template-columns:44px minmax(0,1fr) 18px;gap:9px;min-height:78px;padding:11px}.stock-main-accordion summary b{display:none}.stock-main-accordion__number{width:40px;height:40px}.stock-quick-grid{grid-template-columns:minmax(0,1fr)}.stock-command-kpi{grid-template-columns:46px minmax(0,1fr);min-height:88px;padding:12px}.stock-command-kpi__icon{width:44px;height:44px}}
 
 /* Fatura stok görünümü: depo odaklı ana ekran ve dedicated depo çalışma alanı. */

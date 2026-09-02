@@ -43,6 +43,24 @@ async function loadProductDetail(productId, range = "30d") {
   }
 }
 
+async function loadGlobalPriceMovements(direction) {
+  const model = state.productAnalysis;
+  model.movementMode = direction === "decrease" ? "decrease" : "increase";
+  model.movementLoading = true;
+  model.movementError = "";
+  try {
+    const result = await api(`/analytics/price-movements?direction=${encodeURIComponent(model.movementMode)}`, { dedupe: false });
+    updateRevision(result);
+    model.movementRows = Array.isArray(result.movements) ? result.movements : [];
+    model.movementsStale = false;
+  } catch (error) {
+    model.movementRows = [];
+    model.movementError = error.message || "Fiyat hareketleri alınamadı.";
+  } finally {
+    model.movementLoading = false;
+  }
+}
+
 export function renderProductAnalysis() {
   const model = state.productAnalysis;
   const matches = filteredProducts(model.query);
@@ -52,7 +70,8 @@ export function renderProductAnalysis() {
       <label class="product-analysis-search"><span class="sr-only">Ürün ara</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="productAnalysisSearch" type="search" value="${escapeHtml(model.query)}" placeholder="Ürün ara…" autocomplete="off" aria-controls="productAnalysisResults" aria-expanded="${model.resultsOpen}"><span class="product-analysis-live"><i aria-hidden="true"></i>Canlı</span></label>
       <div class="product-analysis-results" id="productAnalysisResults" ${model.resultsOpen ? "" : "hidden"}>${renderSearchResults(matches)}</div>
     </div>
-    ${detail ? renderDetail(detail) : renderEmpty()}
+    <div class="product-analysis-global-actions" aria-label="Genel fiyat hareketleri"><button type="button" data-product-movement-mode="increase" class="${model.movementMode === "increase" ? "is-active" : ""}">Zam Alan Ürünler</button><button type="button" data-product-movement-mode="decrease" class="${model.movementMode === "decrease" ? "is-active" : ""}">İndirim Alan Ürünler</button></div>
+    ${detail ? renderDetail(detail) : model.movementMode ? renderGlobalPriceMovements(model) : renderEmpty()}
   </section>`;
 }
 
@@ -70,6 +89,17 @@ export function bindProductAnalysisInteractions() {
   });
   input?.addEventListener("keydown", handleSearchKeydown);
   root.addEventListener("click", async (event) => {
+    const movementButton = event.target.closest("[data-product-movement-mode]");
+    if (movementButton) {
+      state.productAnalysis.selectedProductId = "";
+      state.productAnalysis.detail = null;
+      state.productAnalysis.resultsOpen = false;
+      state.productAnalysis.movementMode = movementButton.dataset.productMovementMode;
+      rerender();
+      await loadGlobalPriceMovements(state.productAnalysis.movementMode);
+      rerender();
+      return;
+    }
     const result = event.target.closest("[data-product-analysis-select]");
     if (result) {
       await selectProduct(result.dataset.productAnalysisSelect);
@@ -109,6 +139,8 @@ function handleSearchKeydown(event) {
 
 async function selectProduct(productId) {
   state.productAnalysis.resultsOpen = false;
+  state.productAnalysis.movementMode = "";
+  state.productAnalysis.movementRows = [];
   state.productAnalysis.detailStale = true;
   replaceProductUrl(productId);
   await loadProductDetail(productId, state.productAnalysis.range);
@@ -150,7 +182,15 @@ function renderSearchResults(products) {
 }
 
 function renderEmpty() {
-  return `<div class="product-analysis-empty"><div class="product-analysis-empty__icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 7 8-4 8 4-8 4zM4 7v10l8 4 8-4V7M12 11v10"/><circle cx="18" cy="17" r="3"/><path d="m20.3 19.3 1.7 1.7"/></svg></div><h2>Analiz etmek istediğiniz ürünü arayın.</h2><p>Fiyat, alım, tüketim ve stok planlama verileri seçtiğiniz gerçek stok ürünü için hazırlanır.</p></div>`;
+  return `<div class="product-analysis-empty"><div class="product-analysis-empty__icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 7 8-4 8 4-8 4zM4 7v10l8 4 8-4V7M12 11v10"/><circle cx="18" cy="17" r="3"/><path d="m20.3 19.3 1.7 1.7"/></svg></div><h2>Analiz etmek istediğiniz ürünü arayın.</h2><p>Temel birim alış fiyatı ve tamamlanan tedarikçi sevkiyatları seçtiğiniz ürün için hazırlanır.</p></div>`;
+}
+
+function renderGlobalPriceMovements(model) {
+  const label = model.movementMode === "decrease" ? "İndirim Alan Ürünler" : "Zam Alan Ürünler";
+  if (model.movementLoading) return `<div class="product-analysis-global-list"><h2>${label}</h2><div class="product-analysis-inline-empty">Fiyat hareketleri hazırlanıyor…</div></div>`;
+  if (model.movementError) return `<div class="product-analysis-global-list"><h2>${label}</h2><div class="product-analysis-inline-empty">${escapeHtml(model.movementError)}</div></div>`;
+  if (!model.movementRows.length) return `<div class="product-analysis-global-list"><h2>${label}</h2><div class="product-analysis-inline-empty">Karşılaştırılabilir iki sevkiyat fiyatı bulunan ürün yok.</div></div>`;
+  return `<section class="product-analysis-global-list"><h2>${label}</h2><div>${model.movementRows.map((item) => `<button type="button" data-product-analysis-select="${escapeHtml(item.product?.id || "")}"><span><strong>${escapeHtml(item.product?.name || "Ürün")}</strong><small>${escapeHtml(item.supplier?.name || "Tedarikçi belirtilmedi")}${Number(item.consecutiveIncreaseCount) >= 2 ? " · Ardışık fiyat artışı" : ""}</small></span><span class="product-analysis-global-prices"><em>${trMoney(item.previousBaseUnitPriceKurus)} → ${trMoney(item.lastBaseUnitPriceKurus)} / ${escapeHtml(item.product?.baseUnit || "adet")}</em><b class="${item.changePercent > 0 ? "is-danger" : "is-success"}">${item.changePercent > 0 ? "+" : ""}${formatNumber(item.changePercent)}%</b></span></button>`).join("")}</div></section>`;
 }
 
 function renderDetail(data) {
@@ -164,9 +204,17 @@ function renderDetail(data) {
   <div class="product-analysis-accordions">
     ${analysisSection(1, "Fiyat Geçmişi", renderPriceHistory(data, product), true)}
     ${analysisSection(2, "Alım Geçmişi", renderPurchaseHistory(data.purchaseHistory || [], product))}
-    ${analysisSection(3, "Tüketim Analizi", renderConsumption(data.consumption || {}, data.stockCoverage || {}, product), true)}
-    ${analysisSection(4, "Tedarikçi Karşılaştırması", renderSupplierComparison(data.supplierComparison || [], product))}
+    ${analysisSection(3, "Ardışık Fiyat Artışı", renderPriceMovements(data.priceHistory || [], product), true)}
   </div>`;
+}
+
+function renderPriceMovements(rows, product) {
+  const ordered = [...rows].filter((row) => Number(row.baseUnitPriceKurus) > 0).sort((a, b) => new Date(a.date) - new Date(b.date));
+  let consecutive = 0;
+  for (let index = ordered.length - 1; index > 0 && ordered[index].baseUnitPriceKurus > ordered[index - 1].baseUnitPriceKurus; index -= 1) consecutive += 1;
+  return consecutive >= 2
+    ? `<div class="price-streak-warning">${escapeHtml(product.name)} için art arda ${consecutive} fiyat artışı tespit edildi.</div>`
+    : emptyBlock("Bu ürün için ardışık fiyat artışı bulunmuyor.");
 }
 
 function renderFinancialSummary(summary, product) {
@@ -189,10 +237,9 @@ function analysisSection(number, title, body, open = false) {
 function renderPriceHistory(data, product) {
   if (!data.financialVisible) return emptyBlock("Fiyat geçmişi için finansal görüntüleme yetkisi gereklidir.");
   const rows = data.priceHistory || [];
-  if (!rows.length) return emptyBlock("Seçilen aralıkta onaylanmış fiyat kaydı bulunmuyor.");
+  if (!rows.length) return emptyBlock("Seçilen aralıkta tamamlanmış tedarikçi fiyat kaydı bulunmuyor.");
   const baseChart = chart(rows, "baseUnitPriceKurus", `${product.baseUnit || "adet"} fiyatı`);
-  const bulkChart = product.bulkUnit ? chart(rows, "bulkUnitPriceKurus", `${product.bulkUnit} fiyatı`) : "";
-  return `<div class="product-analysis-charts ${bulkChart ? "" : "is-single"}">${baseChart}${bulkChart}</div>`;
+  return `<div class="product-analysis-charts is-single">${baseChart}</div>`;
 }
 
 function chart(rows, key, label) {
@@ -205,7 +252,7 @@ function chart(rows, key, label) {
 }
 
 function renderPurchaseHistory(rows, product) {
-  if (!rows.length) return emptyBlock("Seçilen aralıkta onaylanmış alım kaydı bulunmuyor.");
+  if (!rows.length) return emptyBlock("Seçilen aralıkta tamamlanmış tedarikçi alımı bulunmuyor.");
   return `<div class="product-analysis-table-wrap"><table><thead><tr><th>Tarih</th><th>Tedarikçi</th><th>Toplu miktar</th><th>İçerik</th><th>Temel miktar</th><th>Temel fiyat</th><th>Toplu fiyat</th><th>Toplam</th></tr></thead><tbody>${rows.map((row) => `<tr><td>${trDate(row.date)}</td><td>${escapeHtml(row.supplierName)}</td><td>${formatNumber(row.quantity)} ${escapeHtml(row.purchaseUnit)}</td><td>${row.unitsPerBulkUnit ? `${formatNumber(row.unitsPerBulkUnit)} ${escapeHtml(row.baseUnit)}` : "—"}</td><td>${formatNumber(row.baseQuantity)} ${escapeHtml(row.baseUnit)}</td><td>${trMoney(row.baseUnitPriceKurus)}</td><td>${row.bulkUnitPriceKurus ? trMoney(row.bulkUnitPriceKurus) : "—"}</td><td>${trMoney(row.totalKurus)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
@@ -235,11 +282,13 @@ export function handleProductAnalysisGatewayEvent(event = {}) {
   if (!["inventory", "catalog", "shipment", "procurement"].includes(String(event.topic || ""))) return false;
   if (event.topic === "catalog") state.productAnalysis.productsStale = true;
   state.productAnalysis.detailStale = true;
+  state.productAnalysis.movementsStale = true;
   window.clearTimeout(eventTimer);
-  if (state.activeView === "productAnalysis" && state.productAnalysis.selectedProductId) {
+  if (state.activeView === "productAnalysis" && (state.productAnalysis.selectedProductId || state.productAnalysis.movementMode)) {
     eventTimer = window.setTimeout(async () => {
       try {
-        await loadProductAnalysis({ productId: state.productAnalysis.selectedProductId });
+        if (state.productAnalysis.movementMode) await loadGlobalPriceMovements(state.productAnalysis.movementMode);
+        else await loadProductAnalysis({ productId: state.productAnalysis.selectedProductId });
         rerender();
       } catch (_error) {}
     }, 180);
@@ -251,6 +300,7 @@ export function resetProductAnalysisState() {
   window.clearTimeout(searchTimer); window.clearTimeout(eventTimer); loadSequence += 1;
   Object.assign(state.productAnalysis, {
     products: [], selectedProductId: "", detail: null, query: "", range: "30d",
-    resultsOpen: false, loaded: false, loading: false, productsStale: true, detailStale: true
+    resultsOpen: false, loaded: false, loading: false, productsStale: true, detailStale: true,
+    movementMode: "", movementRows: [], movementLoading: false, movementError: "", movementsStale: true
   });
 }

@@ -475,18 +475,12 @@ import { requestText } from "./ui-dialogs.js";
     const planningUnavailable = Boolean(state.planningError);
     const kpis = planning.kpis || {};
     const activeLocations = state.locations.filter((item) => item.active !== false);
-    const pendingTransferCount = state.transfers.filter((item) => ["onay_bekliyor", "pending", "submitted"].includes(String(item.status))).length;
     const derivedStockItems = Math.max(0, ...activeLocations.map((item) => Number(item.inventorySummary?.totalProducts || 0)), Number(state.summary.productCount || state.balances.length || 0));
-    const derivedCritical = activeLocations.reduce((sum, item) => sum + Number(item.inventorySummary?.criticalProducts || 0), 0);
-    const derivedSuggestions = activeLocations.reduce((sum, item) => sum + Number(item.inventorySummary?.openSuggestions || 0), 0);
+    const derivedCritical = new Set(state.balances.filter((item) => ["critical", "empty"].includes(balanceStatus(item))).map(productId)).size;
     const cards = [
-      planning.financialVisible
-        ? ["Toplam Stok Değeri", planningUnavailable ? "—" : formatMoney(kpis.totalStockValueKurus), planningUnavailable ? "Veri yok" : "Bu depolardaki son alış değeri", "value"]
-        : ["Aktif Depolar", formatNumber(kpis.activeLocationCount ?? activeLocations.length), "Yetkili olduğunuz operasyon alanları", "location"],
       ["Stok Kalemleri", formatNumber(kpis.stockItemCount ?? derivedStockItems), "Canonical ürün kataloğu", "product"],
-      ["Kritik Stoklar", formatNumber(kpis.criticalStockCount ?? derivedCritical), "Depo eşiklerine göre", "critical"],
-      ["Bekleyen Transfer", formatNumber(pendingTransferCount), "Depolar arası onay akışı", "transfer"],
-      ["Açık Öneri", formatNumber(kpis.openSuggestionCount ?? derivedSuggestions), "Transfer ve sipariş önerileri", "purchase"]
+      ["Kritik Stok", formatNumber(derivedCritical), "Benzersiz ürün sayısı", "critical"],
+      ["Birim Merkezi", "Aç", "Temel ve toplu birimleri yönetin", "unit"]
     ];
     const symbols = {
       value: '<path d="M4 8h16v10H4zM7 5h10v3M8 13h8M12 10v6"/>',
@@ -496,8 +490,9 @@ import { requestText } from "./ui-dialogs.js";
       purchase: '<path d="M5 20V9M12 20V4M19 20v-7M3 20h18"/>',
       transfer: '<path d="M4 8h14m0 0-3-3m3 3-3 3M20 16H6m0 0 3 3m-3-3 3-3"/>',
       critical: '<path d="M12 3 2.8 20h18.4zM12 9v5M12 17h.01"/>'
+      ,unit: '<path d="M4 7h16M7 4v6M12 4v3M17 4v6M4 17h16M7 14v6M12 17v3M17 14v6"/>'
     };
-    host.innerHTML = cards.map(([label, value, note, kind]) => `<article class="stock-command-kpi is-${kind}"><span class="stock-command-kpi__icon"><svg viewBox="0 0 24 24" aria-hidden="true">${symbols[kind]}</svg></span><span><small>${esc(label)}</small><strong>${esc(value)}</strong><em>${esc(note)}</em></span></article>`).join("");
+    host.innerHTML = cards.map(([label, value, note, kind]) => `${kind === "unit" ? '<button type="button" data-stock-kpi-unit-center' : '<article'} class="stock-command-kpi is-${kind}"><span class="stock-command-kpi__icon"><svg viewBox="0 0 24 24" aria-hidden="true">${symbols[kind]}</svg></span><span><small>${esc(label)}</small><strong>${esc(value)}</strong><em>${esc(note)}</em></span>${kind === "unit" ? '</button>' : '</article>'}`).join("");
   }
 
   function planningRows(items, value) {
@@ -595,8 +590,12 @@ import { requestText } from "./ui-dialogs.js";
   function renderViewMode() {
     const overview = $("#stockOverviewWorkspace");
     const inventory = $("#stockLocationInventoryView");
+    const workspaceHead = $(".stock-location-workspace__head");
+    const pageHeading = document.querySelector(".page-heading");
     if (overview) overview.hidden = state.viewMode !== "overview";
     if (inventory) inventory.hidden = state.viewMode !== "inventory";
+    if (workspaceHead) workspaceHead.hidden = state.viewMode === "overview";
+    if (pageHeading) pageHeading.hidden = state.viewMode === "inventory";
     const quickButton = $("#stockQuickActionsButton");
     if (quickButton) quickButton.hidden = state.viewMode !== "overview";
     const backButton = $("#stockWarehouseBackButton");
@@ -644,7 +643,6 @@ import { requestText } from "./ui-dialogs.js";
       const product = productOf(balance);
       const rawStatus = balanceStatus(balance);
       const status = Number(balance.quantity || 0) <= 0 ? "empty" : rawStatus === "sufficient" ? "sufficient" : "critical";
-      const suggestion = balance.recommendation || (balance.suggestedTransfer ? { type: "transfer", quantity: balance.suggestedTransfer } : null);
       const display = balance.quantityDisplay || {};
       const bulkUnit = textValue(product.bulkUnit || product.caseUnit, "");
       const factor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
@@ -652,12 +650,10 @@ import { requestText } from "./ui-dialogs.js";
       const selected = String(state.selectedProductId) === productId(balance) && !$("#stockProductDrawerLayer")?.hidden;
       return `<article class="stock-location-product is-${esc(status)}${selected ? " is-selected" : ""}" data-stock-product-card="${esc(productId(balance))}" role="button" tabindex="0" aria-haspopup="dialog" aria-label="${esc(productName(balance))} stok detayını aç">
         <div class="stock-location-product__top"><span class="stock-location-product__category">${esc(product.category || "Kategori yok")}</span>${selected ? `<span class="stock-location-product__selected" aria-label="Seçili">✓</span>` : ""}</div>
-        <div class="stock-location-product__identity"><strong>${esc(productName(balance))}</strong><span>${esc(product.productCode || product.code || "Kod yok")}</span></div>
+        <div class="stock-location-product__identity"><strong>${esc(productName(balance))}</strong></div>
         <span class="stock-location-status is-${esc(status)}">${esc(statusLabel(status))}</span>
         <div class="stock-location-product__quantity"><strong>${esc(quantityDisplay(balance))}</strong></div>
         <p class="stock-location-product__conversion">${factor > 0 ? `1 ${esc(bulkUnit)} = ${esc(formatNumber(factor))} ${esc(unitOf(balance))}` : `Temel birim: ${esc(unitOf(balance))}`}</p>
-        ${suggestion ? `<p class="stock-transfer-suggestion">${suggestion.type === "transfer" ? "Genel Depodan transfer önerisi" : "Satın alma önerisi"}: ${esc(formatNumber(suggestion.quantity))} ${esc(unitOf(balance))}</p>` : ""}
-        <span class="stock-location-product__open">Ayrıntıları aç <b aria-hidden="true">›</b></span>
       </article>`;
     }).join("") : `<div class="stock-location-empty"><strong>Bu görünümde ürün yok</strong><span>Arama veya durum filtresini değiştirin.</span></div>`;
   }
@@ -677,38 +673,27 @@ import { requestText } from "./ui-dialogs.js";
     const selectedLocation = state.locations.find((location) => String(location.id) === String(state.selectedLocationId));
     const totalReadOnly = state.selectedLocationId === "total" || selectedLocation?.active === false;
     const canMoveStock = can(CAPABILITIES.inventoryMovementCreate);
-    const canTransfer = can(CAPABILITIES.inventoryTransferCreate);
     const canManageInventory = can(CAPABILITIES.inventoryManage);
     const canManageCatalog = can(CAPABILITIES.inventoryCatalogManage);
-    const cafeQuantity = balance.cafeQuantity ?? (selectedLocation && selectedLocation.type === "cafe" ? balance.quantity : 0);
     $("#stockProductDrawerTitle").textContent = productName(balance);
-    $("#stockProductDrawerSubtitle").textContent = `${product.productCode || "Kod yok"} · ${product.category || "Kategori yok"}`;
+    $("#stockProductDrawerSubtitle").textContent = product.category || "Kategori yok";
     $("#stockProductDrawerMessage").textContent = state.selectedLocationId === "total"
       ? "Tüm Depolar görünümü salt okunurdur. İşlem için aktif bir depo seçin."
       : selectedLocation?.active === false ? "Pasif depo geçmişi salt okunurdur; yeni stok, transfer ve sayım işlemi yapılamaz." : "";
     const body = $("#stockProductDrawerBody");
-    const recentMovements = state.movements.filter((movement) => String(movement.productId) === String(product.id)).slice(0, 4);
     const currentBaseUnit = unitOf(balance);
     const currentBulkUnit = textValue(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR");
     const currentFactor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
-    body.innerHTML = `<section class="stock-drawer-selected"><span>${esc(locationName(state.selectedLocationId))}</span><strong>${esc(quantityDisplay(balance))}</strong><small>Seçili depo bakiyesi</small></section><section class="stock-drawer-overview">
-      <article><span>Kafe Deposu</span><strong>${esc(quantityDisplay(balance, cafeQuantity))}</strong><small>Operasyon bakiyesi</small></article>
-      <article><span>Genel Depo</span><strong>${esc(quantityDisplay(balance, balance.generalQuantity ?? 0))}</strong><small>Merkez bakiyesi</small></article>
-      <article><span>Tüm Depolar</span><strong>${esc(quantityDisplay(balance, balance.totalQuantity ?? balance.quantity ?? 0))}</strong><small>Toplam bakiye</small></article>
-    </section>
-    <dl class="stock-drawer-details"><div><dt>Kategori</dt><dd>${esc(product.category || "Kategori yok")}</dd></div><div><dt>Ürün kodu</dt><dd>${esc(product.productCode || product.code || "Kod yok")}</dd></div><div><dt>Durum</dt><dd>${esc(statusLabel(balanceStatus(balance)))}</dd></div><div><dt>Tedarikçi</dt><dd>${esc(product.supplier || "Belirtilmedi")}</dd></div><div><dt>Kritik eşik</dt><dd>${esc(formatNumber(balance.criticalThreshold))} ${esc(unitOf(balance))}</dd></div><div><dt>Sipariş eşiği</dt><dd>${esc(formatNumber(balance.orderThreshold))} ${esc(unitOf(balance))}</dd></div><div><dt>Hedef stok</dt><dd>${esc(formatNumber(balance.targetLevel))} ${esc(unitOf(balance))}</dd></div></dl>
+    body.innerHTML = `<section class="stock-drawer-selected"><span>${esc(locationName(state.selectedLocationId))}</span><strong>${esc(quantityDisplay(balance))}</strong><small>Seçili depo bakiyesi</small></section>
+    <dl class="stock-drawer-details"><div><dt>Durum</dt><dd>${esc(statusLabel(balanceStatus(balance)))}</dd></div><div><dt>Tedarikçi</dt><dd>${esc(product.supplier || "Belirtilmedi")}</dd></div></dl>
     <section class="stock-drawer-unit-config" aria-label="Birim yapısı">
       <div><span>Temel birim</span><strong>${esc(currentBaseUnit)}</strong></div>
       <div><span>Toplu birim</span><strong>${esc(currentBulkUnit || "Yok")}</strong></div>
       <div><span>Dönüşüm</span><strong>${currentBulkUnit && currentFactor > 0 ? `1 ${esc(currentBulkUnit)} = ${esc(formatNumber(currentFactor))} ${esc(currentBaseUnit)}` : "Toplu birim seçilmedi"}</strong></div>
     </section>
-    <section class="stock-drawer-recent"><header><strong>Son hareketler</strong><span>${recentMovements.length} kayıt</span></header>${recentMovements.length ? recentMovements.map((movement) => `<div><span>${esc(statusLabel(movement.type))}</span><strong>${esc(formatNumber(movement.inputQuantity ?? movement.sourceQuantity ?? movement.quantity))} ${esc(movement.inputUnit || movement.sourceUnit || movement.baseUnit || unitOf(balance))}</strong><small>${esc(formatDate(movement.createdAt))}</small></div>`).join("") : `<p>Bu ürün için hareket kaydı henüz yüklenmedi.</p>`}</section>
     <div class="stock-drawer-actions" aria-label="${esc(productName(balance))} stok işlemleri">
-      ${totalReadOnly || !canMoveStock ? "" : `<button class="ui-button ui-button--primary" type="button" data-stock-drawer-action="manual_in">Stok Ekle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="waste">Sarf İşle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="manual_out">Eksilt</button>`}
-      ${totalReadOnly || !canTransfer ? "" : `<button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="transfer">Transfer Oluştur</button>`}
-      ${totalReadOnly || !(canManageInventory || canManageCatalog) ? "" : `<button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="settings">Ürün ve Depo Ayarları</button>`}
-      <button class="ui-button ui-button--ghost" type="button" data-stock-drawer-action="history">Hareket Geçmişi</button>
-      ${can(CAPABILITIES.read) ? '<button class="ui-button ui-button--ghost" type="button" data-stock-drawer-action="analysis">Ürün Analizine Git</button>' : ""}
+      ${totalReadOnly || !canMoveStock ? "" : `<button class="ui-button ui-button--primary" type="button" data-stock-drawer-action="manual_in">Stok Ekle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="waste">Sarf İşle</button>`}
+      ${totalReadOnly || !(canManageInventory || canManageCatalog) ? "" : `<button class="ui-button ui-button--secondary stock-drawer-settings" type="button" data-stock-drawer-action="settings">Ürün Ayarları</button>`}
     </div>`;
     layer.hidden = false;
     document.documentElement.classList.add("is-stock-drawer-open");
@@ -850,7 +835,7 @@ import { requestText } from "./ui-dialogs.js";
 
   async function openQuickAction(action) {
     if (action === "shipment") {
-      document.dispatchEvent(new CustomEvent("tahmisci:fatura:navigate", { detail: { view: "shipments", action: "new-shipment" } }));
+      document.dispatchEvent(new CustomEvent("tahmisci:fatura:navigate", { detail: { view: "suppliers" } }));
       return;
     }
     if (state.selectedLocationId === "total" || state.viewMode === "overview") {
@@ -972,12 +957,12 @@ import { requestText } from "./ui-dialogs.js";
       const source = product.unitSchemaSource === "manual" ? "Yönetici" : product.unitSchemaSource === "excel" ? "Excel" : "Eski kayıt";
       $("#stockThresholdSchemaStatus").textContent = `Şema: v${version || 1} · Kaynak: ${source}${product.unitSchemaLocked ? " · Manuel korumalı" : ""}`;
     }
-    if ($("#stockUnitSchemaSubmit")) $("#stockUnitSchemaSubmit").hidden = !can(CAPABILITIES.inventoryCatalogManage);
+    if ($("#stockUnitSchemaSubmit")) $("#stockUnitSchemaSubmit").hidden = true;
     ["#stockThresholdCritical", "#stockThresholdOrder", "#stockThresholdTarget"].forEach((selector) => {
       const input = $(selector);
       if (input) input.disabled = !canManageInventory;
     });
-    if ($("#stockThresholdSubmit")) $("#stockThresholdSubmit").hidden = !canManageInventory;
+    if ($("#stockThresholdSubmit")) $("#stockThresholdSubmit").hidden = !canManageInventory && !canManageCatalog;
     $("#stockThresholdDialogMessage").textContent = "";
     const dialog = $("#stockThresholdDialog");
     if (dialog && !dialog.open) dialog.showModal();
@@ -1381,7 +1366,11 @@ import { requestText } from "./ui-dialogs.js";
   function closeDialog(id) {
     const dialog = document.getElementById(id);
     if (dialog && dialog.open) dialog.close();
-    if (id === "stockUnitMigrationDialog") state.pendingUnitMigration = null;
+    if (id === "stockUnitMigrationDialog") {
+      state.pendingUnitMigration = null;
+      state.pendingThresholdSave = null;
+    }
+    if (id === "stockThresholdDialog") state.pendingThresholdSave = null;
   }
 
   async function submitTransfer(form) {
@@ -1604,26 +1593,35 @@ import { requestText } from "./ui-dialogs.js";
     const pending = state.pendingUnitMigration;
     if (!pending) throw new Error("Onaylanacak birim dönüşümü bulunamadı.");
     return runOperation(`unit-migration:${pending.productId}`, button, async () => {
-      const result = await api(`/api/procurement/v1/stock/products/${encodeURIComponent(pending.productId)}/unit-migration`,
+      let result = await api(`/api/procurement/v1/stock/products/${encodeURIComponent(pending.productId)}/unit-migration`,
         mutation("POST", { ...pending.schema, confirm: true }, "fatura-stock-unit-migration", ["inventory", "catalog"]));
+      updateRevision(result);
+      const thresholdSave = state.pendingThresholdSave;
+      if (thresholdSave && can(CAPABILITIES.inventoryManage)) {
+        result = await api(`/api/procurement/v1/stock/inventory/${encodeURIComponent(pending.productId)}`,
+          mutation("PATCH", thresholdSave.payload, "fatura-stock-thresholds", "inventory"));
+      }
       state.pendingUnitMigration = null;
+      state.pendingThresholdSave = null;
       $("#stockUnitMigrationDialog")?.close();
       $("#stockThresholdDialog")?.close();
       state.thresholdInitial = null;
       closeProductDrawer({ restoreFocus: false });
-      await reloadAfterMutation(result, "Stok ve eşikler yeni temel birime güvenle dönüştürüldü.");
+      await reloadAfterMutation(result, thresholdSave ? "Birim yapısı ve stok eşikleri güncellendi." : "Stok ve eşikler yeni temel birime güvenle dönüştürüldü.");
     });
   }
 
   async function submitThresholds(form) {
-    if (!can(CAPABILITIES.inventoryManage)) throw new Error("Depo eşiklerini yönetme yetkiniz yok.");
+    const canManageInventory = can(CAPABILITIES.inventoryManage);
+    const canManageCatalog = can(CAPABILITIES.inventoryCatalogManage);
+    if (!canManageInventory && !canManageCatalog) throw new Error("Ürün ayarlarını yönetme yetkiniz yok.");
     const balance = selectedProductBalance();
     if (!balance || state.selectedLocationId === "total") throw new Error("Önce gerçek bir depo ve ürün seçin.");
     const critical = Number($("#stockThresholdCritical")?.value);
     const order = Number($("#stockThresholdOrder")?.value);
     const target = Number($("#stockThresholdTarget")?.value);
-    if ([critical, order, target].some((value) => !Number.isFinite(value) || value < 0)) throw new Error("Eşik değerleri sıfır veya daha büyük olmalıdır.");
-    if (critical > order) throw new Error("Kritik eşik sipariş eşiğinden büyük olamaz.");
+    if (canManageInventory && [critical, order, target].some((value) => !Number.isFinite(value) || value < 0)) throw new Error("Eşik değerleri sıfır veya daha büyük olmalıdır.");
+    if (canManageInventory && critical > order) throw new Error("Kritik eşik sipariş eşiğinden büyük olamaz.");
     const productKey = productId(balance);
     const payload = {
       locationId: state.selectedLocationId,
@@ -1636,14 +1634,43 @@ import { requestText } from "./ui-dialogs.js";
       orderThreshold: order,
       targetLevel: target
     };
-    return runOperation(`thresholds:${productKey}`, $("#stockThresholdSubmit"), async () => {
+    const schema = canManageCatalog ? readUnitSchemaForm() : null;
+    const initial = state.thresholdInitial || {};
+    const baseChanged = schema && unitKey(schema.targetBaseUnit) !== unitKey(initial.baseUnit);
+    const schemaChanged = Boolean(schema && (baseChanged
+      || unitKey(schema.targetBulkUnit) !== unitKey(initial.bulkUnit)
+      || Number(schema.unitsPerBulkUnit || 0) !== Number(initial.factor || 0)));
+    if (baseChanged) {
+      state.pendingThresholdSave = canManageInventory ? { productId: productKey, payload, retryDraft } : null;
+      return submitUnitSchema($("#stockThresholdSubmit"));
+    }
+    return runOperation(`product-settings:${productKey}`, $("#stockThresholdSubmit"), async () => {
       try {
-        const result = await api(`/api/procurement/v1/stock/inventory/${encodeURIComponent(productKey)}`,
-          mutation("PATCH", payload, "fatura-stock-thresholds", "inventory"));
+        let result = null;
+        if (schemaChanged) {
+          result = await api(`/api/procurement/v1/stock/catalog/products/${encodeURIComponent(productKey)}`,
+            mutation("PATCH", {
+              baseUnit: schema.targetBaseUnit,
+              bulkUnit: schema.targetBulkUnit,
+              unitsPerBulkUnit: schema.unitsPerBulkUnit,
+              defaultMovementUnit: schema.defaultMovementUnit,
+              allowDecimal: schema.allowDecimal
+            }, "fatura-stock-unit-schema", "catalog"));
+          updateRevision(result, "catalog");
+        }
+        if (canManageInventory) {
+          result = await api(`/api/procurement/v1/stock/inventory/${encodeURIComponent(productKey)}`,
+            mutation("PATCH", payload, "fatura-stock-thresholds", "inventory"));
+        }
         $("#stockThresholdDialog")?.close();
         state.thresholdInitial = null;
         closeProductDrawer({ restoreFocus: false });
-        await reloadAfterMutation(result, "Seçili depo eşikleri güncellendi.");
+        if (canManageInventory) await reloadAfterMutation(result, "Ürün ayarları güncellendi.");
+        else {
+          state.stale = true;
+          await loadAll({ force: true, reloadLocations: true });
+          setMessage("Birim yapısı güncellendi.");
+        }
       } catch (error) {
         const revisionConflict = error && error.status === 409 && /başka bir işlemle güncellendi/i.test(error.message || "");
         if (revisionConflict) {
@@ -1828,6 +1855,7 @@ import { requestText } from "./ui-dialogs.js";
     state.bound = true;
     state.boundWorkspace = workspace;
     workspace.addEventListener("click", (event) => {
+      if (event.target.closest("[data-stock-kpi-unit-center]")) { openUnitSettingsDialog(); return; }
       const quickDrawerOpen = event.target.closest("#stockQuickActionsButton");
       if (quickDrawerOpen) { openQuickDrawer(quickDrawerOpen); return; }
       if (event.target.closest("[data-stock-quick-close]")) { closeQuickDrawer(); return; }
@@ -1842,7 +1870,7 @@ import { requestText } from "./ui-dialogs.js";
         const target = alert.dataset.stockAlertTarget;
         if (target === "shipments") {
           closeQuickDrawer({ restoreFocus: false });
-          document.dispatchEvent(new CustomEvent("tahmisci:fatura:navigate", { detail: { view: "shipments" } }));
+          document.dispatchEvent(new CustomEvent("tahmisci:fatura:navigate", { detail: { view: "documents" } }));
           return;
         }
         closeQuickDrawer({ restoreFocus: false });
@@ -2153,7 +2181,7 @@ export async function applyStockIntent(intent = {}) {
     } else setMessage("Bağlantıdaki transfer mevcut filtrede bulunamadı.", "error");
   }
   if (String(intent.workforce || "") === "shipments") {
-    document.dispatchEvent(new CustomEvent("tahmisci:fatura:navigate", { detail: { view: "shipments", entityId: intent.entityId || "" } }));
+    document.dispatchEvent(new CustomEvent("tahmisci:fatura:navigate", { detail: { view: "documents", entityId: intent.entityId || "" } }));
   }
   return true;
 }
@@ -2223,6 +2251,7 @@ export function resetStockState() {
   state.activeCount = null;
   state.thresholdInitial = null;
   state.pendingUnitMigration = null;
+  state.pendingThresholdSave = null;
   state.loaded = false;
   state.stale = true;
   state.bound = false;

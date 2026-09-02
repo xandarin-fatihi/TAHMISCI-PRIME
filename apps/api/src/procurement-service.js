@@ -158,7 +158,7 @@ function createProcurementService(options = {}) {
     const activeFilter = parseActiveFilter(filters.active);
     const suppliers = procurement.suppliers
       .filter((supplier) => activeFilter === null || supplier.active === activeFilter)
-      .filter((supplier) => !search || normalizeLookup(`${supplier.code} ${supplier.name} ${supplier.taxNumber}`).includes(search))
+      .filter((supplier) => !search || normalizeLookup(`${supplier.code} ${supplier.name} ${supplier.contactName} ${supplier.phone}`).includes(search))
       .map((supplier) => publicSupplier(supplier, balances ? balances.get(supplier.id) || 0 : null))
       .sort((left, right) => left.name.localeCompare(right.name, "tr"));
     return { ok: true, revision: procurement.revision, suppliers };
@@ -170,9 +170,11 @@ function createProcurementService(options = {}) {
       const values = validateSupplierInput(input, { partial: false });
       assertUniqueSupplier(procurement.suppliers, values);
       const timestamp = isoNow(now);
+      const supplierId = createId("supplier");
       const supplier = {
-        id: createId("supplier"),
+        id: supplierId,
         ...values,
+        code: values.code || `TED-${supplierId.replace(/[^a-z0-9]/gi, "").slice(-8).toLocaleUpperCase("tr-TR")}`,
         active: true,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -291,6 +293,11 @@ function createProcurementService(options = {}) {
     return mutate("supplier-independent-product.create", actor, mutation, (data, procurement, helpers) => {
       const supplier = findSupplier(procurement, supplierId, { active: true });
       const values = validateIndependentProductInput(input, { partial: false });
+      if (values.stockProductId) {
+        const stockProduct = findStockProduct(data.stockState, { stockProductId: values.stockProductId });
+        values.stockProductId = String(stockProduct.id);
+        values.stockMatchStatus = "matched";
+      }
       assertUniqueIndependentProduct(procurement.supplierIndependentProducts, supplier.id, values);
       const timestamp = isoNow(now);
       const item = {
@@ -309,6 +316,11 @@ function createProcurementService(options = {}) {
       const item = findById(procurement.supplierIndependentProducts, itemId, "Bağımsız tedarikçi ürünü");
       if (item.supplierId !== supplier.id) throw fail("Bağımsız ürün bu tedarikçiye ait değil.", 404, "SUPPLIER_INDEPENDENT_PRODUCT_NOT_FOUND");
       const values = validateIndependentProductInput(input, { partial: true });
+      if (values.stockProductId) {
+        const stockProduct = findStockProduct(data.stockState, { stockProductId: values.stockProductId });
+        values.stockProductId = String(stockProduct.id);
+        values.stockMatchStatus = "matched";
+      }
       assertUniqueIndependentProduct(procurement.supplierIndependentProducts, supplier.id, { ...item, ...values }, item.id);
       Object.assign(item, values, { updatedAt: isoNow(now), updatedBy: actor.id });
       return helpers.result("supplierIndependentProduct", item.id, { independentProduct: publicIndependentProduct(item) });
@@ -359,7 +371,7 @@ function createProcurementService(options = {}) {
     return mutate("shipment.create", actor, mutation, (data, procurement, helpers) => {
       const supplierId = text(input && input.supplierId, 180);
       const supplier = supplierId ? findSupplier(procurement, supplierId, { active: true }) : null;
-      const items = validateShipmentItems(data.stockState, input && input.items, createId);
+      const items = validateShipmentItems(data.stockState, input && input.items, createId, { procurement, supplier, now });
       const stockState = normalizeStockState(data.stockState);
       const destinationLocation = resolveOptionalStockLocation(stockState, input && input.destinationLocationId);
       const evidenceDocumentIds = validateDocumentIds(procurement, input && input.evidenceDocumentIds, actor);
@@ -381,6 +393,8 @@ function createProcurementService(options = {}) {
         documentType: normalizeDocumentType(input && input.documentType, ""),
         documentNumber: text(input && input.documentNumber, 120),
         documentDate: validateOptionalDate(input && input.documentDate, "Belge tarihi"),
+        shipmentDate: validateOptionalDate(input && (input.shipmentDate || input.documentDate), "Sevkiyat tarihi"),
+        procurementFinalizedAt: input && input.finalized === true ? timestamp : null,
         accountingStatus: "not_posted",
         accountingEntryIds: [],
         accountingPostedAt: null,
@@ -424,7 +438,7 @@ function createProcurementService(options = {}) {
         supplier = input.supplierId ? findSupplier(procurement, input.supplierId, { active: true }) : null;
         shipment.supplierId = supplier ? supplier.id : "";
       }
-      if (draft && Object.prototype.hasOwnProperty.call(input || {}, "items")) shipment.items = validateShipmentItems(data.stockState, input.items, createId);
+      if (draft && Object.prototype.hasOwnProperty.call(input || {}, "items")) shipment.items = validateShipmentItems(data.stockState, input.items, createId, { procurement, supplier, now });
       if (Object.prototype.hasOwnProperty.call(input || {}, "evidenceDocumentIds")) {
         shipment.evidenceDocumentIds = validateDocumentIds(procurement, input.evidenceDocumentIds, actor);
         linkDocumentsToShipment(procurement, shipment.evidenceDocumentIds, shipment);
@@ -1544,7 +1558,10 @@ function notifyFaturaReceiptUsers(data, helpers, shipment, input) {
       role: String(user.faturaRole || "operasyon"),
       sectionAccess: user.faturaSectionAccess
     };
-    if (!recipient.id || !hasSectionAccess(recipient, "shipments", "view") || !canViewAllShipments(recipient)) continue;
+    const canSeeReceipt = hasSectionAccess(recipient, "shipments", "view")
+      || hasSectionAccess(recipient, "documents", "view")
+      || hasSectionAccess(recipient, "suppliers", "view");
+    if (!recipient.id || !canSeeReceipt || !canViewAllShipments(recipient)) continue;
     helpers.notifyPerson(data, recipient.id, {
       category: "shipment",
       eventType: input.eventType,
@@ -1553,7 +1570,7 @@ function notifyFaturaReceiptUsers(data, helpers, shipment, input) {
       severity: input.severity || "info",
       entityType: "shipment",
       entityId: String(shipment.id),
-      deepLink: `/fatura/?view=shipments&shipmentId=${encodeURIComponent(shipment.id)}`,
+      deepLink: `/fatura/?view=documents&shipmentId=${encodeURIComponent(shipment.id)}`,
       dedupeKey: `procurement-${input.dedupeSuffix || input.eventType}:${shipment.id}:${recipient.id}`,
       metadata: {
         branchId,
@@ -1610,6 +1627,7 @@ function publicSupplier(supplier, balanceKurus) {
   const visibleBalance = Number.isSafeInteger(balanceKurus) ? balanceKurus : null;
   return {
     ...supplier,
+    contactName: String(supplier.contactName || ""),
     balanceKurus: visibleBalance,
     debtKurus: visibleBalance === null ? null : Math.max(0, -visibleBalance)
   };
@@ -1631,7 +1649,13 @@ function publicIndependentProduct(item) {
     supplierId: String(item.supplierId || ""),
     name: String(item.name || ""),
     code: String(item.code || ""),
-    purchaseUnit: String(item.purchaseUnit || ""),
+    documentType: String(item.documentType || "irsaliye"),
+    bulkUnit: String(item.bulkUnit || item.purchaseUnit || ""),
+    baseUnit: String(item.baseUnit || "adet"),
+    purchaseUnit: String(item.bulkUnit || item.purchaseUnit || ""),
+    conversionFactor: Math.max(0.001, Number(item.conversionFactor || 1)),
+    stockProductId: String(item.stockProductId || ""),
+    stockMatchStatus: String(item.stockMatchStatus || (item.stockProductId ? "matched" : "unmatched")),
     defaultPurchasePriceKurus: Math.max(0, Number(item.defaultPurchasePriceKurus || 0)),
     lastPurchasePriceKurus: Math.max(0, Number(item.lastPurchasePriceKurus || 0)),
     note: String(item.note || ""),
@@ -1714,13 +1738,13 @@ function validateSupplierInput(input, options = {}) {
   };
   assign("code", text(source.code, 80).toLocaleUpperCase("tr-TR"));
   assign("name", text(source.name, 180));
+  assign("contactName", text(source.contactName, 180));
   assign("taxNumber", text(source.taxNumber, 32));
   assign("phone", text(source.phone, 40));
   assign("email", text(source.email, 254).toLowerCase());
   assign("address", text(source.address, 1000));
   assign("paymentTermDays", clampInteger(source.paymentTermDays, 0, 0, 3650));
   if (!options.partial || Object.prototype.hasOwnProperty.call(source, "active")) result.active = source.active !== false;
-  if ((!options.partial || Object.prototype.hasOwnProperty.call(source, "code")) && !result.code) throw fail("Tedarikçi kodu zorunludur.", 400, "SUPPLIER_CODE_REQUIRED");
   if ((!options.partial || Object.prototype.hasOwnProperty.call(source, "name")) && !result.name) throw fail("Tedarikçi adı zorunludur.", 400, "SUPPLIER_NAME_REQUIRED");
   if (result.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email)) throw fail("Tedarikçi e-posta adresi geçersiz.", 400, "INVALID_EMAIL");
   return result;
@@ -1769,7 +1793,17 @@ function validateIndependentProductInput(input, options = {}) {
   };
   maybe("name", text(source.name, 180));
   maybe("code", text(source.code, 100).toLocaleUpperCase("tr-TR"));
-  maybe("purchaseUnit", text(source.purchaseUnit, 40));
+  maybe("documentType", normalizeDocumentType(source.documentType, "irsaliye"));
+  maybe("bulkUnit", text(source.bulkUnit || source.purchaseUnit, 40));
+  maybe("baseUnit", text(source.baseUnit, 40) || "adet");
+  maybe("purchaseUnit", text(source.bulkUnit || source.purchaseUnit, 40));
+  if (!options.partial || Object.prototype.hasOwnProperty.call(source, "conversionFactor")) {
+    result.conversionFactor = positiveDecimal(source.conversionFactor === undefined ? 1 : source.conversionFactor, "Toplu birim çarpanı");
+  }
+  if (!options.partial || Object.prototype.hasOwnProperty.call(source, "stockProductId")) {
+    result.stockProductId = text(source.stockProductId, 180);
+    result.stockMatchStatus = result.stockProductId ? "matched" : "unmatched";
+  }
   maybe("note", text(source.note, 1000));
   if (!options.partial || Object.prototype.hasOwnProperty.call(source, "defaultPurchasePriceKurus")) {
     result.defaultPurchasePriceKurus = nonNegativeInteger(source.defaultPurchasePriceKurus || 0, "Varsayılan alış fiyatı");
@@ -1779,7 +1813,7 @@ function validateIndependentProductInput(input, options = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(source, "active")) result.active = source.active !== false;
   if ((!options.partial || Object.prototype.hasOwnProperty.call(source, "name")) && !result.name) throw fail("Bağımsız ürün adı zorunludur.", 422, "INDEPENDENT_PRODUCT_NAME_REQUIRED");
-  if ((!options.partial || Object.prototype.hasOwnProperty.call(source, "purchaseUnit")) && !result.purchaseUnit) throw fail("Satın alma birimi zorunludur.", 422, "INDEPENDENT_PRODUCT_UNIT_REQUIRED");
+  if ((!options.partial || Object.prototype.hasOwnProperty.call(source, "bulkUnit") || Object.prototype.hasOwnProperty.call(source, "purchaseUnit")) && !result.purchaseUnit) throw fail("Toplu birim zorunludur.", 422, "INDEPENDENT_PRODUCT_UNIT_REQUIRED");
   return result;
 }
 
@@ -1791,23 +1825,33 @@ function assertUniqueIndependentProduct(items, supplierId, values, ignoredId = "
   if (duplicate) throw fail("Bu tedarikçi için aynı bağımsız ürün zaten kayıtlı.", 409, "SUPPLIER_INDEPENDENT_PRODUCT_EXISTS");
 }
 
-function validateShipmentItems(stockStateInput, requestedItems, createId) {
+function validateShipmentItems(stockStateInput, requestedItems, createId, options = {}) {
   if (!Array.isArray(requestedItems) || !requestedItems.length) throw fail("En az bir sevkiyat satırı zorunludur.", 400, "SHIPMENT_ITEMS_REQUIRED");
   if (requestedItems.length > 200) throw fail("Bir sevkiyatta en fazla 200 satır olabilir.", 400, "SHIPMENT_ITEMS_LIMIT");
   const index = indexStockProducts(stockStateInput);
+  const supplierProducts = new Map((options.procurement && Array.isArray(options.procurement.supplierIndependentProducts) ? options.procurement.supplierIndependentProducts : [])
+    .filter((item) => !options.supplier || item.supplierId === options.supplier.id)
+    .map((item) => [String(item.id), item]));
   const seen = new Set();
   return requestedItems.map((requested) => {
-    const product = index.byCode.get(normalizeProductCode(requested && (requested.stockProductCode || requested.productCode)))
+    const supplierProduct = supplierProducts.get(String(requested && requested.supplierProductId || ""));
+    let product = index.byCode.get(normalizeProductCode(requested && (requested.stockProductCode || requested.productCode)))
       || index.byId.get(String(requested && (requested.stockProductId || requested.productId) || ""));
-    if (!product || !isActiveStockProduct(product)) throw fail("Seçilen stok ürünü aktif katalogda bulunamadı.", 409, "STOCK_PRODUCT_NOT_FOUND");
-    const identity = stockIdentity(product);
+    if (!product && supplierProduct && supplierProduct.stockProductId) product = index.byId.get(String(supplierProduct.stockProductId));
+    if (!product && supplierProduct) {
+      const exactName = normalizeLookup(supplierProduct.name);
+      const matches = [...index.byId.values()].filter((item) => isActiveStockProduct(item) && normalizeLookup(item.name) === exactName);
+      if (matches.length === 1) product = matches[0];
+    }
+    if (product && !isActiveStockProduct(product)) product = null;
+    const identity = product ? stockIdentity(product) : `supplier:${supplierProduct && supplierProduct.id || normalizeLookup(requested && requested.supplierProductName)}`;
     if (seen.has(identity)) throw fail("Aynı stok ürünü sevkiyata birden fazla kez eklenemez.", 400, "DUPLICATE_SHIPMENT_PRODUCT");
     seen.add(identity);
-    const quantity = positiveDecimal(requested.quantity, "Miktar");
-    const baseUnitSnapshot = text(product.baseUnit || product.unit || "adet", 40) || "adet";
-    const bulkUnitSnapshot = text(product.bulkUnit || product.caseUnit || "", 40);
-    const unitsPerBulkUnitSnapshot = Math.max(0, Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0) || 0);
-    const purchaseUnitSnapshot = text(requested.purchaseUnit || requested.unit || product.defaultMovementUnit || baseUnitSnapshot, 40) || baseUnitSnapshot;
+    const quantity = positiveDecimal(requested.quantityBulk ?? requested.quantity, "Miktar");
+    const baseUnitSnapshot = text(supplierProduct && supplierProduct.baseUnit || requested.baseUnit || product && (product.baseUnit || product.unit) || "adet", 40) || "adet";
+    const bulkUnitSnapshot = text(supplierProduct && (supplierProduct.bulkUnit || supplierProduct.purchaseUnit) || requested.bulkUnit || product && (product.bulkUnit || product.caseUnit) || "", 40);
+    const unitsPerBulkUnitSnapshot = Math.max(0, Number(supplierProduct && supplierProduct.conversionFactor || requested.conversionFactor || product && (product.unitsPerBulkUnit ?? product.unitsPerCase) || 0) || 0);
+    const purchaseUnitSnapshot = text(requested.purchaseUnit || requested.unit || product && product.defaultMovementUnit || baseUnitSnapshot, 40) || baseUnitSnapshot;
     const normalizedPurchaseUnit = purchaseUnitSnapshot.toLocaleLowerCase("tr-TR");
     const normalizedBulkUnit = bulkUnitSnapshot.toLocaleLowerCase("tr-TR");
     const normalizedBaseUnit = baseUnitSnapshot.toLocaleLowerCase("tr-TR");
@@ -1822,16 +1866,23 @@ function validateShipmentItems(stockStateInput, requestedItems, createId) {
     const totalKurus = requested.totalKurus === undefined
       ? calculatedTotal
       : nonNegativeInteger(requested.totalKurus, "Satır toplamı");
-    return {
+    if (supplierProduct && totalKurus <= 0) {
+      throw fail("Satır toplamı sıfırdan büyük olmalıdır.", 422, "SHIPMENT_LINE_TOTAL_REQUIRED");
+    }
+    const line = {
       id: text(requested.id, 180) || createId("shipment-item"),
-      productId: String(product.id),
-      stockProductId: String(product.id),
-      productCode: normalizeProductCode(product.productCode),
-      stockProductCode: normalizeProductCode(product.productCode),
-      name: String(product.name || ""),
-      categoryId: String(product.categoryId || ""),
-      category: String(product.category || ""),
+      supplierProductId: supplierProduct ? String(supplierProduct.id) : "",
+      productId: product ? String(product.id) : "",
+      stockProductId: product ? String(product.id) : "",
+      productCode: product ? normalizeProductCode(product.productCode) : "",
+      stockProductCode: product ? normalizeProductCode(product.productCode) : "",
+      name: String(supplierProduct && supplierProduct.name || requested.supplierProductName || product && product.name || ""),
+      productName: String(supplierProduct && supplierProduct.name || requested.supplierProductName || product && product.name || ""),
+      documentType: normalizeDocumentType(supplierProduct && supplierProduct.documentType || requested.documentType, "irsaliye"),
+      categoryId: product ? String(product.categoryId || "") : "",
+      category: product ? String(product.category || "") : "",
       quantity,
+      quantityBulk: quantity,
       unit: purchaseUnitSnapshot,
       baseQuantity,
       baseUnit: baseUnitSnapshot,
@@ -1846,9 +1897,17 @@ function validateShipmentItems(stockStateInput, requestedItems, createId) {
       unitPriceKurus,
       taxKurus,
       totalKurus,
+      lineTotalKurus: totalKurus,
       supplierProductCode: text(requested.supplierProductCode, 100),
+      stockMatchStatus: product ? "matched" : "unmatched",
       evidenceDocumentIds: uniqueStrings(requested.evidenceDocumentIds, 180)
     };
+    if (supplierProduct && product && !supplierProduct.stockProductId) {
+      supplierProduct.stockProductId = String(product.id);
+      supplierProduct.stockMatchStatus = "matched";
+      supplierProduct.updatedAt = isoNow(options.now || Date);
+    }
+    return line;
   });
 }
 
