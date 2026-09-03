@@ -1,4 +1,4 @@
-import { CAPABILITIES, escapeHtml, has, state, statusBadge } from "./state.js";
+import { CAPABILITIES, escapeHtml, has, hasSection, state, statusBadge } from "./state.js";
 
 export function renderSuppliers() {
   const workspace = state.supplierWorkspace || {};
@@ -6,7 +6,7 @@ export function renderSuppliers() {
   const query = normalize(state.filters.suppliers);
   const suppliers = state.suppliers.filter((supplier) => supplier.active !== false)
     .filter((supplier) => !query || normalize(`${supplier.name} ${supplier.contactName} ${supplier.phone}`).includes(query));
-  return `${toolbar(has(CAPABILITIES.supplierManage) ? '<button class="ui-button ui-button--primary" data-action="new-supplier">Tedarikçi Ekle</button>' : "")}
+  return `${toolbar(hasSection("suppliers", "full") ? '<button class="ui-button ui-button--primary" data-action="new-supplier">Tedarikçi Ekle</button>' : "")}
     <p class="result-meta">${suppliers.length} tedarikçi gösteriliyor.</p>
     ${suppliers.length ? `<section class="supplier-list" aria-label="Tedarikçiler"><div class="supplier-list__header" aria-hidden="true"><span>Firma</span><span>Tedarikçi</span><span>Telefon</span><span>Durum</span><span>İşlem</span></div>${suppliers.map(supplierRow).join("")}</section>` : empty("Henüz tedarikçi yok", "İlk tedarikçi kaydını oluşturabilirsiniz.")}`;
 }
@@ -18,7 +18,7 @@ export function renderSupplierWorkspace(supplierId) {
   if (workspace.loading) return '<div class="supplier-workspace"><div class="loading-skeleton" aria-label="Tedarikçi ürünleri yükleniyor"><span></span><span></span><span></span></div></div>';
   const products = canonicalProducts(workspace);
   return `<section class="supplier-workspace" aria-label="${escapeHtml(supplier.name)} tedarikçi çalışma alanı">
-    <header class="supplier-workspace__header supplier-workspace__header--actions"><div class="supplier-workspace__actions">${has(CAPABILITIES.supplierManage) || has(CAPABILITIES.links) ? '<button class="ui-button ui-button--primary" type="button" data-action="supplier-add-product">Ürün Ekle</button>' : ""}${has(CAPABILITIES.receiptCreate) ? '<button class="ui-button ui-button--secondary" type="button" data-action="supplier-create-shipment">Sevkiyat Oluştur</button>' : ""}<details class="supplier-secondary-menu"><summary aria-label="Tedarikçi işlemleri">•••</summary><div>${has(CAPABILITIES.supplierManage) ? '<button type="button" data-supplier-workspace-action="edit">Tedarikçiyi düzenle</button><button class="is-danger" type="button" data-supplier-workspace-action="delete">Tedarikçiyi Sil</button>' : ""}${has(CAPABILITIES.accountingRead) ? '<button type="button" data-supplier-workspace-action="ledger">Cari hesabı aç</button>' : ""}</div></details></div></header>
+    <header class="supplier-workspace__header supplier-workspace__header--actions"><div class="supplier-workspace__actions">${has(CAPABILITIES.supplierManage) || has(CAPABILITIES.links) ? '<button class="ui-button ui-button--primary" type="button" data-action="supplier-add-product">Ürün Ekle</button>' : ""}${has(CAPABILITIES.receiptCreate) ? '<button class="ui-button ui-button--secondary" type="button" data-action="supplier-create-shipment">Sevkiyat Oluştur</button>' : ""}<details class="supplier-secondary-menu"><summary aria-label="Tedarikçi işlemleri">•••</summary><div>${hasSection("suppliers", "full") ? '<button type="button" data-supplier-workspace-action="edit">Tedarikçiyi düzenle</button><button class="is-danger" type="button" data-supplier-workspace-action="delete">Tedarikçiyi Sil</button>' : ""}${has(CAPABILITIES.accountingRead) ? '<button type="button" data-supplier-workspace-action="ledger">Cari hesabı aç</button>' : ""}</div></details></div></header>
     <section class="supplier-products"><header><div><h3>Ürün Kalemleri</h3><p>${products.filter((item) => item.active !== false).length} aktif ürün</p></div></header>
       ${products.length ? `<div class="supplier-product-list">${products.map(supplierProductRow).join("")}</div>` : empty("Ürün kaydı bulunmuyor", "Bu tedarikçinin toplu ve temel birim bilgisini içeren ilk ürününü ekleyin.")}
     </section>
