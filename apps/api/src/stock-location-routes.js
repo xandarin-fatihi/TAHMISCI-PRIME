@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const express = require("express");
 const { normalizeStockState } = require("./store/migrations");
 const { hasSectionAccess } = require("./procurement-access");
 const stockService = require("./stock-service");
@@ -94,6 +95,46 @@ function registerStockLocationRoutes(deps) {
     if (!value && required) throw fail("Bu işlem için requestId veya Idempotency-Key gerekli.");
     if (value && !REQUEST_ID_PATTERN.test(value)) throw fail("Geçerli bir requestId veya Idempotency-Key gerekli.");
     return value;
+  }
+
+  function parseMultipartStockUpload(req) {
+    const contentType = String(req.get("content-type") || "");
+    const match = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+    if (!match) throw fail("Excel yüklemesi multipart/form-data olmalıdır.", 415);
+    const boundary = String(match[1] || match[2] || "").trim();
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || !body.length) throw fail("Excel dosyası seçilmedi.", 422);
+    const delimiter = Buffer.from(`--${boundary}`);
+    const headerSeparator = Buffer.from("\r\n\r\n");
+    const nextDelimiter = Buffer.from(`\r\n--${boundary}`);
+    const fields = Object.create(null);
+    let file = null;
+    let cursor = 0;
+    while ((cursor = body.indexOf(delimiter, cursor)) !== -1) {
+      cursor += delimiter.length;
+      if (body.subarray(cursor, cursor + 2).toString("ascii") === "--") break;
+      if (body.subarray(cursor, cursor + 2).toString("ascii") === "\r\n") cursor += 2;
+      const headerEnd = body.indexOf(headerSeparator, cursor);
+      if (headerEnd === -1) break;
+      const headers = body.subarray(cursor, headerEnd).toString("latin1");
+      const dataStart = headerEnd + headerSeparator.length;
+      const dataEnd = body.indexOf(nextDelimiter, dataStart);
+      if (dataEnd === -1) break;
+      const disposition = headers.match(/content-disposition:\s*form-data;[^\r\n]*/i);
+      const nameMatch = disposition && disposition[0].match(/name="([^"]+)"/i);
+      const fileNameMatch = disposition && disposition[0].match(/filename="([^"]*)"/i);
+      const name = nameMatch ? nameMatch[1] : "";
+      const data = body.subarray(dataStart, dataEnd);
+      if (name === "file" && fileNameMatch) {
+        file = { name: fileNameMatch[1], buffer: Buffer.from(data) };
+      } else if (name) fields[name] = data.toString("utf8").trim();
+      cursor = dataEnd + 2;
+    }
+    if (!file || !file.buffer.length) throw fail("Excel dosyası seçilmedi.", 422);
+    if (!/\.xlsx$/i.test(file.name)) throw fail("Yalnız .xlsx stok dosyası yüklenebilir.", 422);
+    if (file.buffer.length > 20 * 1024 * 1024) throw fail("Excel dosyası en fazla 20 MB olabilir.", 413);
+    if (file.buffer[0] !== 0x50 || file.buffer[1] !== 0x4b) throw fail("Yüklenen dosya geçerli bir .xlsx dosyası değil.", 422);
+    return { file, fields };
   }
 
   function routeOperation(state, type, operationId) {
@@ -1299,6 +1340,70 @@ function registerStockLocationRoutes(deps) {
       res.json({ ok: true, movements: result.movements, stockState: normalizeStockState(saved.stockState), idempotent: result.idempotent, ...canonicalRevisionPayload(saved, "inventory"), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
+
+  app.post("/api/procurement/v1/stock/excel/import",
+    requireAdminOrMainRequestOrigin,
+    auth.requireRecipe,
+    attachProcurementActor,
+    requireCanonicalSection("full"),
+    requireCanonicalCapability("inventory.manage"),
+    express.raw({ type: "multipart/form-data", limit: "21mb" }),
+    async (req, res, next) => {
+      try {
+        const { file, fields } = parseMultipartStockUpload(req);
+        const targetLocationId = String(fields.targetLocationId || "").trim();
+        if (!targetLocationId) throw fail("Hedef depo seçimi zorunludur.", 422);
+        const operationId = requestId(req, true);
+        const timestamp = nowIso();
+        const actor = adminActor(req);
+        const parsed = await stockService.parseStockExcelWorkbook(file.buffer);
+        const revisionInput = {
+          expectedInventoryRevision: req.get("X-Expected-Inventory-Revision"),
+          expectedCatalogRevision: req.get("X-Expected-Catalog-Revision")
+        };
+        const pendingNotifications = [];
+        let result;
+        const saved = await store.update((data, context) => {
+          assertExpectedDomainRevision(data, revisionInput, "inventory", "stock_excel_import", operationId);
+          assertExpectedDomainRevision(data, revisionInput, "catalog", "stock_excel_import", operationId);
+          const previousStockState = normalizeStockState(data.stockState);
+          result = stockService.applyStockExcelImport(previousStockState, parsed, {
+            targetLocationId,
+            requestId: operationId
+          }, actor, { now: timestamp });
+          if (result.idempotent) return context.noChange;
+          persistStockMutation(data, result.stockState, timestamp, ["inventory", "catalog"]);
+          if (typeof queueStockThresholdNotifications === "function") {
+            queueStockThresholdNotifications(data, pendingNotifications, previousStockState, result.stockState, { operationId, updatedAt: timestamp });
+          }
+          appendStockAudit(data, actor, "stock.excel.import", targetLocationId, operationId, null, {
+            fileName: String(file.name || "").slice(0, 240),
+            summary: result.summary,
+            movementIds: result.movements.map((movement) => movement.id)
+          }, timestamp);
+          return data;
+        });
+        if (!result.idempotent) {
+          broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
+          broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "catalog"), "catalog");
+        }
+        publishNotifications(pendingNotifications);
+        res.json({
+          ok: true,
+          summary: result.summary,
+          errors: result.errors,
+          updatedProducts: result.details && result.details.updatedProducts || [],
+          createdProducts: result.details && result.details.createdProducts || [],
+          createdCategories: result.details && result.details.createdCategories || [],
+          balanceChanges: result.details && result.details.balanceChanges || [],
+          skippedProducts: result.details && result.details.skippedProducts || [],
+          idempotent: result.idempotent,
+          targetLocation: stockService.getLocation(saved.stockState, targetLocationId),
+          ...canonicalRevisionPayload(saved, "inventory"),
+          updatedAt: saved.stockUpdatedAt || timestamp
+        });
+      } catch (error) { next(error); }
+    });
 
   app.get("/api/workforce/stock", requireAdminOrMainRequestOrigin, auth.requireActivePersonel, auth.requirePersonelSection("stock"), async (req, res, next) => {
     try {

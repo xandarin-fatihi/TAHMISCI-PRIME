@@ -18,6 +18,10 @@ export const state = {
   notifications: [], unreadCount: 0,
   dashboard: null, settings: null, accessTemplates: [], sectionDefinitions: [], sectionAccess: Object.create(null), filters: Object.create(null), detail: null,
   supplierWorkspace: { supplierId: "", productLinks: [], independentProducts: [], loading: false, returnScrollY: 0 },
+  stockExcel: {
+    result: null, errors: [], fileName: "", busy: false,
+    details: { updatedProducts: [], createdProducts: [], createdCategories: [], balanceChanges: [], skippedProducts: [] }
+  },
   revisions: { procurement: 0, workforce: 0, stock: 0, inventory: 0, shipment: 0, catalog: 0, notification: 0 },
   stock: {
     revision: 0, inventoryRevision: 0, catalogRevision: 0,
@@ -150,6 +154,7 @@ export function icon(name) {
     users: '<circle cx="9" cy="8" r="3"/><path d="M3 21v-2a6 6 0 0 1 12 0v2M17 11a4 4 0 0 1 4 4v2"/>',
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/>',
     stock: '<path d="m4 7 8-4 8 4-8 4z"/><path d="m4 7 8 4 8-4v10l-8 4-8-4zM12 11v10"/>',
+    stockExcel: '<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5M8 12h8M8 16h8M8 8h3"/>',
     productAnalysis: '<circle cx="9" cy="9" r="5"/><path d="m13 13 4 4M15 20h6M18 17v6M4 20h7"/>',
     trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 10v7M14 10v7"/>'
   };

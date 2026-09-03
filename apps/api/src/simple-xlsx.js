@@ -4,14 +4,10 @@ const zlib = require("zlib");
 const MAX_ZIP_ENTRIES = 5000;
 const MAX_XML_ENTRY_BYTES = 32 * 1024 * 1024;
 const MAX_TOTAL_XML_BYTES = 128 * 1024 * 1024;
+const FORMULA_VALUE_MISSING = "__TAHMISCI_XLSX_FORMULA_VALUE_MISSING__";
 
 function readWorkbook(buffer) {
-  const input = Buffer.from(buffer || []);
-  if (input.length < 4 || input.readUInt32LE(0) !== 0x04034b50) throw new Error("XLSX dosya imzası geçersiz.");
-  const files = readZipFiles(input);
-  const sharedStrings = parseSharedStrings(files.get("xl/sharedStrings.xml") || "");
-  const rels = parseWorkbookRels(files.get("xl/_rels/workbook.xml.rels") || "");
-  const sheets = parseWorkbookSheets(files.get("xl/workbook.xml") || "", rels);
+  const { files, sharedStrings, sheets } = readWorkbookParts(buffer);
   const result = { SheetNames: [], Sheets: {} };
 
   sheets.forEach((sheet) => {
@@ -22,6 +18,45 @@ function readWorkbook(buffer) {
   });
 
   return result;
+}
+
+function readWorkbookCells(buffer) {
+  const { files, sharedStrings, sheets } = readWorkbookParts(buffer);
+  const result = { SheetNames: [], Sheets: {}, worksheets: [] };
+
+  sheets.forEach((sheet) => {
+    const xml = files.get(sheet.path);
+    if (!xml) return;
+    const grid = parseSheetGrid(xml, sharedStrings);
+    const worksheet = {
+      name: sheet.name,
+      actualRowCount: grid.actualRowCount,
+      getCell(row, column) {
+        const rowIndex = Math.trunc(Number(row)) - 1;
+        const columnIndex = Math.trunc(Number(column)) - 1;
+        return {
+          value: rowIndex >= 0 && columnIndex >= 0 && grid.rows[rowIndex]
+            ? grid.rows[rowIndex][columnIndex] ?? ""
+            : ""
+        };
+      }
+    };
+    result.SheetNames.push(sheet.name);
+    result.Sheets[sheet.name] = worksheet;
+    result.worksheets.push(worksheet);
+  });
+
+  return result;
+}
+
+function readWorkbookParts(buffer) {
+  const input = Buffer.from(buffer || []);
+  if (input.length < 4 || input.readUInt32LE(0) !== 0x04034b50) throw new Error("XLSX dosya imzası geçersiz.");
+  const files = readZipFiles(input);
+  const sharedStrings = parseSharedStrings(files.get("xl/sharedStrings.xml") || "");
+  const rels = parseWorkbookRels(files.get("xl/_rels/workbook.xml.rels") || "");
+  const sheets = parseWorkbookSheets(files.get("xl/workbook.xml") || "", rels);
+  return { files, sharedStrings, sheets };
 }
 
 function sheetToJson(sheet) {
@@ -170,6 +205,31 @@ function parseSheetRows(xml, sharedStrings) {
   return rows;
 }
 
+function parseSheetGrid(xml, sharedStrings) {
+  const rows = [];
+  let actualRowCount = 0;
+  let nextRowNumber = 1;
+  const rowMatches = [...xml.matchAll(/<(?:[\w-]+:)?row\b([^>]*)>([\s\S]*?)<\/(?:[\w-]+:)?row>/g)];
+  rowMatches.forEach((rowMatch) => {
+    const rowAttrs = parseAttributes(rowMatch[1]);
+    const explicitRowNumber = Number(rowAttrs.r);
+    const rowNumber = Number.isInteger(explicitRowNumber) && explicitRowNumber > 0 ? explicitRowNumber : nextRowNumber;
+    const values = [];
+    let nextColumnIndex = 0;
+    [...rowMatch[2].matchAll(/<(?:[\w-]+:)?c\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/(?:[\w-]+:)?c>)/g)].forEach((cell) => {
+      const attrs = parseAttributes(cell[1]);
+      const reference = String(attrs.r || "").match(/[A-Za-z]+/);
+      const columnIndex = reference ? columnToIndex(reference[0]) : nextColumnIndex;
+      values[columnIndex] = readCellValue(attrs, cell[2] || "", sharedStrings);
+      nextColumnIndex = columnIndex + 1;
+    });
+    rows[rowNumber - 1] = values;
+    actualRowCount = Math.max(actualRowCount, rowNumber);
+    nextRowNumber = rowNumber + 1;
+  });
+  return { rows, actualRowCount };
+}
+
 function readCellValue(attrs, body, sharedStrings) {
   const inline = body.match(/<(?:[\w-]+:)?is\b[^>]*>([\s\S]*?)<\/(?:[\w-]+:)?is>/);
   if (inline) {
@@ -177,7 +237,7 @@ function readCellValue(attrs, body, sharedStrings) {
   }
   const valueMatch = body.match(/<(?:[\w-]+:)?v\b[^>]*>([\s\S]*?)<\/(?:[\w-]+:)?v>/);
   if (/<(?:[\w-]+:)?f\b/i.test(body) && !valueMatch) {
-    return "__TAHMISCI_XLSX_FORMULA_VALUE_MISSING__";
+    return FORMULA_VALUE_MISSING;
   }
   const value = valueMatch ? valueMatch[1] : "";
   if (attrs.t === "s") return sharedStrings[Number(value)] || "";
@@ -213,4 +273,4 @@ function decodeXml(value) {
     .replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(parseInt(code, 10)));
 }
 
-module.exports = { parseSheetRows, readWorkbook, sheetToJson };
+module.exports = { FORMULA_VALUE_MISSING, parseSheetGrid, parseSheetRows, readWorkbook, readWorkbookCells, sheetToJson };

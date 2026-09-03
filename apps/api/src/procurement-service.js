@@ -218,6 +218,11 @@ function createProcurementService(options = {}) {
       supplier.deactivationReason = text(input && input.reason, 500);
       supplier.updatedAt = supplier.deactivatedAt;
       supplier.updatedBy = actor.id;
+      for (const shipment of data.workforceShipments || []) {
+        if (String(shipment.supplierId || "") === String(supplier.id) && !shipment.supplierName) {
+          shipment.supplierName = supplier.name;
+        }
+      }
       return helpers.result("supplier", supplier.id, {
         supplier: publicSupplier(supplier, hasCapability(actor, "accounting.read")
           ? balanceForSupplier(procurement.ledgerEntries, supplier.id)
@@ -332,7 +337,13 @@ function createProcurementService(options = {}) {
         values.stockMatchStatus = "matched";
       }
       assertUniqueIndependentProduct(procurement.supplierIndependentProducts, supplier.id, { ...item, ...values }, item.id);
-      Object.assign(item, values, { updatedAt: isoNow(now), updatedBy: actor.id });
+      const timestamp = isoNow(now);
+      Object.assign(item, values, {
+        archivedAt: values.active === false ? item.archivedAt || timestamp : values.active === true ? null : item.archivedAt || null,
+        removedAt: values.active === false ? item.removedAt || timestamp : values.active === true ? null : item.removedAt || null,
+        updatedAt: timestamp,
+        updatedBy: actor.id
+      });
       return helpers.result("supplierIndependentProduct", item.id, { independentProduct: publicIndependentProduct(item) });
     });
   }
@@ -469,6 +480,7 @@ function createProcurementService(options = {}) {
         userId: actor.id,
         userName: actor.name,
         supplierId: supplier ? supplier.id : "",
+        supplierName: supplier ? supplier.name : "",
         branchId: actor.branchId || procurement.settings.defaultBranchId || "main",
         destinationLocationId: destinationLocation ? destinationLocation.id : null,
         destinationLocationName: destinationLocation ? destinationLocation.name : null,
@@ -522,9 +534,11 @@ function createProcurementService(options = {}) {
         throw fail("Gönderilmiş sevkiyatın ürün satırları değiştirilemez.", 409, "SHIPMENT_ITEMS_LOCKED");
       }
       let supplier = shipment.supplierId ? findSupplier(procurement, shipment.supplierId) : null;
+      if (supplier && !shipment.supplierName) shipment.supplierName = supplier.name;
       if (Object.prototype.hasOwnProperty.call(input || {}, "supplierId")) {
         supplier = input.supplierId ? findSupplier(procurement, input.supplierId, { active: true }) : null;
         shipment.supplierId = supplier ? supplier.id : "";
+        shipment.supplierName = supplier ? supplier.name : "";
       }
       if (draft && Object.prototype.hasOwnProperty.call(input || {}, "items")) shipment.items = validateShipmentItems(data.stockState, input.items, createId, { procurement, supplier, now });
       if (Object.prototype.hasOwnProperty.call(input || {}, "evidenceDocumentIds")) {
@@ -1331,7 +1345,7 @@ function createProcurementService(options = {}) {
     for (const shipment of visibleShipments(data.workforceShipments, actor).filter((item) => item.removedAt)) {
       records.push({
         id: shipment.id, type: "shipment", title: `Sevkiyat · ${String(shipment.shipmentDate || shipment.documentDate || shipment.id)}`,
-        supplierId: shipment.supplierId, supplierName: suppliers.get(String(shipment.supplierId))?.name || "Tedarikçi belirtilmedi",
+        supplierId: shipment.supplierId, supplierName: suppliers.get(String(shipment.supplierId))?.name || shipment.supplierName || "Tedarikçi belirtilmedi",
         amountKurus: shipmentTotalKurus(shipment), reason: shipment.removalReason || "—", actorName: shipment.removedByName || shipment.removedBy || "—",
         removedAt: shipment.removedAt, stockReversalMovementIds: shipment.stockReversalMovementIds || [], ledgerEntryId: shipment.accountingReversalEntryId || ""
       });
@@ -1986,7 +2000,11 @@ function publicShipment(shipment, supplier, actor, procurement = null) {
     items: (Array.isArray(shipment.items) ? shipment.items : []).map((item) => canViewFinancials
       ? { ...item }
       : omitFinancialShipmentFields(item)),
-    supplier: supplier ? { id: supplier.id, code: supplier.code, name: supplier.name, active: supplier.active } : null,
+    supplier: supplier
+      ? { id: supplier.id, code: supplier.code, name: supplier.name, active: supplier.active }
+      : shipment.supplierName
+        ? { id: String(shipment.supplierId || ""), code: String(shipment.supplierCode || ""), name: String(shipment.supplierName), active: false }
+        : null,
     canEdit: !shipment.removedAt && shipment.status === "taslak" && canEditShipment(actor, shipment),
     canApprove: !shipment.removedAt && shipment.status === "onay_bekliyor" && !shipment.stockAppliedAt && hasCapability(actor, "receipt.approve"),
     canReject: !shipment.removedAt && shipment.status === "onay_bekliyor" && !shipment.stockAppliedAt && hasCapability(actor, "receipt.reject"),

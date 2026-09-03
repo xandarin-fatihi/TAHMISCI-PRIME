@@ -1,7 +1,7 @@
-import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument } from "./api.js?v=20260903-fatura-list-export";
-import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, updateRevision, value } from "./state.js";
+import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260903-stock-excel";
+import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, updateRevision, value } from "./state.js?v=20260903-stock-excel-details";
 import { renderDashboard } from "./dashboard.js?v=20260902-final-ui";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260903-fatura-list-export";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260903-stock-excel";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
 import { documentFormBody, printShipmentArchive, renderDocuments, shipmentArchiveDetail } from "./documents.js?v=20260902-final-ui";
 import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderTrash, renderUsers, userAccessFormBody } from "./accounting.js?v=20260903-fatura-list-export";
@@ -23,6 +23,7 @@ const notificationScrim = document.getElementById("notificationScrim");
 const viewDefinitions = [
   { id: "dashboard", label: "Genel Bakış", description: "Tedarik ve cari süreçlerin güncel özeti.", capability: CAPABILITIES.read },
   { id: "stock", label: "Stok", description: "Depoları ve gerçek stok bakiyelerini yönetin.", capability: CAPABILITIES.inventoryRead },
+  { id: "stockExcel", accessSection: "stock", minimumLevel: "full", label: "Stok Excel", description: "Excel stok şablonundaki ürün, birim, eşik ve stok miktarlarını toplu olarak aktarın.", capability: CAPABILITIES.inventoryManage },
   { id: "productAnalysis", label: "Ürün Analizi", description: "Ürün bazlı temel birim alış fiyatlarını inceleyin.", all: [CAPABILITIES.inventoryRead, CAPABILITIES.read] },
   { id: "suppliers", label: "Tedarikçiler", description: "Tedarikçi ürünlerini ve sevkiyatlarını yönetin.", any: [CAPABILITIES.supplierRead,CAPABILITIES.supplierManage] },
   { id: "documents", label: "Sevkiyat Arşivi", description: "Tamamlanan tedarikçi sevkiyatlarını ve belgelerini görüntüleyin.", capability: CAPABILITIES.documentsRead },
@@ -60,6 +61,7 @@ document.addEventListener("pointerdown", (event) => {
 });
 document.addEventListener("input", handleFilterInput);
 document.addEventListener("change", handleChange);
+document.addEventListener("submit", handleAppSubmit);
 entityForm.addEventListener("submit", submitEntityForm);
 entityDialog.addEventListener("cancel", (event) => { if (document.getElementById("dialogSubmit").disabled) event.preventDefault(); });
 entityDialog.addEventListener("close", cleanupEntityDialog);
@@ -155,9 +157,11 @@ function capabilitySummary(actor) {
 
 function canSeeView(view) {
   const actor = state.context && state.context.actor;
-  if (actor && actor.type !== "admin" && state.context.access && state.context.access.sectionAccess) return hasSection(view.id, "view");
+  const accessSection = view.accessSection || view.id;
+  if (actor && actor.type !== "admin" && state.context.access && state.context.access.sectionAccess
+    && !hasSection(accessSection, view.minimumLevel || "view")) return false;
   const sections = state.context && state.context.access && state.context.access.sections;
-  if (Array.isArray(sections)) return sections.includes(view.id);
+  if (Array.isArray(sections) && !sections.includes(accessSection)) return false;
   if (Array.isArray(view.all) && !view.all.every(has)) return false;
   if (view.capability) return has(view.capability);
   return !(view.any || []).length || (view.any || []).some(has);
@@ -197,7 +201,9 @@ async function setView(viewId, options = {}) {
   renderNav();
   document.getElementById("pageTitle").textContent = view.label;
   document.getElementById("pageDescription").textContent = view.description;
-  content.innerHTML = viewId === "stock" ? renderStockView() : loadingSkeleton(`Güncel ${view.label} verileri alınıyor`);
+  content.innerHTML = viewId === "stock" ? renderStockView()
+    : viewId === "stockExcel" ? renderStockExcelView()
+      : loadingSkeleton(`Güncel ${view.label} verileri alınıyor`);
   closeMobileSidebar();
   try {
     await loadView(viewId, options.force === true);
@@ -270,6 +276,7 @@ async function loadView(view, force = false) {
     trash: () => loadTrash(force),
     users: () => loadUsers(force),
     stock: () => loadStockView({ force }),
+    stockExcel: () => loadStockReferences(force),
     productAnalysis: () => loadProductAnalysis({ force, productId: state.productAnalysis.selectedProductId })
   }[view];
   if (loader) await loader();
@@ -333,6 +340,10 @@ function renderActiveView() {
   if (pageHeading) pageHeading.hidden = false;
   if (state.activeView === "suppliers") syncSupplierContextHeading();
   if (state.activeView === "stock") return;
+  if (state.activeView === "stockExcel") {
+    content.innerHTML = renderStockExcelView();
+    return;
+  }
   if (state.activeView === "productAnalysis") {
     content.innerHTML = renderProductAnalysis();
     bindProductAnalysisInteractions();
@@ -340,6 +351,149 @@ function renderActiveView() {
   }
   const renderer = { dashboard: renderDashboard, suppliers: renderSuppliers, documents: renderDocuments, ledger: renderLedger, trash: renderTrash, users: renderUsers }[state.activeView];
   content.innerHTML = renderer ? renderer() : '<div class="empty-state"><p>Bu bölüm kullanılamıyor.</p></div>';
+}
+
+function renderStockExcelView() {
+  const locations = (state.context && state.context.stockLocations || []).filter((location) => location.active !== false);
+  const result = state.stockExcel.result;
+  const groups = stockExcelDetailGroups();
+  const skippedCount = groups.skippedProducts.length;
+  const summary = result ? `<section class="stock-excel-result" aria-live="polite"><header><div><span>İçe aktarım sonucu</span><strong>Stok verileri işlendi</strong></div><span class="badge ${skippedCount ? "is-warning" : "is-success"}">${skippedCount ? `${skippedCount} atlanan` : "Hatasız"}</span></header><div class="stock-excel-result__metrics">${stockExcelMetric("updatedProducts", "Güncellenen ürün", groups.updatedProducts.length)}${stockExcelMetric("createdProducts", "Yeni ürün", groups.createdProducts.length)}${stockExcelMetric("createdCategories", "Yeni kategori", groups.createdCategories.length)}${stockExcelMetric("balanceChanges", "Bakiyesi değişen", groups.balanceChanges.length)}${stockExcelMetric("skippedProducts", "Hatalı / atlanan", skippedCount)}</div></section>` : "";
+  return `<section class="stock-excel-view"><article class="stock-excel-card"><header><span class="stock-excel-card__icon">${icon("stockExcel")}</span><div><p class="eyebrow">CANONICAL STOK AKTARIMI</p><h2>Stok Excel</h2><p>Excel stok şablonundaki ürün, birim, eşik ve stok miktarlarını toplu olarak aktarın.</p></div></header><form id="stockExcelImportForm" class="stock-excel-form" enctype="multipart/form-data" novalidate><label><span>Hedef Depo</span><select name="targetLocationId" required><option value="">Depo seçin</option>${locations.map((location) => `<option value="${escapeHtml(location.id)}">${escapeHtml(location.name)}</option>`).join("")}</select></label><label class="stock-excel-file"><span>Excel Dosyası</span><input id="stockExcelFile" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><small id="stockExcelFileName">${escapeHtml(state.stockExcel.fileName || "Yalnız .xlsx · en fazla 20 MB")}</small></label><p class="stock-excel-message" id="stockExcelMessage" role="alert"></p><button class="ui-button ui-button--primary" id="stockExcelSubmit" type="submit" ${locations.length ? "" : "disabled"}>Stok Bilgilerini İçe Aktar</button></form>${locations.length ? "" : '<p class="stock-excel-empty">İçe aktarım için aktif bir depo bulunamadı.</p>'}</article>${summary}</section>`;
+}
+
+const STOCK_EXCEL_DETAIL_META = {
+  updatedProducts: { kicker: "GÜNCELLENEN ÜRÜNLER", title: "Güncellenen ürünler", description: "Canonical kayıtla eşleşen ürünlerin birim ve eşik değişiklikleri." },
+  createdProducts: { kicker: "YENİ ÜRÜNLER", title: "Oluşturulan ürünler", description: "İçe aktarım sırasında oluşturulan yeni canonical ürünler." },
+  createdCategories: { kicker: "YENİ KATEGORİLER", title: "Oluşturulan kategoriler", description: "İçe aktarım sırasında oluşturulan kategoriler ve yeni ürün sayıları." },
+  balanceChanges: { kicker: "BAKİYE DEĞİŞİMLERİ", title: "Bakiyesi değişen ürünler", description: "Hedef depoda oluşan gerçek adjustment hareketleri." },
+  skippedProducts: { kicker: "HATALI / ATLANAN", title: "Atlanan ürünler", description: "İçe aktarılamayan ürünler ve açık hata nedenleri." }
+};
+
+function stockExcelDetailGroups() {
+  const source = state.stockExcel.details && typeof state.stockExcel.details === "object" ? state.stockExcel.details : {};
+  const skippedFallback = Array.isArray(state.stockExcel.errors) ? state.stockExcel.errors.map((item) => ({ ...item, productName: item.productName || item.product || "" })) : [];
+  return {
+    updatedProducts: Array.isArray(source.updatedProducts) ? source.updatedProducts : [],
+    createdProducts: Array.isArray(source.createdProducts) ? source.createdProducts : [],
+    createdCategories: Array.isArray(source.createdCategories) ? source.createdCategories : [],
+    balanceChanges: Array.isArray(source.balanceChanges) ? source.balanceChanges : [],
+    skippedProducts: Array.isArray(source.skippedProducts) && source.skippedProducts.length ? source.skippedProducts : skippedFallback
+  };
+}
+
+function stockExcelMetric(group, label, count) {
+  const disabled = count === 0;
+  return `<button type="button" data-stock-excel-detail="${group}" aria-haspopup="dialog" ${disabled ? "disabled" : ""}><span>${escapeHtml(label)}</span><strong>${count}</strong><small>${disabled ? "Kayıt yok" : "Detayları görüntüle →"}</small></button>`;
+}
+
+function stockExcelDetailCell(label, content, className = "") {
+  return `<td data-label="${escapeHtml(label)}"${className ? ` class="${className}"` : ""}>${content}</td>`;
+}
+
+function stockExcelUnitDisplay(value) {
+  if (!value || typeof value !== "object") return "—";
+  return escapeHtml(value.display || (value.bulkUnit && value.unitsPerBulkUnit ? `1 ${value.bulkUnit} = ${value.unitsPerBulkUnit} ${value.baseUnit}` : value.baseUnit || "—"));
+}
+
+function stockExcelDetailTable(group, items) {
+  let headings = [];
+  const rows = items.map((item) => {
+    if (group === "updatedProducts") {
+      headings = ["Kategori", "Ürün", "Önceki birim", "Yeni birim", "Değişen alanlar"];
+      const changedFields = new Set((Array.isArray(item.changes) ? item.changes : []).map((change) => change.field));
+      const previousThresholds = item.previousThresholds || {};
+      const nextThresholds = item.newThresholds || {};
+      const thresholdRows = [
+        ["criticalThreshold", "Kritik eşik"],
+        ["orderThreshold", "Sipariş eşiği"],
+        ["targetLevel", "Hedef stok"]
+      ].map(([field, label]) => `<span class="stock-excel-change${changedFields.has(field) ? " is-changed" : ""}"><b>${label}:</b> ${escapeHtml(previousThresholds[field] ?? 0)}${changedFields.has(field) ? ` → ${escapeHtml(nextThresholds[field] ?? 0)}` : ""}</span>`).join("");
+      const unitChange = changedFields.has("unitStructure")
+        ? `<span class="stock-excel-change is-changed"><b>Birim yapısı:</b> ${stockExcelUnitDisplay(item.previousUnitStructure)} → ${stockExcelUnitDisplay(item.newUnitStructure)}</span>`
+        : "";
+      const changes = `${unitChange}${thresholdRows}`;
+      return `<tr>${stockExcelDetailCell("Kategori", escapeHtml(item.category || "—"))}${stockExcelDetailCell("Ürün", `<strong>${escapeHtml(item.productName || "—")}</strong><small>${escapeHtml(item.productCode || "")}</small>`)}${stockExcelDetailCell("Önceki birim", stockExcelUnitDisplay(item.previousUnitStructure))}${stockExcelDetailCell("Yeni birim", stockExcelUnitDisplay(item.newUnitStructure))}${stockExcelDetailCell("Değişen alanlar", changes, "stock-excel-detail-table__changes")}</tr>`;
+    }
+    if (group === "createdProducts") {
+      headings = ["Kategori", "Ürün", "Ürün kodu", "Toplu birim", "Temel birim", "Çarpan"];
+      return `<tr>${stockExcelDetailCell("Kategori", escapeHtml(item.category || "—"))}${stockExcelDetailCell("Ürün", `<strong>${escapeHtml(item.productName || "—")}</strong>`)}${stockExcelDetailCell("Ürün kodu", escapeHtml(item.productCode || "—"))}${stockExcelDetailCell("Toplu birim", escapeHtml(item.bulkUnit || "—"))}${stockExcelDetailCell("Temel birim", escapeHtml(item.baseUnit || "—"))}${stockExcelDetailCell("Çarpan", item.unitsPerBulkUnit > 0 ? escapeHtml(item.unitsPerBulkUnit) : "—")}</tr>`;
+    }
+    if (group === "createdCategories") {
+      headings = ["Kategori", "Oluşturulan ürün"];
+      return `<tr>${stockExcelDetailCell("Kategori", `<strong>${escapeHtml(item.category || "—")}</strong>`)}${stockExcelDetailCell("Oluşturulan ürün", `${Number(item.createdProductCount || 0)} ürün oluşturuldu`)}</tr>`;
+    }
+    if (group === "balanceChanges") {
+      headings = ["Kategori / Ürün", "Hedef depo", "Önceki stok", "Excel hedef stok", "Adjustment"];
+      return `<tr>${stockExcelDetailCell("Kategori / Ürün", `<span>${escapeHtml(item.category || "—")}</span><strong>${escapeHtml(item.productName || "—")}</strong>`)}${stockExcelDetailCell("Hedef depo", escapeHtml(item.targetLocation || "—"))}${stockExcelDetailCell("Önceki stok", escapeHtml(item.previousDisplay || `${item.previousQuantity || 0} ${item.baseUnit || ""}`))}${stockExcelDetailCell("Excel hedef stok", escapeHtml(item.targetDisplay || `${item.targetQuantity || 0} ${item.baseUnit || ""}`))}${stockExcelDetailCell("Adjustment", `<strong class="${Number(item.adjustment || 0) < 0 ? "is-negative" : "is-positive"}">${escapeHtml(item.adjustmentDisplay || item.adjustment || 0)}</strong>`)}</tr>`;
+    }
+    headings = ["Kategori", "Ürün", "Hata nedeni"];
+    return `<tr>${stockExcelDetailCell("Kategori", escapeHtml(item.category || "—"))}${stockExcelDetailCell("Ürün", `<strong>${escapeHtml(item.productName || item.product || "—")}</strong>`)}${stockExcelDetailCell("Hata nedeni", escapeHtml(item.reason || "İçe aktarılamadı."), "stock-excel-detail-table__reason")}</tr>`;
+  }).join("");
+  return `<div class="stock-excel-detail-list"><table class="stock-excel-detail-table"><thead><tr>${headings.map((heading) => `<th scope="col">${escapeHtml(heading)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function openStockExcelDetail(group) {
+  const items = stockExcelDetailGroups()[group] || [];
+  const meta = STOCK_EXCEL_DETAIL_META[group];
+  if (!meta || !items.length) return;
+  state.detail = { type: "stock-excel-import", group };
+  document.getElementById("detailKicker").textContent = meta.kicker;
+  document.getElementById("detailTitle").textContent = meta.title;
+  document.getElementById("detailDescription").textContent = `${items.length} kayıt · ${meta.description}`;
+  document.getElementById("detailBody").innerHTML = stockExcelDetailTable(group, items);
+  if (!detailDialog.open) detailDialog.showModal();
+  document.body.classList.add("dialog-open");
+}
+
+function handleAppSubmit(event) {
+  if (event.target && event.target.id === "stockExcelImportForm") {
+    event.preventDefault();
+    importStockExcel(event.target);
+  }
+}
+
+async function importStockExcel(form) {
+  const button = form.querySelector("#stockExcelSubmit");
+  const message = form.querySelector("#stockExcelMessage");
+  const file = form.elements.file && form.elements.file.files && form.elements.file.files[0];
+  const targetLocationId = String(form.elements.targetLocationId && form.elements.targetLocationId.value || "").trim();
+  if (!targetLocationId) { message.textContent = "Hedef depo seçin."; return; }
+  if (!(file instanceof File) || !/\.xlsx$/i.test(file.name || "")) { message.textContent = "Geçerli bir .xlsx stok dosyası seçin."; return; }
+  if (file.size > 20 * 1024 * 1024) { message.textContent = "Excel dosyası en fazla 20 MB olabilir."; return; }
+  if (state.stockExcel.busy) return;
+  state.stockExcel.busy = true;
+  message.textContent = "";
+  setBusy(button, true, "İçe aktarılıyor…");
+  try {
+    const payload = await uploadStockWorkbook(file, targetLocationId, {
+      inventory: state.revisions.inventory,
+      catalog: state.revisions.catalog
+    });
+    updateRevision(payload, "inventory");
+    state.stockExcel.result = payload.summary || {};
+    state.stockExcel.errors = payload.errors || [];
+    state.stockExcel.details = {
+      updatedProducts: Array.isArray(payload.updatedProducts) ? payload.updatedProducts : [],
+      createdProducts: Array.isArray(payload.createdProducts) ? payload.createdProducts : [],
+      createdCategories: Array.isArray(payload.createdCategories) ? payload.createdCategories : [],
+      balanceChanges: Array.isArray(payload.balanceChanges) ? payload.balanceChanges : [],
+      skippedProducts: Array.isArray(payload.skippedProducts) ? payload.skippedProducts : []
+    };
+    state.stockExcel.fileName = "";
+    state.stock.stale = true;
+    state.stock.loaded = false;
+    state.stock.catalogLoaded = false;
+    invalidate(["stock-references"]);
+    await loadStockReferences(true);
+    renderActiveView();
+    toast(`Stok Excel tamamlandı: ${Number(payload.summary && payload.summary.changedBalances || 0)} bakiye güncellendi.`, false);
+  } catch (error) {
+    message.textContent = error.message || "Stok Excel içe aktarımı tamamlanamadı.";
+  } finally {
+    state.stockExcel.busy = false;
+    if (button && button.isConnected) setBusy(button, false);
+  }
 }
 
 function notificationApiRoot() {
@@ -542,6 +696,7 @@ async function handleClick(event) {
   if (button.dataset.profileAction === "install") return installApp(button);
   if (button.id === "logoutButton" || button.dataset.profileAction === "logout") return performLogout(button);
   if (button.dataset.dashboardView) return navigateFromDashboard(button.dataset.dashboardView, button.dataset.dashboardFilter || "");
+  if (button.dataset.stockExcelDetail) return openStockExcelDetail(button.dataset.stockExcelDetail);
   if (button.dataset.view || button.dataset.viewTarget) return setView(button.dataset.view || button.dataset.viewTarget);
   if (button.dataset.cancelAction === "decline-stock") return declineSupplierShipmentStock(button);
   if (button.classList.contains("dialog-close")) return closeEntityDialog();
@@ -550,7 +705,7 @@ async function handleClick(event) {
   if (button.hasAttribute("data-supplier-back")) return closeSupplierWorkspace();
   if (button.dataset.supplierWorkspaceAction) return handleSupplierWorkspaceAction(button, button.dataset.supplierWorkspaceAction);
   if (button.dataset.editIndependentProduct) return openIndependentProductForm(button.dataset.editIndependentProduct);
-  if (button.dataset.deactivateIndependentProduct) return openIndependentProductDeactivate(button.dataset.deactivateIndependentProduct);
+  if (button.dataset.deactivateIndependentProduct) return deleteIndependentProduct(button, button.dataset.deactivateIndependentProduct);
   if (button.dataset.openShipment) return openShipment(button.dataset.openShipment);
   if (button.dataset.printShipment) return printShipmentArchive(button.dataset.printShipment);
   if (button.dataset.openDocument) return openDocument(button.dataset.openDocument);
@@ -579,6 +734,13 @@ function handleFilterInput(event) {
 }
 
 function handleChange(event) {
+  if (event.target.id === "stockExcelFile") {
+    const file = event.target.files && event.target.files[0];
+    state.stockExcel.fileName = file instanceof File ? file.name : "";
+    const label = document.getElementById("stockExcelFileName");
+    if (label) label.textContent = state.stockExcel.fileName || "Yalnız .xlsx · en fazla 20 MB";
+    return;
+  }
   if (event.target.matches("[data-combo-input]")) {
     syncCombobox(event.target);
     if (event.target.dataset.comboInput === "stockProductId") updateShipmentLineUnit(event.target);
@@ -834,10 +996,23 @@ function openIndependentProductForm(itemId = "") {
   });
 }
 
-function openIndependentProductDeactivate(itemId) {
+async function deleteIndependentProduct(button, itemId) {
   const item = state.supplierWorkspace.independentProducts.find((candidate) => String(candidate.id) === String(itemId));
   if (!item) return;
-  openEntityDialog({ mode: "independent-product-deactivate", entityId: item.id, title: "Ürünü sil", description: `“${item.name}” geçmiş sevkiyatlardan silinmeden yeni işlemlere kapatılacak.`, submitLabel: "Sil", body: `<input type="hidden" name="supplierId" value="${escapeHtml(state.supplierWorkspace.supplierId)}"><p class="application-dialog-copy">Ürün silinecek. Onaylıyor musunuz?</p>` });
+  if (!await confirmAction({
+    title: "Ürün kaydını sil",
+    description: "Bu ürün tedarikçinin aktif ürün listesinden silinecek. Devam edilsin mi?",
+    confirmLabel: "Ürünü Sil",
+    cancelLabel: "Vazgeç",
+    danger: true
+  })) return;
+  const supplierId = state.supplierWorkspace.supplierId;
+  await runButtonMutation(button, () => api(`/suppliers/${encodeURIComponent(supplierId)}/independent-products/${encodeURIComponent(itemId)}`, {
+    method: "PUT", body: { active: false }, expectedRevision: state.revision
+  }), ["suppliers", "productAnalysis", "dashboard"], async () => {
+    await loadSupplierWorkspaceData(supplierId, true);
+    renderActiveView();
+  });
 }
 
 function openSupplierShipmentForm() {
@@ -958,7 +1133,6 @@ async function submitEntityForm(event) {
     else if (mode === "user-access") await saveUserAccess(data);
     else if (mode === "shipment-account") await saveShipmentAccounting(data);
     else if (mode === "independent-product-create" || mode === "independent-product-edit") await saveIndependentProduct(mode, data);
-    else if (mode === "independent-product-deactivate") await deactivateIndependentProduct(data);
     else if (mode === "supplier-shipment-create") followUpShipment = await saveSupplierShipment(data);
     else if (mode === "supplier-shipment-stock") {
       const payload = await saveSupplierShipmentStock(data);
@@ -1008,13 +1182,6 @@ async function saveIndependentProduct(mode, data) {
     ? `/suppliers/${encodeURIComponent(supplierId)}/independent-products`
     : `/suppliers/${encodeURIComponent(supplierId)}/independent-products/${encodeURIComponent(itemId)}`;
   const payload = await api(endpoint, { method: mode === "independent-product-create" ? "POST" : "PUT", body, expectedRevision: state.revision });
-  mutationComplete(payload, ["suppliers","productAnalysis","dashboard"]);
-}
-
-async function deactivateIndependentProduct(data) {
-  const supplierId = value(data, "supplierId") || state.supplierWorkspace.supplierId;
-  const itemId = entityForm.dataset.entityId;
-  const payload = await api(`/suppliers/${encodeURIComponent(supplierId)}/independent-products/${encodeURIComponent(itemId)}`, { method: "PUT", body: { active: false }, expectedRevision: state.revision });
   mutationComplete(payload, ["suppliers","productAnalysis","dashboard"]);
 }
 
@@ -1165,7 +1332,7 @@ function handleSupplierWorkspaceAction(button, action) {
   const supplier = state.suppliers.find((item) => String(item.id) === String(id));
   if (!supplier) return;
   if (action === "edit") return openSupplierForm(supplier);
-  if (action === "deactivate") return deactivateSupplier(button, id);
+  if (action === "delete") return deactivateSupplier(button, id);
   if (action === "ledger") { state.filters.ledgerSupplier = id; return setView("ledger"); }
 }
 
@@ -1208,8 +1375,13 @@ async function handleDetailAction(button, action) {
 }
 
 async function deactivateSupplier(button, id) {
-  const reason = await requestText({ title: "Tedarikçiyi pasife al", description: "Geçmiş mali kayıtlar korunur; yeni işlemler durdurulur.", label: "Pasife alma nedeni", value: "Artık kullanılmıyor", confirmLabel: "Pasife al", danger: true }); if (reason === null) return;
-  await runButtonMutation(button, () => api(`/suppliers/${encodeURIComponent(id)}/deactivate`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["suppliers","dashboard"], async () => { closeDetailDialog(); await setView("suppliers", {force:true}); });
+  if (!await confirmAction({
+    title: "Tedarikçiyi sil",
+    description: "Bu tedarikçi aktif tedarikçi listesinden kaldırılacak. Geçmiş sevkiyat ve muhasebe kayıtları korunacaktır.",
+    confirmLabel: "Tedarikçiyi Sil",
+    danger: true
+  })) return;
+  await runButtonMutation(button, () => api(`/suppliers/${encodeURIComponent(id)}/deactivate`, { method:"POST", body:{reason:"Kullanıcı tarafından aktif listeden kaldırıldı"}, expectedRevision:state.revision }), ["suppliers","dashboard"], async () => { closeDetailDialog(); closeSupplierWorkspace(); await setView("suppliers", {force:true}); });
 }
 async function approveStock(button, id) {
   if (!await confirmAction({ title: "Stok onayı", description: "Stok yalnız bir kez artırılacak; başarılı olursa sevkiyat tutarı tedarikçi cari hesabına otomatik borç yazılacak.", confirmLabel: "Onayla ve stoğa ekle" })) return;

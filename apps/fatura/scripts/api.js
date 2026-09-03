@@ -101,6 +101,25 @@ export async function uploadDocument(file, metadata, expectedRevision) {
   return api("/documents", { method: "POST", headers, body: file, raw: true, expectedRevision, requestId: requestId("document-upload") });
 }
 
+export async function uploadStockWorkbook(file, targetLocationId, revisions = {}) {
+  if (!(file instanceof File) || !/\.xlsx$/i.test(file.name || "")) {
+    throw new ApiError("Yalnız .xlsx stok dosyası seçilebilir.", 422);
+  }
+  if (file.size > 20 * 1024 * 1024) throw new ApiError("Excel dosyası en fazla 20 MB olabilir.", 413);
+  if (!String(targetLocationId || "").trim()) throw new ApiError("Hedef depo seçimi zorunludur.", 422);
+  const form = new FormData();
+  form.append("targetLocationId", String(targetLocationId));
+  form.append("file", file, file.name);
+  return api("/stock/excel/import", {
+    method: "POST",
+    body: form,
+    raw: true,
+    requestId: requestId("stock-excel-import"),
+    expectedInventoryRevision: revisions.inventory,
+    expectedCatalogRevision: revisions.catalog
+  });
+}
+
 export function exportUrl(kind) {
   return `${API_ROOT}/export?kind=${encodeURIComponent(kind || "ledger")}`;
 }

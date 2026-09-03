@@ -8,7 +8,8 @@ const NORMALIZED_STOCK_SNAPSHOT = Symbol.for("tahmisci.stock.normalized-snapshot
 
 const crypto = require("crypto");
 const { normalizeStockState } = require("./store/migrations");
-const { normalizeProductCode } = require("./store/product-code-registry");
+const { isValidProductCode, normalizeProductCode, normalizeProductCodeList } = require("./store/product-code-registry");
+const { FORMULA_VALUE_MISSING, readWorkbookCells } = require("./simple-xlsx");
 
 const CAFE_LOCATION_ID = "stock-location-cafe";
 const GENERAL_LOCATION_ID = "stock-location-general";
@@ -341,6 +342,46 @@ function formatBaseQuantity(product, value) {
       ? `${bulkQuantity} ${metadata.bulkUnit} + ${remainderQuantity} ${metadata.baseUnit}`
       : `${bulkQuantity} ${metadata.bulkUnit}`,
     conversionText: `1 ${metadata.bulkUnit} = ${metadata.unitsPerBulkUnit} ${metadata.baseUnit}`
+  };
+}
+
+function stockExcelUnitDetail(metadata = {}) {
+  const baseUnit = controlledUnit(metadata.baseUnit || "", "");
+  const bulkUnit = controlledUnit(metadata.bulkUnit || "", "");
+  const unitsPerBulkUnit = round(Number(metadata.unitsPerBulkUnit || 0));
+  return {
+    baseUnit,
+    bulkUnit,
+    unitsPerBulkUnit,
+    display: bulkUnit && unitsPerBulkUnit > 0
+      ? `1 ${bulkUnit} = ${unitsPerBulkUnit} ${baseUnit}`
+      : baseUnit || "Tanımsız"
+  };
+}
+
+function stockExcelThresholdDetail(balance = {}) {
+  return {
+    criticalThreshold: round(Number(balance.criticalThreshold || 0)),
+    orderThreshold: round(Number(balance.orderThreshold || 0)),
+    targetLevel: round(Number(balance.targetLevel || 0))
+  };
+}
+
+function stockExcelSkippedDetail(item = {}) {
+  return {
+    category: String(item.category || "").slice(0, 120),
+    productName: String(item.productName || item.product || "").slice(0, 180),
+    reason: String(item.reason || "Ürün içe aktarılamadı.").slice(0, 500)
+  };
+}
+
+function emptyStockExcelDetails(errors = []) {
+  return {
+    updatedProducts: [],
+    createdProducts: [],
+    createdCategories: [],
+    balanceChanges: [],
+    skippedProducts: errors.map(stockExcelSkippedDetail)
   };
 }
 
@@ -1272,6 +1313,406 @@ function serializeMovements(stockState, options = {}) {
   return items.map((movement) => ({ ...movement }));
 }
 
+function excelCellValue(cell) {
+  const value = cell && cell.value;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    if (Object.prototype.hasOwnProperty.call(value, "result")) return value.result;
+    if (Array.isArray(value.richText)) return value.richText.map((item) => item && item.text || "").join("");
+    if (Object.prototype.hasOwnProperty.call(value, "text")) return value.text;
+  }
+  return value === null || value === undefined ? "" : value;
+}
+
+function excelText(cell) {
+  return String(excelCellValue(cell) || "").trim().replace(/\s+/g, " ");
+}
+
+function excelIdentity(value) {
+  return String(value || "").trim().toLocaleLowerCase("tr-TR").replace(/ı/g, "i")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function excelNumber(cell, options = {}) {
+  const raw = excelCellValue(cell);
+  if (raw === "" || raw === null || raw === undefined) return { empty: true, valid: true, value: 0 };
+  const value = typeof raw === "number" ? raw : Number(String(raw).trim().replace(/\s/g, "").replace(",", "."));
+  if (!Number.isFinite(value) || value < 0) return { empty: false, valid: false, value: 0 };
+  if (options.positive && value <= 0) return { empty: false, valid: false, value: 0 };
+  return { empty: false, valid: true, value: round(value) };
+}
+
+function excelProductHeadingIsPlaceholder(value) {
+  const heading = excelIdentity(value);
+  return heading.includes("urun kaydi bulunmuyor") || heading.includes("urun bulunmuyor");
+}
+
+function excelQuantityLabelIsValid(labelCell, unitCell, genericUnitLabel, allowGenericWithUnit = false) {
+  const rawLabel = excelText(labelCell);
+  if (rawLabel === FORMULA_VALUE_MISSING) return true;
+  const label = excelIdentity(rawLabel);
+  const unit = excelIdentity(excelText(unitCell));
+  const generic = `${genericUnitLabel} miktari`;
+  if (!label.endsWith(" miktari")) return false;
+  if (!unit) return label === generic;
+  return label === `${unit} miktari` || allowGenericWithUnit && label === generic;
+}
+
+function excelBlockLabelsAreValid(sheet, row) {
+  const units = [1, 2, 3].map((column) => excelIdentity(excelText(sheet.getCell(row + 1, column))));
+  const thresholds = [1, 2, 3].map((column) => excelIdentity(excelText(sheet.getCell(row + 3, column))));
+  const quantities = [1, 2, 3].map((column) => excelIdentity(excelText(sheet.getCell(row + 5, column))));
+  return units[0] === "toplu birim"
+    && units[1] === "temel birim"
+    && units[2] === "birim carpani"
+    && thresholds[0] === "kritik esik"
+    && thresholds[1] === "siparis esigi"
+    && thresholds[2] === "hedef stok"
+    && excelQuantityLabelIsValid(sheet.getCell(row + 5, 1), sheet.getCell(row + 2, 1), "toplu birim")
+    && excelQuantityLabelIsValid(sheet.getCell(row + 5, 2), sheet.getCell(row + 2, 2), "temel birim", true)
+    && quantities[2] === "toplam";
+}
+
+async function parseStockExcelWorkbook(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
+    throw stockError("Geçerli bir .xlsx stok dosyası yükleyin.", 422);
+  }
+  let workbook;
+  try {
+    workbook = readWorkbookCells(buffer);
+  } catch (_error) {
+    throw stockError("Excel dosyası okunamadı veya geçerli bir .xlsx dosyası değil.", 422);
+  }
+  const codeSheet = workbook.worksheets.find((sheet) => excelIdentity(sheet.name) === "urun kodlari");
+  const codes = new Map();
+  if (codeSheet) {
+    for (let row = 2; row <= codeSheet.actualRowCount; row += 1) {
+      const category = excelText(codeSheet.getCell(row, 1));
+      const productNameValue = excelText(codeSheet.getCell(row, 2));
+      const code = normalizeProductCode(excelText(codeSheet.getCell(row, 3)));
+      if (category && productNameValue && isValidProductCode(code, { stock: true })) {
+        codes.set(`${excelIdentity(category)}\u0000${excelIdentity(productNameValue)}`, code);
+      }
+    }
+  }
+  const products = [];
+  const errors = [];
+  const categoryNames = new Set();
+  for (const sheet of workbook.worksheets) {
+    if (sheet === codeSheet || excelIdentity(sheet.name) === "urun kodlari") continue;
+    let hasProduct = false;
+    for (let row = 1; row <= Math.max(1, sheet.actualRowCount); row += 8) {
+      const productNameValue = excelText(sheet.getCell(row, 1));
+      if (!productNameValue || excelProductHeadingIsPlaceholder(productNameValue)) continue;
+      hasProduct = true;
+      if (!excelBlockLabelsAreValid(sheet, row)) {
+        errors.push({ category: sheet.name, product: productNameValue, reason: "Ürün bloğundaki başlık düzeni stok şablonuyla eşleşmiyor." });
+        continue;
+      }
+      const factor = excelNumber(sheet.getCell(row + 2, 3), { positive: true });
+      const critical = excelNumber(sheet.getCell(row + 4, 1));
+      const order = excelNumber(sheet.getCell(row + 4, 2));
+      const target = excelNumber(sheet.getCell(row + 4, 3));
+      const bulkQuantity = excelNumber(sheet.getCell(row + 6, 1));
+      const baseQuantity = excelNumber(sheet.getCell(row + 6, 2));
+      if (![factor, critical, order, target, bulkQuantity, baseQuantity].every((item) => item.valid)) {
+        errors.push({ category: sheet.name, product: productNameValue, reason: "Birim çarpanı, eşik veya stok miktarı geçersiz." });
+        continue;
+      }
+      if (critical.value > order.value && !order.empty) {
+        errors.push({ category: sheet.name, product: productNameValue, reason: "Kritik eşik sipariş eşiğinden büyük olamaz." });
+        continue;
+      }
+      products.push({
+        category: String(sheet.name || "").trim().slice(0, 120),
+        productName: productNameValue.slice(0, 180),
+        productCode: codes.get(`${excelIdentity(sheet.name)}\u0000${excelIdentity(productNameValue)}`) || "",
+        bulkUnit: controlledUnit(excelText(sheet.getCell(row + 2, 1)), ""),
+        baseUnit: controlledUnit(excelText(sheet.getCell(row + 2, 2)), ""),
+        unitsPerBulkUnit: factor.value,
+        factorProvided: !factor.empty,
+        criticalThreshold: critical.value,
+        orderThreshold: order.value,
+        targetLevel: target.value,
+        bulkQuantity: bulkQuantity.value,
+        baseQuantity: baseQuantity.value,
+        sourceRow: row
+      });
+    }
+    if (hasProduct) categoryNames.add(String(sheet.name || "").trim());
+  }
+  if (!products.length && !errors.length) throw stockError("Excel dosyasında geçerli stok ürün bloğu bulunamadı.", 422);
+  return {
+    workbookName: "Tahmisçi Stok Excel",
+    categoriesFound: categoryNames.size,
+    productsFound: products.length + errors.length,
+    products,
+    errors
+  };
+}
+
+function generatedStockProductCode(state, category, name) {
+  const ascii = (value) => excelIdentity(value).toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const categoryPart = ascii(category).slice(0, 8) || "GENEL";
+  const productPart = ascii(name).slice(0, 24) || "URUN";
+  const occupied = new Set((state.products || []).map((item) => normalizeProductCode(item.productCode)).filter(Boolean));
+  let code = `STK-${categoryPart}-${productPart}`;
+  if (!occupied.has(code)) return code;
+  const suffix = crypto.createHash("sha256").update(`${category}\u0000${name}`, "utf8").digest("hex").slice(0, 8).toUpperCase();
+  code = `STK-${categoryPart}-${productPart}-${suffix}`;
+  let counter = 2;
+  while (occupied.has(code)) code = `STK-${categoryPart}-${productPart}-${suffix}-${counter++}`;
+  return code;
+}
+
+function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {}, options = {}) {
+  const state = normalizeState(stockState);
+  const requestId = String(input.requestId || input.idempotencyKey || "").trim();
+  if (!requestId) throw stockError("Excel içe aktarımı için requestId zorunludur.", 400);
+  const replay = idempotentRecord(state, "stock_excel_import", requestId);
+  if (replay) {
+    const replayErrors = replay.value && replay.value.errors || [];
+    const replayDetails = replay.value && replay.value.details || emptyStockExcelDetails(replayErrors);
+    const replaySummary = { ...(replay.value && replay.value.summary || {}) };
+    replaySummary.matchedProducts = replayDetails.updatedProducts.length;
+    replaySummary.updatedProducts = replayDetails.updatedProducts.length;
+    replaySummary.newProducts = replayDetails.createdProducts.length;
+    replaySummary.newCategories = replayDetails.createdCategories.length;
+    replaySummary.changedBalances = replayDetails.balanceChanges.length;
+    replaySummary.skippedProducts = replayDetails.skippedProducts.length;
+    return { stockState: state, summary: replaySummary, errors: replayErrors, details: replayDetails, movements: [], idempotent: true };
+  }
+  const location = getLocation(state, input.locationId || input.targetLocationId);
+  const timestamp = nowIso(options.now);
+  const summary = {
+    categoriesFound: Math.max(0, Number(parsedWorkbook && parsedWorkbook.categoriesFound || 0)),
+    productsFound: Math.max(0, Number(parsedWorkbook && parsedWorkbook.productsFound || 0)),
+    matchedProducts: 0,
+    updatedProducts: 0,
+    newProducts: 0,
+    newCategories: 0,
+    changedBalances: 0,
+    skippedProducts: 0
+  };
+  const errors = Array.isArray(parsedWorkbook && parsedWorkbook.errors) ? parsedWorkbook.errors.map((item) => ({ ...item })) : [];
+  const details = emptyStockExcelDetails(errors);
+  const createdCategoryDetails = new Map();
+  const movements = [];
+  const processed = new Set();
+  const productByCode = new Map((state.products || []).map((product) => [normalizeProductCode(product.productCode), product]).filter(([code]) => code));
+  const categoryByName = new Map((state.categories || []).map((category) => [excelIdentity(category.name), category]));
+
+  for (const record of Array.isArray(parsedWorkbook && parsedWorkbook.products) ? parsedWorkbook.products : []) {
+    try {
+      const categoryKey = excelIdentity(record.category);
+      const nameKey = excelIdentity(record.productName);
+      const requestedCode = normalizeProductCode(record.productCode);
+      let product = requestedCode ? productByCode.get(requestedCode) : null;
+      if (!product && requestedCode) {
+        product = (state.products || []).find((candidate) => (candidate.productCodeAliases || [])
+          .some((alias) => normalizeProductCode(alias) === requestedCode)) || null;
+      }
+      if (!product) {
+        product = (state.products || []).find((candidate) => excelIdentity(candidate.category) === categoryKey
+          && excelIdentity(candidate.name || candidate.productName) === nameKey) || null;
+      }
+      if (!product) {
+        const nameMatches = (state.products || []).filter((candidate) => excelIdentity(candidate.name || candidate.productName) === nameKey);
+        if (nameMatches.length === 1) product = nameMatches[0];
+      }
+      if (product && processed.has(String(product.id))) throw stockError("Aynı canonical ürün workbook içinde birden fazla kez tanımlanmış.", 409);
+      const existing = Boolean(product);
+      const currentUnits = existing ? productUnitMetadata(product) : { baseUnit: "", bulkUnit: "", unitsPerBulkUnit: 0, allowDecimal: false, defaultMovementUnit: "" };
+      const legacyBulkQuantityUsesBaseUnit = existing
+        && !record.baseUnit
+        && !record.factorProvided
+        && !currentUnits.bulkUnit
+        && excelIdentity(record.bulkUnit) === excelIdentity(currentUnits.baseUnit);
+      const baseUnit = record.baseUnit || currentUnits.baseUnit;
+      const bulkUnit = legacyBulkQuantityUsesBaseUnit ? currentUnits.bulkUnit : record.bulkUnit || currentUnits.bulkUnit;
+      const unitsPerBulkUnit = record.factorProvided ? Number(record.unitsPerBulkUnit || 0) : Number(currentUnits.unitsPerBulkUnit || 0);
+      if (!baseUnit || bulkUnit && !(unitsPerBulkUnit > 0)) throw stockError("Temel birim veya birim çarpanı eksik.", 422);
+      if (Number(record.bulkQuantity || 0) > 0 && !legacyBulkQuantityUsesBaseUnit && (!bulkUnit || !(unitsPerBulkUnit > 0))) throw stockError("Toplu stok miktarı için geçerli toplu birim ve çarpan gerekli.", 422);
+      if (record.bulkUnit && existing && record.bulkUnit !== currentUnits.bulkUnit && !record.factorProvided && !legacyBulkQuantityUsesBaseUnit) {
+        throw stockError("Toplu birim değiştiği için birim çarpanı zorunludur.", 422);
+      }
+      const hasHistory = existing && (state.movements || []).some((movement) => String(movement.productId) === String(product.id));
+      const hasBalance = existing && (state.balances || []).some((balance) => String(balance.productId) === String(product.id) && Number(balance.quantity || 0) !== 0);
+      if (existing && record.baseUnit && record.baseUnit !== currentUnits.baseUnit && (hasHistory || hasBalance)) {
+        throw stockError("Hareket geçmişi bulunan ürünün temel birimi Excel ile değiştirilemez.", 409);
+      }
+      const allowDecimal = existing ? currentUnits.allowDecimal : ["kg", "gr", "litre", "ml"].includes(baseUnit);
+      const targetQuantity = legacyBulkQuantityUsesBaseUnit
+        ? round(Number(record.bulkQuantity || 0) + Number(record.baseQuantity || 0))
+        : round(Number(record.bulkQuantity || 0) * Number(unitsPerBulkUnit || 0) + Number(record.baseQuantity || 0));
+      if (!allowDecimal && !Number.isInteger(targetQuantity)) throw stockError("Bu ürün için kesirli temel miktar kullanılamaz.", 422);
+
+      let category = categoryByName.get(categoryKey);
+      if (!category) {
+        category = {
+          id: `stock-category-${crypto.randomUUID()}`,
+          name: String(record.category).slice(0, 120), active: true, order: state.categories.length,
+          sourceType: "excel", statusSource: "excel", sourcePresent: true,
+          createdAt: timestamp, updatedAt: timestamp, lastImportedAt: timestamp, lastImportOperationId: requestId
+        };
+        state.categories.push(category);
+        categoryByName.set(categoryKey, category);
+        summary.newCategories += 1;
+        createdCategoryDetails.set(categoryKey, { category: category.name, createdProductCount: 0 });
+      } else {
+        category.active = true;
+        category.sourcePresent = true;
+        category.updatedAt = timestamp;
+        category.lastImportedAt = timestamp;
+        category.lastImportOperationId = requestId;
+      }
+
+      if (!product) {
+        const productCode = requestedCode && isValidProductCode(requestedCode, { stock: true })
+          ? requestedCode
+          : generatedStockProductCode(state, record.category, record.productName);
+        product = {
+          id: `stock-product-${crypto.randomUUID()}`,
+          name: record.productName, productName: record.productName,
+          categoryId: category.id, category: category.name, productCode,
+          baseUnit, unit: baseUnit, bulkUnit, caseUnit: bulkUnit,
+          unitsPerBulkUnit, unitsPerCase: unitsPerBulkUnit,
+          allowDecimal, defaultMovementUnit: baseUnit,
+          active: true, sourceType: "excel", statusSource: "excel", sourcePresent: true,
+          unitSchemaSource: "excel", unitSchemaLocked: true, unitSchemaVersion: 1,
+          unitSchemaUpdatedAt: timestamp, createdAt: timestamp, updatedAt: timestamp,
+          lastImportedAt: timestamp, lastImportOperationId: requestId
+        };
+        state.products.push(product);
+        productByCode.set(productCode, product);
+        summary.newProducts += 1;
+        details.createdProducts.push({
+          category: category.name,
+          productName: productName(product),
+          productCode: product.productCode,
+          ...stockExcelUnitDetail(productUnitMetadata(product))
+        });
+        if (createdCategoryDetails.has(categoryKey)) createdCategoryDetails.get(categoryKey).createdProductCount += 1;
+      } else {
+        summary.matchedProducts += 1;
+        const previousUnits = { ...product, unitSchemaHistory: Array.isArray(product.unitSchemaHistory) ? product.unitSchemaHistory.map((item) => ({ ...item })) : [] };
+        const previousProductCode = normalizeProductCode(product.productCode);
+        const nextProductCode = requestedCode || previousProductCode;
+        const productCodeAliases = normalizeProductCodeList([
+          ...(Array.isArray(product.productCodeAliases) ? product.productCodeAliases : []),
+          ...(requestedCode && previousProductCode && requestedCode !== previousProductCode ? [previousProductCode] : [])
+        ]).filter((code) => code !== nextProductCode);
+        const unitChanged = baseUnit !== currentUnits.baseUnit || bulkUnit !== currentUnits.bulkUnit || unitsPerBulkUnit !== currentUnits.unitsPerBulkUnit;
+        Object.assign(product, {
+          name: record.productName, productName: record.productName,
+          categoryId: category.id, category: category.name,
+          productCode: nextProductCode,
+          productCodeAliases,
+          baseUnit, unit: baseUnit, bulkUnit, caseUnit: bulkUnit,
+          unitsPerBulkUnit, unitsPerCase: unitsPerBulkUnit,
+          defaultMovementUnit: allowedProductUnits({ ...product, baseUnit, unit: baseUnit, bulkUnit, unitsPerBulkUnit }).includes(product.defaultMovementUnit)
+            ? product.defaultMovementUnit : baseUnit,
+          active: true, sourcePresent: true, updatedAt: timestamp,
+          lastImportedAt: timestamp, lastImportOperationId: requestId
+        });
+        if (unitChanged) {
+          product.unitSchemaVersion = recordProductUnitSchemaTransition(previousUnits, productUnitMetadata(product), timestamp);
+          product.unitSchemaHistory = previousUnits.unitSchemaHistory;
+          product.unitSchemaSource = "excel";
+          product.unitSchemaLocked = true;
+          product.unitSchemaUpdatedAt = timestamp;
+        }
+        productByCode.set(normalizeProductCode(product.productCode), product);
+        summary.updatedProducts += 1;
+      }
+      processed.add(String(product.id));
+      if (baseUnit && !state.unitDefinitions.base.some((unit) => excelIdentity(unit) === excelIdentity(baseUnit))) state.unitDefinitions.base.push(baseUnit);
+      if (bulkUnit && !state.unitDefinitions.bulk.some((unit) => excelIdentity(unit) === excelIdentity(bulkUnit))) state.unitDefinitions.bulk.push(bulkUnit);
+      const balance = findBalance(state, location.id, product.id, true);
+      const previousThresholds = stockExcelThresholdDetail(balance);
+      const thresholdsChanged = Number(balance.criticalThreshold || 0) !== round(Number(record.criticalThreshold || 0))
+        || Number(balance.orderThreshold || 0) !== round(Number(record.orderThreshold || 0))
+        || Number(balance.targetLevel || 0) !== round(Number(record.targetLevel || 0));
+      balance.criticalThreshold = round(Number(record.criticalThreshold || 0));
+      balance.orderThreshold = round(Number(record.orderThreshold || 0));
+      balance.targetLevel = round(Number(record.targetLevel || 0));
+      const nextThresholds = stockExcelThresholdDetail(balance);
+      const previousQuantity = round(Number(balance.quantity || 0));
+      const delta = round(targetQuantity - previousQuantity);
+      balance.updatedAt = timestamp;
+      if (thresholdsChanged && delta === 0) balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
+      if (delta !== 0) {
+        balance.quantity = targetQuantity;
+        balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
+        const movement = addMovement(state, {
+          type: "adjustment", productId: product.id, stockProductCode: product.productCode,
+          productName: productName(product), locationId: location.id,
+          fromLocationId: delta < 0 ? location.id : null, toLocationId: delta > 0 ? location.id : null,
+          quantity: Math.abs(delta), baseQuantity: Math.abs(delta), baseQuantityDelta: delta,
+          baseUnit, sourceQuantity: Math.abs(delta), sourceUnit: baseUnit,
+          inputQuantity: Math.abs(delta), inputUnit: baseUnit, conversionFactor: 1,
+          conversionSnapshot: { baseUnit, bulkUnit, unitsPerBulkUnit, inputUnit: baseUnit, factor: 1, unitSchemaVersion: Math.max(1, Number(product.unitSchemaVersion || 1)) },
+          previousBalance: previousQuantity, resultingBalance: targetQuantity,
+          referenceType: "excel_stock_import", referenceId: requestId,
+          requestId: `${requestId}:${product.id}`, idempotencyKey: `${requestId}:${product.id}`,
+          actor, note: "Excel stok içe aktarımı", createdAt: timestamp, approvedAt: timestamp
+        });
+        movements.push(movement);
+        summary.changedBalances += 1;
+        details.balanceChanges.push({
+          category: category.name,
+          productName: productName(product),
+          productCode: product.productCode,
+          targetLocation: location.name,
+          previousQuantity,
+          targetQuantity,
+          adjustment: delta,
+          previousDisplay: formatBaseQuantity(product, previousQuantity).display,
+          targetDisplay: formatBaseQuantity(product, targetQuantity).display,
+          adjustmentDisplay: `${delta > 0 ? "+" : "−"}${formatBaseQuantity(product, Math.abs(delta)).display}`,
+          baseUnit
+        });
+      }
+      if (existing) {
+        const previousUnitStructure = stockExcelUnitDetail(currentUnits);
+        const newUnitStructure = stockExcelUnitDetail(productUnitMetadata(product));
+        const changes = [];
+        if (previousUnitStructure.display !== newUnitStructure.display) changes.push({ field: "unitStructure", label: "Birim yapısı", before: previousUnitStructure.display, after: newUnitStructure.display });
+        if (previousThresholds.criticalThreshold !== nextThresholds.criticalThreshold) changes.push({ field: "criticalThreshold", label: "Kritik eşik", before: previousThresholds.criticalThreshold, after: nextThresholds.criticalThreshold });
+        if (previousThresholds.orderThreshold !== nextThresholds.orderThreshold) changes.push({ field: "orderThreshold", label: "Sipariş eşiği", before: previousThresholds.orderThreshold, after: nextThresholds.orderThreshold });
+        if (previousThresholds.targetLevel !== nextThresholds.targetLevel) changes.push({ field: "targetLevel", label: "Hedef stok", before: previousThresholds.targetLevel, after: nextThresholds.targetLevel });
+        details.updatedProducts.push({
+          category: category.name,
+          productName: productName(product),
+          productCode: product.productCode,
+          previousUnitStructure,
+          newUnitStructure,
+          previousThresholds,
+          newThresholds: nextThresholds,
+          changes
+        });
+      }
+      updateProductTotalProjection(state, product.id, timestamp);
+    } catch (error) {
+      summary.skippedProducts += 1;
+      const skipped = { category: record.category, product: record.productName, reason: error && error.message || "Ürün içe aktarılamadı." };
+      errors.push(skipped);
+      details.skippedProducts.push(stockExcelSkippedDetail(skipped));
+    }
+  }
+  details.createdCategories = Array.from(createdCategoryDetails.values());
+  summary.matchedProducts = details.updatedProducts.length;
+  summary.updatedProducts = details.updatedProducts.length;
+  summary.newProducts = details.createdProducts.length;
+  summary.newCategories = details.createdCategories.length;
+  summary.changedBalances = details.balanceChanges.length;
+  summary.skippedProducts = details.skippedProducts.length;
+  state.unitDefinitions.updatedAt = timestamp;
+  state.unitDefinitions.updatedBy = String(actor && actor.id || "system");
+  state.updatedAt = timestamp;
+  recordOperation(state, "stock_excel_import", requestId, { summary, errors: errors.slice(0, 500), details }, timestamp);
+  return { stockState: state, summary, errors, details, movements, idempotent: false, location };
+}
+
 function serializeTransfers(stockState, options = {}) {
   const state = normalizeState(stockState);
   const locationId = String(options.locationId || "").trim();
@@ -1302,6 +1743,7 @@ module.exports = {
   prepareSnapshot,
   TRANSFER_STATUSES,
   actorLocationId,
+  applyStockExcelImport,
   applyStockMovement,
   allowedProductUnits,
   approveStockCount,
@@ -1321,6 +1763,7 @@ module.exports = {
   formatBaseQuantity,
   buildUnitMigrationPlan,
   migrateProductUnitSchema,
+  parseStockExcelWorkbook,
   recordProductUnitSchemaTransition,
   rejectTransfer,
   reverseMovement,
