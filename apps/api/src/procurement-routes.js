@@ -368,6 +368,10 @@ function registerProcurementRoutes(deps = {}) {
     res.json(await service.listTrash(req.procurementActor));
   }));
 
+  app.post(`${API_ROOT}/trash/:type/:id/purge`, ...mutationMiddlewares, sectionAccess("trash", "view"), anyCapability(["receipt.reject", "payment.reverse", "accounting.reverse"]), asyncRoute(async (req, res) => {
+    res.json(await service.purgeTrashRecord(req.procurementActor, req.params.type, req.params.id, mutationInput(req)));
+  }));
+
   app.get(`${API_ROOT}/audit`, ...authenticated, sectionAccess("settings", "full"), capability("procurement.users.manage"), asyncRoute(async (req, res) => {
     res.json(await service.listAudit(req.procurementActor, req.query));
   }));

@@ -1,10 +1,10 @@
-import { api, ApiError, login, logout, requestId, uploadDocument } from "./api.js";
+import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument } from "./api.js?v=20260903-fatura-list-export";
 import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, updateRevision, value } from "./state.js";
 import { renderDashboard } from "./dashboard.js?v=20260902-final-ui";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260902-final-ui";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260903-fatura-list-export";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
 import { documentFormBody, printShipmentArchive, renderDocuments, shipmentArchiveDetail } from "./documents.js?v=20260902-final-ui";
-import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderTrash, renderUsers, userAccessFormBody } from "./accounting.js?v=20260903-workflow-fix";
+import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderTrash, renderUsers, userAccessFormBody } from "./accounting.js?v=20260903-fatura-list-export";
 import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260903-workflow-fix";
 import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260902-final-ui";
 import { confirmAction, requestText } from "./ui-dialogs.js";
@@ -556,6 +556,7 @@ async function handleClick(event) {
   if (button.dataset.openDocument) return openDocument(button.dataset.openDocument);
   if (button.dataset.removeShipment) return removeShipment(button, button.dataset.removeShipment);
   if (button.dataset.removePayment) return removePayment(button, button.dataset.removePayment);
+  if (button.dataset.purgeTrash) return purgeTrashRecord(button, button.dataset.trashType, button.dataset.purgeTrash);
   if (button.dataset.editLink) return openLinkForm(button.dataset.editLink);
   if (button.dataset.editUser) return openUserAccess(button.dataset.editUser);
   if (button.dataset.reverseLedger) return reverseLedger(button, button.dataset.reverseLedger);
@@ -751,6 +752,7 @@ function handleAction(button, action) {
   if (action === "new-shipment") return openShipmentForm();
   if (action === "upload-document") return openDocumentForm();
   if (action === "new-payment") return openPaymentForm();
+  if (action === "export-ledger") return exportLedger(button);
   if (action === "open-payment-history") { state.filters.paymentHistoryOpen = true; return renderActiveView(); }
   if (action === "close-payment-history") { state.filters.paymentHistoryOpen = false; return renderActiveView(); }
   if (action === "new-ledger-entry") return openLedgerEntryForm();
@@ -788,7 +790,7 @@ function openEntityDialog(config) {
   const cancelButton = entityDialog.querySelector("footer .dialog-close");
   if (cancelButton) {
     cancelButton.textContent = config.cancelLabel || "Vazgeç";
-    cancelButton.hidden = config.hideCancel === true;
+    cancelButton.hidden = config.mode === "user-access" || config.hideCancel === true;
     if (config.cancelAction) cancelButton.dataset.cancelAction = config.cancelAction;
     else delete cancelButton.dataset.cancelAction;
   }
@@ -798,7 +800,7 @@ function openEntityDialog(config) {
 }
 function closeEntityDialog() { if (entityDialog.open) entityDialog.close(); cleanupEntityDialog(); }
 function closeDetailDialog() { if (detailDialog.open) detailDialog.close(); cleanupDetailDialog(); }
-function cleanupEntityDialog() { entityForm.reset(); delete entityForm.dataset.mode; delete entityForm.dataset.entityId; const cancelButton = entityDialog.querySelector("footer .dialog-close"); if (cancelButton) { cancelButton.textContent = "Vazgeç"; cancelButton.hidden = false; delete cancelButton.dataset.cancelAction; } entityDialog.classList.remove("fatura-dialog--receipt"); syncDialogOpenState(); }
+function cleanupEntityDialog() { entityForm.reset(); delete entityForm.dataset.mode; delete entityForm.dataset.entityId; const cancelButton = entityDialog.querySelector("footer .dialog-close"); if (cancelButton) { cancelButton.textContent = "Vazgeç"; delete cancelButton.dataset.cancelAction; } entityDialog.classList.remove("fatura-dialog--receipt"); syncDialogOpenState(); }
 function cleanupDetailDialog() { state.detail = null; if (currentObjectUrl) { URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = ""; } syncDialogOpenState(); }
 function syncDialogOpenState() { document.body.classList.toggle("dialog-open", entityDialog.open || detailDialog.open); }
 
@@ -1249,6 +1251,37 @@ async function removePayment(button, id) {
   const reason = await requestText({ title: "Ödemeyi kaldır", description: "Ödeme silinmez; cari hesapta ters kayıt oluşturulur.", label: "Kaldırma nedeni", value: "", confirmLabel: "Kaldır", danger: true });
   if (reason === null) return;
   await runButtonMutation(button, () => api(`/payments/${encodeURIComponent(id)}/reverse`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["ledger","suppliers","dashboard","trash"], () => setView("ledger", {force:true}));
+}
+async function purgeTrashRecord(button, type, id) {
+  if (!await confirmAction({ title: "Kalıcı silinsin mi?", description: "Bu kayıt Çöp Kutusu'ndan kalıcı olarak silinecek ve geri alınamayacak.", confirmLabel: "Kalıcı Sil", danger: true })) return;
+  await runButtonMutation(button, () => api(`/trash/${encodeURIComponent(type)}/${encodeURIComponent(id)}/purge`, { method:"POST", body:{}, expectedRevision:state.revision }), ["trash","shipments","documents","ledger","suppliers","dashboard"], () => {
+    state.trash = (state.trash || []).filter((record) => !(String(record.type) === String(type) && String(record.id) === String(id)));
+    renderActiveView();
+  });
+}
+async function exportLedger(button) {
+  if (button.disabled) return;
+  setBusy(button, true, "Hazırlanıyor…");
+  try {
+    const file = await downloadExport("ledger", {
+      supplierId: state.filters.ledgerSupplier || "",
+      date: state.filters.ledgerDate || ""
+    });
+    const objectUrl = URL.createObjectURL(file.blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = file.filename;
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    toast("Excel çıktısı hazırlandı.");
+  } catch (error) {
+    toast(error.message || "Excel çıktısı hazırlanamadı.", true);
+  } finally {
+    setBusy(button, false);
+  }
 }
 function confirmShipmentDeletion() { return confirmAction({ title: "Mal kabul kaydını sil", description: "Bu taslak kayıt kalıcı olarak silinecek.", confirmLabel: "Evet, sil", danger: true }); }
 async function submitShipment(button, id) {

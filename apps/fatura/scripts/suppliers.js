@@ -7,7 +7,7 @@ export function renderSuppliers() {
   const suppliers = state.suppliers.filter((supplier) => !query || normalize(`${supplier.name} ${supplier.contactName} ${supplier.phone}`).includes(query));
   return `${toolbar(has(CAPABILITIES.supplierManage) ? '<button class="ui-button ui-button--primary" data-action="new-supplier">Tedarikçi Ekle</button>' : "")}
     <p class="result-meta">${suppliers.length} tedarikçi gösteriliyor.</p>
-    ${suppliers.length ? `<div class="card-grid supplier-card-grid">${suppliers.map(supplierCard).join("")}</div>` : empty("Henüz tedarikçi yok", "İlk tedarikçi kaydını oluşturabilirsiniz.")}`;
+    ${suppliers.length ? `<section class="supplier-list" aria-label="Tedarikçiler"><div class="supplier-list__header" aria-hidden="true"><span>Firma</span><span>Tedarikçi</span><span>Telefon</span><span>Durum</span><span>İşlem</span></div>${suppliers.map(supplierRow).join("")}</section>` : empty("Henüz tedarikçi yok", "İlk tedarikçi kaydını oluşturabilirsiniz.")}`;
 }
 
 export function renderSupplierWorkspace(supplierId) {
@@ -33,8 +33,8 @@ function canonicalProducts(workspace) {
 
 export function renderProductLinks() { return empty("Ürün kayıtları taşındı", "Ürün eşleşmelerini ilgili tedarikçinin içinden yönetin."); }
 
-function supplierCard(supplier) {
-  return `<article class="entity-card supplier-card"><div class="entity-footer entity-card__head"><h3>${escapeHtml(supplier.name)}</h3>${statusBadge(supplier.active === false ? "passive" : "active")}</div><div class="supplier-card__facts"><div><span>Tedarikçi</span><strong>${escapeHtml(supplier.contactName || "—")}</strong></div><div><span>Telefon</span><strong>${escapeHtml(supplier.phone || "—")}</strong></div></div><div class="entity-footer"><span></span><button class="row-button" data-open-supplier="${escapeHtml(supplier.id)}">Tedarikçiyi Aç →</button></div></article>`;
+function supplierRow(supplier) {
+  return `<article class="supplier-list__row"><div class="supplier-list__identity" data-label="Firma"><strong>${escapeHtml(supplier.name)}</strong></div><div data-label="Tedarikçi">${escapeHtml(supplier.contactName || "—")}</div><div data-label="Telefon"><a class="supplier-list__phone" href="${supplier.phone ? `tel:${escapeHtml(String(supplier.phone).replace(/[^+\d]/g, ""))}` : "#"}" ${supplier.phone ? "" : 'aria-disabled="true" tabindex="-1"'}>${escapeHtml(supplier.phone || "—")}</a></div><div data-label="Durum">${statusBadge(supplier.active === false ? "passive" : "active")}</div><div class="supplier-list__action" data-label="İşlem"><button class="row-button" type="button" data-open-supplier="${escapeHtml(supplier.id)}">Tedarikçiyi Aç →</button></div></article>`;
 }
 
 function supplierProductRow(item) {

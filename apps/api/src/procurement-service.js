@@ -2,6 +2,7 @@
 
 const crypto = require("crypto");
 const { EventEmitter } = require("events");
+const ExcelJS = require("exceljs");
 const {
   normalizeProcurement,
   normalizeStockState
@@ -1357,6 +1358,71 @@ function createProcurementService(options = {}) {
     return { ok: true, revision: procurement.revision, records: records.sort((left, right) => String(right.removedAt || "").localeCompare(String(left.removedAt || ""))) };
   }
 
+  async function purgeTrashRecord(actor, recordType, recordId, mutation) {
+    const type = String(recordType || "").trim().toLowerCase();
+    const requiredCapability = { shipment: "receipt.reject", payment: "payment.reverse", ledger: "accounting.reverse" }[type];
+    if (!requiredCapability) throw fail("Çöp Kutusu kayıt türü geçersiz.", 422, "INVALID_TRASH_RECORD_TYPE");
+    requireCapability(actor, requiredCapability);
+    const operation = `${type === "shipment" ? "shipment" : type}.trash.purge`;
+    return mutate(operation, actor, mutation, (data, procurement, helpers) => {
+      if (type === "shipment") {
+        const shipment = findVisibleShipment(data, actor, recordId);
+        if (!shipment.removedAt) throw fail("Yalnız Çöp Kutusu'ndaki sevkiyat kalıcı silinebilir.", 409, "SHIPMENT_NOT_IN_TRASH");
+        const itemIds = new Set((shipment.items || []).map((item) => String(item.id || "")).filter(Boolean));
+        let unlinkedDocuments = 0;
+        for (const document of procurement.documents || []) {
+          const currentShipmentIds = Array.isArray(document.shipmentIds) ? document.shipmentIds : [];
+          const currentItemIds = Array.isArray(document.shipmentItemIds) ? document.shipmentItemIds : [];
+          const nextShipmentIds = currentShipmentIds.filter((id) => String(id) !== String(shipment.id));
+          const nextItemIds = currentItemIds.filter((id) => !itemIds.has(String(id)));
+          if (nextShipmentIds.length === currentShipmentIds.length && nextItemIds.length === currentItemIds.length) continue;
+          document.shipmentIds = nextShipmentIds;
+          document.shipmentItemIds = nextItemIds;
+          document.updatedAt = isoNow(now);
+          unlinkedDocuments += 1;
+        }
+        const ledgerCountBefore = procurement.ledgerEntries.length;
+        procurement.ledgerEntries = procurement.ledgerEntries.filter((entry) => (
+          String(entry.shipmentId || "") !== String(shipment.id)
+          && !(entry.sourceType === "shipment_removal" && String(entry.sourceId || "") === String(shipment.id))
+        ));
+        data.workforceShipments = (data.workforceShipments || []).filter((item) => String(item.id) !== String(shipment.id));
+        const workforceRevisionValue = touchWorkforceRevision(data);
+        return helpers.result("shipment", shipment.id, { purged: true, type, id: shipment.id }, {
+          branchId: shipment.branchId,
+          unlinkedDocuments,
+          removedLedgerEntries: ledgerCountBefore - procurement.ledgerEntries.length,
+          workforceRevision: workforceRevisionValue
+        });
+      }
+
+      if (type === "payment") {
+        const payment = findById(procurement.payments, recordId, "Ödeme");
+        assertPaymentVisibility(payment, actor);
+        if (payment.status !== "reversed") throw fail("Yalnız Çöp Kutusu'ndaki ödeme kalıcı silinebilir.", 409, "PAYMENT_NOT_IN_TRASH");
+        const ledgerIds = new Set([payment.ledgerEntryId, payment.reversalLedgerEntryId].map(String).filter(Boolean));
+        procurement.ledgerEntries = procurement.ledgerEntries.filter((entry) => !ledgerIds.has(String(entry.id)));
+        procurement.payments = procurement.payments.filter((item) => String(item.id) !== String(payment.id));
+        return helpers.result("payment", payment.id, { purged: true, type, id: payment.id }, {
+          branchId: payment.branchId,
+          removedLedgerEntries: ledgerIds.size
+        });
+      }
+
+      const reversal = findById(procurement.ledgerEntries, recordId, "Cari ters kayıt");
+      assertLedgerVisibility(data, procurement, reversal, actor);
+      if (reversal.type !== "reversal" || ["payment_reversal", "shipment_removal"].includes(reversal.sourceType)) {
+        throw fail("Yalnız bağımsız Çöp Kutusu ters kaydı kalıcı silinebilir.", 409, "LEDGER_ENTRY_NOT_IN_TRASH");
+      }
+      const ledgerIds = new Set([reversal.id, reversal.reversalOf].map(String).filter(Boolean));
+      procurement.ledgerEntries = procurement.ledgerEntries.filter((entry) => !ledgerIds.has(String(entry.id)));
+      return helpers.result("ledgerEntry", reversal.id, { purged: true, type, id: reversal.id }, {
+        branchId: ledgerBranchId(reversal, data, procurement),
+        removedLedgerEntries: ledgerIds.size
+      });
+    });
+  }
+
   async function listAudit(actor, filters = {}) {
     requireCapability(actor, "procurement.users.manage");
     const { procurement } = await readSnapshot();
@@ -1505,10 +1571,38 @@ function createProcurementService(options = {}) {
       requireCapability(actor, "procurement.read");
     }
     const { data, procurement } = await readSnapshot();
-    const supplierIndex = new Map(procurement.suppliers.map((supplier) => [supplier.id, supplier]));
+    const supplierIndex = new Map(procurement.suppliers.map((supplier) => [String(supplier.id), supplier]));
     const visibleLedgerEntries = actor.type === "admin"
       ? procurement.ledgerEntries
       : procurement.ledgerEntries.filter((entry) => ledgerBranchId(entry, data, procurement) === actorBranchId(actor));
+    if (kind === "ledger") {
+      const supplierId = text(filters.supplierId, 180);
+      const selectedSupplier = supplierId ? findSupplier(procurement, supplierId) : null;
+      const selectedDate = validateOptionalDate(filters.date, "Tarih");
+      const scopedEntries = supplierId
+        ? visibleLedgerEntries.filter((entry) => String(entry.supplierId) === supplierId)
+        : visibleLedgerEntries;
+      const runningEntries = withRunningBalances(scopedEntries);
+      const filteredEntries = selectedDate
+        ? runningEntries.filter((entry) => String(entry.transactionDate || entry.createdAt || "").slice(0, 10) === selectedDate)
+        : runningEntries;
+      let visiblePayments = (procurement.payments || []).filter((payment) => payment.status !== "reversed");
+      if (actor.type !== "admin") visiblePayments = visiblePayments.filter((payment) => String(payment.branchId || "main") === actorBranchId(actor));
+      if (supplierId) visiblePayments = visiblePayments.filter((payment) => String(payment.supplierId) === supplierId);
+      if (selectedDate) visiblePayments = visiblePayments.filter((payment) => String(payment.paymentDate || payment.createdAt || "").slice(0, 10) === selectedDate);
+      const balances = supplierBalances(scopedEntries);
+      const currentDebtKurus = [...balances.values()].reduce((sum, balance) => addKurus(sum, Math.max(0, -balance)), 0);
+      const paymentTotalKurus = visiblePayments.reduce((sum, payment) => addKurus(sum, Number(payment.amountKurus || 0)), 0);
+      return createLedgerWorkbookFile({
+        entries: filteredEntries,
+        supplierIndex,
+        supplierName: selectedSupplier ? selectedSupplier.name : "Tüm Tedarikçiler",
+        selectedDate,
+        currentDebtKurus,
+        paymentTotalKurus,
+        reportDate: now()
+      });
+    }
     let headers;
     let rows;
     if (kind === "suppliers") {
@@ -1522,11 +1616,6 @@ function createProcurementService(options = {}) {
         supplierIndex.get(shipment.supplierId) && supplierIndex.get(shipment.supplierId).name || "", shipment.userName,
         shipment.status, shipment.stockAppliedAt ? "Uygulandı" : "Bekliyor", shipment.accountingStatus,
         shipment.evidenceStatus, shipment.createdAt]);
-    } else {
-      headers = ["Tarih", "Tedarikçi", "Tür", "Tutar (kuruş)", "Koşan bakiye (kuruş)", "Vade", "Kaynak", "Not"];
-      rows = withRunningBalances(visibleLedgerEntries).map((entry) => [entry.transactionDate || entry.createdAt,
-        supplierIndex.get(entry.supplierId) && supplierIndex.get(entry.supplierId).name || entry.supplierId,
-        entry.type, entry.amountKurus, entry.runningBalanceKurus, entry.dueDate, entry.sourceId, entry.note]);
     }
     return {
       filename: `tahmisci-${kind}-${dateKey(now())}.csv`,
@@ -1695,6 +1784,7 @@ function createProcurementService(options = {}) {
     listSuppliers,
     listTrash,
     listUsers,
+    purgeTrashRecord,
     publishExternalEvent,
     recordDocument,
     recordShipmentAccountingFailure,
@@ -2434,6 +2524,185 @@ function sanitizeMetadata(value, depth = 0) {
 function csvCell(value) {
   const source = String(value === undefined || value === null ? "" : value);
   return `"${source.replace(/"/g, '""')}"`;
+}
+
+async function createLedgerWorkbookFile(options) {
+  const reportDate = options.reportDate instanceof Date ? options.reportDate : new Date(options.reportDate);
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Tahmisçi Fatura";
+  workbook.created = reportDate;
+  workbook.modified = reportDate;
+  workbook.calcProperties.fullCalcOnLoad = true;
+  const worksheet = workbook.addWorksheet("Cari Hesap", {
+    properties: { defaultRowHeight: 21 },
+    pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 }
+  });
+  worksheet.columns = [
+    { key: "date", width: 14 }, { key: "supplier", width: 25 }, { key: "type", width: 20 },
+    { key: "description", width: 34 }, { key: "debt", width: 16 }, { key: "payment", width: 16 },
+    { key: "balance", width: 18 }, { key: "dueDate", width: 14 }, { key: "source", width: 27 }
+  ];
+  const brown = "FF5B301B";
+  const darkBrown = "FF32190F";
+  const beige = "FFF5E9DA";
+  const lightBeige = "FFFFFAF3";
+  const line = "FFE1D1C1";
+  const muted = "FF78695F";
+  const white = "FFFFFFFF";
+  const currencyFormat = '₺#,##0.00;[Red]-₺#,##0.00';
+
+  worksheet.mergeCells("A1:I1");
+  worksheet.getCell("A1").value = "TAHMİSÇİ FATURA";
+  worksheet.getCell("A1").font = { name: "Aptos Display", size: 18, bold: true, color: { argb: white } };
+  worksheet.getCell("A1").alignment = { vertical: "middle", horizontal: "left" };
+  worksheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: brown } };
+  worksheet.getRow(1).height = 30;
+  worksheet.mergeCells("A2:I2");
+  worksheet.getCell("A2").value = "CARİ HESAP RAPORU";
+  worksheet.getCell("A2").font = { name: "Aptos", size: 12, bold: true, color: { argb: darkBrown } };
+  worksheet.getCell("A2").fill = { type: "pattern", pattern: "solid", fgColor: { argb: beige } };
+  worksheet.getCell("A2").alignment = { vertical: "middle", horizontal: "left" };
+  worksheet.getRow(2).height = 24;
+
+  const reportInfo = [
+    ["Tedarikçi", options.supplierName],
+    ["Tarih", options.selectedDate ? displayDate(options.selectedDate) : "Tüm tarihler"],
+    ["Rapor tarihi", formatReportDate(reportDate)]
+  ];
+  reportInfo.forEach(([label, value], index) => {
+    const row = 4 + index;
+    worksheet.mergeCells(row, 1, row, 2);
+    worksheet.mergeCells(row, 3, row, 9);
+    worksheet.getCell(row, 1).value = label;
+    worksheet.getCell(row, 1).font = { name: "Aptos", size: 10, bold: true, color: { argb: brown } };
+    worksheet.getCell(row, 3).value = value;
+    worksheet.getCell(row, 3).font = { name: "Aptos", size: 10, color: { argb: darkBrown } };
+  });
+
+  const summaries = [
+    [1, 3, "Güncel Borç", Number(options.currentDebtKurus || 0) / 100, currencyFormat],
+    [4, 6, "Toplam Ödeme", Number(options.paymentTotalKurus || 0) / 100, currencyFormat],
+    [7, 9, "Hareket Sayısı", options.entries.length, "0"]
+  ];
+  summaries.forEach(([from, to, label, value, format]) => {
+    worksheet.mergeCells(8, from, 8, to);
+    worksheet.mergeCells(9, from, 9, to);
+    const labelCell = worksheet.getCell(8, from);
+    const valueCell = worksheet.getCell(9, from);
+    labelCell.value = label;
+    valueCell.value = value;
+    labelCell.font = { name: "Aptos", size: 9, bold: true, color: { argb: muted } };
+    valueCell.font = { name: "Aptos Display", size: 14, bold: true, color: { argb: darkBrown } };
+    valueCell.numFmt = format;
+    for (const row of [8, 9]) {
+      const cell = worksheet.getCell(row, from);
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: lightBeige } };
+      cell.alignment = { vertical: "middle", horizontal: "left" };
+      cell.border = summaryBorder(line, row === 8, row === 9);
+    }
+  });
+  worksheet.getRow(8).height = 21;
+  worksheet.getRow(9).height = 27;
+
+  const tableHeaderRow = 12;
+  const headers = ["Tarih", "Tedarikçi", "Tür", "Açıklama", "Borç", "Ödeme", "Koşan Bakiye", "Vade", "Kaynak / Referans"];
+  const header = worksheet.getRow(tableHeaderRow);
+  header.values = headers;
+  header.height = 27;
+  header.eachCell((cell) => {
+    cell.font = { name: "Aptos", size: 10, bold: true, color: { argb: white } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: brown } };
+    cell.alignment = { vertical: "middle", horizontal: "left" };
+    cell.border = thinBorder(line);
+  });
+  worksheet.autoFilter = { from: { row: tableHeaderRow, column: 1 }, to: { row: tableHeaderRow, column: 9 } };
+  worksheet.views = [{ state: "frozen", ySplit: tableHeaderRow, activeCell: `A${tableHeaderRow + 1}` }];
+
+  if (!options.entries.length) {
+    worksheet.mergeCells(tableHeaderRow + 1, 1, tableHeaderRow + 2, 9);
+    const emptyCell = worksheet.getCell(tableHeaderRow + 1, 1);
+    emptyCell.value = "Seçilen filtrelerle eşleşen cari hareket bulunmuyor.";
+    emptyCell.font = { name: "Aptos", size: 11, italic: true, color: { argb: muted } };
+    emptyCell.alignment = { vertical: "middle", horizontal: "center" };
+    emptyCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: lightBeige } };
+  } else {
+    options.entries.forEach((entry, index) => {
+      const amountKurus = Number(entry.amountKurus || 0);
+      const row = worksheet.addRow([
+        excelDate(entry.transactionDate || entry.createdAt),
+        options.supplierIndex.get(String(entry.supplierId))?.name || String(entry.supplierId || ""),
+        ledgerTypeLabel(entry.type),
+        entry.note || entry.sourceType || "—",
+        amountKurus < 0 ? Math.abs(amountKurus) / 100 : null,
+        amountKurus > 0 ? amountKurus / 100 : null,
+        Math.abs(Number(entry.runningBalanceKurus || 0)) / 100,
+        entry.dueDate ? excelDate(entry.dueDate) : null,
+        [entry.sourceType, entry.sourceId].filter(Boolean).join(" · ") || "—"
+      ]);
+      row.height = 23;
+      row.eachCell({ includeEmpty: true }, (cell, column) => {
+        cell.font = { name: "Aptos", size: 10, color: { argb: darkBrown } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 ? lightBeige : white } };
+        cell.border = thinBorder(line);
+        cell.alignment = { vertical: "middle", horizontal: column >= 5 && column <= 7 ? "right" : "left", wrapText: column === 4 || column === 9 };
+      });
+      row.getCell(1).numFmt = "dd.mm.yyyy";
+      row.getCell(8).numFmt = "dd.mm.yyyy";
+      [5, 6, 7].forEach((column) => { row.getCell(column).numFmt = currencyFormat; });
+    });
+  }
+  worksheet.pageSetup.printTitlesRow = `1:${tableHeaderRow}`;
+  worksheet.pageMargins = { left: 0.35, right: 0.35, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 };
+
+  const fileDate = options.selectedDate || istanbulDateKey(reportDate);
+  const fileBase = options.supplierName === "Tüm Tedarikçiler" ? "tum-tedarikciler" : filenameSlug(options.supplierName);
+  return {
+    filename: `${fileBase}-cari-${displayDate(fileDate)}.xlsx`,
+    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    body: Buffer.from(await workbook.xlsx.writeBuffer())
+  };
+}
+
+function thinBorder(color) {
+  const side = { style: "thin", color: { argb: color } };
+  return { top: side, left: side, bottom: side, right: side };
+}
+
+function summaryBorder(color, firstRow, lastRow) {
+  const side = { style: "thin", color: { argb: color } };
+  return { top: firstRow ? side : undefined, left: side, bottom: lastRow ? side : undefined, right: side };
+}
+
+function excelDate(value) {
+  const date = String(value || "").slice(0, 10);
+  const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12)) : String(value || "");
+}
+
+function displayDate(value) {
+  const match = String(value || "").slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}.${match[2]}.${match[1]}` : String(value || "");
+}
+
+function formatReportDate(value) {
+  return new Intl.DateTimeFormat("tr-TR", {
+    timeZone: "Europe/Istanbul", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"
+  }).format(value);
+}
+
+function istanbulDateKey(value) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Istanbul", day: "2-digit", month: "2-digit", year: "numeric"
+  }).formatToParts(value).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function filenameSlug(value) {
+  return normalizeLookup(value).replace(/\s+/g, "-").replace(/^-+|-+$/g, "") || "tedarikci";
+}
+
+function ledgerTypeLabel(value) {
+  return ({ invoice: "Fatura / Borç", payment: "Ödeme", credit_note: "Alacak Dekontu", reversal: "Ters Kayıt", opening_balance: "Açılış Bakiyesi", adjustment: "Düzeltme" })[value] || String(value || "—");
 }
 
 function parseActiveFilter(value) {

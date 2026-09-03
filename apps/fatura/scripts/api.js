@@ -104,3 +104,23 @@ export async function uploadDocument(file, metadata, expectedRevision) {
 export function exportUrl(kind) {
   return `${API_ROOT}/export?kind=${encodeURIComponent(kind || "ledger")}`;
 }
+
+export async function downloadExport(kind, filters = {}) {
+  const params = new URLSearchParams({ kind: kind || "ledger" });
+  for (const [key, value] of Object.entries(filters || {})) {
+    if (value !== undefined && value !== null && String(value).trim()) params.set(key, String(value).trim());
+  }
+  let response;
+  try {
+    response = await fetch(`${API_ROOT}/export?${params}`, { credentials: "include", cache: "no-store" });
+  } catch (error) {
+    throw new ApiError(navigator.onLine ? "Excel çıktısı alınırken sunucuya ulaşılamadı." : "Çevrimdışıyken Excel çıktısı alınamaz.", 0, { cause: error && error.message });
+  }
+  if (!response.ok) throw await responseError(response);
+  const disposition = String(response.headers.get("content-disposition") || "");
+  const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainName = disposition.match(/filename="?([^";]+)"?/i);
+  let filename = encodedName ? encodedName[1] : plainName ? plainName[1] : `tahmisci-${kind || "ledger"}.xlsx`;
+  try { filename = decodeURIComponent(filename); } catch (_error) {}
+  return { blob: await response.blob(), filename };
+}
