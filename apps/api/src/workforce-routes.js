@@ -228,8 +228,9 @@ function registerWorkforceRoutes(deps) {
     const expectedRaw = req.body && req.body.procurementExpectedRevision;
     const hasExpected = expectedRaw !== undefined && expectedRaw !== null && expectedRaw !== "";
     const expected = Number(expectedRaw);
-    if (req.procurementActor && (!hasExpected || !Number.isInteger(expected) || expected < 0)) throw fail("Geçerli procurement expectedRevision gerekli.", 400);
-    if (hasExpected && expected !== current) throw fail("Tahmisçi Fatura verisi başka bir işlemle güncellendi. Yenileyip tekrar deneyin.", 409);
+    const authoritative = req.internalAuthoritativeShipmentDecision === true;
+    if (req.procurementActor && !authoritative && (!hasExpected || !Number.isInteger(expected) || expected < 0)) throw fail("Geçerli procurement expectedRevision gerekli.", 400);
+    if (!authoritative && hasExpected && expected !== current) throw fail("Tahmisçi Fatura verisi başka bir işlemle güncellendi. Yenileyip tekrar deneyin.", 409);
     const revision = current + 1;
     procurement.version = Math.max(1, Math.trunc(Number(procurement.version || 0)));
     procurement.revision = revision;
@@ -1278,7 +1279,7 @@ function registerWorkforceRoutes(deps) {
             response = replayResponse(previous);
             return context.noChange;
           }
-          assertExpectedRevision(data, body);
+          if (req.internalAuthoritativeShipmentDecision !== true) assertExpectedRevision(data, body);
           shipment = (data.workforceShipments || []).find((item) => item.id === req.params.id);
           if (!shipment) throw fail("Sevkiyat bulunamadı.", 404);
           if (decisionActor.type !== "admin"
@@ -2128,6 +2129,7 @@ function registerWorkforceRoutes(deps) {
       destinationLocationId: String(input.destinationLocationId || "")
     };
     proxyRequest.procurementActor = input.actor || null;
+    proxyRequest.internalAuthoritativeShipmentDecision = input.internalAuthoritativeRevision === true;
     if (typeof proxyRequest.get !== "function") {
       proxyRequest.get = (name) => {
         const key = String(name || "").toLowerCase();

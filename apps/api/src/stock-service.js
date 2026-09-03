@@ -1173,17 +1173,36 @@ function getLocationInventory(stockState, locationId, options = {}) {
     : getLocation(state, locationId, { includeInactive: options.allowInactive === true, allowInactive: options.allowInactive === true });
   const cafe = defaultCafeLocation(state);
   const general = defaultGeneralLocation(state);
+  const activeLocations = (state.locations || []).filter((item) => item && item.active !== false);
   const balances = (state.products || []).filter((product) => options.includeInactive || product.active !== false).map((product) => {
+    const perLocation = location ? [] : activeLocations.map((item) => ({
+      locationId: item.id,
+      locationName: item.name,
+      ...getProductBalance(state, item.id, product.id)
+    }));
+    const totalQuantity = calculateTotalStock(state, product.id);
+    let criticalLocations = perLocation.filter((item) => {
+      const threshold = Math.max(0, Number(item.criticalThreshold || 0));
+      return threshold > 0 && Number(item.quantity || 0) <= threshold;
+    });
+    if (!location && totalQuantity <= 0 && !criticalLocations.length && perLocation.length) {
+      criticalLocations = [perLocation.find((item) => cafe && String(item.locationId) === String(cafe.id)) || perLocation[0]];
+    }
     const selected = location
       ? getProductBalance(state, location.id, product.id)
-      : { locationId: "total", productId: product.id, quantity: calculateTotalStock(state, product.id), criticalThreshold: 0, orderThreshold: 0, targetLevel: 0, updatedAt: product.updatedAt || null };
+      : {
+          locationId: "total", productId: product.id, quantity: totalQuantity,
+          criticalThreshold: perLocation.reduce((sum, item) => sum + Math.max(0, Number(item.criticalThreshold || 0)), 0),
+          orderThreshold: perLocation.reduce((sum, item) => sum + Math.max(0, Number(item.orderThreshold || 0)), 0),
+          targetLevel: perLocation.reduce((sum, item) => sum + Math.max(0, Number(item.targetLevel || 0)), 0),
+          updatedAt: product.updatedAt || null
+        };
     const generalQuantity = general ? Number(getProductBalance(state, general.id, product.id).quantity || 0) : 0;
     const cafeQuantity = cafe ? Number(getProductBalance(state, cafe.id, product.id).quantity || 0) : 0;
-    const totalQuantity = calculateTotalStock(state, product.id);
     const otherLocationQuantity = location
       ? round(totalQuantity - Number(selected.quantity || 0))
       : 0;
-    const status = location ? stockStatus(selected, generalQuantity) : "Toplam";
+    const status = location ? stockStatus(selected, generalQuantity) : totalQuantity <= 0 ? "Tükendi" : criticalLocations.length ? "Kritik" : "Yeterli";
     const desired = Math.max(Number(selected.targetLevel || 0), Number(selected.orderThreshold || 0));
     const needed = Math.max(0, round(desired - Number(selected.quantity || 0)));
     const transferAmount = location && location.type === "cafe" ? Math.min(needed, generalQuantity) : 0;
@@ -1200,6 +1219,14 @@ function getLocationInventory(stockState, locationId, options = {}) {
       status,
       quantityDisplay: formatBaseQuantity(product, selected.quantity),
       totalQuantityDisplay: formatBaseQuantity(product, totalQuantity),
+      criticalLocations: location ? [] : criticalLocations.map((item) => ({
+        locationId: String(item.locationId || ""),
+        locationName: String(item.locationName || "Depo"),
+        quantity: Number(item.quantity || 0),
+        quantityDisplay: formatBaseQuantity(product, item.quantity),
+        criticalThreshold: Number(item.criticalThreshold || 0),
+        status: stockStatus(item)
+      })),
       recommendation,
       suggestedTransfer: transferAmount
     };

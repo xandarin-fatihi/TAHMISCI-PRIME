@@ -264,7 +264,8 @@ import { requestText } from "./ui-dialogs.js";
 
   async function loadInventory(locationId = state.selectedLocationId || "total", signal) {
     const result = await api(`/api/procurement/v1/stock/inventory?locationId=${encodeURIComponent(locationId)}`, { signal });
-    if (String(locationId) !== String(state.selectedLocationId)) return result;
+    const expectedLocationId = state.viewMode === "overview" ? "total" : String(state.selectedLocationId || "total");
+    if (String(locationId) !== expectedLocationId) return result;
     state.balances = Array.isArray(result.balances) ? result.balances : [];
     state.summary = result.summary && typeof result.summary === "object" ? result.summary : {};
     if (result.unitDefinitions) state.unitDefinitions = normalizeUnitDefinitions(result.unitDefinitions);
@@ -370,12 +371,13 @@ import { requestText } from "./ui-dialogs.js";
     const currentPromise = (async () => {
       if (options.force) state.planningStale = true;
       await loadLocations({ force: options.reloadLocations === true || options.force === true });
-      const requestedLocationId = String(state.selectedLocationId || "total");
+      const requestedLocationId = state.viewMode === "overview" ? "total" : String(state.selectedLocationId || "total");
       // İlk görünüm yalnız envanter ve bekleyen transfer projection'ını bekler.
       // Ağır hareket/sayım geçmişi aşağıdaki ikincil alanlar görünür olduğunda
       // yüklenir; ham/boş ekran süresi ve duplicate GET zinciri azalır.
       await Promise.all([loadInventory(requestedLocationId, controller.signal), loadTransfers(controller.signal)]);
-      if (controller.signal.aborted || sequence !== state.loadSequence || requestedLocationId !== String(state.selectedLocationId || "total")) return;
+      const activeRequestLocationId = state.viewMode === "overview" ? "total" : String(state.selectedLocationId || "total");
+      if (controller.signal.aborted || sequence !== state.loadSequence || requestedLocationId !== activeRequestLocationId) return;
       state.loaded = true;
       state.stale = false;
       renderAll();
@@ -526,7 +528,11 @@ import { requestText } from "./ui-dialogs.js";
     });
     host.innerHTML = Array.from(groups, ([category, items]) => `<section class="stock-kpi-category"><header><strong>${esc(category)}</strong><span>${formatNumber(items.length)} ürün</span></header><div>${items.map((balance) => {
       const status = Number(balance.quantity || 0) <= 0 ? "empty" : balanceStatus(balance);
-      return `<article class="stock-kpi-product-row"><span><strong>${esc(productName(balance))}</strong><small>${esc(unitOf(balance))} bazında güncel stok</small></span><b>${esc(quantityDisplay(balance))}</b><i class="stock-location-status is-${esc(status)}">${esc(statusLabel(status))}</i></article>`;
+      if (kind !== "critical") return `<article class="stock-kpi-product-row"><span><strong>${esc(productName(balance))}</strong><small>${esc(unitOf(balance))} bazında güncel stok</small></span><b>${esc(quantityDisplay(balance))}</b><i class="stock-location-status is-${esc(status)}">${esc(statusLabel(status))}</i></article>`;
+      const criticalLocations = Array.isArray(balance.criticalLocations) && balance.criticalLocations.length
+        ? balance.criticalLocations
+        : [{ locationId: balance.locationId, locationName: locationName(balance.locationId), quantity: balance.quantity, criticalThreshold: balance.criticalThreshold, status }];
+      return `<article class="stock-kpi-critical-product"><header><strong>${esc(productName(balance))}</strong><small>${esc(unitOf(balance))}</small></header><div>${criticalLocations.map((item) => { const locationStatus=balanceStatus(item);return `<div class="stock-kpi-critical-row"><span>${esc(item.locationName||locationName(item.locationId))}</span><b>${esc(quantityDisplay({ ...balance, ...item, product: productOf(balance) },item.quantity))}</b><small>Kritik eşik: ${esc(formatNumber(item.criticalThreshold||0))} ${esc(unitOf(balance))}</small><i class="stock-location-status is-${esc(locationStatus)}">${esc(statusLabel(locationStatus))}</i></div>`; }).join("")}</div></article>`;
     }).join("")}</div></section>`).join("");
   }
 
@@ -538,6 +544,10 @@ import { requestText } from "./ui-dialogs.js";
     if ($("#stockKpiListMeta")) $("#stockKpiListMeta").textContent = "Güncel bakiyeler hazırlanıyor…";
     host.innerHTML = '<div class="stock-location-loading">Stok ürünleri yükleniyor…</div>';
     if (!dialog.open) dialog.showModal();
+    if (kind === "critical" && state.balances.length) {
+      renderKpiInventoryList(kind, state.balances);
+      return;
+    }
     try {
       const result = await api("/api/procurement/v1/stock/inventory?locationId=total");
       updateRevision(result);
@@ -1867,10 +1877,7 @@ import { requestText } from "./ui-dialogs.js";
   }
 
   function stockWorkspaceUrl(locationId = "") {
-    const url = new URL("/fatura/", location.origin);
-    url.searchParams.set("view", "stock");
-    if (locationId) url.searchParams.set("locationId", locationId);
-    return `${url.pathname}${url.search}`;
+    return "/fatura/";
   }
 
   function enterWarehouse(locationId, options = {}) {
@@ -1894,13 +1901,14 @@ import { requestText } from "./ui-dialogs.js";
     closeProductDrawer({ restoreFocus: false });
     state.viewMode = "overview";
     renderAll();
-    if (options.fromPopstate) return;
-    if (history.state && history.state.stockWorkspace && history.state.stockOverviewBack) history.back();
+    if (options.fromPopstate) return loadAll({ force: true }).catch(() => {});
+    if (history.state && history.state.stockWorkspace && history.state.stockOverviewBack) return history.back();
     else {
       const nextState = { ...(history.state || {}), faturaView: "stock", stockWorkspace: false, stockOverviewBack: false };
       delete nextState.locationId;
       history.replaceState(nextState, "", stockWorkspaceUrl());
     }
+    return loadAll({ force: true }).catch(() => {});
   }
 
   function trapQuickDrawerFocus(event) {
@@ -2185,8 +2193,7 @@ import { requestText } from "./ui-dialogs.js";
     if (state.popstateHandler) window.removeEventListener("popstate", state.popstateHandler);
     state.popstateHandler = () => {
       if (activeSection() !== "stock") return;
-      const url = new URL(location.href);
-      const locationId = url.searchParams.get("locationId") || "";
+      const locationId = String(history.state && history.state.locationId || "");
       if (locationId && state.locations.some((item) => String(item.id) === locationId)) enterWarehouse(locationId, { skipHistory: true }).catch(() => {});
       else leaveWarehouse({ fromPopstate: true });
     };

@@ -1941,7 +1941,6 @@ function publicIndependentProduct(item) {
     supplierId: String(item.supplierId || ""),
     name: String(item.name || ""),
     code: String(item.code || ""),
-    documentType: String(item.documentType || "irsaliye"),
     bulkUnit: String(item.bulkUnit || item.purchaseUnit || ""),
     baseUnit: String(item.baseUnit || "adet"),
     purchaseUnit: String(item.bulkUnit || item.purchaseUnit || ""),
@@ -2085,7 +2084,6 @@ function validateIndependentProductInput(input, options = {}) {
   };
   maybe("name", text(source.name, 180));
   maybe("code", text(source.code, 100).toLocaleUpperCase("tr-TR"));
-  maybe("documentType", normalizeDocumentType(source.documentType, "irsaliye"));
   maybe("bulkUnit", text(source.bulkUnit || source.purchaseUnit, 40));
   maybe("baseUnit", text(source.baseUnit, 40) || "adet");
   maybe("purchaseUnit", text(source.bulkUnit || source.purchaseUnit, 40));
@@ -2170,7 +2168,6 @@ function validateShipmentItems(stockStateInput, requestedItems, createId, option
       stockProductCode: product ? normalizeProductCode(product.productCode) : "",
       name: String(supplierProduct && supplierProduct.name || requested.supplierProductName || product && product.name || ""),
       productName: String(supplierProduct && supplierProduct.name || requested.supplierProductName || product && product.name || ""),
-      documentType: normalizeDocumentType(supplierProduct && supplierProduct.documentType || requested.documentType, "irsaliye"),
       categoryId: product ? String(product.categoryId || "") : "",
       category: product ? String(product.category || "") : "",
       quantity,

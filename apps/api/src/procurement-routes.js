@@ -186,24 +186,23 @@ function registerProcurementRoutes(deps = {}) {
       result = await approveWorkforceShipment({
         shipmentId: req.params.id,
         requestId: mutation.requestId,
-        expectedRevision: body.workforceExpectedRevision !== undefined ? body.workforceExpectedRevision : body.expectedRevision,
-        procurementExpectedRevision: mutation.expectedRevision,
+        internalAuthoritativeRevision: true,
         note: String(body.note || "").trim().slice(0, 500),
         destinationLocationId: String(body.destinationLocationId || "").trim(),
         actor: req.procurementActor,
         req
       });
     } catch (error) {
+      if (isRevisionConflict(error)) throw error;
       let failure = null;
       try {
-        const current = await service.context(req.procurementActor);
-        failure = await service.recordShipmentStockFailure(req.procurementActor, req.params.id, {
+        failure = await withAuthoritativeProcurementRevision(service, req.procurementActor, {
+          ...mutation,
+          requestId: `${mutation.requestId.slice(0, 140)}:stock-failed`
+        }, (authoritativeMutation) => service.recordShipmentStockFailure(req.procurementActor, req.params.id, {
           code: error && error.payload && error.payload.code || error && error.code || "STOCK_TRANSFER_FAILED",
           message: error && error.payload && error.payload.message || error && error.message
-        }, {
-          requestId: `${mutation.requestId.slice(0, 140)}:stock-failed`,
-          expectedRevision: current.revision
-        });
+        }, authoritativeMutation));
       } catch (_recordError) { /* Ana hata korunur; sevkiyat zaten kalıcıdır. */ }
       if (failure) {
         return res.status(Math.max(400, Math.min(499, Number(error && error.status || 422)))).json({
@@ -218,14 +217,13 @@ function registerProcurementRoutes(deps = {}) {
       }
       throw error;
     }
-    const current = await service.context(req.procurementActor);
     try {
-      const accounting = await service.accountShipmentAfterStock(req.procurementActor, req.params.id, {
+      const accounting = await withAuthoritativeProcurementRevision(service, req.procurementActor, {
+        ...mutation,
+        requestId: `${mutation.requestId.slice(0, 140)}:auto-ledger`
+      }, (authoritativeMutation) => service.accountShipmentAfterStock(req.procurementActor, req.params.id, {
         note: "Stok aktarımı sonrası otomatik tedarikçi borcu"
-      }, {
-        requestId: `${mutation.requestId.slice(0, 140)}:auto-ledger`,
-        expectedRevision: current.revision
-      });
+      }, authoritativeMutation));
       return res.json({
         ...(result && typeof result === "object" ? result : {}), ok: true,
         revision: accounting.revision, workforceRevision: accounting.workforceRevision || result && result.revision,
@@ -234,14 +232,16 @@ function registerProcurementRoutes(deps = {}) {
     } catch (error) {
       let failure = null;
       try {
-        const latest = await service.context(req.procurementActor);
-        failure = await service.recordShipmentAccountingFailure(req.procurementActor, req.params.id, {
+        failure = await withAuthoritativeProcurementRevision(service, req.procurementActor, {
+          ...mutation,
+          requestId: `${mutation.requestId.slice(0, 140)}:ledger-failed`
+        }, (authoritativeMutation) => service.recordShipmentAccountingFailure(req.procurementActor, req.params.id, {
           code: error && error.code || "ACCOUNTING_POST_FAILED", message: error && error.message
-        }, { requestId: `${mutation.requestId.slice(0, 140)}:ledger-failed`, expectedRevision: latest.revision });
+        }, authoritativeMutation));
       } catch (_recordError) { /* Stok sonucu korunur. */ }
       return res.json({
         ...(result && typeof result === "object" ? result : {}), ok: true,
-        revision: failure && failure.revision || current.revision,
+        revision: failure && failure.revision || result && result.procurementRevision || mutation.expectedRevision,
         workforceRevision: failure && failure.workforceRevision || result && result.revision,
         shipment: failure && failure.shipment || result && result.shipment,
         accountingStatus: "failed", accountingMessage: "Stok işlendi ancak cari kayıt oluşturulamadı. Sevkiyat arşivde korunuyor."
@@ -254,7 +254,8 @@ function registerProcurementRoutes(deps = {}) {
   }));
 
   app.post(`${API_ROOT}/shipments/:id/account-without-stock`, ...mutationMiddlewares, anySectionAccess(["shipments", "documents", "ledger"], "operate"), anyCapability(["receipt.approve", "accounting.post"]), asyncRoute(async (req, res) => {
-    const result = await service.accountShipmentWithoutStock(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req));
+    const result = await withAuthoritativeProcurementRevision(service, req.procurementActor, mutationInput(req), (authoritativeMutation) =>
+      service.accountShipmentWithoutStock(req.procurementActor, req.params.id, jsonBody(req), authoritativeMutation));
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
 
@@ -617,6 +618,26 @@ function mutationInput(req) {
     requestId: String(req.get("Idempotency-Key") || req.get("X-Request-ID") || body.requestId || "").trim(),
     expectedRevision: firstDefined(req.get("X-Expected-Revision"), body.expectedRevision)
   };
+}
+
+async function withAuthoritativeProcurementRevision(service, actor, mutation, operation) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const current = await service.context(actor);
+    try {
+      return await operation({ ...mutation, expectedRevision: current.revision });
+    } catch (error) {
+      if (!isRevisionConflict(error) || attempt === 1) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+function isRevisionConflict(error) {
+  const code = String(error && (error.code || error.payload && error.payload.code) || "");
+  const message = String(error && (error.message || error.payload && error.payload.message) || "");
+  return code === "PROCUREMENT_REVISION_CONFLICT" || /(?:procurement|workforce).*revision|verisi başka bir işlemle güncellendi/i.test(message);
 }
 
 function documentInputFromHeaders(req) {
