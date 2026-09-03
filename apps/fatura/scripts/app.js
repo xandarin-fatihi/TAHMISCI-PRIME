@@ -1,7 +1,7 @@
 import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260903-stock-excel";
-import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, updateRevision, value } from "./state.js?v=20260903-stock-excel-details";
+import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, updateRevision, value } from "./state.js";
 import { renderDashboard } from "./dashboard.js?v=20260902-final-ui";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260903-stock-excel";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260903-supplier-create-fix-v1";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
 import { documentFormBody, printShipmentArchive, renderDocuments, shipmentArchiveDetail } from "./documents.js?v=20260902-final-ui";
 import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderTrash, renderUsers, userAccessFormBody } from "./accounting.js?v=20260903-fatura-list-export";

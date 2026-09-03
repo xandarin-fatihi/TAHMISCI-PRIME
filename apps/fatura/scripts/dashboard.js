@@ -6,7 +6,8 @@ export function renderDashboard() {
     .filter((item) => item.status !== "taslak")
     .sort((left, right) => String(right.shipmentDate || right.documentDate || right.createdAt || "").localeCompare(String(left.shipmentDate || left.documentDate || left.createdAt || "")))
     .slice(0, 10);
-  const metrics = hasSection("ledger") ? [
+  const actor = state.context && state.context.actor;
+  const metrics = ((actor && actor.type === "admin") || hasSection("ledger")) ? [
     metric("Toplam tedarikçi borcu", dashboard.financialVisible ? trMoney(dashboard.supplierDebtKurus) : "Yetki gerekli"),
     metric("Bu ay alınan ürün", dashboard.financialVisible ? trMoney(dashboard.monthPurchasesKurus) : "—"),
     metric("Bu ay yapılan ödeme", dashboard.financialVisible ? trMoney(dashboard.monthPaymentsKurus) : "—")

@@ -2,7 +2,7 @@
 importScripts("/shared/scripts/pwa-release.js");
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "fatura",
-  version: self.TAHMISCI_PWA_RELEASE.id,
+  version: `${self.TAHMISCI_PWA_RELEASE.id}-fatura-state-singleton-v2`,
   scopePath: "/fatura/",
   offlineUrl: "/fatura/offline.html",
   offlineAssets: [
@@ -13,11 +13,11 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
     "/fatura/styles/fatura.css?v=20260902-final-ui",
     "/fatura/styles/stock.css?v=20260903-stock-excel-details",
     "/fatura/styles/product-analysis.css?v=20260829-product-analysis",
-    "/fatura/scripts/app.js?v=20260903-stock-excel-details",
+    "/fatura/scripts/app.js?v=20260903-state-singleton-fix-v2",
     "/fatura/scripts/api.js",
-    "/fatura/scripts/state.js?v=20260903-stock-excel-details",
+    "/fatura/scripts/state.js",
     "/fatura/scripts/dashboard.js?v=20260902-final-ui",
-    "/fatura/scripts/suppliers.js?v=20260902-final-ui",
+    "/fatura/scripts/suppliers.js?v=20260903-supplier-create-fix-v1",
     "/fatura/scripts/receipts.js",
     "/fatura/scripts/documents.js?v=20260902-final-ui",
     "/fatura/scripts/accounting.js?v=20260831-panel-access",
