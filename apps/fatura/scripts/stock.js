@@ -764,7 +764,7 @@ import { requestText } from "./ui-dialogs.js";
     const currentBulkUnit = textValue(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR");
     const currentFactor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
     body.innerHTML = `<section class="stock-drawer-selected"><span>${esc(locationName(state.selectedLocationId))}</span><strong>${esc(quantityDisplay(balance))}</strong><small>Seçili depo bakiyesi</small></section>
-    <dl class="stock-drawer-details"><div><dt>Durum</dt><dd>${esc(statusLabel(balanceStatus(balance)))}</dd></div><div><dt>Tedarikçi</dt><dd>${esc(product.supplier || "Belirtilmedi")}</dd></div></dl>
+    <dl class="stock-drawer-details"><div><dt>Durum</dt><dd>${esc(statusLabel(balanceStatus(balance)))}</dd></div><div><dt>Tedarikçi</dt><dd>${esc((Array.isArray(product.supplierNames) && product.supplierNames.length ? product.supplierNames.join(", ") : product.supplier) || "Belirtilmedi")}</dd></div></dl>
     <section class="stock-drawer-unit-config" aria-label="Birim yapısı">
       <div><span>Temel birim</span><strong>${esc(currentBaseUnit)}</strong></div>
       <div><span>Toplu birim</span><strong>${esc(currentBulkUnit || "Yok")}</strong></div>

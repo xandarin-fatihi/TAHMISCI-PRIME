@@ -1464,6 +1464,92 @@ function generatedStockProductCode(state, category, name) {
   return code;
 }
 
+function createCanonicalStockProduct(stockState, input = {}, options = {}) {
+  const state = normalizeState(stockState);
+  const timestamp = nowIso(options.now);
+  const name = String(input.name || input.productName || "").trim().replace(/\s+/g, " ").slice(0, 180);
+  if (!name) throw stockError("Ürün adı zorunludur.", 422);
+  const duplicate = (state.products || []).find((item) => item && item.active !== false
+    && item.sourcePresent !== false && excelIdentity(item.name || item.productName) === excelIdentity(name));
+  if (duplicate) throw stockError("Bu ürün stokta mevcut. Mevcut ürünle eşleştirin.", 409);
+
+  const baseUnit = controlledUnit(input.baseUnit || input.unit, "");
+  const bulkUnit = controlledUnit(input.bulkUnit || input.caseUnit || input.purchaseUnit, "");
+  const unitsPerBulkUnit = bulkUnit
+    ? finitePositive(input.unitsPerBulkUnit ?? input.unitsPerCase ?? input.conversionFactor)
+    : 0;
+  if (!baseUnit) throw stockError("Temel birim zorunludur.", 422);
+  if (bulkUnit && !unitsPerBulkUnit) throw stockError("Toplu birim çarpanı sıfırdan büyük olmalıdır.", 422);
+  if (bulkUnit && bulkUnit === baseUnit) throw stockError("Temel ve toplu birim aynı olamaz.", 422);
+
+  const canonicalCategoryName = "Kategorisizler";
+  let category = (state.categories || []).find((item) => excelIdentity(item.name) === excelIdentity(canonicalCategoryName));
+  let createdCategory = false;
+  if (!category) {
+    category = (state.categories || []).find((item) => excelIdentity(item.name) === excelIdentity("Stokta Olmayanlar"));
+    if (category) {
+      category.name = canonicalCategoryName;
+      category.active = true;
+      category.updatedAt = timestamp;
+      for (const product of state.products || []) {
+        if (String(product.categoryId || "") === String(category.id || "")) product.category = canonicalCategoryName;
+      }
+    }
+  }
+  if (!category) {
+    category = {
+      id: `stock-category-${crypto.randomUUID()}`,
+      name: canonicalCategoryName,
+      active: true,
+      order: (state.categories || []).length,
+      sourceType: "supplier",
+      statusSource: "supplier",
+      sourcePresent: true,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    state.categories.push(category);
+    createdCategory = true;
+  }
+
+  const allowDecimal = input.allowDecimal === true || ["kg", "gr", "litre", "ml"].includes(baseUnit);
+  const productCode = generatedStockProductCode(state, category.name, name);
+  const product = {
+    id: `stock-product-${crypto.randomUUID()}`,
+    name,
+    productName: name,
+    categoryId: category.id,
+    category: category.name,
+    productCode,
+    baseUnit,
+    unit: baseUnit,
+    bulkUnit,
+    caseUnit: bulkUnit,
+    unitsPerBulkUnit: unitsPerBulkUnit || 0,
+    unitsPerCase: unitsPerBulkUnit || 0,
+    allowDecimal,
+    defaultMovementUnit: baseUnit,
+    active: true,
+    sourceType: "supplier",
+    statusSource: "supplier",
+    sourcePresent: true,
+    unitSchemaSource: "supplier",
+    unitSchemaLocked: true,
+    unitSchemaVersion: 1,
+    unitSchemaUpdatedAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+  state.products.push(product);
+  if (!state.unitDefinitions.base.some((unit) => excelIdentity(unit) === excelIdentity(baseUnit))) state.unitDefinitions.base.push(baseUnit);
+  if (bulkUnit && !state.unitDefinitions.bulk.some((unit) => excelIdentity(unit) === excelIdentity(bulkUnit))) state.unitDefinitions.bulk.push(bulkUnit);
+  state.unitDefinitions.updatedAt = timestamp;
+  state.unitDefinitions.updatedBy = String(options.actorId || "system");
+  updateProductTotalProjection(state, product.id, timestamp);
+  state.updatedAt = timestamp;
+  return { stockState: state, product, category, createdCategory };
+}
+
 function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {}, options = {}) {
   const state = normalizeState(stockState);
   const requestId = String(input.requestId || input.idempotencyKey || "").trim();
@@ -1521,31 +1607,53 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
       }
       if (product && processed.has(String(product.id))) throw stockError("Aynı canonical ürün workbook içinde birden fazla kez tanımlanmış.", 409);
       const existing = Boolean(product);
-      const currentUnits = existing ? productUnitMetadata(product) : { baseUnit: "", bulkUnit: "", unitsPerBulkUnit: 0, allowDecimal: false, defaultMovementUnit: "" };
-      const legacyBulkQuantityUsesBaseUnit = existing
-        && !record.baseUnit
+      let currentUnits = existing ? productUnitMetadata(product) : { baseUnit: "", bulkUnit: "", unitsPerBulkUnit: 0, allowDecimal: false, defaultMovementUnit: "" };
+      const originalUnits = { ...currentUnits };
+      const singleUnitQuantityUsesBaseUnit = !record.baseUnit
         && !record.factorProvided
-        && !currentUnits.bulkUnit
-        && excelIdentity(record.bulkUnit) === excelIdentity(currentUnits.baseUnit);
-      const baseUnit = record.baseUnit || currentUnits.baseUnit;
-      const bulkUnit = legacyBulkQuantityUsesBaseUnit ? currentUnits.bulkUnit : record.bulkUnit || currentUnits.bulkUnit;
-      const unitsPerBulkUnit = record.factorProvided ? Number(record.unitsPerBulkUnit || 0) : Number(currentUnits.unitsPerBulkUnit || 0);
+        && Boolean(record.bulkUnit)
+        && (!existing || !currentUnits.bulkUnit && excelIdentity(record.bulkUnit) === excelIdentity(currentUnits.baseUnit));
+      const baseUnit = singleUnitQuantityUsesBaseUnit
+        ? currentUnits.baseUnit || controlledUnit(record.bulkUnit, "")
+        : record.baseUnit || currentUnits.baseUnit;
+      const bulkUnit = singleUnitQuantityUsesBaseUnit ? "" : record.bulkUnit || currentUnits.bulkUnit;
+      const unitsPerBulkUnit = singleUnitQuantityUsesBaseUnit
+        ? 0
+        : record.factorProvided ? Number(record.unitsPerBulkUnit || 0) : Number(currentUnits.unitsPerBulkUnit || 0);
       if (!baseUnit || bulkUnit && !(unitsPerBulkUnit > 0)) throw stockError("Temel birim veya birim çarpanı eksik.", 422);
-      if (Number(record.bulkQuantity || 0) > 0 && !legacyBulkQuantityUsesBaseUnit && (!bulkUnit || !(unitsPerBulkUnit > 0))) throw stockError("Toplu stok miktarı için geçerli toplu birim ve çarpan gerekli.", 422);
-      if (record.bulkUnit && existing && record.bulkUnit !== currentUnits.bulkUnit && !record.factorProvided && !legacyBulkQuantityUsesBaseUnit) {
+      if (Number(record.bulkQuantity || 0) > 0 && !singleUnitQuantityUsesBaseUnit && (!bulkUnit || !(unitsPerBulkUnit > 0))) throw stockError("Toplu stok miktarı için geçerli toplu birim ve çarpan gerekli.", 422);
+      if (record.bulkUnit && existing && record.bulkUnit !== currentUnits.bulkUnit && !record.factorProvided && !singleUnitQuantityUsesBaseUnit) {
         throw stockError("Toplu birim değiştiği için birim çarpanı zorunludur.", 422);
       }
-      const hasHistory = existing && (state.movements || []).some((movement) => String(movement.productId) === String(product.id));
-      const hasBalance = existing && (state.balances || []).some((balance) => String(balance.productId) === String(product.id) && Number(balance.quantity || 0) !== 0);
-      if (existing && record.baseUnit && record.baseUnit !== currentUnits.baseUnit && (hasHistory || hasBalance)) {
+      const hasOperationalHistory = existing && (state.movements || []).some((movement) => {
+        if (String(movement.productId || movement.stockProductId || "") !== String(product.id)) return false;
+        return !(String(movement.type || "") === "adjustment" && String(movement.referenceType || "") === "excel_stock_import");
+      });
+      if (existing && record.baseUnit && record.baseUnit !== currentUnits.baseUnit && hasOperationalHistory) {
         throw stockError("Hareket geçmişi bulunan ürünün temel birimi Excel ile değiştirilemez.", 409);
       }
-      const allowDecimal = existing ? currentUnits.allowDecimal : ["kg", "gr", "litre", "ml"].includes(baseUnit);
-      const targetQuantity = legacyBulkQuantityUsesBaseUnit
+      const allowDecimal = ["kg", "gr", "litre", "ml"].includes(baseUnit)
+        ? true
+        : existing ? currentUnits.allowDecimal : false;
+      const targetQuantity = singleUnitQuantityUsesBaseUnit
         ? round(Number(record.bulkQuantity || 0) + Number(record.baseQuantity || 0))
         : round(Number(record.bulkQuantity || 0) * Number(unitsPerBulkUnit || 0) + Number(record.baseQuantity || 0));
       if (!allowDecimal && !Number.isInteger(targetQuantity)) throw stockError("Bu ürün için kesirli temel miktar kullanılamaz.", 422);
-
+      let unitMigrationApplied = false;
+      if (existing && record.baseUnit && record.baseUnit !== currentUnits.baseUnit) {
+        const migration = migrateProductUnitSchema(state, product.id, {
+          confirm: true,
+          targetBaseUnit: baseUnit,
+          targetBulkUnit: bulkUnit,
+          unitsPerBulkUnit,
+          allowDecimal,
+          defaultMovementUnit: baseUnit
+        }, { now: timestamp });
+        product = migration.product;
+        product.unitSchemaSource = "excel";
+        currentUnits = productUnitMetadata(product);
+        unitMigrationApplied = true;
+      }
       let category = categoryByName.get(categoryKey);
       if (!category) {
         category = {
@@ -1621,6 +1729,11 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
           product.unitSchemaLocked = true;
           product.unitSchemaUpdatedAt = timestamp;
         }
+        if (unitMigrationApplied) {
+          product.unitSchemaSource = "excel";
+          product.unitSchemaLocked = true;
+          product.unitSchemaUpdatedAt = timestamp;
+        }
         productByCode.set(normalizeProductCode(product.productCode), product);
         summary.updatedProducts += 1;
       }
@@ -1673,7 +1786,7 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
         });
       }
       if (existing) {
-        const previousUnitStructure = stockExcelUnitDetail(currentUnits);
+        const previousUnitStructure = stockExcelUnitDetail(originalUnits);
         const newUnitStructure = stockExcelUnitDetail(productUnitMetadata(product));
         const changes = [];
         if (previousUnitStructure.display !== newUnitStructure.display) changes.push({ field: "unitStructure", label: "Birim yapısı", before: previousUnitStructure.display, after: newUnitStructure.display });
@@ -1753,6 +1866,7 @@ module.exports = {
   calculateSuggestedTransfer,
   calculateTotalStock,
   convertToBaseUnit,
+  createCanonicalStockProduct,
   createTransferRequest,
   defaultCafeLocation,
   defaultGeneralLocation,

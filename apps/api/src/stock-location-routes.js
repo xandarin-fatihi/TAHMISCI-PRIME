@@ -164,6 +164,8 @@ function registerStockLocationRoutes(deps) {
           && hasProcurementCapability(procurementActor, "inventory.manage")),
         inventoryTransfer: Boolean(typeof hasProcurementCapability === "function"
           && hasProcurementCapability(procurementActor, "inventory.transfer.create")),
+        supplierRead: Boolean(typeof hasProcurementCapability === "function"
+          && hasProcurementCapability(procurementActor, "supplier.read")),
         inventoryScope: procurementActor.type === "admin"
           || typeof hasProcurementCapability === "function" && hasProcurementCapability(procurementActor, "inventory.manage")
           ? "all"
@@ -290,19 +292,55 @@ function registerStockLocationRoutes(deps) {
     const inventory = stockService.getLocationInventory(state, locationId, {
       allowInactive: Boolean(actor && (actor.type === "admin" || actor.inventoryManage === true || actor.inventoryScope === "all"))
     });
+    const inventoryBalances = actor && (actor.type === "admin" || actor.supplierRead === true)
+      ? enrichBalancesWithSuppliers(data, inventory.balances)
+      : inventory.balances;
     return {
       ok: true,
       location: inventory.location,
       locations: publicLocations(state, actor),
       balances: actor && actor.type !== "admin"
-        ? inventory.balances.map(personnelInventoryBalance)
-        : inventory.balances,
+        ? inventoryBalances.map(personnelInventoryBalance)
+        : inventoryBalances,
       summary: inventory.summary,
       unitDefinitions: state.unitDefinitions,
       ...canonicalRevisionPayload(data, "inventory"),
       publishRevision: Number(data.revisions && data.revisions.publish || 0),
       updatedAt: data.stockUpdatedAt || state.updatedAt || null
     };
+  }
+
+  function enrichBalancesWithSuppliers(data, balances) {
+    const procurement = data && data.procurement && typeof data.procurement === "object" ? data.procurement : {};
+    const suppliers = new Map((Array.isArray(procurement.suppliers) ? procurement.suppliers : [])
+      .filter((supplier) => supplier && supplier.id)
+      .map((supplier) => [String(supplier.id), supplier]));
+    const relations = new Map();
+    for (const item of Array.isArray(procurement.supplierIndependentProducts) ? procurement.supplierIndependentProducts : []) {
+      const productId = String(item && item.stockProductId || "");
+      const supplier = suppliers.get(String(item && item.supplierId || ""));
+      if (!productId || !supplier || item.active === false) continue;
+      if (!relations.has(productId)) relations.set(productId, { ids: new Set(), names: new Set() });
+      relations.get(productId).ids.add(String(supplier.id));
+      relations.get(productId).names.add(String(supplier.name || supplier.contactName || "Tedarikçi"));
+    }
+    return (Array.isArray(balances) ? balances : []).map((balance) => {
+      const product = balance && balance.product && typeof balance.product === "object" ? balance.product : {};
+      const relation = relations.get(String(balance && (balance.productId || product.id) || ""));
+      const supplierIds = relation ? [...relation.ids] : [];
+      const supplierNames = relation ? [...relation.names] : [];
+      const legacySupplier = String(product.supplier || "").trim();
+      if (!supplierNames.length && legacySupplier) supplierNames.push(legacySupplier);
+      return {
+        ...balance,
+        product: {
+          ...product,
+          supplierIds,
+          supplierNames,
+          supplier: supplierNames.join(", ")
+        }
+      };
+    });
   }
 
   function normalizeCatalogUnit(value) {

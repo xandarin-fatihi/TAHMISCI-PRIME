@@ -43,7 +43,6 @@ function registerWorkforceRoutes(deps) {
     const procurement = data.procurement && typeof data.procurement === "object" ? data.procurement : {};
     const supplierProducts = Array.isArray(procurement.supplierIndependentProducts) ? procurement.supplierIndependentProducts : [];
     const normalizeName = (value) => String(value || "").trim().toLocaleLowerCase("tr-TR").replace(/ı/g, "i").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
-    let category = (stockState.categories || []).find((item) => normalizeName(item.name) === normalizeName("Stokta Olmayanlar"));
     let changed = false;
     for (const line of Array.isArray(shipment.items) ? shipment.items : []) {
       const currentIdentity = String(line && (line.stockProductId || line.productId || line.stockProductCode || line.productCode) || "").trim();
@@ -80,25 +79,16 @@ function registerWorkforceRoutes(deps) {
         }
       }
       if (!product) {
-        if (!category) {
-          category = { id: createId("stock-category"), name: "Stokta Olmayanlar", active: true, order: (stockState.categories || []).length + 100, system: true, createdAt: timestamp, updatedAt: timestamp, sourceType: "manual", sourcePresent: true };
-          stockState.categories = [...(stockState.categories || []), category];
-        } else if (category.active === false || category.sourcePresent === false) {
-          category.active = true;
-          category.sourcePresent = true;
-          category.updatedAt = timestamp;
-        }
-        product = {
-          id: createId("stock-product"), categoryId: category.id, category: category.name,
+        const canonicalBulkUnit = bulkUnit && bulkUnit !== baseUnit ? bulkUnit : "";
+        const created = stockService.createCanonicalStockProduct(stockState, {
           name: String(supplierProduct.name || line.supplierProductName || line.name || "Yeni stok ürünü").trim(),
-          productName: String(supplierProduct.name || line.supplierProductName || line.name || "Yeni stok ürünü").trim(),
-          unit: baseUnit, baseUnit, bulkUnit, caseUnit: bulkUnit,
-          unitsPerBulkUnit, unitsPerCase: unitsPerBulkUnit, allowDecimal: !Number.isInteger(unitsPerBulkUnit) || ["kg", "gr", "litre", "ml"].includes(baseUnit),
-          defaultMovementUnit: bulkUnit || baseUnit, unitSchemaVersion: 1, unitSchemaSource: "manual",
-          supplierId: shipment.supplierId || supplierProduct.supplierId || "", supplierProductId: supplierProduct.id,
-          active: true, sourceType: "manual", sourcePresent: true, createdAt: timestamp, updatedAt: timestamp
-        };
-        stockState.products = [...(stockState.products || []), product];
+          baseUnit,
+          bulkUnit: canonicalBulkUnit,
+          unitsPerBulkUnit: canonicalBulkUnit ? unitsPerBulkUnit : 0,
+          allowDecimal: !Number.isInteger(unitsPerBulkUnit) || ["kg", "gr", "litre", "ml"].includes(baseUnit)
+        }, { now: timestamp, actorId: shipment.supplierId || supplierProduct.supplierId || "system" });
+        stockState = created.stockState;
+        product = created.product;
         changed = true;
       }
       supplierProduct.stockProductId = product.id;

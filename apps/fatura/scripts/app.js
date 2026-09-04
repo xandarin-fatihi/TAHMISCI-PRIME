@@ -5,7 +5,7 @@ import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260903-s
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
 import { documentFormBody, printShipmentArchive, renderDocuments, shipmentArchiveDetail } from "./documents.js?v=20260902-final-ui";
 import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderTrash, renderUsers, userAccessFormBody } from "./accounting.js?v=20260903-fatura-list-export";
-import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260903-workflow-fix";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260904-supplier-stock-link-v1";
 import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260902-final-ui";
 import { confirmAction, requestText } from "./ui-dialogs.js";
 
@@ -46,7 +46,7 @@ const EVENT_SCOPES = {
   shipment: ["shipments", "documents", "productAnalysis", "stock", "dashboard"],
   supplier: ["suppliers", "dashboard"],
   supplierProductLink: ["suppliers", "productAnalysis", "dashboard"],
-  supplierIndependentProduct: ["suppliers", "productAnalysis", "dashboard"],
+  supplierIndependentProduct: ["suppliers", "stock", "productAnalysis", "dashboard"],
   document: ["documents", "dashboard"],
   ledgerEntry: ["ledger", "trash", "suppliers", "dashboard"],
   payment: ["ledger", "trash", "suppliers", "dashboard"],
@@ -58,9 +58,13 @@ document.addEventListener("DOMContentLoaded", bootstrap);
 document.addEventListener("click", handleClick);
 document.addEventListener("pointerdown", (event) => {
   if (!profileMenu.hidden && !profileMenu.contains(event.target) && !event.target.closest("#profileMenuButton")) closeProfileMenu();
+  if (!event.target.closest("[data-supplier-product-combobox]")) closeSupplierProductCombobox();
 });
 document.addEventListener("input", handleFilterInput);
 document.addEventListener("change", handleChange);
+document.addEventListener("focusin", (event) => {
+  if (event.target.matches("[data-supplier-product-search]")) openSupplierProductCombobox(event.target);
+});
 document.addEventListener("submit", handleAppSubmit);
 entityForm.addEventListener("submit", submitEntityForm);
 entityDialog.addEventListener("cancel", (event) => { if (document.getElementById("dialogSubmit").disabled) event.preventDefault(); });
@@ -74,6 +78,7 @@ window.addEventListener("beforeinstallprompt", captureInstallPrompt);
 window.addEventListener("appinstalled", clearInstallPrompt);
 window.addEventListener("popstate", handleAppPopstate);
 document.addEventListener("keydown", (event) => {
+  if (handleSupplierProductKeydown(event)) return;
   if (event.key === "Escape" && app.classList.contains("is-mobile-open")) closeMobileSidebar();
   if (event.key === "Escape" && !notificationDrawer.hidden) closeNotifications();
   if (event.key === "Escape" && !profileMenu.hidden) closeProfileMenu();
@@ -358,8 +363,9 @@ function renderStockExcelView() {
   const result = state.stockExcel.result;
   const groups = stockExcelDetailGroups();
   const skippedCount = groups.skippedProducts.length;
+  const fileName = String(state.stockExcel.fileName || "");
   const summary = result ? `<section class="stock-excel-result" aria-live="polite"><header><div><span>İçe aktarım sonucu</span><strong>Stok verileri işlendi</strong></div><span class="badge ${skippedCount ? "is-warning" : "is-success"}">${skippedCount ? `${skippedCount} atlanan` : "Hatasız"}</span></header><div class="stock-excel-result__metrics">${stockExcelMetric("updatedProducts", "Güncellenen ürün", groups.updatedProducts.length)}${stockExcelMetric("createdProducts", "Yeni ürün", groups.createdProducts.length)}${stockExcelMetric("createdCategories", "Yeni kategori", groups.createdCategories.length)}${stockExcelMetric("balanceChanges", "Bakiyesi değişen", groups.balanceChanges.length)}${stockExcelMetric("skippedProducts", "Hatalı / atlanan", skippedCount)}</div></section>` : "";
-  return `<section class="stock-excel-view"><article class="stock-excel-card"><header><span class="stock-excel-card__icon">${icon("stockExcel")}</span><div><p class="eyebrow">CANONICAL STOK AKTARIMI</p><h2>Stok Excel</h2><p>Excel stok şablonundaki ürün, birim, eşik ve stok miktarlarını toplu olarak aktarın.</p></div></header><form id="stockExcelImportForm" class="stock-excel-form" enctype="multipart/form-data" novalidate><label><span>Hedef Depo</span><select name="targetLocationId" required><option value="">Depo seçin</option>${locations.map((location) => `<option value="${escapeHtml(location.id)}">${escapeHtml(location.name)}</option>`).join("")}</select></label><label class="stock-excel-file"><span>Excel Dosyası</span><input id="stockExcelFile" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><small id="stockExcelFileName">${escapeHtml(state.stockExcel.fileName || "Yalnız .xlsx · en fazla 20 MB")}</small></label><p class="stock-excel-message" id="stockExcelMessage" role="alert"></p><button class="ui-button ui-button--primary" id="stockExcelSubmit" type="submit" ${locations.length ? "" : "disabled"}>Stok Bilgilerini İçe Aktar</button></form>${locations.length ? "" : '<p class="stock-excel-empty">İçe aktarım için aktif bir depo bulunamadı.</p>'}</article>${summary}</section>`;
+  return `<section class="stock-excel-view"><article class="stock-excel-card"><header><span class="stock-excel-card__icon">${icon("stockExcel")}</span><div><p class="eyebrow">CANONICAL STOK AKTARIMI</p><h2>Stok Excel</h2><p>Excel stok şablonundaki ürün, birim, eşik ve stok miktarlarını toplu olarak aktarın.</p></div></header><form id="stockExcelImportForm" class="stock-excel-form" enctype="multipart/form-data" novalidate><label><span>Hedef Depo</span><select name="targetLocationId" required><option value="">Depo seçin</option>${locations.map((location) => `<option value="${escapeHtml(location.id)}">${escapeHtml(location.name)}</option>`).join("")}</select></label><label class="stock-excel-field"><span>Excel Dosyası</span><span class="stock-excel-file${fileName ? " is-selected" : ""}" id="stockExcelFilePicker"><input id="stockExcelFile" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required aria-describedby="stockExcelFileMeta"><span class="stock-excel-file__icon">${icon("stockExcel")}</span><span class="stock-excel-file__copy"><strong id="stockExcelFileName">${escapeHtml(fileName || "Excel dosyası seç")}</strong><small id="stockExcelFileMeta">${fileName ? ".xlsx dosyası" : "Yalnız .xlsx · en fazla 20 MB"}</small></span><span class="stock-excel-file__action" id="stockExcelFileAction">${fileName ? "Değiştir" : "Seç"}</span></span></label><p class="stock-excel-message" id="stockExcelMessage" role="alert"></p><button class="ui-button ui-button--primary" id="stockExcelSubmit" type="submit" ${locations.length ? "" : "disabled"}>Stok Bilgilerini İçe Aktar</button></form>${locations.length ? "" : '<p class="stock-excel-empty">İçe aktarım için aktif bir depo bulunamadı.</p>'}</article>${summary}</section>`;
 }
 
 const STOCK_EXCEL_DETAIL_META = {
@@ -698,6 +704,9 @@ async function handleClick(event) {
   if (button.dataset.dashboardView) return navigateFromDashboard(button.dataset.dashboardView, button.dataset.dashboardFilter || "");
   if (button.dataset.stockExcelDetail) return openStockExcelDetail(button.dataset.stockExcelDetail);
   if (button.dataset.view || button.dataset.viewTarget) return setView(button.dataset.view || button.dataset.viewTarget);
+  if (button.hasAttribute("data-supplier-product-new")) return selectNewSupplierStockProduct();
+  if (button.dataset.supplierStockProductId) return selectSupplierStockProduct(button.dataset.supplierStockProductId);
+  if (button.hasAttribute("data-supplier-product-clear")) return clearSupplierStockProductSelection();
   if (button.dataset.cancelAction === "decline-stock") return declineSupplierShipmentStock(button);
   if (button.classList.contains("dialog-close")) return closeEntityDialog();
   if (button.classList.contains("detail-close")) return closeDetailDialog();
@@ -720,6 +729,10 @@ async function handleClick(event) {
 }
 
 function handleFilterInput(event) {
+  if (event.target.matches("[data-supplier-product-search]")) {
+    syncSupplierProductSearch(event.target);
+    return;
+  }
   if (event.target.matches("[data-combo-input]")) {
     syncCombobox(event.target);
     if (event.target.dataset.comboInput === "stockProductId") updateShipmentLineUnit(event.target);
@@ -737,8 +750,14 @@ function handleChange(event) {
   if (event.target.id === "stockExcelFile") {
     const file = event.target.files && event.target.files[0];
     state.stockExcel.fileName = file instanceof File ? file.name : "";
-    const label = document.getElementById("stockExcelFileName");
-    if (label) label.textContent = state.stockExcel.fileName || "Yalnız .xlsx · en fazla 20 MB";
+    const picker = document.getElementById("stockExcelFilePicker");
+    const title = document.getElementById("stockExcelFileName");
+    const meta = document.getElementById("stockExcelFileMeta");
+    const action = document.getElementById("stockExcelFileAction");
+    if (picker) picker.classList.toggle("is-selected", Boolean(state.stockExcel.fileName));
+    if (title) title.textContent = state.stockExcel.fileName || "Excel dosyası seç";
+    if (meta) meta.textContent = state.stockExcel.fileName ? ".xlsx dosyası" : "Yalnız .xlsx · en fazla 20 MB";
+    if (action) action.textContent = state.stockExcel.fileName ? "Değiştir" : "Seç";
     return;
   }
   if (event.target.matches("[data-combo-input]")) {
@@ -775,6 +794,142 @@ function handleChange(event) {
   if (event.target.id === "shipment-evidence") { state.filters.shipmentEvidence = event.target.value; return renderActiveView(); }
   if (event.target.id === "ledger-supplier") { state.filters.ledgerSupplier = event.target.value; return renderActiveView(); }
   if (event.target.id === "ledger-date") { state.filters.ledgerDate = event.target.value; return renderActiveView(); }
+}
+
+function supplierStockProducts(query = "") {
+  const normalizedQuery = normalizeComboText(query);
+  return (state.context && Array.isArray(state.context.stockProducts) ? state.context.stockProducts : [])
+    .filter((product) => {
+      if (!normalizedQuery) return true;
+      return normalizeComboText(`${product.name || ""} ${product.category || ""} ${product.productCode || ""}`).includes(normalizedQuery);
+    })
+    .sort((left, right) => {
+      const leftName = normalizeComboText(left.name);
+      const rightName = normalizeComboText(right.name);
+      const leftRank = normalizedQuery && leftName.startsWith(normalizedQuery) ? 0 : 1;
+      const rightRank = normalizedQuery && rightName.startsWith(normalizedQuery) ? 0 : 1;
+      return leftRank - rightRank || String(left.name || "").localeCompare(String(right.name || ""), "tr");
+    });
+}
+
+function supplierStockProductRows(query = "") {
+  const products = supplierStockProducts(query);
+  if (!products.length) return '<p class="supplier-product-combobox__empty">Eşleşen stok ürünü bulunamadı.</p>';
+  return products.map((product) => `<button type="button" role="option" data-supplier-stock-product-id="${escapeHtml(product.id)}"><strong>${escapeHtml(product.name || "Stok ürünü")}</strong><small>${escapeHtml(product.category || "Kategorisiz")} · ${escapeHtml(product.baseUnit || product.unit || "adet")}</small></button>`).join("");
+}
+
+function supplierStockProductCombobox(item = null) {
+  const selected = item && item.stockProductId
+    ? (state.context.stockProducts || []).find((product) => String(product.id) === String(item.stockProductId))
+    : null;
+  const initialMode = selected ? "existing" : item ? "legacy" : "";
+  const inputValue = selected && selected.name || item && item.name || "";
+  const canCreate = has(CAPABILITIES.inventoryCatalogManage);
+  return `<div class="supplier-product-combobox span-2" data-supplier-product-combobox><label for="supplierStockProductSearch">Ürün Adı</label><input type="hidden" name="stockProductId" value="${escapeHtml(selected && selected.id || item && item.stockProductId || "")}"><input type="hidden" name="stockProductMode" value="${escapeHtml(initialMode)}"><div class="supplier-product-combobox__control"><input id="supplierStockProductSearch" name="name" type="search" value="${escapeHtml(inputValue)}" maxlength="180" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="supplierStockProductOptions" data-supplier-product-search required><button type="button" data-supplier-product-clear aria-label="Ürün seçimini temizle" ${selected ? "" : "hidden"}>×</button></div><div class="supplier-product-combobox__options" id="supplierStockProductOptions" role="listbox" hidden><button class="supplier-product-combobox__new" type="button" role="option" data-supplier-product-new ${canCreate ? "" : "disabled"}><strong>+ Yeni ürün</strong><small>${canCreate ? "Kategorisizler altında canonical stok ürünü oluştur" : "Yeni stok ürünü oluşturma yetkiniz yok"}</small></button><div class="supplier-product-combobox__results" data-supplier-product-results>${supplierStockProductRows("")}</div></div><p class="supplier-product-combobox__selection" data-supplier-product-selection ${selected ? "" : "hidden"}>${selected ? `<span><strong>${escapeHtml(selected.name)}</strong><small>${escapeHtml(selected.category || "Kategorisiz")} · ${escapeHtml(selected.baseUnit || selected.unit || "adet")}</small></span><em>Stok ürünüyle eşleşti</em>` : ""}</p></div>`;
+}
+
+function openSupplierProductCombobox(input = entityForm.querySelector("[data-supplier-product-search]")) {
+  const root = input && input.closest("[data-supplier-product-combobox]");
+  const options = root && root.querySelector(".supplier-product-combobox__options");
+  if (!input || !options) return;
+  const results = options.querySelector("[data-supplier-product-results]");
+  if (results) results.innerHTML = supplierStockProductRows(input.value);
+  options.hidden = false;
+  input.setAttribute("aria-expanded", "true");
+}
+
+function closeSupplierProductCombobox() {
+  const input = entityForm.querySelector("[data-supplier-product-search]");
+  const options = entityForm.querySelector(".supplier-product-combobox__options");
+  if (options) options.hidden = true;
+  if (input) input.setAttribute("aria-expanded", "false");
+}
+
+function setSupplierProductSelection(product = null, mode = "") {
+  const root = entityForm.querySelector("[data-supplier-product-combobox]");
+  if (!root) return;
+  const input = root.querySelector("[data-supplier-product-search]");
+  const idField = root.querySelector('input[name="stockProductId"]');
+  const modeField = root.querySelector('input[name="stockProductMode"]');
+  const clear = root.querySelector("[data-supplier-product-clear]");
+  const selection = root.querySelector("[data-supplier-product-selection]");
+  const baseSelect = entityForm.elements.baseUnit;
+  if (idField) idField.value = product ? String(product.id) : "";
+  if (modeField) modeField.value = mode;
+  if (product && input) input.value = String(product.name || "");
+  if (clear) clear.hidden = !product && mode !== "new";
+  if (baseSelect) {
+    if (product) baseSelect.value = String(product.baseUnit || product.unit || "adet");
+    baseSelect.disabled = Boolean(product);
+    baseSelect.closest("label")?.classList.toggle("is-canonical-locked", Boolean(product));
+  }
+  if (selection) {
+    selection.hidden = !product && mode !== "new";
+    selection.classList.toggle("is-new", mode === "new");
+    selection.innerHTML = product
+      ? `<span><strong>${escapeHtml(product.name || "Stok ürünü")}</strong><small>${escapeHtml(product.category || "Kategorisiz")} · ${escapeHtml(product.baseUnit || product.unit || "adet")}</small></span><em>Stok ürünüyle eşleşti</em>`
+      : mode === "new" ? '<span><strong>Yeni stok ürünü</strong><small>Kategorisizler altında oluşturulacak</small></span><em>Yeni kayıt</em>' : "";
+  }
+  closeSupplierProductCombobox();
+  updateSupplierConversionPreview();
+}
+
+function selectSupplierStockProduct(productId) {
+  const product = (state.context.stockProducts || []).find((item) => String(item.id) === String(productId));
+  if (!product) return;
+  setSupplierProductSelection(product, "existing");
+}
+
+function selectNewSupplierStockProduct() {
+  const input = entityForm.querySelector("[data-supplier-product-search]");
+  setSupplierProductSelection(null, "new");
+  if (input) { input.focus(); input.select(); }
+}
+
+function clearSupplierStockProductSelection() {
+  const input = entityForm.querySelector("[data-supplier-product-search]");
+  if (input) input.value = "";
+  setSupplierProductSelection(null, "");
+  if (input) { input.focus(); openSupplierProductCombobox(input); }
+}
+
+function syncSupplierProductSearch(input) {
+  const root = input.closest("[data-supplier-product-combobox]");
+  const mode = root && root.querySelector('input[name="stockProductMode"]');
+  const idField = root && root.querySelector('input[name="stockProductId"]');
+  if (mode && mode.value === "existing") setSupplierProductSelection(null, "");
+  else if (idField) idField.value = "";
+  openSupplierProductCombobox(input);
+}
+
+function handleSupplierProductKeydown(event) {
+  const root = event.target.closest && event.target.closest("[data-supplier-product-combobox]");
+  if (!root) return false;
+  const input = root.querySelector("[data-supplier-product-search]");
+  const options = root.querySelector(".supplier-product-combobox__options");
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeSupplierProductCombobox();
+    input?.focus();
+    return true;
+  }
+  const choices = [...root.querySelectorAll('.supplier-product-combobox__options button:not(:disabled)')];
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    openSupplierProductCombobox(input);
+    const current = choices.indexOf(document.activeElement);
+    const next = event.key === "ArrowDown"
+      ? choices[(current + 1 + choices.length) % choices.length]
+      : choices[(current - 1 + choices.length) % choices.length];
+    next?.focus();
+    return true;
+  }
+  if (event.key === "Enter" && event.target === input && options && !options.hidden) {
+    const productChoice = root.querySelector('[data-supplier-stock-product-id]:not(:disabled)');
+    const choice = productChoice || root.querySelector('[data-supplier-product-new]:not(:disabled)');
+    if (choice) { event.preventDefault(); choice.click(); return true; }
+  }
+  return false;
 }
 
 function updateSupplierConversionPreview() {
@@ -992,7 +1147,7 @@ function openIndependentProductForm(itemId = "") {
     description: "Tedarikçi ürününün birim yapısını tanımlayın.",
     submitLabel: "Kaydet",
     hideCancel: true,
-    body: `<input type="hidden" name="supplierId" value="${escapeHtml(supplierId)}"><div class="form-grid supplier-product-form"><label class="span-2">Ürün Adı<input name="name" value="${escapeHtml(item && item.name || "")}" maxlength="180" required></label><label>Toplu Birim<select name="bulkUnit" required>${unitOptions("bulk", item && (item.bulkUnit || item.purchaseUnit))}</select></label><label>Temel Birim<select name="baseUnit" required>${unitOptions("base", item && item.baseUnit)}</select></label><label>Birim Çarpan Miktarı<input name="conversionFactor" value="${Number(item && item.conversionFactor || 1)}" type="number" min="0.001" step="0.001" required></label><output class="supplier-conversion-preview span-2" id="supplierConversionPreview">${conversionText(item && (item.bulkUnit || item.purchaseUnit), item && item.baseUnit, item && item.conversionFactor)}</output></div>`
+    body: `<input type="hidden" name="supplierId" value="${escapeHtml(supplierId)}"><div class="form-grid supplier-product-form">${supplierStockProductCombobox(item)}<label>Toplu Birim<select name="bulkUnit" required>${unitOptions("bulk", item && (item.bulkUnit || item.purchaseUnit))}</select></label><label>Temel Birim<select name="baseUnit" required ${item && item.stockProductId ? "disabled" : ""}>${unitOptions("base", item && item.baseUnit)}</select></label><label>Birim Çarpan Miktarı<input name="conversionFactor" value="${Number(item && item.conversionFactor || 1)}" type="number" min="0.001" step="0.001" required></label><output class="supplier-conversion-preview span-2" id="supplierConversionPreview">${conversionText(item && (item.bulkUnit || item.purchaseUnit), item && item.baseUnit, item && item.conversionFactor)}</output></div>`
   });
 }
 
@@ -1058,7 +1213,7 @@ function openSupplierShipmentStockDecision(shipment) {
     kicker: "SEVKİYAT OLUŞTURULDU",
     title: "Sevkiyat stoğa eklensin mi?",
     description: unmatchedCount
-      ? `${matchedCount} eşleşmiş ürün doğrudan işlenecek; ${unmatchedCount} yeni ürün “Stokta Olmayanlar” kategorisinde oluşturulup aynı depoya eklenecek.`
+      ? `${matchedCount} eşleşmiş ürün doğrudan işlenecek; ${unmatchedCount} legacy ürün “Kategorisizler” altında canonical stoğa bağlanıp aynı depoya eklenecek.`
       : "Evet derseniz seçilen hedef depoya tek seferlik stok girişi ve ardından tedarikçi cari borcu uygulanır.",
     cancelLabel: "Hayır",
     cancelAction: "decline-stock",
@@ -1177,12 +1332,40 @@ async function saveIndependentProduct(mode, data) {
   const supplierId = value(data, "supplierId") || state.supplierWorkspace.supplierId;
   const itemId = entityForm.dataset.entityId;
   const existing = state.supplierWorkspace.independentProducts.find((item) => String(item.id) === String(itemId));
-  const body = { name: value(data,"name"), bulkUnit: value(data,"bulkUnit"), baseUnit: value(data,"baseUnit"), purchaseUnit: value(data,"bulkUnit"), conversionFactor: Number(value(data,"conversionFactor") || 1), stockProductId: existing && existing.stockProductId || "", active: existing ? existing.active !== false : true };
+  const productMode = String(entityForm.elements.stockProductMode?.value || "");
+  const stockProductId = String(entityForm.elements.stockProductId?.value || "");
+  const selectedProduct = (state.context.stockProducts || []).find((item) => String(item.id) === stockProductId);
+  const name = String(entityForm.querySelector("[data-supplier-product-search]")?.value || "").trim();
+  const bulkUnit = String(entityForm.elements.bulkUnit?.value || "").trim();
+  const baseUnit = selectedProduct
+    ? String(selectedProduct.baseUnit || selectedProduct.unit || "adet")
+    : String(entityForm.elements.baseUnit?.value || "").trim();
+  const conversionFactor = Number(entityForm.elements.conversionFactor?.value || 0);
+  if (!name) throw new Error("Ürün adı zorunludur.");
+  if (mode === "independent-product-create" && !selectedProduct && productMode !== "new") {
+    throw new Error("Mevcut bir stok ürünü seçin veya + Yeni ürün seçeneğini kullanın.");
+  }
+  const body = {
+    name: selectedProduct ? String(selectedProduct.name || name) : name,
+    bulkUnit,
+    baseUnit,
+    purchaseUnit: bulkUnit,
+    conversionFactor,
+    stockProductId: selectedProduct ? String(selectedProduct.id) : existing && productMode !== "new" ? String(existing.stockProductId || "") : "",
+    active: existing ? existing.active !== false : true
+  };
+  if (productMode === "new") {
+    body.newStockProduct = { name, bulkUnit, baseUnit, unitsPerBulkUnit: conversionFactor };
+  }
   const endpoint = mode === "independent-product-create"
     ? `/suppliers/${encodeURIComponent(supplierId)}/independent-products`
     : `/suppliers/${encodeURIComponent(supplierId)}/independent-products/${encodeURIComponent(itemId)}`;
   const payload = await api(endpoint, { method: mode === "independent-product-create" ? "POST" : "PUT", body, expectedRevision: state.revision });
-  mutationComplete(payload, ["suppliers","productAnalysis","dashboard"]);
+  if (payload.stockProduct) {
+    state.context.stockProducts = [...(state.context.stockProducts || []).filter((item) => String(item.id) !== String(payload.stockProduct.id)), payload.stockProduct]
+      .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "tr"));
+  }
+  mutationComplete(payload, ["suppliers","productAnalysis","dashboard","stock-references","stock"]);
 }
 
 async function saveSupplierShipment(data) {
@@ -1478,7 +1661,7 @@ async function runButtonMutation(button, operation, scopes, after) {
   catch (error) { toast(error.message || "İşlem tamamlanamadı.",true); }
   finally { setBusy(button,false); }
 }
-function mutationComplete(payload, scopes) { updateRevision(payload); invalidate(scopes); }
+function mutationComplete(payload, scopes) { updateRevision(payload); invalidate(scopes); if (scopes.includes("stock")) invalidateStockState(); }
 function setBusy(button,busy,label){ if(!button)return; if(busy){button.dataset.busyContent=button.innerHTML;button.disabled=true;button.textContent=label;}else{button.disabled=false;if(button.dataset.busyContent)button.innerHTML=button.dataset.busyContent;delete button.dataset.busyContent;} }
 
 async function submitLogin(event, scope) {
@@ -1548,6 +1731,7 @@ async function flushEventScopes(){
   const priorView=state.activeView;
   const dataScopes=scopes.filter((scope)=>scope!=="context");
   invalidate(dataScopes);
+  if(dataScopes.includes("stock"))invalidateStockState();
   if(["shipments","documents","ledger","suppliers","users","trash"].some((scope)=>scopes.includes(scope))){
     state.loaded.delete("notifications");
     window.clearTimeout(notificationTimer);

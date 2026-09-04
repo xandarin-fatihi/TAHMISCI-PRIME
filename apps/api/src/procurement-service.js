@@ -308,19 +308,32 @@ function createProcurementService(options = {}) {
     return mutate("supplier-independent-product.create", actor, mutation, (data, procurement, helpers) => {
       const supplier = findSupplier(procurement, supplierId, { active: true });
       const values = validateIndependentProductInput(input, { partial: false });
-      if (values.stockProductId) {
-        const stockProduct = findStockProduct(data.stockState, { stockProductId: values.stockProductId });
-        values.stockProductId = String(stockProduct.id);
-        values.stockMatchStatus = "matched";
+      const timestamp = isoNow(now);
+      const stockResolution = resolveIndependentProductStock(data, actor, values, input, timestamp);
+      if (!stockResolution.stockProduct) {
+        throw fail("Mevcut bir stok ürünü seçin veya yeni stok ürünü bilgilerini girin.", 422, "STOCK_PRODUCT_LINK_REQUIRED");
       }
       assertUniqueIndependentProduct(procurement.supplierIndependentProducts, supplier.id, values);
-      const timestamp = isoNow(now);
       const item = {
         id: createId("supplier-independent-product"), supplierId: supplier.id, ...values,
         active: true, createdAt: timestamp, updatedAt: timestamp, createdBy: actor.id, updatedBy: actor.id
       };
       procurement.supplierIndependentProducts.push(item);
-      return helpers.result("supplierIndependentProduct", item.id, { independentProduct: publicIndependentProduct(item) });
+      const supplierProduct = publicIndependentProduct(item);
+      return helpers.result("supplierIndependentProduct", item.id, {
+        independentProduct: supplierProduct,
+        supplierProduct,
+        stockProduct: publicStockProduct(stockResolution.stockProduct),
+        stockMatchStatus: "matched",
+        createdStockProduct: stockResolution.createdStockProduct,
+        inventoryRevision: Math.max(0, Number(data.revisions && data.revisions.inventory || 0)),
+        catalogRevision: Math.max(0, Number(data.revisions && data.revisions.catalog || 0)),
+        revisions: {
+          inventory: Math.max(0, Number(data.revisions && data.revisions.inventory || 0)),
+          catalog: Math.max(0, Number(data.revisions && data.revisions.catalog || 0)),
+          stock: Math.max(0, Number(data.revisions && data.revisions.stock || 0))
+        }
+      });
     });
   }
 
@@ -331,21 +344,74 @@ function createProcurementService(options = {}) {
       const item = findById(procurement.supplierIndependentProducts, itemId, "Bağımsız tedarikçi ürünü");
       if (item.supplierId !== supplier.id) throw fail("Bağımsız ürün bu tedarikçiye ait değil.", 404, "SUPPLIER_INDEPENDENT_PRODUCT_NOT_FOUND");
       const values = validateIndependentProductInput(input, { partial: true });
-      if (values.stockProductId) {
-        const stockProduct = findStockProduct(data.stockState, { stockProductId: values.stockProductId });
-        values.stockProductId = String(stockProduct.id);
-        values.stockMatchStatus = "matched";
-      }
-      assertUniqueIndependentProduct(procurement.supplierIndependentProducts, supplier.id, { ...item, ...values }, item.id);
       const timestamp = isoNow(now);
+      const stockResolution = resolveIndependentProductStock(data, actor, values, input, timestamp, item);
+      assertUniqueIndependentProduct(procurement.supplierIndependentProducts, supplier.id, { ...item, ...values }, item.id);
       Object.assign(item, values, {
         archivedAt: values.active === false ? item.archivedAt || timestamp : values.active === true ? null : item.archivedAt || null,
         removedAt: values.active === false ? item.removedAt || timestamp : values.active === true ? null : item.removedAt || null,
         updatedAt: timestamp,
         updatedBy: actor.id
       });
-      return helpers.result("supplierIndependentProduct", item.id, { independentProduct: publicIndependentProduct(item) });
+      const supplierProduct = publicIndependentProduct(item);
+      const linkedStockProduct = stockResolution.stockProduct
+        || (item.stockProductId ? findStockProduct(data.stockState, { stockProductId: item.stockProductId }) : null);
+      return helpers.result("supplierIndependentProduct", item.id, {
+        independentProduct: supplierProduct,
+        supplierProduct,
+        stockProduct: linkedStockProduct ? publicStockProduct(linkedStockProduct) : null,
+        stockMatchStatus: String(item.stockMatchStatus || (item.stockProductId ? "matched" : "unmatched")),
+        createdStockProduct: stockResolution.createdStockProduct,
+        inventoryRevision: Math.max(0, Number(data.revisions && data.revisions.inventory || 0)),
+        catalogRevision: Math.max(0, Number(data.revisions && data.revisions.catalog || 0)),
+        revisions: {
+          inventory: Math.max(0, Number(data.revisions && data.revisions.inventory || 0)),
+          catalog: Math.max(0, Number(data.revisions && data.revisions.catalog || 0)),
+          stock: Math.max(0, Number(data.revisions && data.revisions.stock || 0))
+        }
+      });
     });
+  }
+
+  function resolveIndependentProductStock(data, actor, values, input, timestamp, currentItem = null) {
+    const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+    const newStockProduct = source.newStockProduct && typeof source.newStockProduct === "object" && !Array.isArray(source.newStockProduct)
+      ? source.newStockProduct
+      : null;
+    let stockProduct = null;
+    let createdStockProduct = false;
+    if (values.stockProductId) {
+      stockProduct = findStockProduct(data.stockState, { stockProductId: values.stockProductId });
+    } else if (newStockProduct) {
+      requireCapability(actor, "inventory.catalog.manage");
+      const created = stockService.createCanonicalStockProduct(data.stockState, {
+        name: newStockProduct.name || values.name,
+        baseUnit: newStockProduct.baseUnit || values.baseUnit,
+        bulkUnit: newStockProduct.bulkUnit || values.bulkUnit,
+        unitsPerBulkUnit: newStockProduct.unitsPerBulkUnit ?? newStockProduct.conversionFactor ?? values.conversionFactor,
+        allowDecimal: newStockProduct.allowDecimal
+      }, { now: timestamp, actorId: actor.id });
+      data.stockState = created.stockState;
+      data.stockUpdatedAt = timestamp;
+      data.revisions = data.revisions && typeof data.revisions === "object" && !Array.isArray(data.revisions) ? data.revisions : {};
+      data.revisions.catalog = Math.max(0, Number(data.revisions.catalog || 0)) + 1;
+      data.revisions.inventory = Math.max(0, Number(data.revisions.inventory || 0)) + 1;
+      data.revisions.stock = Math.max(
+        Math.max(0, Number(data.revisions.stock || 0)) + 1,
+        data.revisions.catalog,
+        data.revisions.inventory
+      );
+      stockProduct = created.product;
+      createdStockProduct = true;
+    } else if (currentItem && currentItem.stockProductId) {
+      stockProduct = findStockProduct(data.stockState, { stockProductId: currentItem.stockProductId });
+    }
+    if (stockProduct) {
+      values.stockProductId = String(stockProduct.id);
+      values.stockMatchStatus = "matched";
+      values.baseUnit = String(stockProduct.baseUnit || stockProduct.unit || values.baseUnit || "adet");
+    }
+    return { stockProduct, createdStockProduct };
   }
 
   async function listShipments(actor, filters = {}) {
@@ -2233,9 +2299,11 @@ function validateShipmentItems(stockStateInput, requestedItems, createId, option
   const seen = new Set();
   return requestedItems.map((requested) => {
     const supplierProduct = supplierProducts.get(String(requested && requested.supplierProductId || ""));
-    let product = index.byCode.get(normalizeProductCode(requested && (requested.stockProductCode || requested.productCode)))
-      || index.byId.get(String(requested && (requested.stockProductId || requested.productId) || ""));
-    if (!product && supplierProduct && supplierProduct.stockProductId) product = index.byId.get(String(supplierProduct.stockProductId));
+    let product = supplierProduct && supplierProduct.stockProductId
+      ? index.byId.get(String(supplierProduct.stockProductId))
+      : null;
+    if (!product) product = index.byId.get(String(requested && (requested.stockProductId || requested.productId) || ""))
+      || index.byCode.get(normalizeProductCode(requested && (requested.stockProductCode || requested.productCode)));
     if (!product && supplierProduct) {
       const exactName = normalizeLookup(supplierProduct.name);
       const matches = [...index.byId.values()].filter((item) => isActiveStockProduct(item) && normalizeLookup(item.name) === exactName);
@@ -2395,8 +2463,8 @@ function findSupplier(procurement, supplierId, options = {}) {
 
 function findStockProduct(stockStateInput, input) {
   const index = indexStockProducts(stockStateInput);
-  const product = index.byCode.get(normalizeProductCode(input && (input.stockProductCode || input.productCode)))
-    || index.byId.get(String(input && (input.stockProductId || input.productId) || ""));
+  const product = index.byId.get(String(input && (input.stockProductId || input.productId) || ""))
+    || index.byCode.get(normalizeProductCode(input && (input.stockProductCode || input.productCode)));
   if (!product || !isActiveStockProduct(product)) throw fail("Aktif stok ürünü bulunamadı.", 409, "STOCK_PRODUCT_NOT_FOUND");
   return product;
 }
