@@ -1,4 +1,4 @@
-import { CAPABILITIES, escapeHtml, financeValues, has, paymentStatusLabel, state, trDate, trMoney } from "./state.js";
+import { CAPABILITIES, escapeHtml, financeValues, has, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260905-finance-mobile-upload-v1";
 
 export function renderLedger() {
   const supplierId = String(state.filters.ledgerSupplier || "");

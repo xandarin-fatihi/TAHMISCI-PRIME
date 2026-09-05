@@ -1,5 +1,15 @@
 const API_ROOT = "/api/procurement/v1";
 const inFlightGets = new Map();
+const documentUploads = new WeakMap();
+const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+const DOCUMENT_ERRORS = Object.freeze({
+  DOCUMENT_TOO_LARGE: "Fotoğraf çok büyük. Daha düşük çözünürlükte tekrar deneyin.",
+  DOCUMENT_PROCESSING_FAILED: "Fotoğraf işlenemedi. JPEG olarak tekrar deneyin.",
+  DOCUMENT_PROCESSING_UNAVAILABLE: "Bu görsel formatı sunucuda işlenemiyor. JPEG veya PNG deneyin.",
+  UNSUPPORTED_DOCUMENT_TYPE: "JPEG, PNG, WebP, HEIC, HEIF veya PDF seçin.",
+  DOCUMENT_MIME_MISMATCH: "Dosya biçimi doğrulanamadı.",
+  DOCUMENT_EXTENSION_MISMATCH: "Dosya biçimi doğrulanamadı."
+});
 
 export class ApiError extends Error {
   constructor(message, status, payload = null) {
@@ -87,18 +97,132 @@ export async function logout(scope) {
 }
 
 export async function uploadDocument(file, metadata, expectedRevision) {
-  if (!(file instanceof File)) throw new ApiError("Yüklenecek belge seçilmedi.", 400);
+  if (!(file instanceof File) || !file.size) throw new ApiError("Yüklenecek belge seçilmedi.", 400);
+  // Aynı dosya ve bağlantılar için eşzamanlı çağrılar ve belirsiz ağ hataları tek işlem kimliğini kullanır.
+  const key = JSON.stringify([metadata.documentType, metadata.supplierId, metadata.shipmentIds || [], metadata.shipmentItemIds || [], metadata.documentNumber, metadata.documentDate]);
+  let attempts = documentUploads.get(file);
+  if (!attempts) { attempts = new Map(); documentUploads.set(file, attempts); }
+  let attempt = attempts.get(key);
+  if (!attempt) { attempt = { id: requestId("document-upload"), task: null }; attempts.set(key, attempt); }
+  if (attempt.task) return attempt.task;
+  attempt.task = sendDocument(file, metadata, expectedRevision, attempt.id).catch((error) => {
+    attempt.task = null;
+    const message = error.code === "DOCUMENT_TOO_LARGE" && error.payload?.mimeType === "application/pdf"
+      ? "Belge çok büyük. PDF en fazla 10 MB olabilir."
+      : DOCUMENT_ERRORS[error.code] || (error.status === 0 ? "Bağlantı nedeniyle yükleme tamamlanamadı." : error.message);
+    throw new ApiError(message, error.status || 0, error.payload);
+  });
+  return attempt.task;
+}
+
+async function sendDocument(original, metadata, expectedRevision, operationId) {
+  const detectedType = await documentSignature(original);
+  const declaredType = String(original.type || "").toLowerCase();
+  const knownTypes = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf"];
+  const phoneTypes = ["image/jpeg", "image/heic", "image/heif"];
+  // iOS paylaşım/picker MIME'ı ve uzantısı, dönüştürülmüş fotoğrafın içeriğinden farklı olabilir.
+  const phoneAlias = phoneTypes.includes(declaredType) && phoneTypes.includes(detectedType);
+  const mimeType = (!knownTypes.includes(declaredType) || phoneAlias) ? detectedType || "application/octet-stream" : declaredType;
+  const file = mimeType === detectedType ? await prepareDocumentImage(original, detectedType) : original;
+  const maxBytes = detectedType === "application/pdf" ? 10 * 1024 * 1024 : MAX_DOCUMENT_BYTES;
+  if (file.size > maxBytes) throw new ApiError(DOCUMENT_ERRORS.DOCUMENT_TOO_LARGE, 413, { code: "DOCUMENT_TOO_LARGE", mimeType: detectedType });
+  let name = file.name || "belge";
+  const extension = /\.([^.]+)$/.exec(name)?.[1]?.toLowerCase();
+  if (file === original && ["jpg", "jpeg", "heic", "heif"].includes(extension) && phoneTypes.includes(detectedType)) {
+    name = name.replace(/\.[^.]+$/, detectedType === "image/jpeg" ? ".jpg" : detectedType === "image/heic" ? ".heic" : ".heif");
+  }
   const headers = new Headers({
-    "Content-Type": file.type || "application/octet-stream",
-    "X-File-Name": encodeURIComponent(file.name || "belge"),
-    "X-Document-Type": metadata.documentType || "diğer",
+    "Content-Type": file === original ? mimeType : file.type,
+    "X-File-Name": encodeURIComponent(name),
+    "X-Document-Type": encodeURIComponent(metadata.documentType || "diğer"),
     "X-Supplier-Id": metadata.supplierId || "",
     "X-Shipment-Ids": (metadata.shipmentIds || []).join(","),
     "X-Shipment-Item-Ids": (metadata.shipmentItemIds || []).join(","),
-    "X-Document-Number": metadata.documentNumber || "",
+    "X-Document-Number": encodeURIComponent(metadata.documentNumber || ""),
     "X-Document-Date": metadata.documentDate || ""
   });
-  return api("/documents", { method: "POST", headers, body: file, raw: true, expectedRevision, requestId: requestId("document-upload") });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90000);
+  try {
+    const payload = await api("/documents", { method: "POST", headers, body: file, raw: true, expectedRevision, requestId: operationId, signal: controller.signal });
+    if (!payload?.document?.id) throw new ApiError("Bağlantı nedeniyle yükleme tamamlanamadı.", 0);
+    return payload;
+  } finally { clearTimeout(timeout); }
+}
+
+async function documentSignature(file) {
+  try {
+    const slice = file.slice(0, 32);
+    const bytes = new Uint8Array(typeof slice.arrayBuffer === "function" ? await slice.arrayBuffer() : await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(slice);
+    }));
+    const text = (start, end) => String.fromCharCode(...bytes.slice(start, end));
+    if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return "image/jpeg";
+    if ([137,80,78,71,13,10,26,10].every((byte, index) => bytes[index] === byte)) return "image/png";
+    if (text(0, 4) === "RIFF" && text(8, 12) === "WEBP") return "image/webp";
+    if (text(0, 5) === "%PDF-") return "application/pdf";
+    if (text(4, 8) === "ftyp") {
+      if (["heic", "heix", "hevc", "hevx", "heim", "heis"].includes(text(8, 12))) return "image/heic";
+      if (["heif", "mif1", "msf1"].includes(text(8, 12))) return "image/heif";
+    }
+  } catch (_error) { /* Dosya okuma/format doğrulamasını sunucu tamamlar. */ }
+  return "";
+}
+
+async function prepareDocumentImage(file, mimeType) {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) return file;
+  let decoded;
+  let canvas;
+  try {
+    if (typeof createImageBitmap === "function") {
+      try { decoded = await createImageBitmap(file, { imageOrientation: "from-image" }); } catch (_error) { /* WebKit native fallback */ }
+    }
+    if (!decoded) decoded = await decodeDocumentImage(file);
+    const width = decoded.naturalWidth || decoded.width;
+    const height = decoded.naturalHeight || decoded.height;
+    if (width > 24000 || height > 24000 || width * height > 60000000) {
+      throw new ApiError(DOCUMENT_ERRORS.DOCUMENT_TOO_LARGE, 413, { code: "DOCUMENT_TOO_LARGE" });
+    }
+    const scale = Math.min(1, 4000 / Math.max(width, height));
+    if (scale === 1 && file.size <= 2 * 1024 * 1024) return file;
+    canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return file;
+    context.drawImage(decoded, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, mimeType === "image/jpeg" ? "image/jpeg" : "image/webp", .85));
+    if (!blob || (scale === 1 && blob.size >= file.size)) return file;
+    const extension = blob.type === "image/jpeg" ? "jpg" : blob.type === "image/webp" ? "webp" : "png";
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "belge"}.${extension}`, { type: blob.type, lastModified: file.lastModified });
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    return file;
+  } finally {
+    decoded?.close?.();
+    if (decoded instanceof HTMLImageElement) decoded.src = "";
+    if (canvas) { canvas.width = 0; canvas.height = 0; }
+  }
+}
+
+function decodeDocumentImage(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    const finish = (error) => {
+      clearTimeout(timeout);
+      image.onload = image.onerror = null;
+      URL.revokeObjectURL(url);
+      if (error) { image.src = ""; reject(error); } else resolve(image);
+    };
+    const timeout = setTimeout(() => finish(new Error("Görsel okuma zaman aşımı.")), 15000);
+    image.onload = () => finish();
+    image.onerror = () => finish(new Error("Görsel tarayıcıda çözülemedi."));
+    image.src = url;
+  });
 }
 
 export async function uploadStockWorkbook(file, targetLocationId, revisions = {}) {

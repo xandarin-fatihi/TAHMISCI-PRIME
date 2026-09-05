@@ -15,6 +15,61 @@ const {
   sanitizeOriginalFilename
 } = require("../src/procurement-documents");
 const { createProcurementImageProcessor } = require("../src/procurement-image-processor");
+const sharp = require("sharp");
+
+test("mobile upload: 48 MP JPEG küçültülür, EXIF yönü uygulanır ve metadata silinir", async (context) => {
+  const runRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tahmisci-mobile-sharp-"));
+  context.after(() => fs.rm(runRoot, { recursive: true, force: true }));
+  const service = createProcurementDocumentService({ documentsDir: runRoot, imageProcessor: createProcurementImageProcessor(), strictImageProcessing: true });
+  const jpeg = await sharp({ create: { width: 8000, height: 6000, channels: 3, background: "#aaccee" } })
+    .withMetadata({ orientation: 6 }).jpeg().toBuffer();
+  const stored = await service.storeUpload({ buffer: jpeg, originalName: "telefon.jpg", declaredMimeType: "image/jpeg" });
+  service.commitUpload(stored);
+  const primary = await sharp((await service.resolveContent(stored)).buffer).metadata();
+  const thumbnail = await sharp((await service.resolveContent(stored, { thumbnail: true })).buffer).metadata();
+  assert.deepEqual([primary.width, primary.height], [3000, 4000]);
+  assert.equal(primary.exif, undefined);
+  assert.equal(primary.orientation, undefined);
+  assert.ok(Math.max(thumbnail.width, thumbnail.height) <= 480);
+});
+
+test("mobile upload: PDF aynı kalır; küçük JPEG büyütülmez; 25 MB ve 60 MP sınırları korunur", async (context) => {
+  const runRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tahmisci-mobile-limits-"));
+  context.after(() => fs.rm(runRoot, { recursive: true, force: true }));
+  const service = createProcurementDocumentService({ documentsDir: runRoot, imageProcessor: createProcurementImageProcessor(), strictImageProcessing: true });
+  const pdf = Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF\n");
+  const document = await service.storeUpload({ buffer: pdf, originalName: "belge.pdf", declaredMimeType: "application/pdf" });
+  assert.deepEqual((await service.resolveContent(document)).buffer, pdf);
+  const jpeg = await sharp({ create: { width: 40, height: 30, channels: 3, background: "white" } }).jpeg().toBuffer();
+  const image = await service.storeUpload({ buffer: jpeg, originalName: "küçük.jpg", declaredMimeType: "application/octet-stream" });
+  assert.deepEqual([image.width, image.height], [40, 30]);
+  await assert.rejects(service.storeUpload({ buffer: Buffer.alloc(25 * 1024 * 1024 + 1), originalName: "büyük.jpg" }), (error) => error.code === "DOCUMENT_TOO_LARGE" && error.status === 413);
+  const oversized = Buffer.from(jpeg);
+  const sof = oversized.indexOf(Buffer.from([255, 192]));
+  assert.ok(sof > 0);
+  oversized.writeUInt16BE(8000, sof + 5);
+  oversized.writeUInt16BE(8000, sof + 7);
+  await assert.rejects(service.storeUpload({ buffer: oversized, originalName: "64mp.jpg" }), (error) => error.code === "DOCUMENT_TOO_LARGE");
+});
+
+test("mobile upload: HEIC dönüştürülür veya kontrollü reddedilir, ham dosya saklanmaz", async (context) => {
+  const runRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tahmisci-mobile-heic-"));
+  context.after(() => fs.rm(runRoot, { recursive: true, force: true }));
+  const heic = Buffer.from("00000018667479706865696300000000686569636d696631", "hex");
+  const input = { buffer: heic, originalName: "kamera.heic", declaredMimeType: "image/heif" };
+  const noProcessor = createProcurementDocumentService({ documentsDir: path.join(runRoot, "none") });
+  await assert.rejects(noProcessor.storeUpload(input), (error) => error.code === "DOCUMENT_PROCESSING_UNAVAILABLE");
+  const unavailable = createProcurementDocumentService({ documentsDir: path.join(runRoot, "codec"), imageProcessor: async () => { throw new Error("heif: Unsupported feature: Unsupported codec (4.3000)"); } });
+  await assert.rejects(unavailable.storeUpload(input), (error) => error.code === "DOCUMENT_PROCESSING_UNAVAILABLE");
+  const malformed = createProcurementDocumentService({ documentsDir: path.join(runRoot, "bad"), imageProcessor: createProcurementImageProcessor() });
+  await assert.rejects(malformed.storeUpload(input), (error) => ["DOCUMENT_PROCESSING_FAILED", "DOCUMENT_PROCESSING_UNAVAILABLE"].includes(error.code));
+  assert.deepEqual(await fs.readdir(runRoot), []);
+  const converted = createProcurementDocumentService({ documentsDir: path.join(runRoot, "ok"), imageProcessor: async ({ buffer }) => { assert.deepEqual(buffer, heic); return { buffer: PNG_1X1, reencoded: true }; } });
+  const stored = await converted.storeUpload(input);
+  assert.equal(stored.mimeType, "image/png");
+  assert.equal(stored.metadataStripped, true);
+  assert.deepEqual((await converted.resolveContent(stored)).buffer, PNG_1X1);
+});
 
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -107,7 +162,7 @@ test("MIME/uzantı/boyut kontrolleri yazmadan önce hata verir", async (context)
     (error) => error.code === "DOCUMENT_MIME_MISMATCH"
   );
   await assert.rejects(
-    service.storeUpload({ buffer: Buffer.alloc(PNG_1X1.length + 1), originalName: "fatura.png", declaredMimeType: "image/png" }),
+    service.storeUpload({ buffer: JPEG_1X1, originalName: "fatura.jpg", declaredMimeType: "image/jpeg" }),
     (error) => error.code === "DOCUMENT_TOO_LARGE" && error.status === 413
   );
   assert.deepEqual(await fs.readdir(runRoot), [], "geçersiz içerik fiziksel dosya veya index üretmemeli");

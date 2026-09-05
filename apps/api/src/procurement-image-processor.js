@@ -21,8 +21,15 @@ function createProcurementImageProcessor(options = {}) {
     }).timeout({ seconds: timeoutSeconds });
 
     // EXIF yönü fiziksel piksellere uygulanır; metadata bilerek taşınmaz.
+    const metadata = await source.metadata();
+    if (metadata.width > 24000 || metadata.height > 24000 || metadata.width * metadata.height > MAX_INPUT_PIXELS) {
+      const error = new Error("Görsel boyut sınırını aşıyor.");
+      error.code = "DOCUMENT_TOO_LARGE";
+      throw error;
+    }
     const primary = await source
       .rotate()
+      .resize({ width: 4000, height: 4000, fit: "inside", withoutEnlargement: true })
       .webp({ quality: primaryQuality, effort: 4, smartSubsample: true })
       .toBuffer();
     const thumbnailBuffer = await sharp(primary, {
@@ -30,6 +37,7 @@ function createProcurementImageProcessor(options = {}) {
       limitInputPixels: MAX_INPUT_PIXELS,
       sequentialRead: true
     })
+      .timeout({ seconds: timeoutSeconds })
       .resize({ width: maxThumbnailSide, height: maxThumbnailSide, fit: "inside", withoutEnlargement: true })
       .webp({ quality: thumbnailQuality, effort: 4, smartSubsample: true })
       .toBuffer();

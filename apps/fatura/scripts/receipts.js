@@ -1,5 +1,5 @@
-import { shipmentFinance } from "./accounting.js?v=20260905-finance";
-import { CAPABILITIES, comboField, escapeHtml, has, state, statusBadge, trDate, trMoney } from "./state.js";
+import { shipmentFinance } from "./accounting.js?v=20260905-finance-mobile-upload-v1";
+import { CAPABILITIES, comboField, escapeHtml, has, state, statusBadge, trDate, trMoney } from "./state.js?v=20260905-finance-mobile-upload-v1";
 
 export function renderShipments() {
   const query = String(state.filters.shipments || "").toLocaleLowerCase("tr-TR");

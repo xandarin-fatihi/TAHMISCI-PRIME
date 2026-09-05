@@ -1,13 +1,13 @@
-import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js";
-import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, updateRevision, value } from "./state.js";
-import { renderDashboard } from "./dashboard.js?v=20260902-final-ui";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260903-supplier-create-fix-v1";
-import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
-import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260905-finance";
-import { ledgerDetail, ledgerEntryFormBody, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, userAccessFormBody } from "./accounting.js?v=20260905-finance";
-import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260904-stock-lifecycle-upload-v1";
-import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260902-final-ui";
-import { confirmAction, requestText } from "./ui-dialogs.js";
+import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260905-finance-mobile-upload-v1";
+import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, updateRevision, value } from "./state.js?v=20260905-finance-mobile-upload-v1";
+import { renderDashboard } from "./dashboard.js?v=20260905-finance-mobile-upload-v1";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260905-finance-mobile-upload-v1";
+import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260905-finance-mobile-upload-v1";
+import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260905-finance-mobile-upload-v1";
+import { ledgerDetail, ledgerEntryFormBody, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, userAccessFormBody } from "./accounting.js?v=20260905-finance-mobile-upload-v1";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260905-finance-mobile-upload-v1";
+import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260905-finance-mobile-upload-v1";
+import { confirmAction, requestText } from "./ui-dialogs.js?v=20260905-finance-mobile-upload-v1";
 
 const app = document.getElementById("faturaApp");
 const shell = document.getElementById("shell");
@@ -18,6 +18,7 @@ const entityDialog = document.getElementById("entityDialog");
 const detailDialog = document.getElementById("detailDialog");
 const entityForm = document.getElementById("entityForm");
 let supplierStockBulk = null;
+let entityUploadState = null;
 const profileMenu = document.getElementById("profileMenu");
 const notificationDrawer = document.getElementById("notificationDrawer");
 const notificationScrim = document.getElementById("notificationScrim");
@@ -70,8 +71,8 @@ document.addEventListener("focusin", (event) => {
 });
 document.addEventListener("submit", handleAppSubmit);
 entityForm.addEventListener("submit", submitEntityForm);
-entityDialog.addEventListener("cancel", (event) => { if (entityForm.dataset.mode === "supplier-stock-bulk-add" ? supplierStockBulk?.busy : document.getElementById("dialogSubmit").disabled) event.preventDefault(); });
-entityDialog.addEventListener("close", cleanupEntityDialog);
+entityDialog.addEventListener("cancel", (event) => { if (supplierStockBulk?.busy || document.getElementById("dialogSubmit").getAttribute("aria-busy") === "true") event.preventDefault(); });
+entityDialog.addEventListener("close", () => { if (!entityDialog.open) cleanupEntityDialog(); });
 detailDialog.addEventListener("close", cleanupDetailDialog);
 document.getElementById("adminLoginForm").addEventListener("submit", (event) => submitLogin(event, "admin"));
 document.getElementById("personelLoginForm").addEventListener("submit", (event) => submitLogin(event, "personel"));
@@ -733,7 +734,10 @@ async function handleClick(event) {
   if (button.dataset.supplierStockProductId) return selectSupplierStockProduct(button.dataset.supplierStockProductId);
   if (button.hasAttribute("data-supplier-product-clear")) return clearSupplierStockProductSelection();
   if (button.dataset.cancelAction === "decline-stock") return declineSupplierShipmentStock(button);
-  if (button.classList.contains("dialog-close")) return closeEntityDialog();
+  if (button.classList.contains("dialog-close")) {
+    if (document.getElementById("dialogSubmit").getAttribute("aria-busy") === "true") return;
+    return closeEntityDialog();
+  }
   if (button.classList.contains("detail-close")) return closeDetailDialog();
   if (button.dataset.openSupplier) return openSupplier(button.dataset.openSupplier);
   if (button.hasAttribute("data-supplier-back")) return closeSupplierWorkspace();
@@ -840,9 +844,14 @@ function handleChange(event) {
     return;
   }
   if (["shipmentFile", "shipmentCameraFile"].includes(event.target.name)) {
+    retainUploadFile(event.target, "shipment");
     const otherName = event.target.name === "shipmentFile" ? "shipmentCameraFile" : "shipmentFile";
     if (event.target.files?.length && entityForm.elements[otherName]) entityForm.elements[otherName].value = "";
     return updateSupplierShipmentSubmitState();
+  }
+  if (["file", "paymentFile"].includes(event.target.name) && event.target.form === entityForm) {
+    retainUploadFile(event.target, event.target.name);
+    return;
   }
   if (event.target.id === "archive-supplier-filter") { state.filters.documentsSupplier = event.target.value; return renderActiveView(); }
   if (event.target.id === "archive-date-filter") { state.filters.documentsDate = event.target.value; return renderActiveView(); }
@@ -1154,6 +1163,10 @@ function normalizedDialogHeading(value) {
 
 function openEntityDialog(config) {
   if (config.mode !== "supplier-stock-bulk-add") supplierStockBulk = null;
+  entityUploadState = ["supplier-shipment-create", "document-upload", "payment-create"].includes(config.mode)
+    ? { files: new Map(), operations: new Map(), shipment: null } : null;
+  if (entityUploadState) entityForm.dataset.pwaDirty = "true";
+  else delete entityForm.dataset.pwaDirty;
   entityForm.dataset.mode = config.mode;
   entityForm.dataset.entityId = config.entityId || "";
   const kicker = config.kicker || "YENİ KAYIT";
@@ -1167,6 +1180,7 @@ function openEntityDialog(config) {
   const submitButton = document.getElementById("dialogSubmit");
   submitButton.disabled = config.submitDisabled === true;
   submitButton.removeAttribute("aria-busy");
+  delete submitButton.dataset.busyContent;
   submitButton.textContent = config.submitLabel || "Kaydet";
   const cancelButton = entityDialog.querySelector("footer .dialog-close");
   if (cancelButton) {
@@ -1182,7 +1196,7 @@ function openEntityDialog(config) {
 }
 function closeEntityDialog() { if (supplierStockBulk?.busy) return; if (entityDialog.open) entityDialog.close(); cleanupEntityDialog(); }
 function closeDetailDialog() { if (detailDialog.open) detailDialog.close(); cleanupDetailDialog(); }
-function cleanupEntityDialog() { supplierStockBulk = null; entityForm.reset(); delete entityForm.dataset.mode; delete entityForm.dataset.entityId; const cancelButton = entityDialog.querySelector("footer .dialog-close"); if (cancelButton) { cancelButton.textContent = "Vazgeç"; delete cancelButton.dataset.cancelAction; } entityDialog.classList.remove("fatura-dialog--receipt", "fatura-dialog--supplier-stock-bulk"); syncDialogOpenState(); }
+function cleanupEntityDialog() { supplierStockBulk = null; entityUploadState = null; delete entityForm.dataset.pwaDirty; entityForm.reset(); delete entityForm.dataset.mode; delete entityForm.dataset.entityId; const cancelButton = entityDialog.querySelector("footer .dialog-close"); if (cancelButton) { cancelButton.textContent = "Vazgeç"; delete cancelButton.dataset.cancelAction; } entityDialog.classList.remove("fatura-dialog--receipt", "fatura-dialog--supplier-stock-bulk"); syncDialogOpenState(); }
 function cleanupDetailDialog() { state.detail = null; if (currentObjectUrl) { URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = ""; } syncDialogOpenState(); }
 function syncDialogOpenState() { document.body.classList.toggle("dialog-open", entityDialog.open || detailDialog.open); }
 
@@ -1416,24 +1430,27 @@ function updateSupplierShipmentSubmitState() {
 }
 
 function selectedSupplierShipmentFile() {
-  return entityForm.elements.shipmentFile?.files?.[0] || entityForm.elements.shipmentCameraFile?.files?.[0] || null;
+  return entityUploadState?.files.get("shipment") || entityForm.elements.shipmentFile?.files?.[0] || entityForm.elements.shipmentCameraFile?.files?.[0] || null;
 }
 
-async function prepareImageForUpload(file) {
-  if (!(file instanceof File) || file.size <= 2 * 1024 * 1024 || !/^image\/(?:jpeg|png|webp)$/i.test(file.type) || typeof createImageBitmap !== "function") return file;
-  try {
-    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-    const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    canvas.getContext("2d", { alpha: false }).drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", .84));
-    return blob ? new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "belge"}.jpg`, { type: "image/jpeg", lastModified: Date.now() }) : file;
-  } catch (_error) {
-    return file;
+function retainUploadFile(input, key) {
+  if (!entityUploadState || input.form !== entityForm) return;
+  const file = input.files?.[0];
+  if (file?.size) entityUploadState.files.set(key, file);
+  const retained = entityUploadState.files.get(key);
+  if (key !== "shipment" && retained) {
+    input.required = false;
+    let name = input.parentElement.querySelector("[data-retained-file]");
+    if (!name) { name = document.createElement("small"); name.dataset.retainedFile = "true"; input.after(name); }
+    name.textContent = retained.name;
   }
+}
+
+function uploadFormMutation(path, body) {
+  const key = JSON.stringify([path, body]);
+  let id = entityUploadState.operations.get(key);
+  if (!id) { id = requestId("upload-form"); entityUploadState.operations.set(key, id); }
+  return api(path, { method: "POST", body, expectedRevision: state.revision, requestId: id });
 }
 
 function openSupplierShipmentStockDecision(shipment) {
@@ -1620,8 +1637,7 @@ async function saveSupplierShipment(data) {
   const products = new Map((state.supplierWorkspace.independentProducts || []).map((item) => [String(item.id), item]));
   const selectedRows = [...document.querySelectorAll("[data-supplier-shipment-line]")].filter((row) => row.querySelector("[data-supplier-line-enabled]")?.checked);
   if (!selectedRows.length) throw new Error("En az bir ürün seçin.");
-  const selectedFile = selectedSupplierShipmentFile();
-  const file = await prepareImageForUpload(selectedFile);
+  const file = selectedSupplierShipmentFile();
   if (!(file instanceof File) || file.size <= 0) throw new Error("Sevkiyat oluşturmak için belge ekleyin.");
   const documentType = "irsaliye";
   const destinationLocationId = value(data, "destinationLocationId");
@@ -1632,12 +1648,16 @@ async function saveSupplierShipment(data) {
     const lineTotalKurus = integerKurus(row.querySelector("[data-supplier-line-total]").value);
     return { supplierProductId: product.id, supplierProductName: product.name, stockProductId: product.stockProductId || "", quantity: quantityBulk, quantityBulk, unit: product.bulkUnit || product.purchaseUnit, purchaseUnit: product.bulkUnit || product.purchaseUnit, bulkUnit: product.bulkUnit || product.purchaseUnit, baseUnit: product.baseUnit, conversionFactor: Number(product.conversionFactor || 1), totalKurus: lineTotalKurus, unitPriceKurus: quantityBulk > 0 ? Math.round(lineTotalKurus / quantityBulk) : 0 };
   });
-  let payload = await api("/shipments", { method: "POST", body: { supplierId, destinationLocationId, shipmentDate: value(data,"shipmentDate"), documentDate: value(data,"shipmentDate"), documentType, finalized: true, items }, expectedRevision: state.revision });
-  mutationComplete(payload, ["shipments","dashboard","documents","productAnalysis"]);
-  const shipmentId = payload.shipment.id;
-  const documentPayload = await uploadDocument(file, { documentType, supplierId, shipmentIds: [shipmentId], documentDate: value(data,"shipmentDate") }, state.revision);
+  let shipment = entityUploadState.shipment;
+  if (!shipment) {
+    const created = await uploadFormMutation("/shipments", { supplierId, destinationLocationId, shipmentDate: value(data,"shipmentDate"), documentDate: value(data,"shipmentDate"), documentType, finalized: true, items });
+    mutationComplete(created, ["shipments","dashboard","documents","productAnalysis"]);
+    shipment = entityUploadState.shipment = created.shipment;
+  }
+  const shipmentId = shipment.id;
+  const documentPayload = await uploadDocument(file, { documentType, supplierId, shipmentIds: [shipmentId], documentDate: shipment.documentDate || shipment.shipmentDate || value(data,"shipmentDate") }, state.revision);
   mutationComplete(documentPayload, ["documents","shipments","dashboard"]);
-  payload = await api(`/shipments/${encodeURIComponent(shipmentId)}/submit`, { method: "POST", body: {}, expectedRevision: state.revision });
+  const payload = await uploadFormMutation(`/shipments/${encodeURIComponent(shipmentId)}/submit`, {});
   mutationComplete(payload, ["shipments","dashboard","documents","productAnalysis"]);
   return payload.shipment;
 }
@@ -1681,18 +1701,18 @@ async function saveShipment(data) {
   }
 }
 async function saveDocument(data) {
-  const file = data.get("file");
+  const file = entityUploadState?.files.get("file") || data.get("file");
   const payload = await uploadDocument(file, { documentType: value(data,"documentType"), supplierId: value(data,"supplierId"), shipmentIds: value(data,"shipmentId") ? [value(data,"shipmentId")] : [], documentNumber: value(data,"documentNumber"), documentDate: value(data,"documentDate") }, state.revision);
   mutationComplete(payload, ["documents","shipments","dashboard"]);
 }
 async function savePayment(data) {
   const supplierId = value(data,"supplierId");
   const paymentDate = value(data,"paymentDate");
-  const file = data.get("paymentFile");
+  const file = entityUploadState?.files.get("paymentFile") || data.get("paymentFile");
   if (!(file instanceof File) || file.size <= 0) throw new Error("Dekont veya fatura belgesi seçin.");
   const documentPayload = await uploadDocument(file, { documentType: "diğer", supplierId, documentDate: paymentDate }, state.revision);
   mutationComplete(documentPayload, ["documents"]);
-  const payload = await api("/payments", { method: "POST", body: { supplierId, amountKurus: integerKurus(value(data,"amount")), paymentDate, documentId: documentPayload.document && documentPayload.document.id || "", note: value(data,"note") }, expectedRevision: state.revision });
+  const payload = await uploadFormMutation("/payments", { supplierId, amountKurus: integerKurus(value(data,"amount")), paymentDate, documentId: documentPayload.document && documentPayload.document.id || "", note: value(data,"note") });
   mutationComplete(payload, ["ledger","suppliers","dashboard","documents"]);
 }
 async function saveLedgerEntry(data) {
@@ -1998,7 +2018,7 @@ function mutationComplete(payload, scopes) {
   invalidate(affected);
   if (affected.includes("stock")) invalidateStockState();
 }
-function setBusy(button,busy,label){ if(!button)return; if(busy){button.dataset.busyContent=button.innerHTML;button.disabled=true;button.textContent=label;}else{button.disabled=false;if(button.dataset.busyContent)button.innerHTML=button.dataset.busyContent;delete button.dataset.busyContent;} }
+function setBusy(button,busy,label){ if(!button)return; if(busy){button.dataset.busyContent=button.innerHTML;button.disabled=true;button.setAttribute("aria-busy","true");button.textContent=label;}else{button.disabled=false;button.removeAttribute("aria-busy");if(button.dataset.busyContent)button.innerHTML=button.dataset.busyContent;delete button.dataset.busyContent;} }
 
 async function submitLogin(event, scope) {
   event.preventDefault(); const form=event.currentTarget; const button=form.querySelector('button[type="submit"]'); if(button.disabled)return; setBusy(button,true,"Giriş yapılıyor…");

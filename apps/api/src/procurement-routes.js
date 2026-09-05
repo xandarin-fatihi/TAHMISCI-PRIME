@@ -45,10 +45,14 @@ function registerProcurementRoutes(deps = {}) {
     : (req) => resolveActorFromRequest(req, store);
   const authenticated = [auth.requireRecipe, actorMiddleware(resolveActor)];
   const mutationMiddlewares = [requireRequestOrigin, ...authenticated, riskOperationLimiter];
-  const rawUploadLimit = Math.max(normalizeUploadLimit(deps.maxUploadBytes || deps.config && deps.config.procurementMaxUploadBytes), 25 * 1024 * 1024);
-  const rawImageParser = express.raw({
-    type: ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf", "application/octet-stream"],
-    limit: rawUploadLimit
+  const parseDocumentBody = express.raw({
+    // MIME başlığı eksik olsa da içerik belge servisinde imzayla doğrulanır.
+    type: () => true,
+    limit: 25 * 1024 * 1024
+  });
+  const rawImageParser = (req, res, next) => parseDocumentBody(req, res, (error) => {
+    if (error && error.type === "entity.too.large") return next(fail("Belge yükleme boyut sınırını aşıyor.", 413, "DOCUMENT_TOO_LARGE"));
+    next(error);
   });
 
   app.get(`${API_ROOT}/context`, ...authenticated, asyncRoute(async (req, res) => {
@@ -656,11 +660,11 @@ function isRevisionConflict(error) {
 function documentInputFromHeaders(req) {
   return {
     originalName: decodeHeaderValue(requestHeader(req, "X-File-Name")),
-    documentType: requestHeader(req, "X-Document-Type"),
+    documentType: decodeHeaderValue(requestHeader(req, "X-Document-Type")),
     supplierId: requestHeader(req, "X-Supplier-Id"),
     shipmentIds: splitHeader(requestHeader(req, "X-Shipment-Ids")),
     shipmentItemIds: splitHeader(requestHeader(req, "X-Shipment-Item-Ids")),
-    documentNumber: requestHeader(req, "X-Document-Number"),
+    documentNumber: decodeHeaderValue(requestHeader(req, "X-Document-Number")),
     documentDate: requestHeader(req, "X-Document-Date")
   };
 }

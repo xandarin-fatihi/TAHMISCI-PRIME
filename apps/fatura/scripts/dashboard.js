@@ -1,4 +1,4 @@
-import { escapeHtml, hasSection, state, statusBadge, trDate, trMoney } from "./state.js";
+import { escapeHtml, hasSection, state, statusBadge, trDate, trMoney } from "./state.js?v=20260905-finance-mobile-upload-v1";
 
 export function renderDashboard() {
   const dashboard = state.dashboard || {};

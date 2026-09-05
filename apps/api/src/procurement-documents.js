@@ -73,7 +73,7 @@ function createProcurementDocumentService(options = {}) {
   }
 
   async function storeUpload({ buffer, originalName, declaredMimeType } = {}) {
-    validateUploadBuffer(buffer, Math.max(maxUploadBytes, MAX_INCOMING_IMAGE_BYTES));
+    validateUploadBuffer(buffer, MAX_INCOMING_IMAGE_BYTES);
     const detectedMimeType = detectDocumentType(buffer);
     if (!detectedMimeType) {
       throw documentError("UNSUPPORTED_DOCUMENT_TYPE", "Yalnızca geçerli PDF, JPEG, PNG, WebP, HEIC veya HEIF belgeleri yüklenebilir.");
@@ -90,7 +90,7 @@ function createProcurementDocumentService(options = {}) {
       : sanitizeDocument(buffer, detectedMimeType);
     processed = detectedMimeType === "application/pdf"
       ? { ...processed, reencoded: false, thumbnailBuffer: null, thumbnailMimeType: "" }
-      : await optionallyProcessImage(processed, imageProcessor, strictImageProcessing);
+      : await optionallyProcessImage(processed, imageProcessor, strictImageProcessing || isHeif, buffer);
     if (processed.buffer.length > maxUploadBytes) {
       throw documentError("DOCUMENT_TOO_LARGE", `Belge en fazla ${maxUploadBytes} bayt olabilir.`, 413);
     }
@@ -446,11 +446,13 @@ function createProcurementDocumentService(options = {}) {
   };
 }
 
-async function optionallyProcessImage(sanitized, imageProcessor, strict) {
+async function optionallyProcessImage(sanitized, imageProcessor, strict, originalBuffer) {
+  if (!imageProcessor && strict) throw documentError("DOCUMENT_PROCESSING_UNAVAILABLE", "Güvenli görsel dönüştürücüsü kullanılamıyor.", 503);
   if (!imageProcessor) return { ...sanitized, reencoded: false, thumbnailBuffer: null, thumbnailMimeType: "" };
   try {
     const output = await imageProcessor({
-      buffer: sanitized.buffer,
+      // Yapı doğrulandı; EXIF yönünü işlemciye taşı, yalnız temizlenmiş çıktıyı sakla.
+      buffer: originalBuffer || sanitized.buffer,
       mimeType: sanitized.mimeType,
       width: sanitized.width,
       height: sanitized.height,
@@ -472,6 +474,13 @@ async function optionallyProcessImage(sanitized, imageProcessor, strict) {
       thumbnailMimeType
     };
   } catch (error) {
+    if (error.code === "DOCUMENT_TOO_LARGE" || /pixel limit/i.test(error.message || "")) {
+      throw documentError("DOCUMENT_TOO_LARGE", "Görsel boyut sınırını aşıyor.", 413, error);
+    }
+    const isHeif = ["image/heic", "image/heif"].includes(sanitized.mimeType);
+    if (isHeif && /unsupported (?:codec|compression|feature)|(?:decoder|codec|support).*not (?:available|built|compiled)|no (?:decoding|decoder)|not supported/i.test(error.message || "")) {
+      throw documentError("DOCUMENT_PROCESSING_UNAVAILABLE", "Bu görsel formatı sunucuda işlenemiyor. JPEG veya PNG deneyin.", 503, error);
+    }
     if (strict) throw documentError("DOCUMENT_PROCESSING_FAILED", "Belge görseli güvenli biçimde işlenemedi.", 422, error);
     return { ...sanitized, reencoded: false, thumbnailBuffer: null, thumbnailMimeType: "" };
   }
@@ -755,9 +764,11 @@ function validatePngHeader(data, width, height) {
 }
 
 function validateDimensions(width, height, label) {
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1
-    || width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE || width * height > MAX_IMAGE_PIXELS) {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
     throw invalidImage(label);
+  }
+  if (width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE || width * height > MAX_IMAGE_PIXELS) {
+    throw documentError("DOCUMENT_TOO_LARGE", "Görsel boyut sınırını aşıyor.", 413);
   }
 }
 

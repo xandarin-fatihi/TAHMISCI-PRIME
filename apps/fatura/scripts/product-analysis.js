@@ -1,5 +1,5 @@
-import { api } from "./api.js";
-import { escapeHtml, state, trDate, trMoney, updateRevision } from "./state.js";
+import { api } from "./api.js?v=20260905-finance-mobile-upload-v1";
+import { escapeHtml, state, trDate, trMoney, updateRevision } from "./state.js?v=20260905-finance-mobile-upload-v1";
 
 let searchTimer = null;
 let eventTimer = null;

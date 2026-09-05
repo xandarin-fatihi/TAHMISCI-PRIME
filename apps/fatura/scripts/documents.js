@@ -1,6 +1,6 @@
-import { api } from "./api.js";
-import { shipmentFinance } from "./accounting.js?v=20260905-finance";
-import { escapeHtml, financeValues, paymentStatusLabel, state, statusBadge, trDate, trMoney } from "./state.js";
+import { api } from "./api.js?v=20260905-finance-mobile-upload-v1";
+import { shipmentFinance } from "./accounting.js?v=20260905-finance-mobile-upload-v1";
+import { escapeHtml, financeValues, paymentStatusLabel, state, statusBadge, trDate, trMoney } from "./state.js?v=20260905-finance-mobile-upload-v1";
 
 export function renderDocuments() {
   const supplierId = String(state.filters.documentsSupplier || "");
