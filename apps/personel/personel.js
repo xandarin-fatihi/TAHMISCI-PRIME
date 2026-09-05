@@ -799,6 +799,13 @@
         return state.stock;
       })
       .catch((error) => {
+        if (error.code === "STOCK_LOCATION_HIDDEN") {
+          state.stock = emptyStockState();
+          state.stockLoaded = false;
+          closeStockAction();
+          closeStockDetail({ restoreFocus: false });
+          if (state.section === "stock") renderStock();
+        }
         showStockMessage(error.message || "Stok verisi alınamadı.", true);
         throw error;
       })
@@ -1704,7 +1711,7 @@
       const error = new Error(result.message || "İstek başarısız.");
       error.status = response.status;
       error.code = result.code || "";
-      if ((response.status === 401 || (response.status === 403 && error.code !== "PERSONEL_SECTION_FORBIDDEN")) && state.sessionActive) {
+      if ((response.status === 401 || (response.status === 403 && !["PERSONEL_SECTION_FORBIDDEN", "STOCK_LOCATION_HIDDEN"].includes(error.code))) && state.sessionActive) {
         document.dispatchEvent(new CustomEvent("personel:session-ended", {
           detail: { source: "personel-shell", status: response.status, message: error.message }
         }));

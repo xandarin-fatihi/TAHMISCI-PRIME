@@ -274,6 +274,7 @@
 .stock-location-product__quantity span { margin-left: 6px; color: var(--panel-muted, #806b5b); font-size: 16px; }
 .stock-location-product > .stock-location-status { grid-column: 2; grid-row: 3; align-self: start; }
 .stock-location-product__conversion { grid-column: 1 / -1; margin: 0; color: var(--panel-muted, #806b5b); font: 500 11px/1.4 var(--panel-font-ui, sans-serif); }
+.stock-location-product__warning { grid-column: 1 / -1; margin: 0; color: #8a581a; font: 650 10px/1.4 var(--panel-font-ui, sans-serif); overflow-wrap: anywhere; }
 .stock-location-product footer { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr .8fr 44px; align-self: end; margin: auto -14px 0; border-top: 1px solid var(--panel-line, rgba(90, 47, 29, .16)); }
 .stock-location-product footer button { min-width: 0; min-height: 44px; border: 0; border-right: 1px solid var(--panel-line, rgba(90, 47, 29, .16)); background: transparent; color: var(--panel-coffee, #5a2f1d); font: 700 11px/1 var(--panel-font-ui, sans-serif); cursor: pointer; touch-action: manipulation; }
 .stock-location-product footer button:last-child { border-right: 0; }
@@ -299,7 +300,9 @@
 .stock-location-status.is-inactive { background: #fbe2dd; color: #a8362d; }
 .stock-location-status.is-transfer,
 .stock-location-status.is-pending,
-.stock-location-status.is-onay_bekliyor { background: #fff0cc; color: #8a581a; }
+.stock-location-status.is-onay_bekliyor,
+.stock-location-status.is-attention,
+.stock-location-status.is-reconciliation { background: #fff0cc; color: #8a581a; }
 .stock-location-status.is-sufficient,
 .stock-location-status.is-approved,
 .stock-location-status.is-onaylandı,
@@ -358,7 +361,7 @@
 .stock-location-management { border: 1px solid var(--panel-line, rgba(90, 47, 29, .16)); border-radius: 11px; background: #fffdf9; }
 .stock-location-management > summary { min-height: 54px; padding: 10px 14px; }
 .stock-location-management__body { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(0, 1.2fr); gap: 14px; padding: 0 14px 14px; }
-.stock-location-create-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; align-content: start; }
+.stock-location-create-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-content: start; }
 .stock-location-toggle { display: flex !important; grid-template-columns: none !important; flex-direction: row; align-items: center; min-height: 40px; padding: 8px 10px; border: 1px solid var(--panel-line, rgba(90, 47, 29, .16)); border-radius: 9px; }
 .stock-location-toggle input { width: 18px !important; min-height: 18px !important; }
 .stock-location-management__actions { display: grid; min-width: min(100%, 270px); grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
@@ -727,3 +730,49 @@
 
 .supplier-product-combobox{min-width:0;max-width:100%;display:grid;gap:7px}.supplier-product-combobox>label{font-weight:700;color:var(--panel-text)}.supplier-product-combobox__control{min-width:0;position:relative}.supplier-product-combobox__control>input{width:100%;max-width:100%;padding-right:44px;box-sizing:border-box}.supplier-product-combobox__control>button{position:absolute;inset-inline-end:5px;top:50%;width:34px;height:34px;min-width:34px;padding:0;transform:translateY(-50%);border:0;border-radius:9px;background:var(--panel-surface-soft);color:var(--panel-accent);font:700 20px/1 var(--panel-font-body);cursor:pointer}.supplier-product-combobox__control>button:hover,.supplier-product-combobox__control>button:focus-visible{background:#f2e2cf;outline:2px solid rgba(148,89,48,.2);outline-offset:1px}.supplier-product-combobox__options{min-width:0;max-width:100%;max-height:min(300px,42vh);overflow-y:auto;overscroll-behavior:contain;padding:6px;border:1px solid var(--panel-line);border-radius:11px;background:var(--panel-surface);box-shadow:0 12px 26px rgba(69,38,20,.1)}.supplier-product-combobox__options[hidden]{display:none}.supplier-product-combobox__options button{width:100%;min-width:0;min-height:44px;padding:8px 10px;display:grid;gap:2px;border:0;border-radius:8px;background:transparent;color:var(--panel-text);text-align:left;font:inherit;cursor:pointer}.supplier-product-combobox__options button:hover:not(:disabled),.supplier-product-combobox__options button:focus-visible{background:var(--panel-surface-soft);outline:2px solid rgba(148,89,48,.18);outline-offset:-2px}.supplier-product-combobox__options button:disabled{cursor:not-allowed;opacity:.48}.supplier-product-combobox__options button strong,.supplier-product-combobox__options button small{min-width:0;overflow-wrap:anywhere}.supplier-product-combobox__options button strong{font-size:12px}.supplier-product-combobox__options button small{color:var(--panel-muted);font-size:10px}.supplier-product-combobox__new{position:sticky;top:0;z-index:1;margin-bottom:5px;background:#fff8ee!important;border:1px solid rgba(148,89,48,.18)!important}.supplier-product-combobox__results{min-width:0;display:grid;gap:2px}.supplier-product-combobox__empty{margin:8px;padding:7px;color:var(--panel-muted);font-size:11px;text-align:center}.supplier-product-combobox__selection{min-width:0;margin:0;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid #d9e6ce;border-radius:9px;background:#f5f8ef}.supplier-product-combobox__selection[hidden]{display:none}.supplier-product-combobox__selection span{min-width:0;display:grid;gap:1px}.supplier-product-combobox__selection strong,.supplier-product-combobox__selection small{min-width:0;overflow-wrap:anywhere}.supplier-product-combobox__selection small{color:var(--panel-muted);font-size:10px}.supplier-product-combobox__selection em{flex:0 0 auto;color:#52733a;font-size:9px;font-style:normal;font-weight:800}.supplier-product-combobox__selection.is-new{border-color:#ead3ba;background:#fff8ee}.supplier-product-combobox__selection.is-new em{color:var(--panel-accent)}.supplier-product-form label.is-canonical-locked select{background:var(--panel-surface-soft);color:var(--panel-muted);cursor:not-allowed}
 @media(max-width:560px){.stock-excel-file{grid-template-columns:32px minmax(0,1fr) auto}.stock-excel-file__action{padding-inline:6px}.supplier-product-combobox__selection{align-items:flex-start;flex-direction:column;gap:4px}}
+
+.stock-settings-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.stock-settings-footer .ui-button{min-width:min(190px,100%)}
+@media(max-width:520px){.stock-settings-footer{display:grid;grid-template-columns:1fr}.stock-settings-footer .ui-button{width:100%}}
+
+/* Depo yönetimi ve mevcut transfer modalı. */
+.stock-warehouse-overview__actions { display: flex; flex-wrap: wrap; gap: 10px; }
+#stockLocationManagementList > article { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--panel-line); }
+#stockLocationManagementList > article > div { display: grid; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+#stockLocationManagementList > article span { font-size: 12px; }
+#stockLocationCreateMessage { grid-column: 1 / -1; margin: 0; color: var(--panel-danger, #a8362d); }
+.stock-transfer-dialog { width: min(720px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
+.stock-transfer-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: max-content; align-content: start; gap: 16px; overscroll-behavior: contain; }
+.stock-transfer-form label { display: grid; gap: 6px; min-width: 0; font-size: 13px; }
+.stock-transfer-search, .stock-transfer-quantities, .stock-transfer-preview, .stock-transfer-note, #stockTransferDialogMessage { grid-column: 1 / -1; min-width: 0; }
+.stock-transfer-search { position: relative; display: grid; gap: 6px; }
+#stockTransferResults { max-height: min(240px, 32dvh); overflow-y: auto; border: 1px solid var(--panel-line); border-radius: 9px; background: var(--panel-surface, #fffaf3); }
+#stockTransferResults[hidden], #stockTransferBulkField[hidden] { display: none; }
+#stockTransferResults button { display: grid; gap: 5px; width: 100%; padding: 12px; border: 0; border-bottom: 1px solid var(--panel-line); background: transparent; text-align: left; color: inherit; cursor: pointer; overflow-wrap: anywhere; }
+#stockTransferResults button:hover, #stockTransferResults button[aria-selected="true"] { background: #f2e4cf; }
+#stockTransferResults button:disabled { cursor: default; opacity: .65; }
+#stockTransferResults small, #stockTransferCurrent { font-size: 12px; color: var(--panel-muted); }
+#stockTransferResults p { padding: 10px; margin: 0; }
+#stockTransferCurrent, #stockTransferDialogMessage { margin: 0; overflow-wrap: anywhere; }
+#stockTransferDialogMessage { color: var(--panel-danger, #a8362d); font-size: 13px; }
+.stock-transfer-quantities { display: flex; gap: 14px; flex-wrap: wrap; }
+.stock-transfer-quantities > label { flex: 1 1 180px; }
+.stock-transfer-quantities label > div { display: flex; gap: 8px; align-items: center; }
+.stock-transfer-quantities input { min-width: 0; }
+.stock-transfer-quantities label > div > span { flex-shrink: 0; }
+.stock-transfer-preview { border: 1px solid var(--panel-line); border-radius: 10px; padding: 12px; font-size: 13px; overflow-wrap: anywhere; }
+.stock-transfer-preview h4 { font-size: 16px; margin: 0 0 12px; }
+.stock-transfer-preview__row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px; padding: 8px 0; }
+.stock-transfer-preview__labels { color: var(--panel-muted); font-size: 11px; }
+.stock-transfer-preview p { margin: 8px 0 0; }
+.stock-transfer-dialog footer { background: var(--panel-surface, #fffaf3); padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+@media (max-width: 600px) {
+  .stock-warehouse-overview__actions { width: 100%; }
+  .stock-warehouse-overview__actions > button { flex: 1 1 100%; }
+  .stock-transfer-form { grid-template-columns: minmax(0, 1fr); padding: 12px; }
+  .stock-transfer-dialog :is(input, select, textarea) { font-size: 16px; }
+  .stock-transfer-dialog footer { grid-template-columns: auto minmax(0, 1fr); }
+  .stock-transfer-dialog header { padding: 12px; }
+  .stock-transfer-dialog h3 { font-size: 20px; }
+  #stockLocationManagementList > article { grid-template-columns: minmax(0, 1fr) auto; }
+  #stockLocationManagementList > article > div { grid-column: 1 / -1; }
+}

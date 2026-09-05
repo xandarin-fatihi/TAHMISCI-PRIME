@@ -239,6 +239,47 @@ function registerStockLocationRoutes(deps) {
     for (const notification of pending) notificationService.publishNotificationEvent(notification);
   }
 
+  function registerProductLifecycleAction(action, serviceMethod, auditAction) {
+    registerAdminStockRoute("post", `/catalog/products/:id/${action}`, requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+      try {
+        const body = req.body || {};
+        const operationId = requestId(req, true);
+        const timestamp = nowIso();
+        const actor = adminActor(req);
+        let result;
+        let idempotent = false;
+        const saved = await store.update((data, context) => {
+          const state = normalizeStockState(data.stockState);
+          const operationType = `catalog_product_${action}`;
+          const replay = routeOperation(state, operationType, operationId);
+          if (replay) {
+            result = { product: state.products.find((item) => String(item.id) === String(req.params.id)), idempotent: true };
+            idempotent = true;
+            return context.noChange;
+          }
+          assertExpectedDomainRevision(data, body, "catalog", operationType, operationId);
+          assertExpectedDomainRevision(data, body, "inventory", operationType, operationId);
+          const previous = state.products.find((item) => String(item.id) === String(req.params.id));
+          const previousSnapshot = previous ? { ...previous } : null;
+          result = serviceMethod(state, req.params.id, actor, { now: timestamp });
+          if (result.idempotent) {
+            idempotent = true;
+            return context.noChange;
+          }
+          rememberRouteOperation(result.stockState, operationType, operationId, { productId: result.product.id }, timestamp);
+          persistStockMutation(data, result.stockState, timestamp, ["inventory", "catalog"]);
+          appendStockAudit(data, actor, auditAction, result.product.id, operationId, previousSnapshot, result.product, timestamp);
+          return data;
+        });
+        if (!idempotent) {
+          broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
+          broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "catalog"), "catalog");
+        }
+        res.json({ ok: true, product: result && result.product || null, idempotent, ...canonicalRevisionPayload(saved, "catalog"), updatedAt: saved.stockUpdatedAt || timestamp });
+      } catch (error) { next(error); }
+    });
+  }
+
   function queueNotification(data, pending, input) {
     if (!notificationService || typeof notificationService.createNotificationInStore !== "function") return;
     const notification = notificationService.createNotificationInStore(data, input);
@@ -691,6 +732,9 @@ function registerStockLocationRoutes(deps) {
         product.productCode = values.productCode;
         product.baseUnit = values.baseUnit;
         product.unit = values.baseUnit;
+        product.baseUnitMissing = false;
+        product.excelBaseUnitMissing = false;
+        if (body.baseUnit || body.unit) product.excelSourceBaseUnitMissing = false;
         product.bulkUnit = values.bulkUnit;
         product.caseUnit = values.bulkUnit;
         product.unitsPerBulkUnit = values.factor;
@@ -721,6 +765,7 @@ function registerStockLocationRoutes(deps) {
           product.unitSchemaUpdatedAt = timestamp;
         }
         product.updatedAt = timestamp;
+        stockService.updateProductTotalProjection(state, product.id, timestamp);
         rememberRouteOperation(state, "catalog_product_update", operationId, { productId: product.id }, timestamp);
         persistStockMutation(data, state, timestamp, "catalog");
         appendStockAudit(data, adminActor(req), "stock.catalog.product.update", product.id, operationId, previous, product, timestamp);
@@ -730,6 +775,10 @@ function registerStockLocationRoutes(deps) {
       res.json({ ok: true, product, entityId: product && product.id, idempotent, ...canonicalRevisionPayload(saved, "catalog"), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
+
+  registerProductLifecycleAction("trash", stockService.softDeleteStockProduct, "stock.catalog.product.trash");
+  registerProductLifecycleAction("restore", stockService.restoreStockProduct, "stock.catalog.product.restore");
+  registerProductLifecycleAction("purge", stockService.purgeStockProduct, "stock.catalog.product.purge");
 
   registerAdminStockRoute("post", "/products/:productId/unit-migration", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {
@@ -766,7 +815,12 @@ function registerStockLocationRoutes(deps) {
         assertUnitMigrationCatalog(state, body);
         const previousProduct = state.products.find((item) => String(item.id) === String(req.params.productId));
         const previous = previousProduct ? { ...previousProduct } : null;
-        result = stockService.migrateProductUnitSchema(state, req.params.productId, body, { now: timestamp });
+        result = stockService.migrateProductUnitSchema(state, req.params.productId, body, {
+          now: timestamp,
+          source: "manual",
+          requestId: operationId,
+          actorId: String(adminActor(req).id || "system")
+        });
         rememberRouteOperation(result.state, "unit_migration", operationId, { productId: result.product.id, plan: result.plan }, timestamp);
         persistStockMutation(data, result.state, timestamp, ["inventory", "catalog"]);
         appendStockAudit(data, adminActor(req), "stock.catalog.unit_migration", result.product.id, operationId,
@@ -870,8 +924,9 @@ function registerStockLocationRoutes(deps) {
     try {
       const body = req.body || {};
       const name = validateLocationName(body.name);
-      const code = normalizeLocationCode(body.code || name);
+      let code = normalizeLocationCode(body.code || name) || (body.code ? "" : "DEPO");
       const type = String(body.type || "other").trim();
+      if (body.personnelVisible !== undefined && typeof body.personnelVisible !== "boolean") throw fail("Personel görünürlüğü geçersiz.", 422);
       if (!code) throw fail("Depo kodu zorunludur.");
       if (!stockService.LOCATION_TYPES.has(type)) throw fail("Depo türü geçersiz.");
       if (type !== "cafe" && normalizeIdList(body.assignedPersonnelIds).length) {
@@ -890,6 +945,11 @@ function registerStockLocationRoutes(deps) {
           return context.noChange;
         }
         assertExpectedDomainRevision(data, body, "inventory", "location_create", operationId);
+        if (!body.code) {
+          const prefix = code.slice(0, 40);
+          let suffix = 2;
+          while (state.locations.some((item) => item.code === code)) code = `${prefix}-${suffix++}`;
+        }
         if (state.locations.some((item) => item.code === code)) throw fail("Bu depo kodu zaten kullanılıyor.", 409);
         if (body.active !== false && state.locations.some((item) => item.active !== false && locationNameKey(item.name) === locationNameKey(name))) {
           throw fail("Bu depo adı aktif başka bir depoda kullanılıyor.", 409);
@@ -900,6 +960,7 @@ function registerStockLocationRoutes(deps) {
           name,
           description: String(body.description || "").trim().slice(0, 500),
           type,
+          personnelVisible: typeof body.personnelVisible === "boolean" ? body.personnelVisible : type === "cafe",
           active: body.active !== false,
           sortOrder: Number.isFinite(Number(body.sortOrder)) ? Math.max(0, Math.trunc(Number(body.sortOrder))) : state.locations.length * 10 + 10,
           isDefault: body.active !== false && body.isDefault === true,
@@ -946,6 +1007,10 @@ function registerStockLocationRoutes(deps) {
         location = state.locations.find((item) => String(item.id) === String(req.params.id));
         if (!location) throw fail("Stok lokasyonu bulunamadı.", 404);
         const previous = { ...location };
+        if (body.personnelVisible !== undefined) {
+          if (typeof body.personnelVisible !== "boolean") throw fail("Personel görünürlüğü geçersiz.", 422);
+          location.personnelVisible = body.personnelVisible;
+        }
         if (body.name !== undefined) {
           location.name = validateLocationName(body.name);
         }
@@ -1129,6 +1194,9 @@ function registerStockLocationRoutes(deps) {
         if (body.baseUnit !== undefined) {
           product.baseUnit = nextBaseUnit;
           product.unit = nextBaseUnit;
+          product.baseUnitMissing = false;
+          product.excelBaseUnitMissing = false;
+          product.excelSourceBaseUnitMissing = false;
         }
         if (body.bulkUnit !== undefined) {
           product.bulkUnit = normalizeCatalogUnit(body.bulkUnit);
@@ -1160,6 +1228,7 @@ function registerStockLocationRoutes(deps) {
         balance.updatedAt = timestamp;
         balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
         product.updatedAt = timestamp;
+        stockService.updateProductTotalProjection(state, product.id, timestamp);
         rememberRouteOperation(state, "inventory_threshold_update", operationId, { locationId: location.id, productId: product.id }, timestamp);
         persistStockMutation(data, state, timestamp, updatesCatalog ? ["inventory", "catalog"] : "inventory");
         appendStockAudit(data, adminActor(req), "stock.inventory.settings", `${location.id}:${product.id}`, operationId, previous, { balance, product }, timestamp);
@@ -1282,6 +1351,7 @@ function registerStockLocationRoutes(deps) {
       let result;
       const saved = await store.update((data, context) => {
         assertExpectedDomainRevision(data, body, "inventory", "transfer_create", operationId);
+        if (body.expectedCatalogRevision !== undefined) assertExpectedDomainRevision(data, body, "catalog", "transfer_create", operationId);
         const previousStockState = normalizeStockState(data.stockState);
         const created = stockService.createTransferRequest(previousStockState, { ...body, requestId: operationId }, actor, { now: timestamp });
         result = created;
@@ -1434,7 +1504,13 @@ function registerStockLocationRoutes(deps) {
           createdProducts: result.details && result.details.createdProducts || [],
           createdCategories: result.details && result.details.createdCategories || [],
           balanceChanges: result.details && result.details.balanceChanges || [],
+          attentionProducts: result.details && result.details.attentionProducts || [],
+          attentionItems: result.details && (result.details.attentionItems || result.details.attentionProducts) || [],
           skippedProducts: result.details && result.details.skippedProducts || [],
+          processedCount: Number(result.summary && result.summary.processedCount || 0),
+          updatedCount: Number(result.summary && result.summary.updatedCount || 0),
+          createdCount: Number(result.summary && result.summary.createdCount || 0),
+          attentionCount: Number(result.summary && result.summary.attentionCount || 0),
           idempotent: result.idempotent,
           targetLocation: stockService.getLocation(saved.stockState, targetLocationId),
           ...canonicalRevisionPayload(saved, "inventory"),

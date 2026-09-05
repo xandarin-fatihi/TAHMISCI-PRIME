@@ -45,9 +45,9 @@ function registerProcurementRoutes(deps = {}) {
     : (req) => resolveActorFromRequest(req, store);
   const authenticated = [auth.requireRecipe, actorMiddleware(resolveActor)];
   const mutationMiddlewares = [requireRequestOrigin, ...authenticated, riskOperationLimiter];
-  const rawUploadLimit = normalizeUploadLimit(deps.maxUploadBytes || deps.config && deps.config.procurementMaxUploadBytes);
+  const rawUploadLimit = Math.max(normalizeUploadLimit(deps.maxUploadBytes || deps.config && deps.config.procurementMaxUploadBytes), 25 * 1024 * 1024);
   const rawImageParser = express.raw({
-    type: ["image/jpeg", "image/png", "image/webp", "application/pdf", "application/octet-stream"],
+    type: ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf", "application/octet-stream"],
     limit: rawUploadLimit
   });
 
@@ -364,7 +364,7 @@ function registerProcurementRoutes(deps = {}) {
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
 
-  app.get(`${API_ROOT}/trash`, ...authenticated, sectionAccess("trash", "view"), anyCapability(["procurement.read", "accounting.read", "documents.read"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/trash`, ...authenticated, sectionAccess("trash", "view"), anyCapability(["procurement.read", "accounting.read", "documents.read", "inventory.read"]), asyncRoute(async (req, res) => {
     res.json(await service.listTrash(req.procurementActor));
   }));
 

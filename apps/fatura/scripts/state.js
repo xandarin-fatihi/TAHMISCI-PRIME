@@ -20,7 +20,7 @@ export const state = {
   supplierWorkspace: { supplierId: "", productLinks: [], independentProducts: [], loading: false, returnScrollY: 0 },
   stockExcel: {
     result: null, errors: [], fileName: "", busy: false,
-    details: { updatedProducts: [], createdProducts: [], createdCategories: [], balanceChanges: [], skippedProducts: [] }
+    details: { updatedProducts: [], createdProducts: [], createdCategories: [], balanceChanges: [], attentionProducts: [] }
   },
   revisions: { procurement: 0, workforce: 0, stock: 0, inventory: 0, shipment: 0, catalog: 0, notification: 0 },
   stock: {

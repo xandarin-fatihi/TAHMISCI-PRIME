@@ -1400,7 +1400,7 @@ function createProcurementService(options = {}) {
   }
 
   async function listTrash(actor) {
-    requireAnyCapability(actor, ["procurement.read", "accounting.read", "documents.read"]);
+    requireAnyCapability(actor, ["procurement.read", "accounting.read", "documents.read", "inventory.read"]);
     const { data, procurement } = await readSnapshot();
     const suppliers = new Map(procurement.suppliers.map((supplier) => [String(supplier.id), supplier]));
     const actorNames = new Map([
@@ -1408,6 +1408,24 @@ function createProcurementService(options = {}) {
       ...(data.recipeUsers || []).map((user) => [String(user.id || ""), String(user.name || user.username || user.id || "")])
     ]);
     const records = [];
+    if (actor.type === "admin" || hasCapability(actor, "inventory.catalog.manage")) {
+      const stockState = normalizeStockState(data.stockState);
+      for (const product of stockState.products || []) {
+        if (product.trashed !== true || !product.removedAt || product.purgedAt || product.archivedAt) continue;
+        records.push({
+          id: product.id,
+          type: "stock-product",
+          title: product.name || product.productName || "Stok ürünü",
+          productCode: product.productCode || "",
+          category: product.category || "Kategorisiz",
+          supplierName: product.category || "Stok kataloğu",
+          amountKurus: 0,
+          reason: product.removalReason || "Yönetici tarafından stok kataloğundan kaldırıldı.",
+          actorName: product.removedByName || product.removedBy || "Yönetici",
+          removedAt: product.removedAt
+        });
+      }
+    }
     for (const shipment of visibleShipments(data.workforceShipments, actor).filter((item) => item.removedAt)) {
       records.push({
         id: shipment.id, type: "shipment", title: `Sevkiyat · ${String(shipment.shipmentDate || shipment.documentDate || shipment.id)}`,
@@ -1435,7 +1453,13 @@ function createProcurementService(options = {}) {
         reason: entry.note || "—", actorName: actorNames.get(String(entry.createdBy || "")) || entry.createdBy || "—", removedAt: entry.createdAt, ledgerEntryId: entry.id
       });
     }
-    return { ok: true, revision: procurement.revision, records: records.sort((left, right) => String(right.removedAt || "").localeCompare(String(left.removedAt || ""))) };
+    return {
+      ok: true,
+      revision: procurement.revision,
+      inventoryRevision: Math.max(0, Number(data.revisions && data.revisions.inventory || 0)),
+      catalogRevision: Math.max(0, Number(data.revisions && data.revisions.catalog || 0)),
+      records: records.sort((left, right) => String(right.removedAt || "").localeCompare(String(left.removedAt || "")))
+    };
   }
 
   async function purgeTrashRecord(actor, recordType, recordId, mutation) {

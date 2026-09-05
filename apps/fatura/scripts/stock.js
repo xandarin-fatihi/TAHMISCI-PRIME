@@ -1,5 +1,5 @@
 import { api as faturaApi, requestId as createRequestId } from "./api.js";
-import { CAPABILITIES, has, hasSection, state as faturaState, updateRevision as syncRevision } from "./state.js";
+import { CAPABILITIES, has, hasSection, invalidate as invalidateFatura, state as faturaState, updateRevision as syncRevision } from "./state.js";
 import { requestText } from "./ui-dialogs.js";
 
 "use strict";
@@ -16,6 +16,8 @@ import { requestText } from "./ui-dialogs.js";
   // Fatura kabuğu, stok görünümü ve olay akışı aynı revision kontrollü state'i paylaşır.
   const state = faturaState.stock;
   let stockKeydownHandler = null;
+  const transferInventoryCache = new Map();
+  const transferDraft = { source: null, destination: null, sequence: 0, loading: false, error: "", pending: null, activeIndex: -1 };
 
   function requestId(prefix) {
     return createRequestId(prefix);
@@ -27,8 +29,8 @@ import { requestText } from "./ui-dialogs.js";
 
   function domainRevision(domain = "inventory") {
     return domain === "catalog"
-      ? Math.max(0, Number(state.catalogRevision || faturaState.revisions.catalog || 0))
-      : Math.max(0, Number(state.inventoryRevision || faturaState.revisions.inventory || 0));
+      ? Math.max(0, Number(state.catalogRevision || 0), Number(faturaState.revisions.catalog || 0))
+      : Math.max(0, Number(state.inventoryRevision || 0), Number(faturaState.revisions.inventory || 0));
   }
 
   async function api(path, options = {}) {
@@ -86,6 +88,7 @@ import { requestText } from "./ui-dialogs.js";
       ["#stockUnitSettingsButton", CAPABILITIES.inventoryCatalogManage],
       ["#stockManagementAccordion", CAPABILITIES.inventoryCatalogManage],
       ["#stockLocationOverviewAddButton", CAPABILITIES.inventoryLocationManage],
+      ["#stockOverviewTransferButton", CAPABILITIES.inventoryTransferApprove],
       ["#stockLocationManagementButton", CAPABILITIES.inventoryLocationManage],
       ["#stockCountStartButton", CAPABILITIES.inventoryCountManage],
       ["#stockQuickInButton", CAPABILITIES.inventoryMovementCreate],
@@ -156,7 +159,30 @@ import { requestText } from "./ui-dialogs.js";
 
   function unitOf(balance) {
     const product = productOf(balance);
-    return textValue(product.baseUnit || product.unit || balance.unit, "adet").toLocaleLowerCase("tr-TR");
+    if (balance && balance.reconciliationRequired === true) {
+      return textValue(balance.baseUnitSnapshot || balance.previousBaseUnit, "birim tanımsız").toLocaleLowerCase("tr-TR");
+    }
+    return textValue(product.baseUnit || product.unit || balance.unit, "birim tanımsız").toLocaleLowerCase("tr-TR");
+  }
+
+  function balanceAttention(balance) {
+    const product = productOf(balance);
+    if (balance && (balance.reconciliationRequired === true || balance.aggregateReconciliationRequired === true)) {
+      return {
+        kind: "reconciliation",
+        label: "Mutabakat Gerekiyor",
+        message: textValue(balance.reconciliationReason, "Eski stok bakiyesi yeni birime güvenli şekilde dönüştürülemedi. Sayım/mutabakat gerekli.")
+      };
+    }
+    if (product.needsAttention === true || product.baseUnitMissing === true || product.excelBaseUnitMissing === true || product.excelSourceBaseUnitMissing === true) {
+      const messages = Array.isArray(product.attentionMessages) ? product.attentionMessages.filter(Boolean) : [];
+      return {
+        kind: "attention",
+        label: "Eksik Bilgi",
+        message: messages[0] || (product.baseUnitMissing || product.excelBaseUnitMissing ? "Temel birim eksik." : "Ürün ayarları kontrol edilmeli.")
+      };
+    }
+    return null;
   }
 
   function unitsOf(balance) {
@@ -164,7 +190,8 @@ import { requestText } from "./ui-dialogs.js";
     const baseUnit = unitOf(balance);
     const bulkUnit = textValue(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR");
     const factor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
-    const values = Array.from(new Set([baseUnit, ...(bulkUnit && factor > 0 ? [bulkUnit] : [])]));
+    const values = Array.from(new Set([baseUnit, ...(bulkUnit && factor > 0 ? [bulkUnit] : [])]))
+      .filter((unit) => unit && unit !== "birim tanımsız");
     return values.map((unit) => ({
       value: unit,
       label: unit === bulkUnit && factor > 0 ? `${unit} (1 = ${formatNumber(factor)} ${baseUnit})` : unit
@@ -285,7 +312,7 @@ import { requestText } from "./ui-dialogs.js";
     const catalog = Array.isArray(state.unitDefinitions[kind]) ? state.unitDefinitions[kind].slice() : [];
     if (selected && !catalog.includes(selected)) catalog.push(selected);
     const items = catalog.map((unit) => ({ value: unit, label: unit }));
-    if (includeNone) items.unshift({ value: "", label: "Toplu birim yok" });
+    if (includeNone) items.unshift({ value: "", label: kind === "base" ? "Temel birim seçin" : "Toplu birim yok" });
     return items;
   }
 
@@ -724,15 +751,17 @@ import { requestText } from "./ui-dialogs.js";
       const product = productOf(balance);
       const rawStatus = balanceStatus(balance);
       const status = Number(balance.quantity || 0) <= 0 ? "empty" : rawStatus === "sufficient" ? "sufficient" : "critical";
+      const attention = balanceAttention(balance);
       const bulkUnit = textValue(product.bulkUnit || product.caseUnit, "");
       const factor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
       const selected = String(state.selectedProductId) === productId(balance) && !$("#stockProductDrawerLayer")?.hidden;
       return `<article class="stock-location-product is-${esc(status)}${selected ? " is-selected" : ""}" data-stock-product-card="${esc(productId(balance))}" role="button" tabindex="0" aria-haspopup="dialog" aria-label="${esc(productName(balance))} stok detayını aç">
         <div class="stock-location-product__top"><span class="stock-location-product__category">${esc(product.category || "Kategori yok")}</span>${selected ? `<span class="stock-location-product__selected" aria-label="Seçili">✓</span>` : ""}</div>
         <div class="stock-location-product__identity"><strong>${esc(productName(balance))}</strong></div>
-        <span class="stock-location-status is-${esc(status)}">${esc(statusLabel(status))}</span>
+        <span class="stock-location-status is-${esc(attention ? attention.kind : status)}">${esc(attention ? attention.label : statusLabel(status))}</span>
         <div class="stock-location-product__quantity"><strong>${esc(quantityDisplay(balance))}</strong></div>
         <p class="stock-location-product__conversion">${factor > 0 ? `1 ${esc(bulkUnit)} = ${esc(formatNumber(factor))} ${esc(unitOf(balance))}` : `Temel birim: ${esc(unitOf(balance))}`}</p>
+        ${attention ? `<p class="stock-location-product__warning">${esc(attention.message)}</p>` : ""}
       </article>`;
     }).join("") : `<div class="stock-location-empty"><strong>Bu görünümde ürün yok</strong><span>Arama veya durum filtresini değiştirin.</span></div>`;
   }
@@ -754,13 +783,17 @@ import { requestText } from "./ui-dialogs.js";
     const canMoveStock = can(CAPABILITIES.inventoryMovementCreate);
     const canManageInventory = can(CAPABILITIES.inventoryManage);
     const canManageCatalog = can(CAPABILITIES.inventoryCatalogManage);
+    const attention = balanceAttention(balance);
+    const riskyOperationBlocked = balance.reconciliationRequired === true || !textValue(product.baseUnit || product.unit, "");
     $("#stockProductDrawerTitle").textContent = productName(balance);
     $("#stockProductDrawerSubtitle").textContent = product.category || "Kategori yok";
     $("#stockProductDrawerMessage").textContent = state.selectedLocationId === "total"
       ? "Tüm Depolar görünümü salt okunurdur. İşlem için aktif bir depo seçin."
-      : selectedLocation?.active === false ? "Pasif depo geçmişi salt okunurdur; yeni stok, transfer ve sayım işlemi yapılamaz." : "";
+      : selectedLocation?.active === false
+        ? "Pasif depo geçmişi salt okunurdur; yeni stok, transfer ve sayım işlemi yapılamaz."
+        : attention ? attention.message : "";
     const body = $("#stockProductDrawerBody");
-    const currentBaseUnit = unitOf(balance);
+    const currentBaseUnit = textValue(product.baseUnit || product.unit, "Tanımsız");
     const currentBulkUnit = textValue(product.bulkUnit || product.caseUnit, "").toLocaleLowerCase("tr-TR");
     const currentFactor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
     body.innerHTML = `<section class="stock-drawer-selected"><span>${esc(locationName(state.selectedLocationId))}</span><strong>${esc(quantityDisplay(balance))}</strong><small>Seçili depo bakiyesi</small></section>
@@ -771,7 +804,7 @@ import { requestText } from "./ui-dialogs.js";
       <div><span>Dönüşüm</span><strong>${currentBulkUnit && currentFactor > 0 ? `1 ${esc(currentBulkUnit)} = ${esc(formatNumber(currentFactor))} ${esc(currentBaseUnit)}` : "Toplu birim seçilmedi"}</strong></div>
     </section>
     <div class="stock-drawer-actions" aria-label="${esc(productName(balance))} stok işlemleri">
-      ${totalReadOnly || !canMoveStock ? "" : `<button class="ui-button ui-button--primary" type="button" data-stock-drawer-action="manual_in">Stok Ekle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="waste">Sarf İşle</button>`}
+      ${totalReadOnly || !canMoveStock || riskyOperationBlocked ? "" : `<button class="ui-button ui-button--primary" type="button" data-stock-drawer-action="manual_in">Stok Ekle</button><button class="ui-button ui-button--secondary" type="button" data-stock-drawer-action="waste">Sarf İşle</button>`}
       ${totalReadOnly || !(canManageInventory || canManageCatalog) ? "" : `<button class="ui-button ui-button--secondary stock-drawer-settings" type="button" data-stock-drawer-action="settings">Ürün Ayarları</button>`}
     </div>`;
     layer.hidden = false;
@@ -808,13 +841,8 @@ import { requestText } from "./ui-dialogs.js";
   }
 
   function renderFormOptions() {
-    const activeLocations = state.locations.filter((item) => item.active !== false);
     const realSelected = state.selectedLocationId !== "total" ? state.selectedLocationId : "";
     const products = inventoryProducts();
-    setSelectOptions($("#stockTransferFrom"), activeLocations.map((item) => ({ value: item.id, label: `${item.name} (${item.code})` })), realSelected);
-    const source = $("#stockTransferFrom")?.value || realSelected;
-    setSelectOptions($("#stockTransferTo"), activeLocations.filter((item) => String(item.id) !== String(source)).map((item) => ({ value: item.id, label: `${item.name} (${item.code})` })));
-    setSelectOptions($("#stockTransferProduct"), products.map((balance) => ({ value: productId(balance), label: `${productName(balance)} · ${formatNumber(balance.quantity)} ${unitOf(balance)}` })));
     const selectedMovementProduct = $("#stockLocationMovementProduct")?.value || "";
     setSelectOptions($("#stockLocationMovementProduct"), products.map((balance) => ({ value: productId(balance), label: productName(balance) })), selectedMovementProduct);
     const movementFilter = $("#stockMovementProductFilter");
@@ -832,9 +860,7 @@ import { requestText } from "./ui-dialogs.js";
   }
 
   function updateProductUnits() {
-    const transferBalance = selectedBalance("#stockTransferProduct");
     const movementBalance = selectedBalance("#stockLocationMovementProduct");
-    if ($("#stockTransferUnit")) setSelectOptions($("#stockTransferUnit"), transferBalance ? unitsOf(transferBalance) : []);
     const movementUnit = $("#stockLocationMovementUnit");
     if (movementUnit) setSelectOptions(movementUnit, movementBalance ? unitsOf(movementBalance) : []);
     updateMovementPreview();
@@ -886,6 +912,10 @@ import { requestText } from "./ui-dialogs.js";
     const balance = state.balances.find((item) => productId(item) === String(productIdValue));
     const dialog = $("#stockMovementDialog");
     if (!balance || !dialog) return;
+    if (balance.reconciliationRequired === true || !textValue(productOf(balance).baseUnit || productOf(balance).unit, "")) {
+      setMessage("Bu ürün için önce eksik birim bilgisini tamamlayın veya stok sayımıyla mutabakat yapın.", "error");
+      return;
+    }
     const productSelect = $("#stockLocationMovementProduct");
     productSelect.value = productId(balance);
     productSelect.hidden = options.allowProductChange !== true;
@@ -936,46 +966,189 @@ import { requestText } from "./ui-dialogs.js";
 
   function openTransferDialog(productIdValue = state.selectedProductId) {
     if (!can(CAPABILITIES.inventoryTransferCreate)) return setMessage("Transfer oluşturma yetkiniz yok.", "error");
-    if (state.selectedLocationId === "total") {
-      setMessage("Transfer için gerçek bir depo seçin.", "error");
-      return;
-    }
-    if (state.locations.find((location) => String(location.id) === String(state.selectedLocationId))?.active === false) {
-      setMessage("Pasif depo transfer kaynağı veya hedefi olamaz.", "error");
-      return;
-    }
-    renderFormOptions();
-    if ($("#stockTransferFrom")) {
-      $("#stockTransferFrom").value = state.selectedLocationId;
-      $("#stockTransferFrom").disabled = true;
-    }
-    renderFormOptions();
-    if ($("#stockTransferProduct")) $("#stockTransferProduct").value = String(productIdValue || "");
-    if ($("#stockTransferQuantity")) $("#stockTransferQuantity").value = "1";
-    if ($("#stockTransferDialogMessage")) $("#stockTransferDialogMessage").textContent = "";
-    updateProductUnits();
-    updateTransferPreview();
     const dialog = $("#stockTransferDialog");
-    if (dialog && !dialog.open) dialog.showModal();
-    $("#stockTransferQuantity")?.focus();
+    if (!dialog) return;
+    $("#stockTransferForm").reset();
+    transferDraft.pending = null;
+    transferDraft.error = "";
+    const source = state.viewMode !== "overview" && state.selectedLocationId !== "total" ? state.selectedLocationId : "";
+    updateTransferLocations(source, "");
+    $("#stockTransferProduct").value = "";
+    $("#stockTransferSearch").value = "";
+    $("#stockTransferDialogMessage").textContent = "";
+    if (!dialog.open) dialog.showModal();
+    refreshTransferInventories({ productIdValue: source ? productIdValue : "" }).catch(() => {});
+    $(source ? "#stockTransferSearch" : "#stockTransferFrom")?.focus();
+  }
+
+  function updateTransferLocations(source = $("#stockTransferFrom")?.value || "", destination = $("#stockTransferTo")?.value || "") {
+    const active = state.locations.filter((location) => location.active !== false);
+    const options = [{ value: "", label: "Depo seçin" }, ...active.map((location) => ({ value: location.id, label: location.name }))];
+    setSelectOptions($("#stockTransferFrom"), options, source);
+    const selected = $("#stockTransferFrom")?.value || "";
+    setSelectOptions($("#stockTransferTo"), options.filter((option) => !option.value || String(option.value) !== String(selected)), destination === selected ? "" : destination);
+  }
+
+  async function loadTransferInventory(locationId, force = false) {
+    if (!locationId) return null;
+    const cached = transferInventoryCache.get(locationId);
+    if (!force && cached && cached.inventoryRevision === domainRevision("inventory") && cached.catalogRevision === domainRevision("catalog")) return cached;
+    const result = await api(`/api/procurement/v1/stock/inventory?locationId=${encodeURIComponent(locationId)}`);
+    updateRevision(result);
+    const inventoryRevision = Number(result.inventoryRevision ?? result.revision ?? 0);
+    const catalogRevision = Number(result.catalogRevision ?? 0);
+    if (inventoryRevision < domainRevision("inventory") || catalogRevision < domainRevision("catalog")) throw new Error("Stok miktarı değişti. Güncel miktarı kontrol edip tekrar deneyin.");
+    const inventory = { ...result, inventoryRevision, catalogRevision };
+    transferInventoryCache.set(locationId, inventory);
+    if (transferInventoryCache.size > 6) transferInventoryCache.delete(transferInventoryCache.keys().next().value);
+    return inventory;
+  }
+
+  async function refreshTransferInventories({ force = false, productIdValue = $("#stockTransferProduct")?.value || "" } = {}) {
+    const sequence = ++transferDraft.sequence;
+    const sourceId = $("#stockTransferFrom")?.value || "";
+    const destinationId = $("#stockTransferTo")?.value || "";
+    transferDraft.loading = true;
+    transferDraft.error = "";
+    transferDraft.source = null;
+    transferDraft.destination = null;
+    updateTransferPreview();
+    try {
+      const [source, destination] = await Promise.all([loadTransferInventory(sourceId, force), loadTransferInventory(destinationId, force)]);
+      if (sequence !== transferDraft.sequence) return;
+      transferDraft.source = source;
+      transferDraft.destination = destination;
+      const selected = (source?.balances || []).find((balance) => productId(balance) === String(productIdValue));
+      if (selected && transferProductEligible(selected) && !transferBlockReason(selected)) {
+        $("#stockTransferProduct").value = productId(selected);
+        $("#stockTransferSearch").value = productName(selected);
+      } else {
+        $("#stockTransferProduct").value = "";
+      }
+      updateTransferQuantityFields();
+    } catch (error) {
+      if (sequence !== transferDraft.sequence) return;
+      transferDraft.error = error.message;
+    } finally {
+      if (sequence === transferDraft.sequence) {
+        transferDraft.loading = false;
+        renderTransferResults();
+        updateTransferPreview();
+      }
+    }
+  }
+
+  function transferProductEligible(balance) {
+    const product = productOf(balance);
+    return product.active !== false && product.sourcePresent !== false && product.trashed !== true
+      && !product.archivedAt && !product.removedAt && !product.deletedAt && !product.purgedAt
+      && (Number(balance.quantity || 0) > 0 || balance.reconciliationRequired === true || !textValue(product.baseUnit || product.unit));
+  }
+
+  function transferBlockReason(balance) {
+    if (balance?.reconciliationRequired === true) return "Bu depo bakiyesi için stok mutabakatı gerekiyor.";
+    const product = productOf(balance);
+    if (!textValue(product.baseUnit || product.unit)) return "Temel birim eksik. Önce Ürün Ayarlarını tamamlayın.";
+    if (Number(balance.quantity || 0) <= 0) return "Kaynak depoda yeterli stok yok.";
+    return "";
+  }
+
+  function selectedTransferBalance() {
+    const id = $("#stockTransferProduct")?.value || "";
+    return (transferDraft.source?.balances || []).find((balance) => productId(balance) === id) || null;
+  }
+
+  function renderTransferResults() {
+    const host = $("#stockTransferResults");
+    const search = $("#stockTransferSearch");
+    if (!host || !search) return;
+    const query = locationNameKey(search.value);
+    const matches = (transferDraft.source?.balances || []).filter(transferProductEligible)
+      .filter((balance) => locationNameKey(`${productName(balance)} ${productOf(balance).productCode || ""}`).includes(query)).slice(0, 40);
+    host.innerHTML = matches.length ? matches.map((balance, index) => {
+      const reason = transferBlockReason(balance);
+      return `<button type="button" role="option" id="stock-transfer-option-${index}" aria-selected="false" data-transfer-product="${esc(productId(balance))}"${reason ? ' disabled aria-disabled="true"' : ""}><strong>${esc(productName(balance))}</strong><small>${esc(reason ? `⚠ ${reason}` : `Mevcut: ${quantityDisplay(balance)}`)}</small></button>`;
+    }).join("") : `<p>${transferDraft.loading ? "Stok yükleniyor…" : transferDraft.error || (transferDraft.source ? "Uygun ürün bulunamadı." : "Önce transfer eden depoyu seçin.")}</p>`;
+    transferDraft.activeIndex = -1;
+    search.removeAttribute("aria-activedescendant");
+    const show = document.activeElement === search && !$("#stockTransferProduct")?.value;
+    host.hidden = !show;
+    search.setAttribute("aria-expanded", String(show));
+  }
+
+  function chooseTransferProduct(id) {
+    const balance = (transferDraft.source?.balances || []).find((item) => productId(item) === String(id));
+    if (!balance || !transferProductEligible(balance) || transferBlockReason(balance)) return;
+    $("#stockTransferProduct").value = productId(balance);
+    $("#stockTransferSearch").value = productName(balance);
+    $("#stockTransferResults").hidden = true;
+    $("#stockTransferSearch").setAttribute("aria-expanded", "false");
+    $("#stockTransferSearch").removeAttribute("aria-activedescendant");
+    transferDraft.pending = null;
+    $("#stockTransferBulkQuantity").value = "0";
+    $("#stockTransferQuantity").value = "0";
+    updateTransferQuantityFields();
+    updateTransferPreview();
+    $($("#stockTransferBulkField").hidden ? "#stockTransferQuantity" : "#stockTransferBulkQuantity")?.focus();
+  }
+
+  function updateTransferQuantityFields() {
+    const balance = selectedTransferBalance();
+    const product = productOf(balance);
+    const bulkUnit = textValue(product.bulkUnit || product.caseUnit);
+    const factor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
+    const mixed = Boolean(balance && bulkUnit && factor > 0);
+    $("#stockTransferBulkField").hidden = !mixed;
+    if (!mixed) $("#stockTransferBulkQuantity").value = "0";
+    $("#stockTransferBulkUnit").textContent = mixed ? bulkUnit : "";
+    $("#stockTransferBaseUnit").textContent = balance ? unitOf(balance) : "";
+    $("#stockTransferQuantityLabel").textContent = mixed ? "Temel miktar" : "Miktar";
+    $("#stockTransferQuantity").step = product.allowDecimal ? "0.001" : "1";
+    $("#stockTransferCurrent").textContent = balance ? `Mevcut: ${quantityDisplay(balance)}` : "";
+  }
+
+  function transferInput() {
+    const balance = selectedTransferBalance();
+    const bulkQuantity = Number($("#stockTransferBulkQuantity")?.value || 0);
+    const baseQuantity = Number($("#stockTransferQuantity")?.value || 0);
+    const factor = Number(productOf(balance).unitsPerBulkUnit ?? productOf(balance).unitsPerCase ?? 0);
+    const quantity = Math.round((bulkQuantity * factor + baseQuantity) * 1000) / 1000;
+    const sourceId = $("#stockTransferFrom")?.value || "";
+    const destinationId = $("#stockTransferTo")?.value || "";
+    const destination = (transferDraft.destination?.balances || []).find((item) => balance && productId(item) === productId(balance));
+    let error = transferDraft.error;
+    if (!error && transferDraft.loading) error = "Stok yükleniyor…";
+    if (!error && (!sourceId || !destinationId || sourceId === destinationId)) error = "Farklı kaynak ve hedef depoları seçin.";
+    if (!error && ![sourceId, destinationId].every((id) => state.locations.some((location) => String(location.id) === id && location.active !== false))) error = "Pasif depo transferde kullanılamaz.";
+    if (!error && !balance) error = "Transfer edilecek ürünü seçin.";
+    if (!error && (!transferDraft.source || !transferDraft.destination)) error = "Depo stoklarının yüklenmesini bekleyin.";
+    if (!error && balance) error = transferBlockReason(balance);
+    if (!error && destination?.reconciliationRequired) error = "Bu depo bakiyesi için stok mutabakatı gerekiyor.";
+    if (!error && (![bulkQuantity, baseQuantity, quantity].every(Number.isFinite) || bulkQuantity < 0 || baseQuantity < 0 || quantity <= 0)) error = "Sıfırdan büyük geçerli bir miktar girin.";
+    if (!error && !productOf(balance).allowDecimal && !Number.isInteger(quantity)) error = "Bu ürün için tam temel miktar girin.";
+    if (!error && quantity > Number(balance.quantity || 0)) error = "Kaynak depoda yeterli stok yok.";
+    if (!error && [transferDraft.source, transferDraft.destination].some((inventory) => inventory.inventoryRevision !== domainRevision("inventory") || inventory.catalogRevision !== domainRevision("catalog"))) error = "Stok miktarı değişti. Güncel miktarı kontrol edip tekrar deneyin.";
+    return { balance, destination, sourceId, destinationId, bulkQuantity, baseQuantity, quantity, error };
   }
 
   function updateThresholdConversionPreview() {
-    const baseUnit = textValue($("#stockThresholdBaseUnit")?.value, "adet");
+    const baseUnit = textValue($("#stockThresholdBaseUnit")?.value, "");
     const bulkUnit = textValue($("#stockThresholdBulkUnit")?.value, "");
     const factor = Number($("#stockThresholdFactor")?.value || 0);
     const preview = $("#stockThresholdConversionPreview");
     const factorInput = $("#stockThresholdFactor");
-    if (factorInput) factorInput.disabled = state.selectedLocationId === "total" || !can(CAPABILITIES.inventoryCatalogManage) || !bulkUnit;
+    if (factorInput) factorInput.disabled = state.selectedLocationId === "total" || !can(CAPABILITIES.inventoryCatalogManage) || !baseUnit || !bulkUnit;
     const defaultSelect = $("#stockThresholdDefaultUnit");
     if (defaultSelect) {
       const previous = textValue(defaultSelect.value, state.thresholdInitial && state.thresholdInitial.defaultMovementUnit || baseUnit);
-      const options = [{ value: baseUnit, label: baseUnit }];
+      const options = baseUnit ? [{ value: baseUnit, label: baseUnit }] : [{ value: "", label: "Önce temel birim seçin" }];
       if (bulkUnit && factor > 0) options.push({ value: bulkUnit, label: bulkUnit });
       setSelectOptions(defaultSelect, options, options.some((item) => unitKey(item.value) === unitKey(previous)) ? previous : baseUnit);
     }
     if (!preview) return;
-    preview.textContent = bulkUnit && factor > 0
+    preview.textContent = !baseUnit
+      ? "Temel birim seçilmelidir."
+      : bulkUnit && factor > 0
       ? `1 ${bulkUnit} = ${formatNumber(factor)} ${baseUnit}`
       : "Toplu birim seçilmedi.";
   }
@@ -997,7 +1170,7 @@ import { requestText } from "./ui-dialogs.js";
     state.selectedProductId = productId(balance);
     $("#stockThresholdDialogTitle").textContent = productName(balance);
     $("#stockThresholdDialogMeta").textContent = locationName(state.selectedLocationId);
-    const currentBaseUnit = textValue(product.baseUnit || product.unit, "adet");
+    const currentBaseUnit = textValue(product.baseUnit || product.unit, "");
     const currentBulkUnit = textValue(product.bulkUnit || product.caseUnit, "");
     const currentFactor = Number(product.unitsPerBulkUnit ?? product.unitsPerCase ?? 0);
     const currentDefaultMovementUnit = textValue(product.defaultMovementUnit, currentBaseUnit);
@@ -1016,7 +1189,7 @@ import { requestText } from "./ui-dialogs.js";
     const baseUnit = textValue(draft && draft.baseUnit, currentBaseUnit);
     const bulkUnit = textValue(draft && draft.bulkUnit, currentBulkUnit);
     const factor = draft && draft.factor !== undefined ? Number(draft.factor || 0) : currentFactor;
-    setSelectOptions($("#stockThresholdBaseUnit"), unitCatalogOptions("base", baseUnit), baseUnit);
+    setSelectOptions($("#stockThresholdBaseUnit"), unitCatalogOptions("base", baseUnit, true), baseUnit);
     setSelectOptions($("#stockThresholdBulkUnit"), unitCatalogOptions("bulk", bulkUnit, true), bulkUnit);
     if ($("#stockThresholdBaseUnit")) $("#stockThresholdBaseUnit").disabled = !can(CAPABILITIES.inventoryCatalogManage);
     if ($("#stockThresholdBulkUnit")) $("#stockThresholdBulkUnit").disabled = !can(CAPABILITIES.inventoryCatalogManage);
@@ -1042,26 +1215,44 @@ import { requestText } from "./ui-dialogs.js";
       if (input) input.disabled = !canManageInventory;
     });
     if ($("#stockThresholdSubmit")) $("#stockThresholdSubmit").hidden = !canManageInventory && !canManageCatalog;
+    if ($("#stockThresholdDelete")) $("#stockThresholdDelete").hidden = !canManageCatalog;
     $("#stockThresholdDialogMessage").textContent = "";
     const dialog = $("#stockThresholdDialog");
     if (dialog && !dialog.open) dialog.showModal();
-    $("#stockThresholdCritical")?.focus();
+    (baseUnit ? $("#stockThresholdCritical") : $("#stockThresholdBaseUnit"))?.focus();
   }
 
   function updateTransferPreview() {
     const preview = $("#stockTransferPreview");
     if (!preview) return;
-    const balance = selectedBalance("#stockTransferProduct");
-    const quantity = Number($("#stockTransferQuantity")?.value || 0);
-    if (!balance || !(quantity > 0)) {
-      preview.textContent = "Ürün ve miktar seçildiğinde önizleme görünür.";
+    const input = transferInput();
+    const { balance, destination, sourceId, destinationId, quantity, error } = input;
+    const button = $("#stockTransferSubmit");
+    if (button) button.disabled = Boolean(error && !transferDraft.pending) || state.busyKeys.has("direct-transfer");
+    $("#stockTransferDialogMessage").textContent = error;
+    if (!balance || !transferDraft.destination || !Number.isFinite(quantity)) {
+      preview.textContent = "Transfer Sonrası Önizleme: Depoları, ürünü ve miktarı seçin.";
       return;
     }
-    const unit = $("#stockTransferUnit")?.value || unitOf(balance);
-    const baseQuantity = toBaseQuantity(balance, quantity, unit);
-    const after = Number(balance.quantity || 0) - baseQuantity;
-    preview.textContent = `${locationName($("#stockTransferFrom")?.value)}: ${formatNumber(balance.quantity)} → ${formatNumber(after)} ${unitOf(balance)} · Hedef: ${locationName($("#stockTransferTo")?.value)}`;
-    preview.dataset.kind = after < 0 ? "error" : "info";
+    const target = { ...destination, product: productOf(balance), quantity: Number(destination?.quantity || 0) };
+    const sourceQuantity = Number(balance.quantity || 0);
+    const afterSource = sourceQuantity - quantity;
+    preview.innerHTML = `<h4>Transfer Sonrası Önizleme</h4><div class="stock-transfer-preview__row stock-transfer-preview__labels"><span>Depo</span><span>Önce</span><span>Sonra</span></div>
+      <div class="stock-transfer-preview__row"><strong>${esc(locationName(sourceId))}</strong><span>${esc(quantityDisplay(balance))}</span><b>${esc(afterSource < 0 ? "Yetersiz stok" : quantityDisplay(balance, afterSource))}</b></div>
+      <div class="stock-transfer-preview__row"><strong>${esc(locationName(destinationId))}</strong><span>${esc(quantityDisplay(target))}</span><b>${esc(destination?.reconciliationRequired ? "Mutabakat gerekiyor" : quantityDisplay(target, target.quantity + quantity))}</b></div>
+      <p>Transfer: <strong>${esc(quantityDisplay({ ...balance, quantityDisplay: null }, quantity))}</strong></p>`;
+    preview.dataset.kind = error ? "error" : "info";
+  }
+
+  function transferQuantityText(item) {
+    const snapshot = item.conversionSnapshot;
+    if (snapshot && (snapshot.bulkQuantity !== undefined || snapshot.baseQuantity !== undefined)) {
+      const parts = [];
+      if (Number(snapshot.bulkQuantity) > 0) parts.push(`${formatNumber(snapshot.bulkQuantity)} ${snapshot.bulkUnit}`);
+      if (Number(snapshot.baseQuantity) > 0) parts.push(`${formatNumber(snapshot.baseQuantity)} ${snapshot.baseUnit}`);
+      return parts.join(" + ") || `0 ${snapshot.baseUnit}`;
+    }
+    return `${formatNumber(item.sourceQuantity ?? item.inputQuantity ?? item.quantity)} ${item.sourceUnit || item.inputUnit || item.baseUnit || item.unit || "adet"}`;
   }
 
   function renderTransfers() {
@@ -1075,7 +1266,7 @@ import { requestText } from "./ui-dialogs.js";
       return `<article class="stock-transfer-request" data-stock-transfer-card="${esc(transfer.id)}">
         <div><strong>${esc(product.name || product.productName || transfer.productName || "Stok ürünü")}</strong><span>${esc(transfer.requestedByName || transfer.personnelName || "Personel")} · ${esc(formatDate(transfer.createdAt))}</span></div>
         <p>${esc(locationName(transfer.fromLocationId))} → ${esc(locationName(transfer.toLocationId))}</p>
-        <b>${esc(formatNumber(transfer.quantity))} ${esc(transfer.baseUnit || transfer.unit || "adet")}</b>
+        <b>${esc(transfer.conversionSnapshot?.bulkQuantity !== undefined || transfer.conversionSnapshot?.baseQuantity !== undefined ? transferQuantityText(transfer) : `${formatNumber(transfer.quantity)} ${transfer.baseUnit || transfer.unit || "adet"}`)}</b>
         <span class="stock-location-status is-${esc(transfer.status)}">${esc(statusLabel(transfer.status))}</span>
         ${pending && can(CAPABILITIES.inventoryTransferApprove) ? `<label><span>Yönetici notu</span><input type="text" maxlength="250" data-transfer-note="${esc(transfer.id)}" placeholder="Ret için neden zorunlu"></label>
           <div class="stock-transfer-request__actions">
@@ -1089,7 +1280,7 @@ import { requestText } from "./ui-dialogs.js";
   function movementText(movement) {
     const from = movement.fromLocationId ? locationName(movement.fromLocationId) : "";
     const to = movement.toLocationId ? locationName(movement.toLocationId) : "";
-    if (movement.type === "transfer") return `${from} → ${to}`;
+    if (["transfer", "transfer_out", "transfer_in"].includes(movement.type)) return `${from} → ${to}`;
     return locationName(movement.locationId || movement.toLocationId || movement.fromLocationId);
   }
 
@@ -1101,7 +1292,7 @@ import { requestText } from "./ui-dialogs.js";
       return `<article class="stock-location-movement">
         <div><strong>${esc(movement.productName || "Stok ürünü")}</strong><span>${esc(movementText(movement))}</span></div>
         <p>${esc(statusLabel(movement.type))} · ${esc(formatDate(movement.createdAt))}</p>
-        <b>${esc(formatNumber(movement.quantity))} ${esc(movement.baseUnit || movement.unit || "adet")}</b>
+        <b>${esc(["transfer", "transfer_out", "transfer_in"].includes(movement.type) ? `${movement.type === "transfer_out" ? "−" : movement.type === "transfer_in" ? "+" : ""}${transferQuantityText(movement)}` : `${formatNumber(movement.quantity)} ${movement.baseUnit || movement.unit || "adet"}`)}</b>
         ${reversible && can(CAPABILITIES.inventoryMovementReverse) ? `<button class="ui-button ui-button--ghost ui-button--sm" type="button" data-reverse-movement="${esc(movement.id)}">Ters Kayıt</button>` : !reversible ? `<span class="stock-location-status">Ters kayıtlı</span>` : ""}
       </article>`;
     }).join("") : `<div class="stock-location-empty"><strong>Hareket kaydı yok</strong><span>Seçili filtrelere ait işlem bulunamadı.</span></div>`;
@@ -1111,23 +1302,11 @@ import { requestText } from "./ui-dialogs.js";
     const host = $("#stockLocationManagementList");
     if (!host) return;
     if (!can(CAPABILITIES.inventoryLocationManage)) { host.innerHTML = ""; return; }
-    const activePersonnel = state.personnel.filter((person) => person.active !== false);
-    host.innerHTML = state.locations.map((location) => {
-      const assigned = new Set((location.assignedPersonnelIds || []).map(String));
-      const assignmentControl = location.type === "cafe" ? `<label class="stock-location-assignment">
-        <span>Atanmış personel</span>
-        <select multiple size="${Math.min(5, Math.max(2, activePersonnel.length || 2))}" data-location-personnel="${esc(location.id)}" aria-label="${esc(location.name)} personel ataması">
-          ${activePersonnel.map((person) => `<option value="${esc(person.id)}"${assigned.has(String(person.id)) ? " selected" : ""}>${esc(person.name)}${person.username ? ` · @${esc(person.username)}` : ""}</option>`).join("")}
-        </select>
-      </label>
-      <button class="ui-button ui-button--secondary ui-button--sm" type="button" data-location-personnel-save="${esc(location.id)}">Atamayı Kaydet</button>`
-        : `<span class="stock-location-assignment__hint">Personel yalnızca Kafe Deposuna atanabilir.</span>`;
-      return `<article>
-        <div><strong>${esc(location.name)}</strong><span>${esc(location.code)} · ${esc(location.type)}${location.description ? ` · ${esc(location.description)}` : ""}</span></div>
-        <span class="stock-location-status is-${location.active === false ? "inactive" : "active"}">${location.active === false ? "Pasif" : "Aktif"}</span>
-        <div class="stock-location-management__actions">${assignmentControl}<button class="ui-button ui-button--secondary ui-button--sm" type="button" data-location-edit="${esc(location.id)}">Düzenle</button><button class="ui-button ui-button--ghost ui-button--sm" type="button" data-location-toggle="${esc(location.id)}" data-next-active="${location.active === false}">${location.active === false ? "Aktifleştir" : "Pasifleştir"}</button></div>
-      </article>`;
-    }).join("");
+    host.innerHTML = state.locations.map((location) => `<article>
+      <div><strong>${esc(location.name)}</strong><span>Personel görünümü: ${location.personnelVisible === true ? "Açık" : "Kapalı"}</span></div>
+      <span class="stock-location-status is-${location.active === false ? "inactive" : "active"}">${location.active === false ? "Pasif" : "Aktif"}</span>
+      <button class="ui-button ui-button--secondary ui-button--sm" type="button" data-location-edit="${esc(location.id)}">Düzenle</button>
+    </article>`).join("");
   }
 
   function setUnitSettingsMessage(message, isError = false) {
@@ -1455,26 +1634,51 @@ import { requestText } from "./ui-dialogs.js";
   async function submitTransfer(form) {
     if (!can(CAPABILITIES.inventoryTransferCreate)) throw new Error("Transfer oluşturma yetkiniz yok.");
     const button = $("#stockTransferSubmit");
-    return runOperation("direct-transfer", button, async () => {
-      const balance = selectedBalance("#stockTransferProduct");
-      const quantity = Number($("#stockTransferQuantity")?.value || 0);
-      const fromLocationId = $("#stockTransferFrom")?.value || "";
-      const toLocationId = $("#stockTransferTo")?.value || "";
-      if (!balance || !fromLocationId || !toLocationId || fromLocationId === toLocationId || !(quantity > 0)) {
-        throw new Error("Kaynak, hedef, ürün ve geçerli miktar seçin.");
-      }
-      const transferUnit = $("#stockTransferUnit")?.value || unitOf(balance);
-      if (toBaseQuantity(balance, quantity, transferUnit) > Number(balance.quantity || 0)) throw new Error("Kaynak depoda yeterli stok yok.");
-      const approveNow = can(CAPABILITIES.inventoryTransferApprove);
-      const result = await api("/api/procurement/v1/stock/transfers", mutation("POST", {
-        productId: productId(balance), fromLocationId, toLocationId, quantity,
-        unit: transferUnit, note: $("#stockTransferNote")?.value.trim() || "", directApply: approveNow, approveNow
-      }, "admin-stock-transfer"));
-      form.reset();
-      $("#stockTransferDialog")?.close();
-      closeProductDrawer({ restoreFocus: false });
-      await reloadAfterMutation(result, approveNow ? "Depolar arası transfer tamamlandı." : "Transfer talebi onaya gönderildi.");
-    });
+    try {
+      return await runOperation("direct-transfer", button, async () => {
+        const input = transferInput();
+        if (input.error && !transferDraft.pending) throw new Error(input.error);
+        const { balance, destination, sourceId, destinationId, bulkQuantity, baseQuantity, quantity } = input;
+        const approveNow = can(CAPABILITIES.inventoryTransferApprove);
+        if (!transferDraft.pending) {
+          transferDraft.pending = mutation("POST", {
+            productId: productId(balance), fromLocationId: sourceId, toLocationId: destinationId,
+            bulkQuantity, baseQuantity, sourceExpectedRevision: Number(balance.revision || 0),
+            destinationExpectedRevision: Number(destination?.revision || 0),
+            note: $("#stockTransferNote")?.value.trim() || "", directApply: approveNow, approveNow
+          }, "admin-stock-transfer", ["inventory", "catalog"]);
+        }
+        const controls = $$("input, select, textarea", form);
+        controls.forEach((control) => { control.disabled = true; });
+        try {
+          const result = await api("/api/procurement/v1/stock/transfers", transferDraft.pending);
+          const transfer = result.transfer;
+          const message = approveNow
+            ? `Transfer tamamlandı: ${transferQuantityText(transfer)} • ${locationName(transfer.fromLocationId)} → ${locationName(transfer.toLocationId)}`
+            : "Transfer talebi onaya gönderildi.";
+          transferDraft.pending = null;
+          transferInventoryCache.clear();
+          transferDraft.sequence += 1;
+          form.reset();
+          $("#stockTransferProduct").value = "";
+          $("#stockTransferDialog")?.close();
+          closeProductDrawer({ restoreFocus: false });
+          await reloadAfterMutation(result, message);
+        } catch (error) {
+          if (error.status === 409) {
+            transferDraft.pending = null;
+            transferInventoryCache.clear();
+            await refreshTransferInventories({ force: true });
+            if (!/mutabakat|temel birim|yeterli stok|pasif|aktif/i.test(error.message)) error.message = "Stok miktarı değişti. Güncel miktarı kontrol edip tekrar deneyin.";
+          } else if (error.status >= 400 && error.status < 500) transferDraft.pending = null;
+          throw error;
+        } finally {
+          controls.forEach((control) => { control.disabled = false; });
+        }
+      });
+    } finally {
+      updateTransferPreview();
+    }
   }
 
   async function submitMovement(form) {
@@ -1533,12 +1737,10 @@ import { requestText } from "./ui-dialogs.js";
     const button = $("button[type=submit]", form);
     return runOperation("location-create", button, async () => {
       const name = $("#stockLocationName")?.value.trim() || "";
-      const code = $("#stockLocationCode")?.value.trim().toUpperCase() || "";
-      if (!name || !code) throw new Error("Depo adı ve kodu zorunludur.");
+      if (!name) throw new Error("Depo adı zorunludur.");
+      $("#stockLocationCreateMessage").textContent = "";
       const result = await api("/api/procurement/v1/stock/locations", mutation("POST", {
-        name, code, type: $("#stockLocationType")?.value || "other",
-        description: $("#stockLocationDescription")?.value.trim() || "",
-        active: true, isDefault: Boolean($("#stockLocationDefault")?.checked)
+        name, personnelVisible: $("#stockLocationPersonnelVisible")?.value === "true"
       }, "admin-stock-location"));
       form.reset();
       await reloadAfterMutation(result, "Yeni depo oluşturuldu.");
@@ -1561,6 +1763,7 @@ import { requestText } from "./ui-dialogs.js";
     $("#stockLocationEditId").value = String(id);
     $("#stockLocationEditName").value = location.name || "";
     $("#stockLocationEditStatus").value = location.active === false ? "passive" : "active";
+    $("#stockLocationEditPersonnelVisible").value = String(location.personnelVisible === true);
     $("#stockLocationEditMessage").textContent = "";
     const dialog = $("#stockLocationEditDialog");
     if (dialog && !dialog.open) dialog.showModal();
@@ -1583,7 +1786,7 @@ import { requestText } from "./ui-dialogs.js";
       && !await requestConfirmation("Depoyu pasifleştir", "Bu depo yeni stok ve transfer işlemlerine kapatılacaktır. Geçmiş kayıtlar korunacaktır.", "Pasifleştir")) return;
     const button = $("#stockLocationEditSubmit");
     return runOperation(`location-edit:${id}`, button, async () => {
-      const result = await api(`/api/procurement/v1/stock/locations/${encodeURIComponent(id)}`, mutation("PATCH", { name, active }, "fatura-stock-location-edit"));
+      const result = await api(`/api/procurement/v1/stock/locations/${encodeURIComponent(id)}`, mutation("PATCH", { name, active, personnelVisible: $("#stockLocationEditPersonnelVisible")?.value === "true" }, "fatura-stock-location-edit"));
       $("#stockLocationEditDialog")?.close();
       await reloadAfterMutation(result, "Depo bilgileri güncellendi.");
     });
@@ -1604,8 +1807,31 @@ import { requestText } from "./ui-dialogs.js";
     openThresholdDialog(productIdValue);
   }
 
+  async function trashSelectedProduct(button) {
+    if (!can(CAPABILITIES.inventoryCatalogManage)) throw new Error("Stok ürünü silme yetkiniz yok.");
+    const balance = selectedProductBalance();
+    if (!balance) throw new Error("Stok ürünü bulunamadı.");
+    const productKey = productId(balance);
+    const confirmed = await requestConfirmation(
+      "Ürünü sil",
+      `“${productName(balance)}” aktif stok listesinden kaldırılıp Çöp Kutusu'na taşınacak. Geçmiş hareketler korunacak.`,
+      "Ürünü Sil"
+    );
+    if (!confirmed) return;
+    return runOperation(`product-trash:${productKey}`, button, async () => {
+      const result = await api(`/api/procurement/v1/stock/catalog/products/${encodeURIComponent(productKey)}/trash`,
+        mutation("POST", {}, "fatura-stock-product-trash", ["inventory", "catalog"]));
+      updateRevision(result, "catalog");
+      invalidateFatura(["trash", "stock-references"]);
+      $("#stockThresholdDialog")?.close();
+      state.thresholdInitial = null;
+      closeProductDrawer({ restoreFocus: false });
+      await reloadAfterMutation(result, "Ürün Çöp Kutusu'na taşındı.");
+    });
+  }
+
   function readUnitSchemaForm() {
-    const baseUnit = textValue($("#stockThresholdBaseUnit")?.value, "adet").toLocaleLowerCase("tr-TR");
+    const baseUnit = textValue($("#stockThresholdBaseUnit")?.value, "").toLocaleLowerCase("tr-TR");
     const bulkUnit = textValue($("#stockThresholdBulkUnit")?.value, "").toLocaleLowerCase("tr-TR");
     const unitsPerBulkUnit = bulkUnit ? Number($("#stockThresholdFactor")?.value || 0) : 0;
     const defaultMovementUnit = textValue($("#stockThresholdDefaultUnit")?.value, baseUnit).toLocaleLowerCase("tr-TR");
@@ -1626,7 +1852,7 @@ import { requestText } from "./ui-dialogs.js";
       <article><span>Eski birim yapısı</span><strong>${esc(plan.currentSchema.baseUnit)}${plan.currentSchema.bulkUnit ? ` · 1 ${esc(plan.currentSchema.bulkUnit)} = ${esc(formatNumber(plan.currentSchema.unitsPerBulkUnit))} ${esc(plan.currentSchema.baseUnit)}` : ""}</strong></article>
       <article><span>Yeni birim yapısı</span><strong>${esc(plan.targetSchema.baseUnit)}${plan.targetSchema.bulkUnit ? ` · 1 ${esc(plan.targetSchema.bulkUnit)} = ${esc(formatNumber(plan.targetSchema.unitsPerBulkUnit))} ${esc(plan.targetSchema.baseUnit)}` : ""}</strong></article>
       <article><span>Mevcut stok</span><strong>${esc(plan.currentDisplay)}</strong></article>
-      <article><span>Dönüşüm sonrası</span><strong>${esc(plan.nextDisplay)} · oran ${esc(formatNumber(plan.factor))}</strong></article>
+      <article><span>Dönüşüm sonrası</span><strong>${esc(plan.nextDisplay)} · oran ${plan.factor === null ? "depo bazlı" : esc(formatNumber(plan.factor))}</strong></article>
     </div><div class="stock-unit-migration-preview__locations">${(plan.locations || []).map((item) => `<article><span>${esc(item.locationName)}<small>${esc(item.current.display)} → ${esc(item.next.display)}</small></span><strong>Kritik ${esc(formatNumber(item.current.criticalThreshold))} → ${esc(formatNumber(item.next.criticalThreshold))}<br>Sipariş ${esc(formatNumber(item.current.orderThreshold))} → ${esc(formatNumber(item.next.orderThreshold))}<br>Hedef ${esc(formatNumber(item.current.targetLevel))} → ${esc(formatNumber(item.next.targetLevel))}</strong></article>`).join("")}</div>`;
   }
 
@@ -1638,7 +1864,8 @@ import { requestText } from "./ui-dialogs.js";
     const schema = readUnitSchemaForm();
     const initial = state.thresholdInitial || {};
     const baseChanged = unitKey(schema.targetBaseUnit) !== unitKey(initial.baseUnit);
-    if (baseChanged) {
+    const requiresMigration = baseChanged || balance.reconciliationRequired === true;
+    if (requiresMigration) {
       return runOperation(`unit-preview:${productKey}`, button, async () => {
         const result = await api(`/api/procurement/v1/stock/products/${encodeURIComponent(productKey)}/unit-migration`, {
           method: "POST",
@@ -1646,7 +1873,9 @@ import { requestText } from "./ui-dialogs.js";
         });
         state.pendingUnitMigration = { productId: productKey, schema, plan: result.plan };
         renderUnitMigrationPreview(result.plan);
-        $("#stockUnitMigrationMessage").textContent = "Bu işlem mevcut stok ve eşikleri yeni temel birime dönüştürecektir.";
+        $("#stockUnitMigrationMessage").textContent = result.plan.reconciliationRequired
+          ? "Bazı depo bakiyeleri otomatik dönüştürülemiyor. Önce stok sayımıyla mutabakatı tamamlayın."
+          : "Bu işlem mevcut stok ve eşikleri güvenli birim oranıyla dönüştürecektir.";
         const dialog = $("#stockUnitMigrationDialog");
         if (dialog && !dialog.open) dialog.showModal();
       });
@@ -1719,7 +1948,8 @@ import { requestText } from "./ui-dialogs.js";
     const schemaChanged = Boolean(schema && (baseChanged
       || unitKey(schema.targetBulkUnit) !== unitKey(initial.bulkUnit)
       || Number(schema.unitsPerBulkUnit || 0) !== Number(initial.factor || 0)));
-    if (baseChanged) {
+    const requiresMigration = Boolean(schema && (baseChanged || balance.reconciliationRequired === true));
+    if (requiresMigration) {
       state.pendingThresholdSave = canManageInventory ? { productId: productKey, payload, retryDraft } : null;
       return submitUnitSchema($("#stockThresholdSubmit"));
     }
@@ -2069,10 +2299,46 @@ import { requestText } from "./ui-dialogs.js";
     });
     $("#stockLocationSearch")?.addEventListener("input", renderInventory);
     $("#stockLocationStatusFilter")?.addEventListener("change", renderInventory);
-    $("#stockTransferTo")?.addEventListener("change", updateTransferPreview);
-    $("#stockTransferProduct")?.addEventListener("change", () => { updateProductUnits(); updateTransferPreview(); });
-    $("#stockTransferQuantity")?.addEventListener("input", updateTransferPreview);
-    $("#stockTransferUnit")?.addEventListener("change", updateTransferPreview);
+    $("#stockTransferFrom")?.addEventListener("change", () => {
+      transferDraft.pending = null;
+      $("#stockTransferProduct").value = "";
+      $("#stockTransferSearch").value = "";
+      updateTransferLocations();
+      refreshTransferInventories().catch(() => {});
+    });
+    $("#stockTransferTo")?.addEventListener("change", () => { transferDraft.pending = null; refreshTransferInventories().catch(() => {}); });
+    ["#stockTransferQuantity", "#stockTransferBulkQuantity", "#stockTransferNote"].forEach((selector) => $(selector)?.addEventListener("input", () => { transferDraft.pending = null; updateTransferPreview(); }));
+    $("#stockTransferSearch")?.addEventListener("input", () => {
+      transferDraft.pending = null;
+      $("#stockTransferProduct").value = "";
+      updateTransferQuantityFields(); renderTransferResults(); updateTransferPreview();
+    });
+    $("#stockTransferSearch")?.addEventListener("focus", renderTransferResults);
+    $("#stockTransferResults")?.addEventListener("click", (event) => {
+      const option = event.target.closest("[data-transfer-product]");
+      if (option && !option.disabled) chooseTransferProduct(option.dataset.transferProduct);
+    });
+    $("#stockTransferSearch")?.addEventListener("keydown", (event) => {
+      const host = $("#stockTransferResults");
+      if (event.key === "Escape" && !host.hidden) {
+        event.preventDefault(); event.stopPropagation(); host.hidden = true;
+        event.currentTarget.setAttribute("aria-expanded", "false"); return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key) || (event.key === "Enter" && host.hidden)) return;
+      event.preventDefault();
+      host.hidden = false; event.currentTarget.setAttribute("aria-expanded", "true");
+      const options = $$("[data-transfer-product]:not(:disabled)", host);
+      if (!options.length) return;
+      if (event.key === "Enter") { const option = options[transferDraft.activeIndex]; if (option) chooseTransferProduct(option.dataset.transferProduct); return; }
+      transferDraft.activeIndex = (transferDraft.activeIndex + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+      options.forEach((option, index) => option.setAttribute("aria-selected", String(index === transferDraft.activeIndex)));
+      const selected = options[transferDraft.activeIndex];
+      event.currentTarget.setAttribute("aria-activedescendant", selected.id);
+      selected.scrollIntoView({ block: "nearest" });
+    });
+    $("#stockTransferForm")?.addEventListener("focusout", (event) => {
+      if (!event.relatedTarget?.closest(".stock-transfer-search")) { $("#stockTransferResults").hidden = true; $("#stockTransferSearch").setAttribute("aria-expanded", "false"); }
+    });
     $("#stockLocationMovementProduct")?.addEventListener("change", () => {
       updateProductUnits();
       const balance = selectedBalance("#stockLocationMovementProduct");
@@ -2093,6 +2359,7 @@ import { requestText } from "./ui-dialogs.js";
     $("#stockMovementProductFilter")?.addEventListener("change", () => loadMovements().then(renderMovements).catch((error) => setMessage(error.message, "error")));
     $("#stockLocationRefreshButton")?.addEventListener("click", (event) => runOperation("refresh", event.currentTarget, () => loadAll({ force: true })).catch(() => {}));
     $("#stockWarehouseBackButton")?.addEventListener("click", () => leaveWarehouse());
+    $("#stockOverviewTransferButton")?.addEventListener("click", () => openTransferDialog(""));
     $("#stockLocationOverviewAddButton")?.addEventListener("click", () => { const dialog = $("#stockLocationManagementDialog"); if (dialog && !dialog.open) dialog.showModal(); });
     $("#stockLocationNewProductButton")?.addEventListener("click", () => {
       openCatalogEditor("new-product").catch((error) => setCatalogMessage(error.message, true));
@@ -2176,10 +2443,11 @@ import { requestText } from "./ui-dialogs.js";
     $("#stockTransferForm")?.addEventListener("submit", (event) => { event.preventDefault(); submitTransfer(event.currentTarget).catch((error) => { $("#stockTransferDialogMessage").textContent = error.message; }); });
     $("#stockLocationMovementForm")?.addEventListener("submit", (event) => { event.preventDefault(); submitMovement(event.currentTarget).catch((error) => { $("#stockMovementDialogMessage").textContent = error.message; }); });
     $("#stockThresholdForm")?.addEventListener("submit", (event) => { event.preventDefault(); submitThresholds(event.currentTarget).catch((error) => { $("#stockThresholdDialogMessage").textContent = error.message; }); });
+    $("#stockThresholdDelete")?.addEventListener("click", (event) => { trashSelectedProduct(event.currentTarget).catch((error) => { $("#stockThresholdDialogMessage").textContent = error.message; }); });
     $("#stockUnitSchemaSubmit")?.addEventListener("click", (event) => { submitUnitSchema(event.currentTarget).catch((error) => { $("#stockThresholdDialogMessage").textContent = error.message; }); });
     $("#stockUnitMigrationForm")?.addEventListener("submit", (event) => { event.preventDefault(); confirmUnitMigration($("#stockUnitMigrationConfirm")).catch((error) => { $("#stockUnitMigrationMessage").textContent = error.message; }); });
     $("#stockLocationEditForm")?.addEventListener("submit", (event) => { event.preventDefault(); saveLocationEdit(event.currentTarget).catch((error) => { $("#stockLocationEditMessage").textContent = error.message; }); });
-    $("#stockLocationCreateForm")?.addEventListener("submit", (event) => { event.preventDefault(); createLocation(event.currentTarget).catch(() => {}); });
+    $("#stockLocationCreateForm")?.addEventListener("submit", (event) => { event.preventDefault(); createLocation(event.currentTarget).catch((error) => { $("#stockLocationCreateMessage").textContent = error.message; }); });
     $$('[data-stock-dialog-close]').forEach((button) => button.addEventListener("click", () => closeDialog(button.dataset.stockDialogClose)));
     if (stockKeydownHandler) document.removeEventListener("keydown", stockKeydownHandler);
     stockKeydownHandler = (event) => {
@@ -2235,6 +2503,7 @@ export async function applyStockIntent(intent = {}) {
     renderAll();
     const card = $(`[data-stock-product-card="${CSS.escape(productIdValue)}"]`);
     openProductDrawer(productIdValue, card || null);
+    if (intent.openSettings === true) openThresholdDialog(productIdValue);
   }
   const transferId = String(intent.transferId || "");
   if (transferId) {
@@ -2264,6 +2533,7 @@ export function connectStockEvents() {
 export function handleStockGatewayEvent(event = {}) {
   const topic = String(event.topic || "");
   if (!new Set(["inventory", "catalog"]).has(topic)) return false;
+  transferInventoryCache.clear();
   const revision = Math.max(0, Number(event.revision || 0));
   if (topic === "catalog") {
     state.catalogRevision = Math.max(state.catalogRevision || 0, revision);
@@ -2276,7 +2546,12 @@ export function handleStockGatewayEvent(event = {}) {
   state.planningStale = true;
   clearTimeout(stockEventTimer);
   stockEventTimer = setTimeout(() => {
-    if (activeSection() === "stock") loadAll({ force: true, reloadLocations: true }).catch(() => {});
+    if (activeSection() === "stock") loadAll({ force: true, reloadLocations: true }).then(() => {
+      if ($("#stockTransferDialog")?.open && !state.busyKeys.has("direct-transfer")) {
+        updateTransferLocations();
+        return refreshTransferInventories();
+      }
+    }).catch(() => {});
   }, 180);
   return true;
 }
@@ -2298,11 +2573,15 @@ export function disconnectStockEvents() {
 }
 
 export function invalidateStockState() {
+  transferInventoryCache.clear();
   state.stale = true;
   state.planningStale = true;
 }
 
 export function resetStockState() {
+  transferInventoryCache.clear();
+  transferDraft.sequence += 1;
+  transferDraft.source = transferDraft.destination = transferDraft.pending = null;
   disconnectStockEvents();
   state.revision = 0;
   state.inventoryRevision = 0;

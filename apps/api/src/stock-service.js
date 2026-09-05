@@ -62,8 +62,13 @@ function controlledUnit(value, fallback = "") {
   return unit && unit.length <= 30 && /^[\p{L}\p{N} _-]+$/u.test(unit) ? unit : fallback;
 }
 
-function productUnitMetadata(product = {}) {
-  const baseUnit = controlledUnit(product.baseUnit || product.unit || "adet", "adet");
+function productUnitMetadata(product = {}, options = {}) {
+  const allowDefaultBaseUnit = options.allowDefaultBaseUnit !== false
+    && product.excelSourceBaseUnitMissing !== true
+    && product.excelBaseUnitMissing !== true
+    && product.baseUnitMissing !== true;
+  const fallbackBaseUnit = allowDefaultBaseUnit ? "adet" : "";
+  const baseUnit = controlledUnit(product.baseUnit || product.unit || fallbackBaseUnit, fallbackBaseUnit);
   const bulkUnit = controlledUnit(product.bulkUnit || product.caseUnit || product.purchaseUnit || "", "");
   const unitsPerBulkUnit = finitePositive(product.unitsPerBulkUnit ?? product.unitsPerCase ?? product.packageSize
     ?? product.packSize ?? product.piecesPerBox ?? product.koliIci
@@ -133,6 +138,14 @@ function allowedProductUnits(product) {
   return Array.from(result).filter(Boolean);
 }
 
+function requireProductBaseUnit(product) {
+  const metadata = productUnitMetadata(product, { allowDefaultBaseUnit: false });
+  if (!metadata.baseUnit) {
+    throw stockError(`${productName(product)} için temel birim tanımlanmadan stok hareketi yapılamaz.`, 409);
+  }
+  return metadata;
+}
+
 function productName(product) {
   return String(product && (product.productName || product.name) || "Stok ürünü");
 }
@@ -196,10 +209,12 @@ function actorLocationId(stockState, actor) {
   if (requested) {
     const location = getLocation(state, requested);
     if (location.type !== "cafe") throw stockError("Personel stok işlemleri yalnızca atanmış Kafe Deposunda yapılabilir.", 403);
+    if (location.personnelVisible === false) throw Object.assign(stockError("Bu depo personel görünümüne kapalıdır.", 403), { code: "STOCK_LOCATION_HIDDEN" });
     return location.id;
   }
   const cafe = defaultCafeLocation(state);
   if (!cafe || cafe.active === false) throw stockError("Personel için aktif Kafe Deposu bulunamadı.", 404);
+  if (cafe.personnelVisible === false) throw Object.assign(stockError("Bu depo personel görünümüne kapalıdır.", 403), { code: "STOCK_LOCATION_HIDDEN" });
   return cafe.id;
 }
 
@@ -216,7 +231,8 @@ function getProduct(stockState, productId, productCode) {
     product = matches[0] || null;
   }
   if (!product) throw stockError("Stok ürünü bulunamadı.", 404);
-  if (product.active === false || product.sourcePresent === false || product.archivedAt) {
+  if (product.active === false || product.sourcePresent === false || product.archivedAt
+    || product.trashed === true || product.removedAt || product.deletedAt || product.purgedAt) {
     throw stockError("Stok ürünü aktif katalogda bulunamadı.", 409);
   }
   if (wantedCode && normalizeProductCode(product.productCode) !== wantedCode) {
@@ -245,6 +261,18 @@ function findBalance(state, locationId, productId, create = false) {
     criticalThreshold: Math.max(0, Number(product && product.criticalThreshold || 0)),
     orderThreshold: Math.max(0, Number(product && product.orderThreshold || 0)),
     targetLevel: Math.max(0, Number(product && product.targetLevel || 0)),
+    reconciliationRequired: false,
+    reconciliationReasonCode: "",
+    reconciliationReason: "",
+    previousQuantity: null,
+    previousBaseUnit: "",
+    targetBaseUnit: "",
+    baseUnitSnapshot: productUnitMetadata(product || {}).baseUnit,
+    bulkUnitSnapshot: productUnitMetadata(product || {}).bulkUnit,
+    unitsPerBulkUnitSnapshot: productUnitMetadata(product || {}).unitsPerBulkUnit,
+    unitSchemaVersionAtBalance: Math.max(1, Number(product && product.unitSchemaVersion || 1)),
+    reconciliationCreatedAt: null,
+    reconciliationResolvedAt: null,
     updatedAt: null
   };
   balances.push(balance);
@@ -267,12 +295,54 @@ function calculateTotalStock(stockState, productId) {
     .reduce((total, balance) => total + Number(balance.quantity || 0), 0));
 }
 
+function refreshProductAttentionState(state, product) {
+  const reconciliationRequired = (state.balances || []).some((balance) => String(balance.productId) === String(product.id)
+    && balance.reconciliationRequired === true);
+  const baseUnitMissing = !productUnitMetadata(product, { allowDefaultBaseUnit: false }).baseUnit;
+  const reasonCodes = new Set((Array.isArray(product.attentionReasons) ? product.attentionReasons : [])
+    .map((value) => String(value || "").trim()).filter(Boolean));
+  let messages = (Array.isArray(product.attentionMessages) ? product.attentionMessages : [])
+    .map((value) => String(value || "").trim()).filter(Boolean);
+
+  if (reconciliationRequired) {
+    reasonCodes.add("BALANCE_RECONCILIATION_REQUIRED");
+    if (!messages.some((message) => /mutabakat|güvenli şekilde dönüştürülemedi/i.test(message))) {
+      messages.push("Eski stok bakiyesi yeni birime güvenli şekilde dönüştürülemedi. Sayım/mutabakat gerekli.");
+    }
+  } else {
+    reasonCodes.delete("BALANCE_RECONCILIATION_REQUIRED");
+    messages = messages.filter((message) => !/mutabakat|eski stok bakiyesi yeni birime güvenli şekilde dönüştürülemedi/i.test(message));
+  }
+
+  if (baseUnitMissing || product.excelSourceBaseUnitMissing === true) {
+    reasonCodes.add("MISSING_BASE_UNIT");
+    messages = messages.filter((message) => !/temel birim.*eksik/i.test(message));
+    messages.push(product.excelSourceBaseUnitMissing === true
+      ? "Excel dosyasında temel birim eksik." + (baseUnitMissing ? "" : " Mevcut temel birim korunuyor.")
+      : "Temel birim eksik.");
+  } else {
+    reasonCodes.delete("MISSING_BASE_UNIT");
+    messages = messages.filter((message) => !/temel birim.*eksik/i.test(message));
+  }
+
+  messages = Array.from(new Set(messages));
+  if (!messages.length) reasonCodes.delete("EXCEL_IMPORT_WARNING");
+  product.attentionReasons = Array.from(reasonCodes);
+  product.attentionMessages = messages;
+  product.needsAttention = product.attentionReasons.length > 0 || messages.length > 0;
+  product.stockQuantityReconciliationRequired = reconciliationRequired;
+  return reconciliationRequired;
+}
+
 function updateProductTotalProjection(state, productId, timestamp) {
   const product = state.products.find((item) => String(item.id) === String(productId));
   if (!product) return;
   const total = calculateTotalStock(state, productId);
+  const reconciliationRequired = refreshProductAttentionState(state, product);
   product.stockQuantity = total;
-  product.stockQuantityText = `${total} ${productUnitMetadata(product).baseUnit}`;
+  product.stockQuantityText = reconciliationRequired
+    ? "Mutabakat gerekiyor"
+    : `${total} ${productUnitMetadata(product).baseUnit || "birim tanımsız"}`;
   product.updatedAt = timestamp || product.updatedAt || null;
 }
 
@@ -330,7 +400,7 @@ function formatBaseQuantity(product, value) {
   const metadata = productUnitMetadata(product);
   const quantity = Math.max(0, round(Number(value || 0)));
   if (!metadata.bulkUnit || metadata.unitsPerBulkUnit <= 0) {
-    return { baseQuantity: quantity, bulkQuantity: 0, remainderQuantity: quantity, display: `${quantity} ${metadata.baseUnit}` };
+    return { baseQuantity: quantity, bulkQuantity: 0, remainderQuantity: quantity, display: `${quantity} ${metadata.baseUnit || "birim tanımsız"}` };
   }
   const bulkQuantity = Math.floor((quantity + Number.EPSILON) / metadata.unitsPerBulkUnit);
   const remainderQuantity = round(quantity - bulkQuantity * metadata.unitsPerBulkUnit);
@@ -342,6 +412,29 @@ function formatBaseQuantity(product, value) {
       ? `${bulkQuantity} ${metadata.bulkUnit} + ${remainderQuantity} ${metadata.baseUnit}`
       : `${bulkQuantity} ${metadata.bulkUnit}`,
     conversionText: `1 ${metadata.bulkUnit} = ${metadata.unitsPerBulkUnit} ${metadata.baseUnit}`
+  };
+}
+
+function balanceUnitMetadata(product, balance = {}) {
+  if (balance.reconciliationRequired !== true) return productUnitMetadata(product);
+  return {
+    baseUnit: controlledUnit(balance.baseUnitSnapshot || balance.previousBaseUnit || "", ""),
+    bulkUnit: controlledUnit(balance.bulkUnitSnapshot || "", ""),
+    unitsPerBulkUnit: Math.max(0, Number(balance.unitsPerBulkUnitSnapshot || 0)),
+    allowDecimal: true,
+    defaultMovementUnit: controlledUnit(balance.baseUnitSnapshot || balance.previousBaseUnit || "", "")
+  };
+}
+
+function formatBalanceQuantity(product, balance = {}, value = balance.quantity) {
+  if (balance.aggregateReconciliationRequired === true) {
+    return { baseQuantity: null, bulkQuantity: null, remainderQuantity: null, display: "Mutabakat gerekiyor", reconciliationRequired: true };
+  }
+  const metadata = balanceUnitMetadata(product, balance);
+  return {
+    ...formatBaseQuantity({ ...product, ...metadata, unit: metadata.baseUnit, caseUnit: metadata.bulkUnit, unitsPerCase: metadata.unitsPerBulkUnit }, value),
+    reconciliationRequired: balance.reconciliationRequired === true,
+    baseUnitSnapshot: metadata.baseUnit
   };
 }
 
@@ -375,12 +468,37 @@ function stockExcelSkippedDetail(item = {}) {
   };
 }
 
+function stockExcelAttentionDetail(item = {}) {
+  const reasons = Array.isArray(item.reasons) ? item.reasons : [item.reason];
+  const reasonCodes = Array.isArray(item.reasonCodes) ? item.reasonCodes : [item.reasonCode];
+  const messages = Array.from(new Set(reasons.map((reason) => String(reason || "").trim()).filter(Boolean))).slice(0, 20);
+  const codes = Array.from(new Set(reasonCodes.map((code) => String(code || "").trim()).filter(Boolean))).slice(0, 20);
+  return {
+    productId: String(item.productId || ""),
+    locationId: String(item.locationId || ""),
+    categoryId: String(item.categoryId || ""),
+    category: String(item.category || "").slice(0, 120),
+    categoryName: String(item.categoryName || item.category || "").slice(0, 120),
+    productName: String(item.productName || item.product || "").slice(0, 180),
+    productCode: String(item.productCode || "").slice(0, 80),
+    locationName: String(item.locationName || "").slice(0, 120),
+    reasonCodes: codes,
+    reasons: messages,
+    reasonCode: codes[0] || "EXCEL_IMPORT_WARNING",
+    message: String(messages[0] || "Ürün ayarları kontrol edilmeli.").slice(0, 500),
+    reason: String(messages[0] || "Ürün ayarları kontrol edilmeli.").slice(0, 500)
+  };
+}
+
 function emptyStockExcelDetails(errors = []) {
+  const attentionProducts = [];
   return {
     updatedProducts: [],
     createdProducts: [],
     createdCategories: [],
     balanceChanges: [],
+    attentionProducts,
+    attentionItems: attentionProducts,
     skippedProducts: errors.map(stockExcelSkippedDetail)
   };
 }
@@ -407,6 +525,15 @@ function unitSchemaMigrationFactor(currentMetadata, targetMetadata, hasStoredDat
   throw stockError("Temel birimler arasında güvenli dönüşüm oranı kurulamadı.", 422);
 }
 
+function safeUnitSchemaMigrationFactor(currentMetadata, targetMetadata, hasStoredData) {
+  try {
+    return { factor: unitSchemaMigrationFactor(currentMetadata, targetMetadata, hasStoredData), reason: "" };
+  } catch (error) {
+    if (!hasStoredData) return { factor: 1, reason: "" };
+    return { factor: null, reason: error && error.message || "Güvenilir birim dönüşüm oranı bulunamadı." };
+  }
+}
+
 function unitMigrationTarget(product, input = {}) {
   const current = productUnitMetadata(product);
   const baseUnit = controlledUnit(input.targetBaseUnit ?? input.baseUnit, "");
@@ -427,59 +554,104 @@ function unitMigrationTarget(product, input = {}) {
   return { baseUnit, bulkUnit, unitsPerBulkUnit: unitsPerBulkUnit || 0, allowDecimal, defaultMovementUnit };
 }
 
-function buildUnitMigrationPlan(stockState, productId, input = {}) {
+function unitMigrationProduct(state, productId, options = {}) {
+  const product = (state.products || []).find((item) => String(item.id) === String(productId));
+  if (!product) throw stockError("Stok ürünü bulunamadı.", 404);
+  if (options.allowInactive !== true && (product.active === false || product.sourcePresent === false || product.archivedAt)) {
+    throw stockError("Stok ürünü aktif katalogda bulunamadı.", 409);
+  }
+  return product;
+}
+
+function buildUnitMigrationPlan(stockState, productId, input = {}, options = {}) {
   const state = normalizeState(stockState);
-  const product = getProduct(state, productId);
-  const current = productUnitMetadata(product);
+  const product = unitMigrationProduct(state, productId, options);
+  const current = productUnitMetadata(product, { allowDefaultBaseUnit: false });
   const target = unitMigrationTarget(product, input);
   const balances = (state.balances || []).filter((item) => String(item.productId) === String(product.id));
   const hasHistory = (state.movements || []).some((item) => String(item.productId || item.stockProductId) === String(product.id));
-  const hasBalance = balances.some((item) => Number(item.quantity || 0) !== 0
-    || Number(item.criticalThreshold || 0) !== 0 || Number(item.orderThreshold || 0) !== 0 || Number(item.targetLevel || 0) !== 0);
-  const factor = unitSchemaMigrationFactor(current, target, hasHistory || hasBalance);
   const baseChanged = current.baseUnit !== target.baseUnit;
-  const converted = (value) => round(Number(value || 0) * (baseChanged ? factor : 1));
-  if (baseChanged && !target.allowDecimal) {
-    const storedValues = balances.flatMap((balance) => [balance.quantity, balance.criticalThreshold, balance.orderThreshold, balance.targetLevel])
-      .concat([product.catalogCriticalThreshold, product.criticalThreshold, product.catalogOrderThreshold, product.orderThreshold, product.targetLevel, product.targetStock])
-      .filter((value) => value !== undefined && value !== null && value !== "");
-    if (storedValues.some((value) => !Number.isInteger(converted(value)))) {
-      throw stockError(`Yeni “${target.baseUnit}” birimi için ondalıklı miktara izin verin veya tam sayıya dönüşen bir şema seçin.`, 422);
-    }
-  }
   const targetProduct = { ...product, ...target, unit: target.baseUnit, caseUnit: target.bulkUnit, unitsPerCase: target.unitsPerBulkUnit };
-  const locations = balances.map((balance) => ({
-    locationId: String(balance.locationId || ""),
-    locationName: (state.locations || []).find((item) => String(item.id) === String(balance.locationId))?.name || "Depo",
-    current: {
-      quantity: round(Number(balance.quantity || 0)),
-      criticalThreshold: round(Number(balance.criticalThreshold || 0)),
-      orderThreshold: round(Number(balance.orderThreshold || 0)),
-      targetLevel: round(Number(balance.targetLevel || 0)),
-      display: formatBaseQuantity(product, balance.quantity).display
-    },
-    next: {
-      quantity: converted(balance.quantity),
-      criticalThreshold: converted(balance.criticalThreshold),
-      orderThreshold: converted(balance.orderThreshold),
-      targetLevel: converted(balance.targetLevel),
-      display: formatBaseQuantity(targetProduct, converted(balance.quantity)).display
-    }
-  }));
+  const locations = balances.map((balance) => {
+    const snapshotBaseUnit = controlledUnit(balance.baseUnitSnapshot || balance.previousBaseUnit || "", "");
+    const hasDistinctBalanceSchema = Boolean(snapshotBaseUnit && snapshotBaseUnit !== current.baseUnit);
+    const sourceSchema = balance.reconciliationRequired === true || hasDistinctBalanceSchema
+      ? {
+          ...current,
+          baseUnit: snapshotBaseUnit || current.baseUnit,
+          bulkUnit: controlledUnit(balance.bulkUnitSnapshot || "", ""),
+          unitsPerBulkUnit: Math.max(0, Number(balance.unitsPerBulkUnitSnapshot || 0))
+        }
+      : current;
+    const storedValues = [balance.quantity, balance.criticalThreshold, balance.orderThreshold, balance.targetLevel];
+    const hasStoredData = Number(balance.quantity || 0) !== 0;
+    const locationBaseChanged = sourceSchema.baseUnit !== target.baseUnit;
+    const requiresMigration = locationBaseChanged || balance.reconciliationRequired === true || hasDistinctBalanceSchema;
+    const resolved = locationBaseChanged
+      ? safeUnitSchemaMigrationFactor(sourceSchema, target, hasStoredData)
+      : { factor: 1, reason: "" };
+    const converted = (value) => round(Number(value || 0) * Number(resolved.factor === null ? 1 : resolved.factor));
+    const wouldLosePrecision = resolved.factor !== null && !target.allowDecimal
+      && storedValues.some((value) => !Number.isInteger(converted(value)));
+    const decision = !hasStoredData
+      ? "NO_BALANCE"
+      : resolved.factor === null || wouldLosePrecision
+        ? "RECONCILIATION_REQUIRED"
+        : "SAFE_CONVERSION";
+    const reason = wouldLosePrecision
+      ? `Yeni “${target.baseUnit}” birimi için dönüşüm kesirli bakiye üretiyor.`
+      : resolved.reason;
+    const currentProduct = { ...product, ...sourceSchema, unit: sourceSchema.baseUnit, caseUnit: sourceSchema.bulkUnit, unitsPerCase: sourceSchema.unitsPerBulkUnit };
+    return {
+      locationId: String(balance.locationId || ""),
+      locationName: (state.locations || []).find((item) => String(item.id) === String(balance.locationId))?.name || "Depo",
+      requiresMigration,
+      decision,
+      reason,
+      factor: resolved.factor,
+      sourceSchema,
+      current: {
+        quantity: round(Number(balance.quantity || 0)),
+        criticalThreshold: round(Number(balance.criticalThreshold || 0)),
+        orderThreshold: round(Number(balance.orderThreshold || 0)),
+        targetLevel: round(Number(balance.targetLevel || 0)),
+        display: formatBaseQuantity(currentProduct, balance.quantity).display
+      },
+      next: {
+        quantity: decision === "RECONCILIATION_REQUIRED" ? round(Number(balance.quantity || 0)) : converted(balance.quantity),
+        criticalThreshold: decision === "RECONCILIATION_REQUIRED" ? round(Number(balance.criticalThreshold || 0)) : converted(balance.criticalThreshold),
+        orderThreshold: decision === "RECONCILIATION_REQUIRED" ? round(Number(balance.orderThreshold || 0)) : converted(balance.orderThreshold),
+        targetLevel: decision === "RECONCILIATION_REQUIRED" ? round(Number(balance.targetLevel || 0)) : converted(balance.targetLevel),
+        display: decision === "RECONCILIATION_REQUIRED"
+          ? `${formatBaseQuantity(currentProduct, balance.quantity).display} · Mutabakat gerekiyor`
+          : formatBaseQuantity(targetProduct, converted(balance.quantity)).display
+      }
+    };
+  });
+  const safeFactors = Array.from(new Set(locations.filter((item) => item.factor !== null).map((item) => Number(item.factor))));
+  const factor = safeFactors.length === 1 ? safeFactors[0] : null;
   const currentTotal = round(balances.reduce((sum, item) => sum + Number(item.quantity || 0), 0));
-  const nextTotal = converted(currentTotal);
+  const reconciliationRequired = locations.some((item) => item.decision === "RECONCILIATION_REQUIRED");
+  const requiresBalanceMigration = locations.some((item) => item.requiresMigration);
+  const nextTotal = reconciliationRequired
+    ? null
+    : round(locations.reduce((sum, item) => sum + Number(item.next.quantity || 0), 0));
   return {
     productId: String(product.id),
     productName: productName(product),
     baseChanged,
+    requiresBalanceMigration,
     factor,
     hasHistory,
     currentSchema: current,
     targetSchema: target,
     currentTotal,
     nextTotal,
-    currentDisplay: formatBaseQuantity(product, currentTotal).display,
-    nextDisplay: formatBaseQuantity(targetProduct, nextTotal).display,
+    currentDisplay: locations.some((item) => item.requiresMigration && item.sourceSchema.baseUnit !== current.baseUnit)
+      ? "Depo bazlı eski birim bakiyeleri"
+      : formatBaseQuantity(product, currentTotal).display,
+    nextDisplay: reconciliationRequired ? "Mutabakat gerekiyor" : formatBaseQuantity(targetProduct, nextTotal).display,
+    reconciliationRequired,
     locations
   };
 }
@@ -487,21 +659,71 @@ function buildUnitMigrationPlan(stockState, productId, input = {}) {
 function migrateProductUnitSchema(stockState, productId, input = {}, options = {}) {
   if (input.confirm !== true) throw stockError("Birim dönüşümü için açık onay gereklidir.", 422);
   const state = normalizeState(stockState);
-  const plan = buildUnitMigrationPlan(state, productId, input);
-  const product = getProduct(state, productId);
+  const plan = buildUnitMigrationPlan(state, productId, input, options);
+  if (plan.reconciliationRequired && options.allowReconciliation !== true) {
+    throw stockError("Bazı depo bakiyeleri yeni temel birime güvenli biçimde dönüştürülemiyor. Stok sayımı veya manuel mutabakat gerekli.", 422);
+  }
+  const product = unitMigrationProduct(state, productId, options);
   const timestamp = nowIso(options.now);
   const unitSchemaVersion = recordProductUnitSchemaTransition(product, plan.targetSchema, timestamp);
-  if (plan.baseChanged) {
-    for (const balance of state.balances || []) {
-      if (String(balance.productId) !== String(product.id)) continue;
-      for (const field of ["quantity", "criticalThreshold", "orderThreshold", "targetLevel"]) {
-        balance[field] = round(Number(balance[field] || 0) * plan.factor);
+  if (plan.requiresBalanceMigration) {
+    for (const locationPlan of plan.locations) {
+      if (!locationPlan.requiresMigration) continue;
+      const balance = (state.balances || []).find((item) => String(item.productId) === String(product.id)
+        && String(item.locationId) === String(locationPlan.locationId));
+      if (!balance) continue;
+      if (locationPlan.decision === "RECONCILIATION_REQUIRED") {
+        balance.reconciliationRequired = true;
+        balance.reconciliationReasonCode = "BALANCE_RECONCILIATION_REQUIRED";
+        balance.reconciliationReason = locationPlan.reason || "Güvenilir birim dönüşüm oranı bulunamadı.";
+        balance.previousQuantity = locationPlan.current.quantity;
+        balance.previousBaseUnit = locationPlan.sourceSchema.baseUnit;
+        balance.targetBaseUnit = plan.targetSchema.baseUnit;
+        balance.baseUnitSnapshot = locationPlan.sourceSchema.baseUnit;
+        balance.bulkUnitSnapshot = locationPlan.sourceSchema.bulkUnit || "";
+        balance.unitsPerBulkUnitSnapshot = Number(locationPlan.sourceSchema.unitsPerBulkUnit || 0);
+        balance.reconciliationCreatedAt = balance.reconciliationCreatedAt || timestamp;
+        balance.reconciliationResolvedAt = null;
+      } else {
+        for (const field of ["quantity", "criticalThreshold", "orderThreshold", "targetLevel"]) {
+          balance[field] = locationPlan.next[field];
+        }
+        balance.reconciliationRequired = false;
+        balance.reconciliationReasonCode = "";
+        balance.reconciliationReason = "";
+        balance.previousQuantity = null;
+        balance.previousBaseUnit = "";
+        balance.targetBaseUnit = "";
+        balance.baseUnitSnapshot = plan.targetSchema.baseUnit;
+        balance.bulkUnitSnapshot = plan.targetSchema.bulkUnit || "";
+        balance.unitsPerBulkUnitSnapshot = Number(plan.targetSchema.unitsPerBulkUnit || 0);
+        balance.unitSchemaVersionAtBalance = unitSchemaVersion;
+        balance.reconciliationResolvedAt = balance.reconciliationCreatedAt ? timestamp : null;
+        balance.reconciliationCreatedAt = null;
       }
       balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
       balance.updatedAt = timestamp;
+      state.migrationAudit = (Array.isArray(state.migrationAudit) ? state.migrationAudit : []).concat({
+        id: `stock-unit-location-${crypto.randomUUID()}`,
+        type: "unit_schema_migration",
+        decision: locationPlan.decision,
+        productId: product.id,
+        locationId: balance.locationId,
+        oldQuantity: locationPlan.current.quantity,
+        newQuantity: locationPlan.next.quantity,
+        oldBaseUnit: locationPlan.sourceSchema.baseUnit,
+        newBaseUnit: plan.targetSchema.baseUnit,
+        conversionRatio: locationPlan.factor,
+        source: String(options.source || "manual"),
+        requestId: String(options.requestId || input.requestId || ""),
+        actorId: String(options.actorId || "system"),
+        createdAt: timestamp
+      }).slice(-2000);
     }
-    for (const field of ["catalogCriticalThreshold", "criticalThreshold", "catalogOrderThreshold", "orderThreshold", "targetLevel", "targetStock"]) {
-      if (Number.isFinite(Number(product[field]))) product[field] = round(Number(product[field]) * plan.factor);
+    if (plan.baseChanged && !plan.reconciliationRequired && Number.isFinite(Number(plan.factor))) {
+      for (const field of ["catalogCriticalThreshold", "criticalThreshold", "catalogOrderThreshold", "orderThreshold", "targetLevel", "targetStock"]) {
+        if (Number.isFinite(Number(product[field]))) product[field] = round(Number(product[field]) * plan.factor);
+      }
     }
   }
   Object.assign(product, {
@@ -514,11 +736,16 @@ function migrateProductUnitSchema(stockState, productId, input = {}, options = {
     allowDecimal: plan.targetSchema.allowDecimal,
     defaultMovementUnit: plan.targetSchema.defaultMovementUnit,
     unitSchemaVersion,
-    unitSchemaSource: "manual",
-    unitSchemaLocked: true,
+    unitSchemaSource: options.source === "excel_import" ? "excel" : "manual",
+    unitSchemaLocked: options.source === "excel_import" ? product.unitSchemaLocked === true : true,
     unitSchemaUpdatedAt: timestamp,
     updatedAt: timestamp
   });
+  if (plan.targetSchema.baseUnit) {
+    product.baseUnitMissing = false;
+    product.excelBaseUnitMissing = false;
+    if (options.source !== "excel_import" && (input.targetBaseUnit || input.baseUnit || input.unit)) product.excelSourceBaseUnitMissing = false;
+  }
   updateProductTotalProjection(state, product.id, timestamp);
   state.updatedAt = timestamp;
   return { state, plan, product };
@@ -553,6 +780,9 @@ function movementDirection(type, input = {}) {
 
 function addMovement(state, input) {
   const product = (state.products || []).find((item) => String(item.id) === String(input.productId));
+  const fallbackBaseUnit = productUnitMetadata(product || {}).baseUnit;
+  const movementBaseUnit = String(input.baseUnit ?? fallbackBaseUnit ?? "");
+  const movementInputUnit = String(input.inputUnit || input.sourceUnit || movementBaseUnit);
   const requestedSnapshotVersion = Number(input.unitSchemaVersion
     ?? (input.conversionSnapshot && input.conversionSnapshot.unitSchemaVersion)
     ?? (product && product.unitSchemaVersion)
@@ -563,10 +793,10 @@ function addMovement(state, input) {
   const conversionSnapshot = input.conversionSnapshot && typeof input.conversionSnapshot === "object"
     ? { ...input.conversionSnapshot, unitSchemaVersion: snapshotVersion }
     : {
-        baseUnit: String(input.baseUnit || "adet"),
+        baseUnit: movementBaseUnit,
         bulkUnit: String(input.bulkUnit || ""),
         unitsPerBulkUnit: Number(input.unitsPerBulkUnit || 0),
-        inputUnit: String(input.inputUnit || input.sourceUnit || input.baseUnit || "adet"),
+        inputUnit: movementInputUnit,
         factor: Number.isFinite(Number(input.conversionFactor)) ? Number(input.conversionFactor) : 1,
         unitSchemaVersion: snapshotVersion
       };
@@ -581,15 +811,17 @@ function addMovement(state, input) {
     productName: String(input.productName || ""),
     fromLocationId: input.fromLocationId ? String(input.fromLocationId) : null,
     toLocationId: input.toLocationId ? String(input.toLocationId) : null,
+    sourceLocationId: input.fromLocationId ? String(input.fromLocationId) : null,
+    destinationLocationId: input.toLocationId ? String(input.toLocationId) : null,
     locationId: input.locationId ? String(input.locationId) : null,
     quantity: round(Number(input.quantity || 0)),
     baseQuantity: round(Math.abs(Number(input.baseQuantity ?? input.quantity ?? input.baseQuantityDelta ?? 0))),
-    baseUnit: String(input.baseUnit || "adet"),
-    unit: String(input.baseUnit || "adet"),
+    baseUnit: movementBaseUnit,
+    unit: movementBaseUnit,
     sourceQuantity: round(Number(input.sourceQuantity || input.quantity || 0)),
-    sourceUnit: String(input.sourceUnit || input.baseUnit || "adet"),
+    sourceUnit: String(input.sourceUnit || movementBaseUnit),
     inputQuantity: round(Number(input.inputQuantity ?? input.sourceQuantity ?? input.quantity ?? 0)),
-    inputUnit: String(input.inputUnit || input.sourceUnit || input.baseUnit || "adet"),
+    inputUnit: movementInputUnit,
     baseQuantityDelta: round(Number(input.baseQuantityDelta ?? (Number(input.resultingBalance || 0) - Number(input.previousBalance || 0)))),
     unitSchemaVersion: snapshotVersion,
     conversionFactor: Number.isFinite(Number(input.conversionFactor)) ? Number(input.conversionFactor) : 1,
@@ -645,17 +877,24 @@ function applyStockMovement(stockState, input = {}, actor = {}, options = {}) {
     return { stockState: state, movement: movement || null, idempotent: true };
   }
   const product = getProduct(state, input.productId || input.stockProductId, input.productCode || input.stockProductCode);
+  requireProductBaseUnit(product);
   const locationId = String(input.locationId || options.locationId || actorLocationId(state, actor) || "").trim();
   const location = getLocation(state, locationId);
   if (actor && actor.type !== "admin" && actor.inventoryManage !== true && String(actorLocationId(state, actor)) !== location.id) {
     throw stockError("Bu stok lokasyonunda işlem yetkiniz yok.", 403);
+  }
+  const balance = findBalance(state, location.id, product.id, true);
+  const reconciliationResolution = balance.reconciliationRequired === true
+    && ["adjustment", "correction"].includes(type)
+    && ["stock_count", "manual_adjustment", "reconciliation"].includes(String(input.referenceType || ""));
+  if (balance.reconciliationRequired === true && !reconciliationResolution) {
+    throw stockError("Bu depo bakiyesi birim mutabakatı gerektiriyor. Önce stok sayımı veya manuel düzeltme yapın.", 409);
   }
   const sourceQuantity = finitePositive(input.quantity);
   if (!sourceQuantity) throw stockError("Geçerli bir miktar girin.", 422);
   const conversion = convertToBaseUnit(sourceQuantity, input.unit || product.unit, product);
   const delta = movementDirection(type, input) * conversion.quantity;
   if (!delta) throw stockError("Bu hareket türü için geçerli miktar değişimi gerekli.");
-  const balance = findBalance(state, location.id, product.id, true);
   if (input.expectedBalanceRevision !== undefined && input.expectedBalanceRevision !== null && input.expectedBalanceRevision !== "") {
     const expectedBalanceRevision = Number(input.expectedBalanceRevision);
     if (!Number.isInteger(expectedBalanceRevision) || expectedBalanceRevision < 0) throw stockError("Beklenen ürün-depo revision geçersiz.", 422);
@@ -670,6 +909,20 @@ function applyStockMovement(stockState, input = {}, actor = {}, options = {}) {
   balance.quantity = resulting;
   balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
   balance.updatedAt = timestamp;
+  if (reconciliationResolution) {
+    balance.reconciliationRequired = false;
+    balance.reconciliationReasonCode = "";
+    balance.reconciliationReason = "";
+    balance.previousQuantity = null;
+    balance.previousBaseUnit = "";
+    balance.targetBaseUnit = "";
+    balance.baseUnitSnapshot = productUnitMetadata(product).baseUnit;
+    balance.bulkUnitSnapshot = productUnitMetadata(product).bulkUnit;
+    balance.unitsPerBulkUnitSnapshot = productUnitMetadata(product).unitsPerBulkUnit;
+    balance.unitSchemaVersionAtBalance = Math.max(1, Number(product.unitSchemaVersion || 1));
+    balance.reconciliationResolvedAt = timestamp;
+    balance.reconciliationCreatedAt = null;
+  }
   if (input.criticalThreshold !== undefined) balance.criticalThreshold = Math.max(0, Number(input.criticalThreshold) || 0);
   if (input.orderThreshold !== undefined) balance.orderThreshold = Math.max(0, Number(input.orderThreshold) || 0);
   if (input.targetLevel !== undefined) balance.targetLevel = Math.max(0, Number(input.targetLevel) || 0);
@@ -766,13 +1019,35 @@ function createTransferRequest(stockState, input = {}, actor = {}, options = {})
   const seenProducts = new Set();
   const items = rawItems.map((item) => {
     const product = getProduct(state, item.productId || item.stockProductId, item.productCode || item.stockProductCode);
+    requireProductBaseUnit(product);
     if (seenProducts.has(String(product.id))) throw stockError("Aynı ürün bir transferde yalnızca bir kez bulunabilir.", 409);
     seenProducts.add(String(product.id));
-    const sourceQuantity = finitePositive(item.quantity);
-    if (!sourceQuantity) throw stockError("Geçerli bir miktar girin.");
-    const conversion = convertToBaseUnit(sourceQuantity, item.unit || product.unit, product);
-    const sourceBalance = findBalance(state, from.id, product.id, true);
-    const destinationBalance = findBalance(state, to.id, product.id, true);
+    const mixedInput = item.bulkQuantity !== undefined || item.baseQuantity !== undefined;
+    const metadata = requireProductBaseUnit(product);
+    const bulkQuantity = Number(item.bulkQuantity ?? 0);
+    const baseQuantity = Number(item.baseQuantity ?? 0);
+    if (mixedInput && (![bulkQuantity, baseQuantity].every((value) => Number.isFinite(value) && value >= 0)
+      || bulkQuantity > 0 && (!metadata.bulkUnit || !(metadata.unitsPerBulkUnit > 0)))) {
+      throw stockError("Geçerli toplu ve temel miktar girin.", 422);
+    }
+    const sourceQuantity = mixedInput
+      ? bulkQuantity * metadata.unitsPerBulkUnit + baseQuantity
+      : finitePositive(item.quantity);
+    if (!sourceQuantity) throw stockError("Geçerli bir miktar girin.", 422);
+    const conversion = convertToBaseUnit(sourceQuantity, mixedInput ? metadata.baseUnit : item.unit || product.unit, product);
+    const sourceBalance = getProductBalance(state, from.id, product.id);
+    const destinationBalance = getProductBalance(state, to.id, product.id);
+    if (sourceBalance.reconciliationRequired === true || destinationBalance.reconciliationRequired === true) {
+      throw stockError(`${productName(product)} için depo bakiyesi mutabakat bekliyor; transfer oluşturulamaz.`, 409);
+    }
+    for (const [field, balance] of [["sourceExpectedRevision", sourceBalance], ["destinationExpectedRevision", destinationBalance]]) {
+      const expected = item[field] ?? input[field];
+      if (expected !== undefined && expected !== null) {
+        if (!Number.isInteger(Number(expected)) || Number(expected) < 0) throw stockError("Beklenen ürün-depo revision geçersiz.", 422);
+        if (Number(expected) !== Number(balance.revision || 0)) throw stockError("Stok miktarı değişti. Güncel miktarı kontrol edip tekrar deneyin.", 409);
+      }
+    }
+    if (Number(sourceBalance.quantity || 0) < conversion.quantity) throw stockError("Kaynak depoda yeterli stok yok.", 409);
     return {
       productId: product.id,
       quantity: conversion.quantity,
@@ -781,7 +1056,7 @@ function createTransferRequest(stockState, input = {}, actor = {}, options = {})
       sourceUnit: conversion.inputUnit,
       conversionFactor: conversion.factor,
       unitSchemaVersion: Math.max(1, Number(product.unitSchemaVersion || 1)),
-      conversionSnapshot: { baseUnit: conversion.baseUnit, bulkUnit: conversion.bulkUnit, unitsPerBulkUnit: conversion.unitsPerBulkUnit, inputUnit: conversion.inputUnit, factor: conversion.factor, unitSchemaVersion: Math.max(1, Number(product.unitSchemaVersion || 1)) },
+      conversionSnapshot: { baseUnit: conversion.baseUnit, bulkUnit: conversion.bulkUnit, unitsPerBulkUnit: conversion.unitsPerBulkUnit, inputUnit: conversion.inputUnit, factor: conversion.factor, unitSchemaVersion: Math.max(1, Number(product.unitSchemaVersion || 1)), ...(mixedInput ? { bulkQuantity, baseQuantity } : {}) },
       sourceExpectedRevision: Math.max(0, Number(sourceBalance.revision || 0)),
       destinationExpectedRevision: Math.max(0, Number(destinationBalance.revision || 0))
     };
@@ -843,10 +1118,14 @@ function approveTransfer(stockState, transferId, input = {}, actor = {}, options
   const rawItems = Array.isArray(transfer.items) && transfer.items.length ? transfer.items : [transfer];
   const prepared = rawItems.map((item) => {
     const product = getProduct(state, item.productId || transfer.productId);
+    requireProductBaseUnit(product);
     const amount = finitePositive(item.quantity);
     if (!amount) throw stockError("Aktarım miktarı geçersiz.");
-    const fromBalance = findBalance(state, from.id, product.id, true);
-    const toBalance = findBalance(state, to.id, product.id, true);
+    const fromBalance = getProductBalance(state, from.id, product.id);
+    const toBalance = getProductBalance(state, to.id, product.id);
+    if (fromBalance.reconciliationRequired === true || toBalance.reconciliationRequired === true) {
+      throw stockError(`${productName(product)} için depo bakiyesi mutabakat bekliyor; transfer onaylanamaz.`, 409);
+    }
     const sourceRevision = Math.max(0, Number(fromBalance.revision || 0));
     const destinationRevision = Math.max(0, Number(toBalance.revision || 0));
     if (item.sourceExpectedRevision !== null && item.sourceExpectedRevision !== undefined
@@ -866,7 +1145,9 @@ function approveTransfer(stockState, transferId, input = {}, actor = {}, options
   const transactionRef = createId("stock-transfer-transaction");
   const movements = [];
   for (const entry of prepared) {
-    const { item, product, amount, fromBalance, toBalance, beforeFrom, beforeTo } = entry;
+    const { item, product, amount, beforeFrom, beforeTo } = entry;
+    const fromBalance = findBalance(state, from.id, product.id, true);
+    const toBalance = findBalance(state, to.id, product.id, true);
     fromBalance.quantity = round(beforeFrom - amount);
     toBalance.quantity = round(beforeTo + amount);
     fromBalance.revision = Math.max(0, Number(fromBalance.revision || 0)) + 1;
@@ -1038,6 +1319,7 @@ function updateStockCount(stockState, countId, input = {}, actor = {}, options =
     const item = (count.items || []).find((candidate) => String(candidate.productId) === productId);
     const product = (state.products || []).find((candidate) => String(candidate.id) === productId);
     if (!item || !product) throw stockError("Sayım ürünü bulunamadı.", 404);
+    requireProductBaseUnit(product);
     const rawQuantity = Number(entry.quantity ?? entry.countedQuantity ?? entry.inputQuantity);
     if (!Number.isFinite(rawQuantity) || rawQuantity < 0) throw stockError("Sayım miktarı negatif olamaz.");
     const unit = normalizeUnit(entry.unit || entry.inputUnit || productUnitMetadata(product).defaultMovementUnit);
@@ -1073,8 +1355,28 @@ function approveStockCount(stockState, countId, input = {}, actor = {}, options 
   const movements = [];
   for (const item of countedItems) {
     const difference = round(Number(item.countedQuantity || 0) - Number(item.systemQuantity || 0));
-    if (!difference) continue;
     const product = getProduct(state, item.productId);
+    if (!difference) {
+      const balance = findBalance(state, count.locationId, product.id, true);
+      if (balance.reconciliationRequired === true) {
+        balance.reconciliationRequired = false;
+        balance.reconciliationReasonCode = "";
+        balance.reconciliationReason = "";
+        balance.previousQuantity = null;
+        balance.previousBaseUnit = "";
+        balance.targetBaseUnit = "";
+        balance.baseUnitSnapshot = productUnitMetadata(product).baseUnit;
+        balance.bulkUnitSnapshot = productUnitMetadata(product).bulkUnit;
+        balance.unitsPerBulkUnitSnapshot = productUnitMetadata(product).unitsPerBulkUnit;
+        balance.unitSchemaVersionAtBalance = Math.max(1, Number(product.unitSchemaVersion || 1));
+        balance.reconciliationResolvedAt = timestamp;
+        balance.reconciliationCreatedAt = null;
+        balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
+        balance.updatedAt = timestamp;
+        updateProductTotalProjection(state, product.id, timestamp);
+      }
+      continue;
+    }
     const result = applyStockMovement(state, {
       type: "adjustment",
       productId: product.id,
@@ -1157,6 +1459,9 @@ function reverseMovement(stockState, movementId, input = {}, actor = {}, options
   for (const item of related) {
     const locationId = String(item.locationId || (item.toLocationId && item.previousBalance < item.resultingBalance ? item.toLocationId : item.fromLocationId) || "");
     const balance = findBalance(state, locationId, product.id, true);
+    if (balance.reconciliationRequired === true) {
+      throw stockError("Bu depo bakiyesi mutabakat beklediği için hareket geri alınamaz.", 409);
+    }
     const prior = round(Number(balance.quantity || 0));
     const isIncoming = Number(item.resultingBalance || 0) > Number(item.previousBalance || 0);
     const next = round(prior + (isIncoming ? -Number(item.quantity || 0) : Number(item.quantity || 0)));
@@ -1221,6 +1526,7 @@ function getLocationInventory(stockState, locationId, options = {}) {
       locationName: item.name,
       ...getProductBalance(state, item.id, product.id)
     }));
+    const reconciliationLocations = perLocation.filter((item) => item.reconciliationRequired === true);
     const totalQuantity = calculateTotalStock(state, product.id);
     let criticalLocations = perLocation.filter((item) => {
       const threshold = Math.max(0, Number(item.criticalThreshold || 0));
@@ -1236,7 +1542,17 @@ function getLocationInventory(stockState, locationId, options = {}) {
           criticalThreshold: perLocation.reduce((sum, item) => sum + Math.max(0, Number(item.criticalThreshold || 0)), 0),
           orderThreshold: perLocation.reduce((sum, item) => sum + Math.max(0, Number(item.orderThreshold || 0)), 0),
           targetLevel: perLocation.reduce((sum, item) => sum + Math.max(0, Number(item.targetLevel || 0)), 0),
-          updatedAt: product.updatedAt || null
+          updatedAt: product.updatedAt || null,
+          reconciliationRequired: reconciliationLocations.length > 0,
+          aggregateReconciliationRequired: reconciliationLocations.length > 0,
+          reconciliationLocations: reconciliationLocations.map((item) => ({
+            locationId: item.locationId,
+            locationName: item.locationName,
+            previousQuantity: item.previousQuantity ?? item.quantity,
+            previousBaseUnit: item.previousBaseUnit || item.baseUnitSnapshot || "",
+            targetBaseUnit: item.targetBaseUnit || product.baseUnit || "",
+            reason: item.reconciliationReason || "Güvenilir birim dönüşüm oranı bulunamadı."
+          }))
         };
     const generalQuantity = general ? Number(getProductBalance(state, general.id, product.id).quantity || 0) : 0;
     const cafeQuantity = cafe ? Number(getProductBalance(state, cafe.id, product.id).quantity || 0) : 0;
@@ -1258,13 +1574,15 @@ function getLocationInventory(stockState, locationId, options = {}) {
       generalQuantity,
       otherLocationQuantity,
       status,
-      quantityDisplay: formatBaseQuantity(product, selected.quantity),
-      totalQuantityDisplay: formatBaseQuantity(product, totalQuantity),
+      quantityDisplay: formatBalanceQuantity(product, selected),
+      totalQuantityDisplay: reconciliationLocations.length
+        ? { display: "Mutabakat gerekiyor", reconciliationRequired: true }
+        : formatBaseQuantity(product, totalQuantity),
       criticalLocations: location ? [] : criticalLocations.map((item) => ({
         locationId: String(item.locationId || ""),
         locationName: String(item.locationName || "Depo"),
         quantity: Number(item.quantity || 0),
-        quantityDisplay: formatBaseQuantity(product, item.quantity),
+        quantityDisplay: formatBalanceQuantity(product, item),
         criticalThreshold: Number(item.criticalThreshold || 0),
         status: stockStatus(item)
       })),
@@ -1303,6 +1621,8 @@ function serializeMovements(stockState, options = {}) {
   const type = String(options.type || "").trim();
   const productId = String(options.productId || "").trim();
   const items = (state.movements || []).filter((movement) => {
+    if (locationId && ["transfer_out", "transfer_in"].includes(movement.type)
+      && movement.locationId && String(movement.locationId) !== locationId) return false;
     if (locationId && String(movement.locationId || "") !== locationId
       && String(movement.fromLocationId || "") !== locationId
       && String(movement.toLocationId || "") !== locationId) return false;
@@ -1399,52 +1719,52 @@ async function parseStockExcelWorkbook(buffer) {
   const categoryNames = new Set();
   for (const sheet of workbook.worksheets) {
     if (sheet === codeSheet || excelIdentity(sheet.name) === "urun kodlari") continue;
-    let hasProduct = false;
+    categoryNames.add(String(sheet.name || "").trim());
     for (let row = 1; row <= Math.max(1, sheet.actualRowCount); row += 8) {
       const productNameValue = excelText(sheet.getCell(row, 1));
       if (!productNameValue || excelProductHeadingIsPlaceholder(productNameValue)) continue;
-      hasProduct = true;
-      if (!excelBlockLabelsAreValid(sheet, row)) {
-        errors.push({ category: sheet.name, product: productNameValue, reason: "Ürün bloğundaki başlık düzeni stok şablonuyla eşleşmiyor." });
-        continue;
-      }
+      const warnings = [];
+      if (!excelBlockLabelsAreValid(sheet, row)) warnings.push("Ürün bloğundaki başlık düzeni stok şablonuyla tam eşleşmiyor.");
       const factor = excelNumber(sheet.getCell(row + 2, 3), { positive: true });
       const critical = excelNumber(sheet.getCell(row + 4, 1));
       const order = excelNumber(sheet.getCell(row + 4, 2));
       const target = excelNumber(sheet.getCell(row + 4, 3));
       const bulkQuantity = excelNumber(sheet.getCell(row + 6, 1));
       const baseQuantity = excelNumber(sheet.getCell(row + 6, 2));
-      if (![factor, critical, order, target, bulkQuantity, baseQuantity].every((item) => item.valid)) {
-        errors.push({ category: sheet.name, product: productNameValue, reason: "Birim çarpanı, eşik veya stok miktarı geçersiz." });
-        continue;
-      }
-      if (critical.value > order.value && !order.empty) {
-        errors.push({ category: sheet.name, product: productNameValue, reason: "Kritik eşik sipariş eşiğinden büyük olamaz." });
-        continue;
-      }
+      if (!factor.valid) warnings.push("Birim çarpanı geçersiz veya eksik.");
+      if (![critical, order, target].every((item) => item.valid)) warnings.push("Stok eşiklerinden biri geçersiz.");
+      if (![bulkQuantity, baseQuantity].every((item) => item.valid)) warnings.push("Stok miktarlarından biri geçersiz.");
+      if (critical.valid && order.valid && critical.value > order.value && !order.empty) warnings.push("Kritik eşik sipariş eşiğinden büyük.");
+      const bulkUnit = controlledUnit(excelText(sheet.getCell(row + 2, 1)), "");
+      const baseUnit = controlledUnit(excelText(sheet.getCell(row + 2, 2)), "");
+      if (!baseUnit) warnings.push("Temel birim eksik.");
+      if (bulkUnit && (factor.empty || !factor.valid)) warnings.push("Toplu birim çarpanı eksik.");
       products.push({
         category: String(sheet.name || "").trim().slice(0, 120),
         productName: productNameValue.slice(0, 180),
         productCode: codes.get(`${excelIdentity(sheet.name)}\u0000${excelIdentity(productNameValue)}`) || "",
-        bulkUnit: controlledUnit(excelText(sheet.getCell(row + 2, 1)), ""),
-        baseUnit: controlledUnit(excelText(sheet.getCell(row + 2, 2)), ""),
+        bulkUnit,
+        baseUnit,
         unitsPerBulkUnit: factor.value,
-        factorProvided: !factor.empty,
+        factorProvided: !factor.empty && factor.valid,
         criticalThreshold: critical.value,
         orderThreshold: order.value,
         targetLevel: target.value,
         bulkQuantity: bulkQuantity.value,
         baseQuantity: baseQuantity.value,
+        warnings,
+        quantitiesValid: bulkQuantity.valid && baseQuantity.valid,
+        thresholdsValid: critical.valid && order.valid && target.valid,
         sourceRow: row
       });
     }
-    if (hasProduct) categoryNames.add(String(sheet.name || "").trim());
   }
-  if (!products.length && !errors.length) throw stockError("Excel dosyasında geçerli stok ürün bloğu bulunamadı.", 422);
+  if (!products.length) throw stockError("Excel dosyasında geçerli stok ürün bloğu bulunamadı.", 422);
   return {
     workbookName: "Tahmisçi Stok Excel",
     categoriesFound: categoryNames.size,
-    productsFound: products.length + errors.length,
+    categories: Array.from(categoryNames).filter(Boolean),
+    productsFound: products.length,
     products,
     errors
   };
@@ -1550,6 +1870,80 @@ function createCanonicalStockProduct(stockState, input = {}, options = {}) {
   return { stockState: state, product, category, createdCategory };
 }
 
+function softDeleteStockProduct(stockState, productId, actor = {}, options = {}) {
+  const state = normalizeState(stockState);
+  const product = (state.products || []).find((item) => String(item.id) === String(productId));
+  if (!product) throw stockError("Stok ürünü bulunamadı.", 404);
+  if (product.purgedAt || product.archivedAt) throw stockError("Kalıcı olarak arşivlenmiş ürün silinemez.", 409);
+  const timestamp = nowIso(options.now);
+  if (product.trashed === true && product.removedAt) return { stockState: state, product, idempotent: true };
+  Object.assign(product, {
+    active: false,
+    manuallyInactive: true,
+    trashed: true,
+    removedAt: timestamp,
+    deletedAt: product.deletedAt || timestamp,
+    removedBy: String(actor && actor.id || "system"),
+    removedByName: String(actor && actor.name || "Yönetici"),
+    statusSource: "manual",
+    updatedAt: timestamp
+  });
+  state.updatedAt = timestamp;
+  return { stockState: state, product, idempotent: false };
+}
+
+function restoreStockProduct(stockState, productId, actor = {}, options = {}) {
+  const state = normalizeState(stockState);
+  const product = (state.products || []).find((item) => String(item.id) === String(productId));
+  if (!product) throw stockError("Stok ürünü bulunamadı.", 404);
+  if (product.purgedAt || product.archivedAt) throw stockError("Kalıcı olarak arşivlenmiş ürün geri alınamaz.", 409);
+  if (product.trashed !== true && !product.removedAt) return { stockState: state, product, idempotent: true };
+  const timestamp = nowIso(options.now);
+  Object.assign(product, {
+    active: true,
+    manuallyInactive: false,
+    trashed: false,
+    removedAt: null,
+    deletedAt: null,
+    removedBy: "",
+    removedByName: "",
+    restoredAt: timestamp,
+    restoredBy: String(actor && actor.id || "system"),
+    statusSource: "manual",
+    sourcePresent: true,
+    updatedAt: timestamp
+  });
+  state.updatedAt = timestamp;
+  return { stockState: state, product, idempotent: false };
+}
+
+function purgeStockProduct(stockState, productId, actor = {}, options = {}) {
+  const state = normalizeState(stockState);
+  const product = (state.products || []).find((item) => String(item.id) === String(productId));
+  if (!product) throw stockError("Stok ürünü bulunamadı.", 404);
+  if (product.purgedAt || product.archivedAt) return { stockState: state, product, idempotent: true };
+  if (product.trashed !== true || !product.removedAt) throw stockError("Yalnız Çöp Kutusu'ndaki stok ürünü kalıcı silinebilir.", 409);
+  const timestamp = nowIso(options.now);
+  const hasReferences = (state.movements || []).some((item) => String(item.productId || item.stockProductId || "") === String(product.id))
+    || (state.transfers || []).some((transfer) => (transfer.items || []).some((item) => String(item.productId || "") === String(product.id)))
+    || (state.counts || []).some((count) => (count.items || []).some((item) => String(item.productId || "") === String(product.id)));
+  Object.assign(product, {
+    active: false,
+    manuallyInactive: true,
+    trashed: false,
+    removedAt: null,
+    purgedAt: timestamp,
+    purgedBy: String(actor && actor.id || "system"),
+    archivedAt: timestamp,
+    archiveReason: hasReferences ? "historical_references_preserved" : "permanent_catalog_removal",
+    statusSource: "manual",
+    sourcePresent: false,
+    updatedAt: timestamp
+  });
+  state.updatedAt = timestamp;
+  return { stockState: state, product, hasReferences, idempotent: false };
+}
+
 function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {}, options = {}) {
   const state = normalizeState(stockState);
   const requestId = String(input.requestId || input.idempotencyKey || "").trim();
@@ -1564,7 +1958,14 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
     replaySummary.newProducts = replayDetails.createdProducts.length;
     replaySummary.newCategories = replayDetails.createdCategories.length;
     replaySummary.changedBalances = replayDetails.balanceChanges.length;
+    replaySummary.attentionProducts = (replayDetails.attentionProducts || []).length;
+    replaySummary.processedProducts = replayDetails.updatedProducts.length + replayDetails.createdProducts.length;
     replaySummary.skippedProducts = replayDetails.skippedProducts.length;
+    replayDetails.attentionItems = replayDetails.attentionProducts || [];
+    replaySummary.processedCount = replaySummary.processedProducts;
+    replaySummary.updatedCount = replaySummary.updatedProducts;
+    replaySummary.createdCount = replaySummary.newProducts;
+    replaySummary.attentionCount = replaySummary.attentionProducts;
     return { stockState: state, summary: replaySummary, errors: replayErrors, details: replayDetails, movements: [], idempotent: true };
   }
   const location = getLocation(state, input.locationId || input.targetLocationId);
@@ -1577,6 +1978,8 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
     newProducts: 0,
     newCategories: 0,
     changedBalances: 0,
+    processedProducts: 0,
+    attentionProducts: 0,
     skippedProducts: 0
   };
   const errors = Array.isArray(parsedWorkbook && parsedWorkbook.errors) ? parsedWorkbook.errors.map((item) => ({ ...item })) : [];
@@ -1586,6 +1989,22 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
   const processed = new Set();
   const productByCode = new Map((state.products || []).map((product) => [normalizeProductCode(product.productCode), product]).filter(([code]) => code));
   const categoryByName = new Map((state.categories || []).map((category) => [excelIdentity(category.name), category]));
+
+  for (const rawCategory of Array.isArray(parsedWorkbook && parsedWorkbook.categories) ? parsedWorkbook.categories : []) {
+    const categoryName = String(rawCategory || "").trim().slice(0, 120);
+    const categoryKey = excelIdentity(categoryName);
+    if (!categoryName || categoryByName.has(categoryKey)) continue;
+    const category = {
+      id: `stock-category-${crypto.randomUUID()}`,
+      name: categoryName, active: true, order: state.categories.length,
+      sourceType: "excel", statusSource: "excel", sourcePresent: true,
+      createdAt: timestamp, updatedAt: timestamp, lastImportedAt: timestamp, lastImportOperationId: requestId
+    };
+    state.categories.push(category);
+    categoryByName.set(categoryKey, category);
+    summary.newCategories += 1;
+    createdCategoryDetails.set(categoryKey, { category: category.name, createdProductCount: 0 });
+  }
 
   for (const record of Array.isArray(parsedWorkbook && parsedWorkbook.products) ? parsedWorkbook.products : []) {
     try {
@@ -1601,44 +2020,66 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
         product = (state.products || []).find((candidate) => excelIdentity(candidate.category) === categoryKey
           && excelIdentity(candidate.name || candidate.productName) === nameKey) || null;
       }
-      if (!product) {
-        const nameMatches = (state.products || []).filter((candidate) => excelIdentity(candidate.name || candidate.productName) === nameKey);
-        if (nameMatches.length === 1) product = nameMatches[0];
+      if (product && processed.has(String(product.id))) {
+        details.attentionProducts.push(stockExcelAttentionDetail({
+          productId: product.id, locationId: location.id, category: record.category,
+          productName: record.productName, productCode: product.productCode,
+          reasonCode: "DUPLICATE_WORKBOOK_PRODUCT",
+          reason: "Aynı canonical ürün workbook içinde birden fazla kez tanımlanmış; ilk kayıt uygulandı."
+        }));
+        continue;
       }
-      if (product && processed.has(String(product.id))) throw stockError("Aynı canonical ürün workbook içinde birden fazla kez tanımlanmış.", 409);
       const existing = Boolean(product);
-      let currentUnits = existing ? productUnitMetadata(product) : { baseUnit: "", bulkUnit: "", unitsPerBulkUnit: 0, allowDecimal: false, defaultMovementUnit: "" };
+      const warnings = Array.isArray(record.warnings)
+        ? record.warnings.filter((message) => !/temel birim.*eksik/i.test(String(message))) : [];
+      const warningCodes = warnings.map((message) => {
+        const warning = String(message || "");
+        if (/temel birim.*eksik/i.test(warning)) return "MISSING_BASE_UNIT";
+        if (/çarpan|toplu birim/i.test(warning)) return "MISSING_CONVERSION";
+        if (/miktar/i.test(warning)) return "INVALID_QUANTITY";
+        if (/eşik/i.test(warning)) return "INVALID_THRESHOLDS";
+        if (/başlık|şablon/i.test(warning)) return "TEMPLATE_LABEL_WARNING";
+        return "EXCEL_IMPORT_WARNING";
+      });
+      const addWarning = (code, message) => {
+        if (!warnings.includes(message)) warnings.push(message);
+        if (!warningCodes.includes(code)) warningCodes.push(code);
+      };
+      let currentUnits = existing ? productUnitMetadata(product, { allowDefaultBaseUnit: false }) : { baseUnit: "", bulkUnit: "", unitsPerBulkUnit: 0, allowDecimal: false, defaultMovementUnit: "" };
       const originalUnits = { ...currentUnits };
       const singleUnitQuantityUsesBaseUnit = !record.baseUnit
         && !record.factorProvided
         && Boolean(record.bulkUnit)
-        && (!existing || !currentUnits.bulkUnit && excelIdentity(record.bulkUnit) === excelIdentity(currentUnits.baseUnit));
+        && existing
+        && !currentUnits.bulkUnit
+        && excelIdentity(record.bulkUnit) === excelIdentity(currentUnits.baseUnit);
       const baseUnit = singleUnitQuantityUsesBaseUnit
-        ? currentUnits.baseUnit || controlledUnit(record.bulkUnit, "")
-        : record.baseUnit || currentUnits.baseUnit;
+        ? currentUnits.baseUnit
+        : record.baseUnit || currentUnits.baseUnit || "";
       const bulkUnit = singleUnitQuantityUsesBaseUnit ? "" : record.bulkUnit || currentUnits.bulkUnit;
       const unitsPerBulkUnit = singleUnitQuantityUsesBaseUnit
         ? 0
         : record.factorProvided ? Number(record.unitsPerBulkUnit || 0) : Number(currentUnits.unitsPerBulkUnit || 0);
-      if (!baseUnit || bulkUnit && !(unitsPerBulkUnit > 0)) throw stockError("Temel birim veya birim çarpanı eksik.", 422);
-      if (Number(record.bulkQuantity || 0) > 0 && !singleUnitQuantityUsesBaseUnit && (!bulkUnit || !(unitsPerBulkUnit > 0))) throw stockError("Toplu stok miktarı için geçerli toplu birim ve çarpan gerekli.", 422);
+      if (!record.baseUnit) addWarning("MISSING_BASE_UNIT", baseUnit
+        ? "Excel dosyasında temel birim eksik. Mevcut temel birim korunuyor."
+        : "Excel dosyasında temel birim eksik.");
+      if (bulkUnit && !(unitsPerBulkUnit > 0)) addWarning("MISSING_CONVERSION", "Toplu birim çarpanı eksik; toplu miktar bakiyeye uygulanmadı.");
+      const targetQuantityReliable = record.quantitiesValid !== false
+        && (!Number(record.bulkQuantity || 0) || singleUnitQuantityUsesBaseUnit || Boolean(bulkUnit && unitsPerBulkUnit > 0));
       if (record.bulkUnit && existing && record.bulkUnit !== currentUnits.bulkUnit && !record.factorProvided && !singleUnitQuantityUsesBaseUnit) {
-        throw stockError("Toplu birim değiştiği için birim çarpanı zorunludur.", 422);
-      }
-      const hasOperationalHistory = existing && (state.movements || []).some((movement) => {
-        if (String(movement.productId || movement.stockProductId || "") !== String(product.id)) return false;
-        return !(String(movement.type || "") === "adjustment" && String(movement.referenceType || "") === "excel_stock_import");
-      });
-      if (existing && record.baseUnit && record.baseUnit !== currentUnits.baseUnit && hasOperationalHistory) {
-        throw stockError("Hareket geçmişi bulunan ürünün temel birimi Excel ile değiştirilemez.", 409);
+        addWarning("MISSING_CONVERSION", "Toplu birim değişti ancak çarpan verilmedi; mevcut çarpan kullanıldı.");
       }
       const allowDecimal = ["kg", "gr", "litre", "ml"].includes(baseUnit)
         ? true
         : existing ? currentUnits.allowDecimal : false;
-      const targetQuantity = singleUnitQuantityUsesBaseUnit
+      let targetQuantity = singleUnitQuantityUsesBaseUnit
         ? round(Number(record.bulkQuantity || 0) + Number(record.baseQuantity || 0))
         : round(Number(record.bulkQuantity || 0) * Number(unitsPerBulkUnit || 0) + Number(record.baseQuantity || 0));
-      if (!allowDecimal && !Number.isInteger(targetQuantity)) throw stockError("Bu ürün için kesirli temel miktar kullanılamaz.", 422);
+      let balanceUpdateAllowed = targetQuantityReliable && Boolean(baseUnit);
+      if (!allowDecimal && !Number.isInteger(targetQuantity)) {
+        addWarning("INVALID_QUANTITY_PRECISION", "Kesirli miktar bu temel birim için uygulanamadı; mevcut bakiye korundu.");
+        balanceUpdateAllowed = false;
+      }
       let unitMigrationApplied = false;
       if (existing && record.baseUnit && record.baseUnit !== currentUnits.baseUnit) {
         const migration = migrateProductUnitSchema(state, product.id, {
@@ -1648,11 +2089,26 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
           unitsPerBulkUnit,
           allowDecimal,
           defaultMovementUnit: baseUnit
-        }, { now: timestamp });
+        }, {
+          now: timestamp,
+          allowReconciliation: true,
+          allowInactive: true,
+          source: "excel_import",
+          requestId,
+          actorId: String(actor && actor.id || "system")
+        });
         product = migration.product;
         product.unitSchemaSource = "excel";
-        currentUnits = productUnitMetadata(product);
+        currentUnits = productUnitMetadata(product, { allowDefaultBaseUnit: false });
         unitMigrationApplied = true;
+        if (migration.plan.reconciliationRequired) {
+          const affectedLocations = migration.plan.locations
+            .filter((item) => item.decision === "RECONCILIATION_REQUIRED"
+              && !(String(item.locationId) === String(location.id) && targetQuantityReliable && Boolean(baseUnit)))
+            .map((item) => item.locationName)
+            .filter(Boolean);
+          if (affectedLocations.length) addWarning("BALANCE_RECONCILIATION_REQUIRED", `Eski stok bakiyesi yeni birime güvenli şekilde dönüştürülemedi. Sayım/mutabakat gerekli: ${affectedLocations.join(", ")}.`);
+        }
       }
       let category = categoryByName.get(categoryKey);
       if (!category) {
@@ -1667,7 +2123,10 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
         summary.newCategories += 1;
         createdCategoryDetails.set(categoryKey, { category: category.name, createdProductCount: 0 });
       } else {
-        category.active = true;
+        const categoryLifecycleLocked = category.manuallyInactive === true || category.trashed === true
+          || Boolean(category.removedAt || category.deletedAt || category.purgedAt || category.archivedAt)
+          || category.active === false && category.statusSource === "manual";
+        if (categoryLifecycleLocked) addWarning("CATEGORY_LIFECYCLE_PRESERVED", "Kategori manuel olarak pasif veya arşivde; Excel yaşam döngüsünü değiştirmedi.");
         category.sourcePresent = true;
         category.updatedAt = timestamp;
         category.lastImportedAt = timestamp;
@@ -1686,6 +2145,12 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
           unitsPerBulkUnit, unitsPerCase: unitsPerBulkUnit,
           allowDecimal, defaultMovementUnit: baseUnit,
           active: true, sourceType: "excel", statusSource: "excel", sourcePresent: true,
+          needsAttention: warnings.length > 0,
+          attentionReasons: Array.from(new Set(warningCodes)),
+          attentionMessages: Array.from(new Set(warnings)),
+          excelBaseUnitMissing: !baseUnit,
+          excelSourceBaseUnitMissing: !record.baseUnit,
+          baseUnitMissing: !baseUnit,
           unitSchemaSource: "excel", unitSchemaLocked: true, unitSchemaVersion: 1,
           unitSchemaUpdatedAt: timestamp, createdAt: timestamp, updatedAt: timestamp,
           lastImportedAt: timestamp, lastImportOperationId: requestId
@@ -1697,11 +2162,15 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
           category: category.name,
           productName: productName(product),
           productCode: product.productCode,
-          ...stockExcelUnitDetail(productUnitMetadata(product))
+          ...stockExcelUnitDetail(productUnitMetadata(product, { allowDefaultBaseUnit: false }))
         });
         if (createdCategoryDetails.has(categoryKey)) createdCategoryDetails.get(categoryKey).createdProductCount += 1;
       } else {
         summary.matchedProducts += 1;
+        const lifecycleLocked = product.manuallyInactive === true || product.trashed === true
+          || Boolean(product.removedAt || product.deletedAt || product.purgedAt || product.archivedAt)
+          || product.active === false && product.statusSource === "manual";
+        if (lifecycleLocked) addWarning("PRODUCT_LIFECYCLE_PRESERVED", "Bu ürün Excel dosyasında mevcut ancak Çöp Kutusunda veya manuel olarak pasif; yaşam döngüsü değiştirilmedi.");
         const previousUnits = { ...product, unitSchemaHistory: Array.isArray(product.unitSchemaHistory) ? product.unitSchemaHistory.map((item) => ({ ...item })) : [] };
         const previousProductCode = normalizeProductCode(product.productCode);
         const nextProductCode = requestedCode || previousProductCode;
@@ -1719,9 +2188,16 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
           unitsPerBulkUnit, unitsPerCase: unitsPerBulkUnit,
           defaultMovementUnit: allowedProductUnits({ ...product, baseUnit, unit: baseUnit, bulkUnit, unitsPerBulkUnit }).includes(product.defaultMovementUnit)
             ? product.defaultMovementUnit : baseUnit,
-          active: true, sourcePresent: true, updatedAt: timestamp,
+          sourcePresent: true, updatedAt: timestamp,
+          needsAttention: warnings.length > 0,
+          attentionReasons: Array.from(new Set(warningCodes)),
+          attentionMessages: Array.from(new Set(warnings)),
+          excelBaseUnitMissing: !baseUnit,
+          excelSourceBaseUnitMissing: !record.baseUnit,
+          baseUnitMissing: !baseUnit,
           lastImportedAt: timestamp, lastImportOperationId: requestId
         });
+        if (!lifecycleLocked && product.active === undefined) product.active = true;
         if (unitChanged) {
           product.unitSchemaVersion = recordProductUnitSchemaTransition(previousUnits, productUnitMetadata(product), timestamp);
           product.unitSchemaHistory = previousUnits.unitSchemaHistory;
@@ -1741,18 +2217,44 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
       if (baseUnit && !state.unitDefinitions.base.some((unit) => excelIdentity(unit) === excelIdentity(baseUnit))) state.unitDefinitions.base.push(baseUnit);
       if (bulkUnit && !state.unitDefinitions.bulk.some((unit) => excelIdentity(unit) === excelIdentity(bulkUnit))) state.unitDefinitions.bulk.push(bulkUnit);
       const balance = findBalance(state, location.id, product.id, true);
+      const previousBalanceDisplay = formatBalanceQuantity(product, balance).display;
+      if (balance.reconciliationRequired === true && !record.baseUnit) {
+        balanceUpdateAllowed = false;
+        addWarning("BALANCE_RECONCILIATION_REQUIRED", "Bu depo bakiyesi için stok mutabakatı gerekiyor.");
+      }
+      const wasReconciliationRequired = balance.reconciliationRequired === true;
+      const previousBalanceUnit = balance.baseUnitSnapshot || balance.previousBaseUnit || originalUnits.baseUnit || "";
       const previousThresholds = stockExcelThresholdDetail(balance);
-      const thresholdsChanged = Number(balance.criticalThreshold || 0) !== round(Number(record.criticalThreshold || 0))
+      const thresholdsApplicable = record.thresholdsValid !== false;
+      const thresholdsChanged = thresholdsApplicable && (Number(balance.criticalThreshold || 0) !== round(Number(record.criticalThreshold || 0))
         || Number(balance.orderThreshold || 0) !== round(Number(record.orderThreshold || 0))
-        || Number(balance.targetLevel || 0) !== round(Number(record.targetLevel || 0));
-      balance.criticalThreshold = round(Number(record.criticalThreshold || 0));
-      balance.orderThreshold = round(Number(record.orderThreshold || 0));
-      balance.targetLevel = round(Number(record.targetLevel || 0));
+        || Number(balance.targetLevel || 0) !== round(Number(record.targetLevel || 0)));
+      if (thresholdsApplicable) {
+        balance.criticalThreshold = round(Number(record.criticalThreshold || 0));
+        balance.orderThreshold = round(Number(record.orderThreshold || 0));
+        balance.targetLevel = round(Number(record.targetLevel || 0));
+      }
       const nextThresholds = stockExcelThresholdDetail(balance);
       const previousQuantity = round(Number(balance.quantity || 0));
+      if (!balanceUpdateAllowed) targetQuantity = previousQuantity;
       const delta = round(targetQuantity - previousQuantity);
       balance.updatedAt = timestamp;
-      if (thresholdsChanged && delta === 0) balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
+      if (balanceUpdateAllowed && baseUnit) {
+        balance.reconciliationRequired = false;
+        balance.reconciliationReasonCode = "";
+        balance.reconciliationReason = "";
+        balance.previousQuantity = null;
+        balance.previousBaseUnit = "";
+        balance.targetBaseUnit = "";
+        balance.baseUnitSnapshot = baseUnit;
+        balance.bulkUnitSnapshot = bulkUnit || "";
+        balance.unitsPerBulkUnitSnapshot = Number(unitsPerBulkUnit || 0);
+        balance.unitSchemaVersionAtBalance = Math.max(1, Number(product.unitSchemaVersion || 1));
+        balance.reconciliationResolvedAt = wasReconciliationRequired ? timestamp : balance.reconciliationResolvedAt || null;
+        balance.reconciliationCreatedAt = null;
+      }
+      const reconciliationChanged = wasReconciliationRequired !== (balance.reconciliationRequired === true);
+      if ((thresholdsChanged || reconciliationChanged) && delta === 0) balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
       if (delta !== 0) {
         balance.quantity = targetQuantity;
         balance.revision = Math.max(0, Number(balance.revision || 0)) + 1;
@@ -1763,7 +2265,12 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
           quantity: Math.abs(delta), baseQuantity: Math.abs(delta), baseQuantityDelta: delta,
           baseUnit, sourceQuantity: Math.abs(delta), sourceUnit: baseUnit,
           inputQuantity: Math.abs(delta), inputUnit: baseUnit, conversionFactor: 1,
-          conversionSnapshot: { baseUnit, bulkUnit, unitsPerBulkUnit, inputUnit: baseUnit, factor: 1, unitSchemaVersion: Math.max(1, Number(product.unitSchemaVersion || 1)) },
+          conversionSnapshot: {
+            baseUnit, bulkUnit, unitsPerBulkUnit, inputUnit: baseUnit, factor: 1,
+            unitSchemaVersion: Math.max(1, Number(product.unitSchemaVersion || 1)),
+            previousBaseUnit: previousBalanceUnit,
+            reconciliationResolution: wasReconciliationRequired
+          },
           previousBalance: previousQuantity, resultingBalance: targetQuantity,
           referenceType: "excel_stock_import", referenceId: requestId,
           requestId: `${requestId}:${product.id}`, idempotencyKey: `${requestId}:${product.id}`,
@@ -1779,7 +2286,7 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
           previousQuantity,
           targetQuantity,
           adjustment: delta,
-          previousDisplay: formatBaseQuantity(product, previousQuantity).display,
+          previousDisplay: previousBalanceDisplay,
           targetDisplay: formatBaseQuantity(product, targetQuantity).display,
           adjustmentDisplay: `${delta > 0 ? "+" : "−"}${formatBaseQuantity(product, Math.abs(delta)).display}`,
           baseUnit
@@ -1804,12 +2311,23 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
           changes
         });
       }
+      if (warnings.length) {
+        details.attentionProducts.push(stockExcelAttentionDetail({
+          productId: product.id,
+          locationId: location.id,
+          locationName: location.name,
+          categoryId: category.id,
+          category: category.name,
+          categoryName: category.name,
+          productName: productName(product),
+          productCode: product.productCode,
+          reasonCodes: warningCodes,
+          reasons: warnings
+        }));
+      }
       updateProductTotalProjection(state, product.id, timestamp);
     } catch (error) {
-      summary.skippedProducts += 1;
-      const skipped = { category: record.category, product: record.productName, reason: error && error.message || "Ürün içe aktarılamadı." };
-      errors.push(skipped);
-      details.skippedProducts.push(stockExcelSkippedDetail(skipped));
+      throw stockError(`“${record.productName || "Stok ürünü"}” işlenirken içe aktarım durdu: ${error && error.message || "Beklenmeyen hata."}`, Number(error && error.status || 422));
     }
   }
   details.createdCategories = Array.from(createdCategoryDetails.values());
@@ -1818,7 +2336,14 @@ function applyStockExcelImport(stockState, parsedWorkbook, input = {}, actor = {
   summary.newProducts = details.createdProducts.length;
   summary.newCategories = details.createdCategories.length;
   summary.changedBalances = details.balanceChanges.length;
+  summary.processedProducts = details.updatedProducts.length + details.createdProducts.length;
+  summary.attentionProducts = details.attentionProducts.length;
   summary.skippedProducts = details.skippedProducts.length;
+  summary.processedCount = summary.processedProducts;
+  summary.updatedCount = summary.updatedProducts;
+  summary.createdCount = summary.newProducts;
+  summary.attentionCount = summary.attentionProducts;
+  details.attentionItems = details.attentionProducts;
   state.unitDefinitions.updatedAt = timestamp;
   state.unitDefinitions.updatedBy = String(actor && actor.id || "system");
   state.updatedAt = timestamp;
@@ -1878,6 +2403,7 @@ module.exports = {
   buildUnitMigrationPlan,
   migrateProductUnitSchema,
   parseStockExcelWorkbook,
+  purgeStockProduct,
   recordProductUnitSchemaTransition,
   rejectTransfer,
   reverseMovement,
@@ -1885,8 +2411,10 @@ module.exports = {
   serializeMovements,
   serializeTransfers,
   startStockCount,
+  softDeleteStockProduct,
   stockError,
   stockStatus,
+  restoreStockProduct,
   updateStockCount,
   updateAllProductTotals,
   updateProductTotalProjection

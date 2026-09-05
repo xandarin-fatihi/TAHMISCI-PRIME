@@ -2398,6 +2398,9 @@ app.head("/media/:name", requireKnownHost, serveMediaFile);
 app.use(notFound);
 
 app.use((error, req, res, _next) => {
+  if (error && error.code === "STOCK_LOCATION_HIDDEN") {
+    return res.status(403).json({ ok: false, code: error.code, message: error.message });
+  }
   const status = error && (error.type === "entity.too.large" || Number(error.status) === 413)
     ? 413
     : Number(error && error.status || 500);

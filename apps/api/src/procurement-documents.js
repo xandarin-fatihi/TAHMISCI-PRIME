@@ -6,6 +6,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 
 const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_INCOMING_IMAGE_BYTES = 25 * 1024 * 1024;
 const DEFAULT_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
 const MAX_IMAGE_PIXELS = 60 * 1000 * 1000;
 const MAX_IMAGE_SIDE = 24_000;
@@ -15,6 +16,8 @@ const MIME_DETAILS = Object.freeze({
   "image/jpeg": { extension: ".jpg", label: "JPEG" },
   "image/png": { extension: ".png", label: "PNG" },
   "image/webp": { extension: ".webp", label: "WebP" },
+  "image/heic": { extension: ".heic", label: "HEIC" },
+  "image/heif": { extension: ".heif", label: "HEIF" },
   "application/pdf": { extension: ".pdf", label: "PDF" }
 });
 const PUBLIC_DOCUMENT_FIELDS = new Set([
@@ -70,16 +73,21 @@ function createProcurementDocumentService(options = {}) {
   }
 
   async function storeUpload({ buffer, originalName, declaredMimeType } = {}) {
-    validateUploadBuffer(buffer, maxUploadBytes);
+    validateUploadBuffer(buffer, Math.max(maxUploadBytes, MAX_INCOMING_IMAGE_BYTES));
     const detectedMimeType = detectDocumentType(buffer);
     if (!detectedMimeType) {
-      throw documentError("UNSUPPORTED_DOCUMENT_TYPE", "Yalnızca geçerli PDF, JPEG, PNG veya WebP belgeleri yüklenebilir.");
+      throw documentError("UNSUPPORTED_DOCUMENT_TYPE", "Yalnızca geçerli PDF, JPEG, PNG, WebP, HEIC veya HEIF belgeleri yüklenebilir.");
     }
+    if (detectedMimeType === "application/pdf" && buffer.length > maxUploadBytes) validateUploadBuffer(buffer, maxUploadBytes);
     validateDeclaredType(declaredMimeType, detectedMimeType);
     validateFilenameType(originalName, detectedMimeType);
 
     const sanitizedName = sanitizeOriginalFilename(originalName, MIME_DETAILS[detectedMimeType].extension);
-    let processed = sanitizeDocument(buffer, detectedMimeType);
+    const isHeif = detectedMimeType === "image/heic" || detectedMimeType === "image/heif";
+    if (isHeif && !imageProcessor) throw documentError("DOCUMENT_PROCESSING_UNAVAILABLE", "HEIC/HEIF belge dönüştürücüsü kullanılamıyor.", 503);
+    let processed = isHeif
+      ? { buffer: Buffer.from(buffer), mimeType: detectedMimeType, extension: MIME_DETAILS[detectedMimeType].extension, width: 0, height: 0, metadataStripped: false }
+      : sanitizeDocument(buffer, detectedMimeType);
     processed = detectedMimeType === "application/pdf"
       ? { ...processed, reencoded: false, thumbnailBuffer: null, thumbnailMimeType: "" }
       : await optionallyProcessImage(processed, imageProcessor, strictImageProcessing);
@@ -502,6 +510,11 @@ function detectImageType(buffer) {
   if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "image/jpeg";
   if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
   if (buffer.length >= 12 && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  if (buffer.length >= 12 && buffer.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brand = buffer.subarray(8, 12).toString("ascii").toLowerCase();
+    if (["heic", "heix", "hevc", "hevx", "heim", "heis"].includes(brand)) return "image/heic";
+    if (["heif", "mif1", "msf1"].includes(brand)) return "image/heif";
+  }
   return "";
 }
 
@@ -764,7 +777,8 @@ function validateUploadBuffer(buffer, maxUploadBytes) {
 function validateDeclaredType(value, detectedMimeType) {
   const declared = String(value || "").split(";", 1)[0].trim().toLowerCase();
   if (!declared || declared === "application/octet-stream") return;
-  if (!MIME_DETAILS[declared] || declared !== detectedMimeType) {
+  const heifPair = [declared, detectedMimeType].every((item) => item === "image/heic" || item === "image/heif");
+  if (!MIME_DETAILS[declared] || (declared !== detectedMimeType && !heifPair)) {
     throw documentError("DOCUMENT_MIME_MISMATCH", "Belgenin MIME türü ile dosya içeriği uyuşmuyor.");
   }
 }
@@ -773,7 +787,8 @@ function validateFilenameType(value, detectedMimeType) {
   const extension = path.extname(String(value || "").trim()).toLowerCase();
   if (!extension) return;
   const normalized = extension === ".jpeg" ? ".jpg" : extension;
-  if ([".jpg", ".png", ".webp", ".pdf"].includes(normalized) && normalized !== MIME_DETAILS[detectedMimeType].extension) {
+  const heifPair = [".heic", ".heif"].includes(normalized) && ["image/heic", "image/heif"].includes(detectedMimeType);
+  if ([".jpg", ".png", ".webp", ".heic", ".heif", ".pdf"].includes(normalized) && normalized !== MIME_DETAILS[detectedMimeType].extension && !heifPair) {
     throw documentError("DOCUMENT_EXTENSION_MISMATCH", "Belgenin dosya uzantısı ile içeriği uyuşmuyor.");
   }
 }

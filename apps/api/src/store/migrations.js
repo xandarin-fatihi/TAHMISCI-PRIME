@@ -1088,10 +1088,16 @@ function normalizeStockState(stockState) {
   balances.forEach((balance) => totals.set(String(balance.productId), (totals.get(String(balance.productId)) || 0) + Number(balance.quantity || 0)));
   next.products = next.products.map((product) => {
     const stockQuantity = Math.max(0, finiteNumber(totals.get(String(product.id)), 0));
+    const reconciliationRequired = balances.some((balance) => String(balance.productId) === String(product.id)
+      && balance.reconciliationRequired === true);
     return {
       ...product,
       stockQuantity,
-      stockQuantityText: `${stockQuantity} ${product.unit || "adet"}`
+      stockQuantityText: reconciliationRequired
+        ? "Mutabakat gerekiyor"
+        : `${stockQuantity} ${product.unit || "birim tanımsız"}`,
+      stockQuantityReconciliationRequired: reconciliationRequired,
+      needsAttention: product.needsAttention === true || reconciliationRequired
     };
   });
   return next;
@@ -1144,8 +1150,8 @@ function stockUnitIdentity(value) {
 
 function normalizeStockLocations(value) {
   const required = [
-    { id: "stock-location-cafe", code: "CAFE", name: "Kafe Deposu", type: "cafe", active: true, sortOrder: 10, isDefault: true },
-    { id: "stock-location-general", code: "GENEL", name: "Genel Depo", type: "central", active: true, sortOrder: 20, isDefault: false }
+    { id: "stock-location-cafe", code: "CAFE", name: "Kafe Deposu", type: "cafe", personnelVisible: true, active: true, sortOrder: 10, isDefault: true },
+    { id: "stock-location-general", code: "GENEL", name: "Genel Depo", type: "central", personnelVisible: false, active: true, sortOrder: 20, isDefault: false }
   ];
   const source = normalizeArray(value);
   const seenIds = new Set();
@@ -1165,6 +1171,7 @@ function normalizeStockLocations(value) {
       name: String(item.name || code).trim().slice(0, 120) || code,
       description: String(item.description || "").trim().slice(0, 500),
       type: ["cafe", "central", "other"].includes(item.type) ? item.type : "other",
+      personnelVisible: typeof item.personnelVisible === "boolean" ? item.personnelVisible : item.type === "cafe",
       active: item.active !== false,
       sortOrder: Math.max(0, Math.trunc(finiteNumber(item.sortOrder, result.length * 10))),
       isDefault: item.isDefault === true,
@@ -1220,6 +1227,20 @@ function normalizeStockBalances(value, products, locations, legacyMigrationRequi
         criticalThreshold: Math.max(0, finiteNumber(item.criticalThreshold, 0)),
         orderThreshold: Math.max(0, finiteNumber(item.orderThreshold ?? item.warningThreshold, 0)),
         targetLevel: Math.max(0, finiteNumber(item.targetLevel, 0)),
+        reconciliationRequired: item.reconciliationRequired === true,
+        reconciliationReasonCode: String(item.reconciliationReasonCode || "").trim().slice(0, 80),
+        reconciliationReason: String(item.reconciliationReason || item.reason || "").trim().slice(0, 500),
+        previousQuantity: item.previousQuantity === null || item.previousQuantity === undefined
+          ? null
+          : Math.max(0, finiteNumber(item.previousQuantity, 0)),
+        previousBaseUnit: normalizeStockUnit(item.previousBaseUnit || ""),
+        targetBaseUnit: normalizeStockUnit(item.targetBaseUnit || ""),
+        baseUnitSnapshot: normalizeStockUnit(item.baseUnitSnapshot || item.balanceBaseUnit || ""),
+        bulkUnitSnapshot: normalizeStockUnit(item.bulkUnitSnapshot || ""),
+        unitsPerBulkUnitSnapshot: Math.max(0, finiteNumber(item.unitsPerBulkUnitSnapshot, 0)),
+        unitSchemaVersionAtBalance: Math.max(1, Math.trunc(finiteNumber(item.unitSchemaVersionAtBalance, 1))),
+        reconciliationCreatedAt: item.reconciliationCreatedAt || null,
+        reconciliationResolvedAt: item.reconciliationResolvedAt || null,
         updatedAt: item.updatedAt || null
       });
     }
@@ -1244,6 +1265,19 @@ function normalizeStockBalances(value, products, locations, legacyMigrationRequi
         criticalThreshold: inheritLegacyThresholds ? Math.max(0, finiteNumber(product.criticalThreshold, 0)) : 0,
         orderThreshold: inheritLegacyThresholds ? Math.max(0, finiteNumber(product.orderThreshold ?? product.warningThreshold, 0)) : 0,
         targetLevel: inheritLegacyThresholds ? Math.max(0, finiteNumber(product.targetLevel, 0)) : 0,
+        reconciliationRequired: false,
+        reconciliationReasonCode: "",
+        reconciliationReason: "",
+        previousQuantity: null,
+        previousBaseUnit: "",
+        targetBaseUnit: "",
+        baseUnitSnapshot: normalizeStockUnit(product.baseUnit || product.unit
+          || (product.baseUnitMissing === true || product.excelBaseUnitMissing === true ? "" : "adet")),
+        bulkUnitSnapshot: normalizeStockUnit(product.bulkUnit || product.caseUnit || ""),
+        unitsPerBulkUnitSnapshot: Math.max(0, finiteNumber(product.unitsPerBulkUnit ?? product.unitsPerCase, 0)),
+        unitSchemaVersionAtBalance: Math.max(1, Math.trunc(finiteNumber(product.unitSchemaVersion, 1))),
+        reconciliationCreatedAt: null,
+        reconciliationResolvedAt: null,
         updatedAt: product.updatedAt || null
       });
     }
@@ -1424,7 +1458,10 @@ function normalizeStockCategory(category, index) {
 function normalizeStockProduct(product, index, categoryNames) {
   if (!product || typeof product !== "object" || Array.isArray(product)) return null;
   const categoryId = String(product.categoryId || stableStockId("stock-category", product.category || "Genel")).trim();
-  const baseUnit = normalizeStockUnit(product.baseUnit || product.unit || "adet") || "adet";
+  const preserveMissingExcelBaseUnit = product.excelBaseUnitMissing === true || product.baseUnitMissing === true || product.excelSourceBaseUnitMissing === true;
+  const baseUnit = preserveMissingExcelBaseUnit
+    ? normalizeStockUnit(product.baseUnit || product.unit || "")
+    : normalizeStockUnit(product.baseUnit || product.unit || "adet") || "adet";
   const bulkUnit = normalizeStockUnit(product.bulkUnit || product.caseUnit || product.purchaseUnit || "");
   const packageMetadata = product.packageInfo && typeof product.packageInfo === "object" ? product.packageInfo : {};
   const unitsPerBulkUnit = Math.max(0, finiteNumber(
@@ -1446,8 +1483,17 @@ function normalizeStockProduct(product, index, categoryNames) {
     allowDecimal,
     defaultMovementUnit
   });
+  const missingSourceAttention = product.excelSourceBaseUnitMissing === true ? {
+    needsAttention: true,
+    attentionReasons: [...new Set([...normalizeArray(product.attentionReasons), "MISSING_BASE_UNIT"])],
+    attentionMessages: [...new Set([
+      ...normalizeArray(product.attentionMessages).filter((message) => !/temel birim.*eksik/i.test(String(message))),
+      "Excel dosyasında temel birim eksik." + (baseUnit ? " Mevcut temel birim korunuyor." : "")
+    ])]
+  } : {};
   return {
     ...product,
+    ...missingSourceAttention,
     id: String(product.id || stableStockId("stock-product", `${categoryId}\u0000${product.productName || product.name || index}`)),
     categoryId,
     category: String(product.category || categoryNames.get(categoryId) || "Genel"),
@@ -1461,6 +1507,7 @@ function normalizeStockProduct(product, index, categoryNames) {
     unitsPerCase: unitsPerBulkUnit,
     allowDecimal,
     defaultMovementUnit,
+    baseUnitMissing: preserveMissingExcelBaseUnit && !baseUnit,
     unitSchemaVersion: normalizedSchema.version,
     unitSchemaHistory: normalizedSchema.history,
     unitSchemaSource: ["manual", "excel", "legacy"].includes(String(product.unitSchemaSource || ""))
