@@ -157,11 +157,11 @@ function registerProcurementRoutes(deps = {}) {
     res.json(await service.updateProductLink(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.get(`${API_ROOT}/shipments`, ...authenticated, anySectionAccess(["shipments", "documents", "suppliers"], "view"), anyCapability(["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/shipments`, ...authenticated, anySectionAccess(["shipments", "documents", "suppliers", "ledger"], "view"), anyCapability(["procurement.read", "supplier.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
     res.json(await service.listShipments(req.procurementActor, req.query));
   }));
 
-  app.get(`${API_ROOT}/shipments/:id`, ...authenticated, anySectionAccess(["shipments", "documents", "suppliers"], "view"), anyCapability(["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/shipments/:id`, ...authenticated, anySectionAccess(["shipments", "documents", "suppliers", "ledger"], "view"), anyCapability(["procurement.read", "supplier.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]), asyncRoute(async (req, res) => {
     res.json(await service.getShipment(req.procurementActor, req.params.id));
   }));
 

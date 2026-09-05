@@ -15,6 +15,7 @@ export const CAPABILITIES = {
 export const state = {
   context: null, revision: 0, workforceRevision: 0, activeView: "dashboard", loaded: new Map(), eventSource: null,
   suppliers: [], productLinks: [], shipments: [], documents: [], ledgerEntries: [], payments: [], trash: [], users: [], auditEvents: [],
+  ledgerSummary: null, ledgerFilterKey: "", ledgerDrilldown: "",
   notifications: [], unreadCount: 0,
   dashboard: null, settings: null, accessTemplates: [], sectionDefinitions: [], sectionAccess: Object.create(null), filters: Object.create(null), detail: null,
   supplierWorkspace: { supplierId: "", productLinks: [], independentProducts: [], loading: false, returnScrollY: 0 },
@@ -102,6 +103,15 @@ export function escapeHtml(value) {
 export function trMoney(kurus) {
   const amount = Number(kurus || 0) / 100;
   return new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 2 }).format(amount);
+}
+
+export function financeValues(summary, className = "finance-summary") {
+  if (!summary || summary.debtKurus == null) return "";
+  return `<div class="${className}"><div><small>Borç</small><strong class="finance-debt">${trMoney(summary.debtKurus)}</strong></div><div><small>Yapılan Ödeme</small><strong class="finance-payment">${trMoney(summary.paymentKurus)}</strong></div><div><small>Kalan</small><strong class="finance-remaining">${trMoney(summary.remainingKurus)}</strong></div></div>`;
+}
+
+export function paymentStatusLabel(status) {
+  return ({ open: "Ödeme bekliyor", partial: "Kısmi ödendi", paid: "Tam ödendi", reversed: "Terslendi", removed: "Kaldırıldı", not_posted: "Borç oluşmadı" })[status] || "Borç oluşmadı";
 }
 
 export function trDate(value, withTime = false) {

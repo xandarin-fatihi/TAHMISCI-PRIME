@@ -3,8 +3,8 @@ import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKur
 import { renderDashboard } from "./dashboard.js?v=20260902-final-ui";
 import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260903-supplier-create-fix-v1";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js";
-import { documentFormBody, printShipmentArchive, renderDocuments, shipmentArchiveDetail } from "./documents.js?v=20260904-stock-lifecycle-upload-v1";
-import { ledgerEntryFormBody, paymentFormBody, renderLedger, renderTrash, renderUsers, userAccessFormBody } from "./accounting.js?v=20260904-stock-lifecycle-upload-v1";
+import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260905-finance";
+import { ledgerDetail, ledgerEntryFormBody, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, userAccessFormBody } from "./accounting.js?v=20260905-finance";
 import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260904-stock-lifecycle-upload-v1";
 import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260902-final-ui";
 import { confirmAction, requestText } from "./ui-dialogs.js";
@@ -46,13 +46,13 @@ const gatewayTopicRevisions = new Map();
 const EVENT_SCOPES = {
   inventory: ["stock", "stockExcel", "dashboard", "trash"],
   catalog: ["stock", "stockExcel", "dashboard", "trash"],
-  shipment: ["shipments", "documents", "productAnalysis", "stock", "dashboard"],
+  shipment: ["shipments", "documents", "productAnalysis", "stock", "dashboard", "ledger", "suppliers", "trash"],
   supplier: ["suppliers", "dashboard"],
   supplierProductLink: ["suppliers", "productAnalysis", "dashboard"],
   supplierIndependentProduct: ["suppliers", "stock", "productAnalysis", "dashboard"],
   document: ["documents", "dashboard"],
-  ledgerEntry: ["ledger", "trash", "suppliers", "dashboard"],
-  payment: ["ledger", "trash", "suppliers", "dashboard"],
+  ledgerEntry: ["ledger", "trash", "suppliers", "dashboard", "shipments", "documents"],
+  payment: ["ledger", "trash", "suppliers", "dashboard", "shipments", "documents"],
   personel: ["users", "context"],
   procurementSettings: ["dashboard"]
 };
@@ -125,6 +125,9 @@ async function resolveContext() {
 
 function showAuth(message = "") {
   stopEvents();
+  if (detailDialog.open) closeDetailDialog();
+  state.ledgerEntries = []; state.payments = []; state.ledgerSummary = null;
+  state.ledgerFilterKey = ""; state.ledgerDrilldown = ""; state.loaded.delete("ledger");
   disconnectStockEvents();
   resetStockState();
   resetProductAnalysisState();
@@ -315,7 +318,14 @@ const loadStockReferences = (force) => cachedLoad("stock-references", () => api(
 const loadProductLinks = (force) => cachedLoad("links", () => api("/product-links?active=all"), (p) => { state.productLinks = p.productLinks || []; }, force);
 const loadShipments = (force) => cachedLoad("shipments", () => api("/shipments"), (p) => { state.shipments = p.shipments || []; }, force);
 const loadDocuments = (force) => cachedLoad("documents", () => api("/documents"), (p) => { state.documents = p.documents || []; }, force);
-const loadLedger = (force) => cachedLoad("ledger", () => api("/ledger"), (p) => { state.ledgerEntries = p.entries || []; state.payments = p.payments || []; }, force);
+const loadLedger = (force) => {
+  const query = new URLSearchParams({ supplierId: state.filters.ledgerSupplier || "", date: state.filters.ledgerDate || "" }).toString();
+  if (state.ledgerFilterKey !== query) { state.loaded.delete("ledger"); state.ledgerSummary = null; }
+  state.ledgerFilterKey = query;
+  return cachedLoad("ledger", () => api(`/ledger?${query}`), (p) => {
+    state.ledgerEntries = p.entries || []; state.payments = p.payments || []; state.ledgerSummary = p.summary || null;
+  }, force);
+};
 const loadTrash = (force) => cachedLoad("trash", () => api("/trash"), (p) => { state.trash = p.records || []; }, force);
 const loadUsers = (force) => cachedLoad("users", () => api("/users"), (p) => { state.users = p.users || []; state.accessTemplates = p.accessTemplates || []; state.sectionDefinitions = p.sections || []; }, force);
 
@@ -735,6 +745,9 @@ async function handleClick(event) {
   if (button.dataset.openDocument) return openDocument(button.dataset.openDocument);
   if (button.dataset.removeShipment) return removeShipment(button, button.dataset.removeShipment);
   if (button.dataset.removePayment) return removePayment(button, button.dataset.removePayment);
+  if (button.dataset.openPayment) return openPayment(button.dataset.openPayment);
+  if (button.dataset.openLedger) return openLedgerEntry(button.dataset.openLedger);
+  if (button.dataset.trashLedger) return reverseLedger(button, button.dataset.trashLedger);
   if (button.dataset.restoreTrash) return restoreTrashRecord(button, button.dataset.trashType, button.dataset.restoreTrash);
   if (button.dataset.purgeTrash) return purgeTrashRecord(button, button.dataset.trashType, button.dataset.purgeTrash);
   if (button.dataset.editLink) return openLinkForm(button.dataset.editLink);
@@ -836,8 +849,8 @@ function handleChange(event) {
   if (["bulkUnit", "baseUnit", "conversionFactor"].includes(event.target.name)) return updateSupplierConversionPreview();
   if (event.target.id === "shipment-status") { state.filters.shipmentStatus = event.target.value; return renderActiveView(); }
   if (event.target.id === "shipment-evidence") { state.filters.shipmentEvidence = event.target.value; return renderActiveView(); }
-  if (event.target.id === "ledger-supplier") { state.filters.ledgerSupplier = event.target.value; return renderActiveView(); }
-  if (event.target.id === "ledger-date") { state.filters.ledgerDate = event.target.value; return renderActiveView(); }
+  if (event.target.id === "ledger-supplier") { state.filters.ledgerSupplier = event.target.value; return setView("ledger", { force: true }); }
+  if (event.target.id === "ledger-date") { state.filters.ledgerDate = event.target.value; return setView("ledger", { force: true }); }
 }
 
 function supplierStockProducts(query = "") {
@@ -1114,11 +1127,16 @@ function handleAction(button, action) {
   if (action === "upload-document") return openDocumentForm();
   if (action === "new-payment") return openPaymentForm();
   if (action === "export-ledger") return exportLedger(button);
-  if (action === "open-payment-history") { state.filters.paymentHistoryOpen = true; return renderActiveView(); }
-  if (action === "close-payment-history") { state.filters.paymentHistoryOpen = false; return renderActiveView(); }
+  if (action === "open-ledger-drilldown") { state.ledgerDrilldown = button.dataset.ledgerMode; return renderActiveView(); }
+  if (action === "close-ledger-drilldown") { state.ledgerDrilldown = ""; return renderActiveView(); }
+  if (action === "dashboard-ledger") {
+    state.filters.ledgerSupplier = ""; state.filters.ledgerDate = ""; state.ledgerDrilldown = button.dataset.ledgerMode;
+    return setView("ledger", { force: true });
+  }
   if (action === "new-ledger-entry") return openLedgerEntryForm();
   if (action === "supplier-add-product") return openIndependentProductForm();
   if (action === "supplier-add-stock-products") return openSupplierStockBulkAddForm();
+  if (action === "supplier-shipment-history") return openSupplierShipmentHistory(state.supplierWorkspace.supplierId);
   if (action === "supplier-create-shipment") return openSupplierShipmentForm();
   if (action === "add-shipment-line") {
     const lines = document.getElementById("shipmentLines");
@@ -1760,6 +1778,53 @@ async function openShipment(id) {
   } catch (error) { toast(error.message, true); }
 }
 
+async function openSupplierShipmentHistory(supplierId) {
+  if (!supplierId || !hasSection("suppliers")) return;
+  try {
+    const payload = await api(`/shipments?supplierId=${encodeURIComponent(supplierId)}`, { dedupe: false });
+    updateRevision(payload);
+    const supplier = state.suppliers.find((item) => String(item.id) === String(supplierId));
+    showFinancialDetail({ type: "supplier-history", id: supplierId }, "TEDARİKÇİ", `${supplier?.name || "Tedarikçi"} · Sevkiyat Geçmişi`,
+      "Seçili tedarikçinin aktif sevkiyatları.", renderSupplierShipmentHistory(payload.shipments || []));
+  } catch (error) { toast(error.message || "Sevkiyat geçmişi alınamadı.", true); }
+}
+
+async function openPayment(id) {
+  if (!has(CAPABILITIES.accountingRead)) return;
+  try {
+    const known = state.payments.find((item) => item.id === id);
+    const supplierId = known?.supplierId || state.detail?.payload?.shipment?.supplierId || "";
+    const payload = await api(`/ledger?supplierId=${encodeURIComponent(supplierId)}`, { dedupe: false });
+    updateRevision(payload);
+    const payment = (payload.payments || []).find((item) => item.id === id);
+    if (!payment) throw new Error("Ödeme bulunamadı.");
+    showFinancialDetail({ type: "payment", id, payment }, "YAPILAN ÖDEME", "Ödeme Detayı", "Ödeme ve belge bilgileri.", paymentDetail(payment));
+  } catch (error) { toast(error.message || "Ödeme alınamadı.", true); }
+}
+
+async function openLedgerEntry(id) {
+  if (!has(CAPABILITIES.accountingRead)) return;
+  try {
+    const payload = await api(`/ledger?${state.ledgerFilterKey}`, { dedupe: false });
+    updateRevision(payload);
+    const entry = (payload.entries || []).find((item) => item.id === id);
+    if (!entry) throw new Error("Cari hareket bulunamadı.");
+    const obligation = payload.summary?.obligations?.find((item) => item.id === id);
+    showFinancialDetail({ type: "ledger", id, entry }, "CARİ HAREKET", "Borç ve Ödeme Detayı", "Seçili filtre kapsamındaki finansal durum.", ledgerDetail(entry, obligation));
+  } catch (error) { toast(error.message || "Cari hareket alınamadı.", true); }
+}
+
+function showFinancialDetail(detail, kicker, title, description, body) {
+  if (currentObjectUrl) { URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = ""; }
+  state.detail = detail;
+  document.getElementById("detailKicker").textContent = kicker;
+  document.getElementById("detailTitle").textContent = title;
+  document.getElementById("detailDescription").textContent = description;
+  document.getElementById("detailBody").innerHTML = body;
+  if (!detailDialog.open) detailDialog.showModal();
+  document.body.classList.add("dialog-open");
+}
+
 async function openDocument(id) {
   try {
     const documentMeta = state.documents.find((item) => item.id === id);
@@ -1835,9 +1900,9 @@ async function removeShipment(button, id) {
   await runButtonMutation(button, () => api(`/shipments/${encodeURIComponent(id)}/remove`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["shipments","documents","dashboard","stock","ledger","suppliers","trash"], async () => { if (detailDialog.open) closeDetailDialog(); await setView(state.activeView === "trash" ? "trash" : "documents", {force:true}); });
 }
 async function removePayment(button, id) {
-  const reason = await requestText({ title: "Ödemeyi kaldır", description: "Ödeme silinmez; cari hesapta ters kayıt oluşturulur.", label: "Kaldırma nedeni", value: "", confirmLabel: "Kaldır", danger: true });
+  const reason = await requestText({ title: "Ödemeyi Çöp Kutusuna taşı", description: "Ödeme silinmez; cari hesapta ters kayıt oluşturulur ve kalan borç yeniden hesaplanır.", label: "İşlem nedeni", value: "", confirmLabel: "Çöp Kutusuna Taşı", danger: true });
   if (reason === null) return;
-  await runButtonMutation(button, () => api(`/payments/${encodeURIComponent(id)}/reverse`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["ledger","suppliers","dashboard","trash"], () => setView("ledger", {force:true}));
+  await runButtonMutation(button, () => api(`/payments/${encodeURIComponent(id)}/reverse`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["ledger","suppliers","dashboard","trash"], async () => { closeDetailDialog(); await setView("ledger", {force:true}); });
 }
 async function purgeTrashRecord(button, type, id) {
   if (!await confirmAction({ title: "Kalıcı silinsin mi?", description: "Bu kayıt Çöp Kutusu'ndan kalıcı olarak silinecek ve geri alınamayacak.", confirmLabel: "Kalıcı Sil", danger: true })) return;
@@ -1908,8 +1973,16 @@ async function archiveDocument(button, id) {
   await runButtonMutation(button, () => api(`/documents/${encodeURIComponent(id)}/archive`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["documents","shipments","dashboard"], async () => { closeDetailDialog(); await setView("documents", {force:true}); });
 }
 async function reverseLedger(button, id) {
-  const reason = await requestText({ title: "Cari hareketi ters kaydet", description: "Geçmiş silinmez; dengeleyici yeni hareket oluşturulur.", label: "Ters kayıt nedeni", confirmLabel: "Ters kaydı oluştur", danger: true }); if (reason === null) return;
-  await runButtonMutation(button, () => api(`/ledger/${encodeURIComponent(id)}/reverse`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["ledger","suppliers","dashboard"], () => setView("ledger", {force:true}));
+  const entry = state.ledgerEntries.find((item) => item.id === id) || (state.detail?.entry?.id === id ? state.detail.entry : null);
+  if (!entry) return toast("Cari hareket güncel listede bulunamadı.", true);
+  if (entry.sourceType === "payment") return removePayment(button, entry.sourceId);
+  const shipmentId = entry.shipmentId;
+  const reason = await requestText({ title: "Cari kaydı Çöp Kutusuna taşı", description: shipmentId
+    ? "Yalnız sevkiyatın cari borcu terslenecek. Sevkiyat ve stok etkisi korunacak; geçmiş silinmeyecek."
+    : "Geçmiş silinmez; kaynağa bağlı dengeleyici ters kayıt oluşturulur.", label: "İşlem nedeni", confirmLabel: "Çöp Kutusuna Taşı", danger: true });
+  if (reason === null) return;
+  const endpoint = shipmentId ? `/shipments/${encodeURIComponent(shipmentId)}/reverse-accounting` : `/ledger/${encodeURIComponent(id)}/reverse`;
+  await runButtonMutation(button, () => api(endpoint, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["ledger","suppliers","dashboard","trash"], async () => { closeDetailDialog(); await setView("ledger", {force:true}); });
 }
 
 async function runButtonMutation(button, operation, scopes, after) {
@@ -1918,7 +1991,13 @@ async function runButtonMutation(button, operation, scopes, after) {
   catch (error) { toast(error.message || "İşlem tamamlanamadı.",true); }
   finally { setBusy(button,false); }
 }
-function mutationComplete(payload, scopes) { updateRevision(payload); invalidate(scopes); if (scopes.includes("stock")) invalidateStockState(); }
+function mutationComplete(payload, scopes) {
+  updateRevision(payload);
+  const affected = scopes.includes("ledger") || scopes.includes("shipments")
+    ? [...new Set([...scopes, "ledger", "suppliers", "dashboard", "shipments", "documents", "trash"])] : scopes;
+  invalidate(affected);
+  if (affected.includes("stock")) invalidateStockState();
+}
 function setBusy(button,busy,label){ if(!button)return; if(busy){button.dataset.busyContent=button.innerHTML;button.disabled=true;button.textContent=label;}else{button.disabled=false;if(button.dataset.busyContent)button.innerHTML=button.dataset.busyContent;delete button.dataset.busyContent;} }
 
 async function submitLogin(event, scope) {
@@ -1979,7 +2058,7 @@ function handleGatewayEvent(message){
     return;
   }
   const scopes=topic==="shipment"||topic==="workforce"
-    ? ["shipments","documents","productAnalysis","dashboard","stock"]
+    ? ["shipments","documents","productAnalysis","dashboard","stock","ledger","suppliers","trash"]
     : EVENT_SCOPES[String(event.entityType||"")]||["dashboard"];
   scopes.forEach((scope)=>pendingEventScopes.add(scope));
   window.clearTimeout(eventRefreshTimer);
@@ -1989,6 +2068,7 @@ async function flushEventScopes(){
   const scopes=[...pendingEventScopes];pendingEventScopes.clear();
   const refreshContext=scopes.includes("context");
   const priorView=state.activeView;
+  const priorDetail=state.detail;
   const dataScopes=scopes.filter((scope)=>scope!=="context");
   invalidate(dataScopes);
   if(dataScopes.includes("stock"))invalidateStockState();
@@ -2003,6 +2083,12 @@ async function flushEventScopes(){
   }
   if(!state.activeView||!visibleViews.some((view)=>view.id===state.activeView)){state.activeView=visibleViews[0]&&visibleViews[0].id||"";}
   if(state.activeView&&(priorView!==state.activeView||scopes.includes(state.activeView)))await setView(state.activeView,{force:true});
+  if(detailDialog.open&&state.detail===priorDetail&&scopes.some((scope)=>["ledger","shipments","suppliers"].includes(scope))){
+    if(priorDetail?.type==="shipment")await openShipment(priorDetail.id);
+    else if(priorDetail?.type==="supplier-history")await openSupplierShipmentHistory(priorDetail.id);
+    else if(priorDetail?.type==="payment")await openPayment(priorDetail.id);
+    else if(priorDetail?.type==="ledger")await openLedgerEntry(priorDetail.id);
+  }
 }
 function stopEvents(){window.clearTimeout(eventRefreshTimer);window.clearTimeout(notificationTimer);pendingEventScopes.clear();if(state.eventSource){state.eventSource.close();state.eventSource=null;}}
 function updateNetworkState(){const element=document.getElementById("liveState");if(!element)return;element.classList.toggle("is-offline",!navigator.onLine);element.lastChild.textContent=navigator.onLine?" Güncel":" Çevrimdışı";}

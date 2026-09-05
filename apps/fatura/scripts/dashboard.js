@@ -8,16 +8,16 @@ export function renderDashboard() {
     .slice(0, 10);
   const actor = state.context && state.context.actor;
   const metrics = ((actor && actor.type === "admin") || hasSection("ledger")) ? [
-    metric("Toplam tedarikçi borcu", dashboard.financialVisible ? trMoney(dashboard.supplierDebtKurus) : "Yetki gerekli"),
-    metric("Bu ay alınan ürün", dashboard.financialVisible ? trMoney(dashboard.monthPurchasesKurus) : "—"),
-    metric("Bu ay yapılan ödeme", dashboard.financialVisible ? trMoney(dashboard.monthPaymentsKurus) : "—")
+    metric("Güncel Borç", dashboard.debtKurus, "debt", "debt"),
+    metric("Yapılan Ödemeler", dashboard.paymentKurus, "payments", "payment"),
+    metric("Kalan Ödemeler", dashboard.remainingKurus, "remaining", "remaining")
   ] : [];
   return `${metrics.length ? `<div class="metric-grid metric-grid--three">${metrics.join("")}</div>` : ""}
     <article class="panel-card dashboard-shipments"><div class="panel-head"><div><p class="eyebrow">SON YAPILAN SEVKİYATLAR</p><h2>Son Yapılan Sevkiyatlar</h2><p>Tedarikçi sevkiyatları en yeni kayıttan başlayarak listelenir.</p></div><button class="row-button" data-view-target="documents">Arşivi aç</button></div><div class="list">${shipments.length ? shipments.map(shipmentRow).join("") : emptyInline("Henüz tamamlanmış sevkiyat bulunmuyor.")}</div></article>`;
 }
 
-function metric(label, value) {
-  return `<article class="metric-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`;
+function metric(label, value, mode, color) {
+  return `<button class="metric-card metric-card--button" type="button" data-action="dashboard-ledger" data-ledger-mode="${mode}" ${state.dashboard?.financialVisible ? "" : "disabled"}><span>${escapeHtml(label)}</span><strong class="finance-${color}">${state.dashboard?.financialVisible ? trMoney(value) : "Yetki gerekli"}</strong><small>Cari detaylarını görüntüle</small></button>`;
 }
 
 function shipmentRow(shipment) {

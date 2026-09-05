@@ -1,4 +1,5 @@
 /* Tahmisçi Fatura — tüm kurallar modül namespace'i içindedir. */
+.fatura-page{--panel-info:#326a91}
 .fatura-app,.fatura-app *{box-sizing:border-box}
 .sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
 .fatura-page{margin:0;min-width:320px;min-height:100%;background:var(--panel-canvas);color:var(--panel-ink);font-family:var(--panel-font-ui);font-size:var(--panel-body-size)}
@@ -176,6 +177,22 @@
 .supplier-secondary-menu button.is-danger{color:#a13f31}.supplier-secondary-menu button.is-danger:hover{background:#fff0ec}
 .row-button--icon{width:40px;min-width:40px;height:40px;padding:0;display:inline-grid;place-items:center}.row-button--icon svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .supplier-stock-add-button{min-height:44px;border:1px solid var(--panel-coffee);background:var(--panel-surface-soft);color:var(--panel-coffee);border-radius:var(--panel-control-radius);gap:8px}
+.fatura-page .finance-debt{color:var(--panel-danger)}
+.fatura-page .finance-payment{color:var(--panel-success)}
+.fatura-page .finance-remaining{color:var(--panel-info)}
+.metric-grid--ledger{grid-template-columns:repeat(3,minmax(0,1fr))}
+.metric-card--button[aria-pressed="true"]{border-color:var(--panel-coffee);box-shadow:inset 0 0 0 1px var(--panel-coffee)}
+.finance-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;min-width:0}
+.finance-summary>div{min-width:0}.finance-summary small,.finance-summary strong{display:block;overflow-wrap:anywhere}
+.finance-summary small{color:var(--panel-muted);font-size:10px;margin-bottom:5px}.finance-summary strong{font-size:15px}
+.supplier-finance-summary,.shipment-finance{padding:14px;border:1px solid var(--panel-line);border-radius:12px;background:var(--panel-surface-soft);margin-bottom:14px}
+.shipment-finance h3{font-size:12px;margin:0 0 12px}
+.finance-drilldown{margin-bottom:16px;overflow:hidden}.finance-list{display:grid;gap:8px;padding:12px;min-width:0}
+.finance-row{grid-template-columns:minmax(0,1fr) minmax(130px,auto) auto;gap:14px}.finance-row>*{min-width:0;overflow-wrap:anywhere}
+.finance-row .finance-summary{min-width:240px}.finance-allocation{margin-top:12px;font-size:12px}.finance-allocation summary{cursor:pointer;min-height:36px}
+.finance-allocation .list-row{flex-wrap:wrap;gap:8px}.shipment-archive-row__main .finance-summary{margin-top:10px}
+@media(max-width:1000px){.finance-row{grid-template-columns:minmax(0,1fr) auto}.finance-row .shipment-archive-row__actions{grid-column:1/-1}.finance-row .finance-summary{min-width:0}}
+@media(max-width:560px){.metric-grid--ledger{grid-template-columns:1fr}.finance-row{grid-template-columns:minmax(0,1fr)}.finance-summary{gap:8px}.finance-summary strong{font-size:13px}.finance-list{padding:8px}.finance-row .shipment-archive-row__actions{display:flex;flex-wrap:wrap;justify-content:flex-start}.finance-row .row-button{flex:1;min-width:0}.finance-drilldown .panel-head{gap:8px}.supplier-workspace__actions{flex-wrap:wrap}.supplier-workspace__actions>.ui-button{min-width:0;white-space:normal}}
 .supplier-stock-add-button:hover{background:var(--panel-focus)}
 .supplier-stock-add-button svg{width:20px;height:20px;flex:0 0 20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .fatura-dialog--supplier-stock-bulk{width:min(1080px,calc(100vw - 28px));height:min(850px,92dvh)}

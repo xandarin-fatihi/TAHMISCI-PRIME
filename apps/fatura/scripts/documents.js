@@ -1,5 +1,6 @@
 import { api } from "./api.js";
-import { escapeHtml, state, trDate, trMoney } from "./state.js";
+import { shipmentFinance } from "./accounting.js?v=20260905-finance";
+import { escapeHtml, financeValues, paymentStatusLabel, state, statusBadge, trDate, trMoney } from "./state.js";
 
 export function renderDocuments() {
   const supplierId = String(state.filters.documentsSupplier || "");
@@ -23,7 +24,12 @@ export function documentFormBody(defaultShipmentId = "") {
 
 function archiveRow(shipment) {
   const date = shipmentDate(shipment);
-  return `<article class="shipment-archive-row"><div class="shipment-archive-row__main"><strong>${escapeHtml(shipment.supplier?.name || "Tedarikçi belirtilmedi")} - ${escapeHtml(numericDate(date))}</strong><span>${(shipment.items || []).length} ürün kalemi · ${trMoney(shipmentTotal(shipment))} · ${escapeHtml(stockStateText(shipment))}</span></div><div class="shipment-archive-row__actions"><button class="row-button" type="button" data-open-shipment="${escapeHtml(shipment.id)}">Görüntüle</button>${shipment.canRemove ? `<button class="row-button danger" type="button" data-remove-shipment="${escapeHtml(shipment.id)}">Kaldır</button>` : ""}</div></article>`;
+  return `<article class="shipment-archive-row"><div class="shipment-archive-row__main"><strong>${escapeHtml(shipment.supplier?.name || "Tedarikçi belirtilmedi")} - ${escapeHtml(numericDate(date))}</strong><span>${(shipment.items || []).length} ürün kalemi · ${shipment.pricesVisible !== false ? trMoney(shipmentTotal(shipment)) + " · " : ""}${escapeHtml(stockStateText(shipment))} · ${escapeHtml(shipment.id)}</span><span>${statusBadge(shipment.status)} · Cari: ${escapeHtml(shipment.financial ? paymentStatusLabel(shipment.financial.paymentStatus) : accountingStateText(shipment, 0))}</span>${shipment.financial ? financeValues(shipment.financial) : ""}</div><div class="shipment-archive-row__actions"><button class="row-button" type="button" data-open-shipment="${escapeHtml(shipment.id)}">Görüntüle</button>${shipment.canRemove ? `<button class="row-button danger" type="button" data-remove-shipment="${escapeHtml(shipment.id)}">Çöp Kutusu</button>` : ""}</div></article>`;
+}
+
+export function renderSupplierShipmentHistory(shipments) {
+  return shipments.length ? `<div class="shipment-archive-list">${shipments.map(archiveRow).join("")}</div>`
+    : empty("Sevkiyat bulunmuyor", "Bu tedarikçinin görünür aktif sevkiyatı yok.");
 }
 
 export function shipmentArchiveDetail(shipment, documents = []) {
@@ -33,15 +39,15 @@ export function shipmentArchiveDetail(shipment, documents = []) {
   const stockState = stockStateText(shipment);
   const destination = shipment.destinationLocationName || shipment.destinationWarehouseName || shipment.destinationLocation?.name || "Stoğa işlenmedi";
   const accountingState = accountingStateText(shipment, total);
-  return `<section class="shipment-receipt-detail"><div class="shipment-receipt-toolbar"><div><small>SEVKİYAT FİŞİ</small><strong>${escapeHtml(shipment.supplier?.name || "Tedarikçi belirtilmedi")} - ${escapeHtml(numericDate(shipmentDate(shipment)))}</strong></div><button class="ui-button ui-button--primary" type="button" data-print-shipment="${escapeHtml(shipment.id)}" aria-label="Sevkiyat fişini PDF olarak indir">İndir</button></div><div class="shipment-impact-summary"><div><small>STOK</small><strong>${escapeHtml(destination)} · ${escapeHtml(stockState)}</strong></div><div><small>CARİ</small><strong>${escapeHtml(accountingState)}</strong></div><div><small>BELGE</small><strong>${evidence ? "Mevcut" : "Bulunmuyor"}</strong></div></div><div class="shipment-receipt-meta"><div><small>TEDARİKÇİ</small><strong>${escapeHtml(shipment.supplier?.name || "Tedarikçi belirtilmedi")}</strong></div><div><small>SEVKİYAT TARİHİ</small><strong>${trDate(shipmentDate(shipment))}</strong></div><div><small>HEDEF DEPO</small><strong>${escapeHtml(destination)}</strong></div><div><small>STOK DURUMU</small><strong>${escapeHtml(stockState)}</strong></div></div><div class="shipment-receipt-lines">${rows.map((item) => shipmentLine(item, stockState)).join("") || '<p>Ürün satırı bulunmuyor.</p>'}</div><footer><span>GENEL TOPLAM</span><strong>${trMoney(total)}</strong></footer><div class="detail-actions detail-actions--spaced">${evidence ? `<button class="ui-button ui-button--secondary" type="button" data-open-document="${escapeHtml(evidence.id)}">Belgeyi Görüntüle</button>` : ""}${shipment.canRemove ? '<button class="ui-button ui-button--danger" type="button" data-detail-action="remove-shipment">Kaldır</button>' : ""}</div></section>`;
+  return `<section class="shipment-receipt-detail"><div class="shipment-receipt-toolbar"><div><small>SEVKİYAT FİŞİ</small><strong>${escapeHtml(shipment.supplier?.name || "Tedarikçi belirtilmedi")} - ${escapeHtml(numericDate(shipmentDate(shipment)))}</strong></div><button class="ui-button ui-button--primary" type="button" data-print-shipment="${escapeHtml(shipment.id)}" aria-label="Sevkiyat fişini PDF olarak indir">İndir</button></div><div class="shipment-impact-summary"><div><small>STOK</small><strong>${escapeHtml(destination)} · ${escapeHtml(stockState)}</strong></div><div><small>CARİ</small><strong>${escapeHtml(accountingState)}</strong></div><div><small>BELGE</small><strong>${evidence ? "Mevcut" : "Bulunmuyor"}</strong></div></div>${shipmentFinance(shipment)}<div class="shipment-receipt-meta"><div><small>TEDARİKÇİ</small><strong>${escapeHtml(shipment.supplier?.name || "Tedarikçi belirtilmedi")}</strong></div><div><small>SEVKİYAT TARİHİ</small><strong>${trDate(shipmentDate(shipment))}</strong></div><div><small>HEDEF DEPO</small><strong>${escapeHtml(destination)}</strong></div><div><small>STOK DURUMU</small><strong>${escapeHtml(stockState)}</strong></div></div><div class="shipment-receipt-lines">${rows.map((item) => shipmentLine(item, stockState, shipment.pricesVisible !== false)).join("") || '<p>Ürün satırı bulunmuyor.</p>'}</div>${shipment.pricesVisible !== false ? `<footer><span>GENEL TOPLAM</span><strong>${trMoney(total)}</strong></footer>` : ""}<div class="detail-actions detail-actions--spaced">${evidence ? `<button class="ui-button ui-button--secondary" type="button" data-open-document="${escapeHtml(evidence.id)}">Belgeyi Görüntüle</button>` : ""}${shipment.canRemove ? '<button class="ui-button ui-button--danger" type="button" data-detail-action="remove-shipment">Çöp Kutusu</button>' : ""}</div></section>`;
 }
 
-function shipmentLine(item, stockState) {
+function shipmentLine(item, stockState, pricesVisible = true) {
   const quantity = Number(item.quantityBulk ?? item.quantity ?? 0);
   const total = Number(item.totalKurus || item.lineTotalKurus || 0);
   const unitPrice = Number(item.unitPriceKurus || (quantity > 0 ? Math.round(total / quantity) : 0));
   const status = item.stockMatchStatus === "unit_mismatch" ? "Birim eşleşmedi" : item.stockMatchStatus === "unmatched" ? "Stokla eşleşmedi" : stockState;
-  return `<article><div class="shipment-receipt-line__product"><strong>${escapeHtml(item.name || item.productName || "Ürün")}</strong><small>${escapeHtml(status)}</small></div><div class="shipment-receipt-line__value"><small>MİKTAR</small><span>${formatNumber(quantity)} ${escapeHtml(item.bulkUnit || item.purchaseUnit || item.unit || "")}</span></div><div class="shipment-receipt-line__value"><small>FİYAT</small><span>${trMoney(unitPrice)}</span></div><div class="shipment-receipt-line__value shipment-receipt-line__total"><small>TOPLAM</small><b>${trMoney(total)}</b></div></article>`;
+  return `<article><div class="shipment-receipt-line__product"><strong>${escapeHtml(item.name || item.productName || "Ürün")}</strong><small>${escapeHtml(status)}</small></div><div class="shipment-receipt-line__value"><small>MİKTAR</small><span>${formatNumber(quantity)} ${escapeHtml(item.bulkUnit || item.purchaseUnit || item.unit || "")}</span></div><div class="shipment-receipt-line__value"><small>FİYAT</small><span>${pricesVisible ? trMoney(unitPrice) : "—"}</span></div><div class="shipment-receipt-line__value shipment-receipt-line__total"><small>TOPLAM</small><b>${pricesVisible ? trMoney(total) : "—"}</b></div></article>`;
 }
 
 export async function printShipmentArchive(shipmentId) {
@@ -189,7 +195,7 @@ function stockStateText(shipment) {
   if (shipment.status === "reddedildi") return "Stok etkisi yok";
   return "Stoğa aktarılmadı";
 }
-function accountingStateText(shipment,total){if(shipment.accountingStatus==="posted")return `${trMoney(total)} borç işlendi`;if(shipment.accountingStatus==="reversed")return "Cari etkisi geri alındı";if(shipment.accountingStatus==="failed")return "Cari kayıt başarısız";return "İşlenmedi";}
+function accountingStateText(shipment){if(shipment.financial)return paymentStatusLabel(shipment.financial.paymentStatus);if(shipment.accountingStatus==="posted")return "Muhasebeleştirildi";if(shipment.accountingStatus==="reversed")return "Cari etkisi geri alındı";if(shipment.accountingStatus==="failed")return "Cari kayıt başarısız";return "İşlenmedi";}
 function numericDate(value) { const date = /^\d{4}-\d{2}-\d{2}/.test(String(value)) ? new Date(`${String(value).slice(0, 10)}T12:00:00`) : new Date(value); if (Number.isNaN(date.getTime())) return "tarihsiz"; return `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}.${date.getFullYear()}`; }
 function toDateKey(value) { const date = new Date(value); if (Number.isNaN(date.getTime())) return ""; return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
 function slugify(value) { return String(value || "tedarikci").toLocaleLowerCase("tr-TR").replace(/ı/g, "i").replace(/ğ/g, "g").replace(/ü/g, "u").replace(/ş/g, "s").replace(/ö/g, "o").replace(/ç/g, "c").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "tedarikci"; }

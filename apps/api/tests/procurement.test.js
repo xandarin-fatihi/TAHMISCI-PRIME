@@ -8,7 +8,7 @@ const path = require("node:path");
 const test = require("node:test");
 const express = require("express");
 const { createProcurementDocumentService } = require("../src/procurement-documents");
-const { createProcurementService, safeDocumentMetadata } = require("../src/procurement-service");
+const { calculateLedgerSummary, createProcurementService, safeDocumentMetadata } = require("../src/procurement-service");
 const { registerProcurementRoutes } = require("../src/procurement-routes");
 const { createProcurementPaymentReminders } = require("../src/notification-scheduler");
 const notificationService = require("../src/notification-service");
@@ -27,6 +27,163 @@ const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64"
 );
+
+test("finance regression: gross debt, payment, supplier/date scope and reversals", () => {
+  const debt = (id, supplierId, amountKurus, date = "2026-09-05") => ({ id, supplierId, type: "invoice", amountKurus: -amountKurus, transactionDate: date, createdAt: `${date}T09:00:00Z` });
+  const payment = (id, supplierId, amountKurus, date = "2026-09-05") => ({ id, supplierId, amountKurus, paymentDate: date, status: "recorded", ledgerEntryId: `ledger-${id}` });
+  const totals = (value) => [value.debtKurus, value.paymentKurus, value.remainingKurus];
+  const entries = [debt("a", "A", 50000), debt("b", "B", 30000)];
+  const payments = [payment("pa", "A", 40000), payment("pb", "B", 5000)];
+  assert.deepEqual(totals(calculateLedgerSummary([entries[0]], [])), [50000, 0, 50000]);
+  assert.deepEqual(totals(calculateLedgerSummary([entries[0]], [payments[0]])), [50000, 40000, 10000]);
+  assert.deepEqual(totals(calculateLedgerSummary(entries, payments)), [80000, 45000, 35000]);
+  assert.deepEqual(totals(calculateLedgerSummary(entries, payments, { supplierId: "A" })), [50000, 40000, 10000]);
+  const historical = [...entries, debt("old", "A", 12000, "2026-09-04")];
+  const datedPayments = [...payments, payment("old-payment", "A", 8000, "2026-09-04")];
+  assert.deepEqual(totals(calculateLedgerSummary(historical, datedPayments, { date: "2026-09-04" })), [12000, 8000, 4000]);
+  assert.deepEqual(totals(calculateLedgerSummary(historical, datedPayments, { supplierId: "A", date: "2026-09-05" })), [50000, 40000, 10000]);
+  assert.deepEqual(totals(calculateLedgerSummary(entries, [{ ...payments[0], status: "reversed" }, payments[1]])), [80000, 5000, 75000]);
+  const reversal = { id: "reverse-a", supplierId: "A", type: "reversal", reversalOf: "a", amountKurus: 50000, transactionDate: "2026-09-06" };
+  assert.deepEqual(totals(calculateLedgerSummary([...entries, reversal], payments, { date: "2026-09-05" })), [30000, 45000, 25000]);
+  const paymentReversal = { ...reversal, id: "reverse-pa", reversalOf: "ledger-pa", amountKurus: -40000 };
+  assert.deepEqual(totals(calculateLedgerSummary([...entries, paymentReversal], payments)), [80000, 5000, 75000]);
+});
+
+test("finance regression: FIFO deterministic allocation, credits and overpayment remain derived", () => {
+  const entries = [
+    { id: "debt-2", supplierId: "A", shipmentId: "shipment-2", type: "invoice", amountKurus: -30000, transactionDate: "2026-09-05", createdAt: "2026-09-05T09:00:00Z" },
+    { id: "debt-1", supplierId: "A", shipmentId: "shipment-1", type: "invoice", amountKurus: -50000, transactionDate: "2026-09-04", createdAt: "2026-09-04T09:00:00Z" }
+  ];
+  const payments = [{ id: "p", supplierId: "A", amountKurus: 60000, paymentDate: "2026-09-05" }];
+  const before = structuredClone({ entries, payments });
+  const summary = calculateLedgerSummary(entries, payments);
+  assert.deepEqual(summary.obligations.map((entry) => [entry.shipmentId, entry.allocatedPaymentKurus, entry.remainingKurus, entry.paymentStatus]), [
+    ["shipment-1", 50000, 0, "paid"], ["shipment-2", 10000, 20000, "partial"]
+  ]);
+  assert.equal(summary.openObligations.length, 1);
+  assert.deepEqual(calculateLedgerSummary([...entries].reverse(), payments), summary);
+  assert.deepEqual({ entries, payments }, before);
+  const tied = entries.map((entry) => ({ ...entry, transactionDate: "2026-09-05", createdAt: "2026-09-05T09:00:00Z" }));
+  assert.equal(calculateLedgerSummary(tied, payments).obligations[0].id, "debt-1");
+  tied[0].createdAt = "2026-09-05T08:00:00Z";
+  assert.equal(calculateLedgerSummary(tied, payments).obligations[0].id, "debt-2");
+  assert.equal(calculateLedgerSummary(entries, [{ ...payments[0], amountKurus: 100000 }]).remainingKurus, 0);
+  const credit = { id: "credit", supplierId: "A", type: "credit_note", amountKurus: 10000, transactionDate: "2026-09-05" };
+  const credited = calculateLedgerSummary([...entries, credit], payments);
+  assert.equal(credited.paymentKurus, 60000);
+  assert.equal(credited.remainingKurus, 10000);
+  assert.equal(credited.obligations.reduce((sum, entry) => sum + entry.allocatedCreditKurus, 0), 10000);
+});
+
+test("finance regression: accounting, payment reversal and shipment removal update shared totals", async () => {
+  const store = createMemoryStore();
+  await store.update((data) => {
+    data.procurement.suppliers = [{ id: "supplier-finance", name: "Finans Tedarikçi", active: true }];
+    data.procurement.documents = [{ id: "finance-doc", supplierId: "supplier-finance", documentType: "fatura", documentDate: "2026-08-22", branchId: "main", createdBy: "admin" }];
+    data.workforceShipments = [{ id: "finance-shipment", supplierId: "supplier-finance", branchId: "main", userId: "admin", status: "onay_bekliyor", shipmentDate: "2026-08-22", evidenceDocumentIds: ["finance-doc"], items: [{ productId: "stock-1", quantity: 1, unit: "kg", totalKurus: 50000 }], revision: 1 }];
+  });
+  const service = createService(store);
+  const accounting = await service.accountShipment(ADMIN, "finance-shipment", { documentId: "finance-doc", amountKurus: 50000 }, mutation("finance-account", 0));
+  const replay = await service.accountShipment(ADMIN, "finance-shipment", {}, mutation("finance-account", 0));
+  assert.equal(replay.idempotent, true);
+  const duplicate = await service.accountShipment(ADMIN, "finance-shipment", {}, mutation("finance-account-again", accounting.revision));
+  assert.equal(duplicate.alreadyAccounted, true);
+  assert.equal((await store.read()).procurement.ledgerEntries.filter((entry) => entry.type === "invoice").length, 1);
+  const paid = await service.createPayment(ADMIN, { supplierId: "supplier-finance", documentId: "finance-doc", paymentDate: "2026-08-22", amountKurus: 40000 }, mutation("finance-payment", duplicate.revision));
+  const ledger = await service.listLedger(ADMIN);
+  const dashboard = (await service.dashboard(ADMIN)).dashboard;
+  const supplier = (await service.listSuppliers(ADMIN)).suppliers[0];
+  const shipment = (await service.getShipment(ADMIN, "finance-shipment")).shipment;
+  for (const summary of [ledger, dashboard, supplier, shipment.financial]) {
+    assert.deepEqual([summary.debtKurus, summary.paymentKurus, summary.remainingKurus], [50000, 40000, 10000]);
+  }
+  assert.equal(shipment.financial.paymentStatus, "partial");
+  const reversed = await service.reversePayment(ADMIN, paid.payment.id, { reason: "Yanlış ödeme" }, mutation("finance-reverse-payment", paid.revision));
+  assert.equal((await service.listLedger(ADMIN)).paymentKurus, 0);
+  assert.equal((await service.getShipment(ADMIN, "finance-shipment")).shipment.financial.remainingKurus, 50000);
+  await assert.rejects(service.reverseLedgerEntry(ADMIN, accounting.ledgerEntry.id, { reason: "Kaynak koruması" }, mutation("finance-generic-reverse", reversed.revision)), (error) => error.code === "USE_SHIPMENT_REVERSAL");
+  await service.removeShipment(ADMIN, "finance-shipment", { reason: "Yanlış sevkiyat" }, mutation("finance-remove-shipment", reversed.revision));
+  const after = await service.listLedger(ADMIN);
+  assert.deepEqual([after.debtKurus, after.paymentKurus, after.remainingKurus], [0, 0, 0]);
+  assert.equal((await store.read()).procurement.ledgerEntries.length, 4);
+  assert.equal((await service.listTrash(ADMIN)).records.some((item) => item.type === "payment" && item.id === paid.payment.id), true);
+  assert.equal((await service.listShipments(ADMIN, { supplierId: "supplier-finance" })).shipments.length, 0);
+});
+
+test("finance regression: supplier history, branch isolation and financial permissions", async () => {
+  const store = createMemoryStore();
+  await store.update((data) => {
+    data.procurement.suppliers = [{ id: "A", name: "A", active: true }, { id: "B", name: "B", active: true }];
+    data.workforceShipments = [
+      { id: "s-main", supplierId: "A", branchId: "main", status: "taslak", userId: "someone", items: [{ productId: "stock-1", quantity: 1, unitPriceKurus: 50000, totalKurus: 50000, taxKurus: 1000, baseUnitPriceKurus: 50000 }] },
+      { id: "s-other", supplierId: "A", branchId: "other", status: "onaylandı", items: [] },
+      { id: "s-b", supplierId: "B", branchId: "main", status: "onay_bekliyor", items: [] },
+      { id: "s-removed", supplierId: "A", branchId: "main", status: "onaylandı", removedAt: "2026-08-22T09:00:00Z", items: [] }
+    ];
+    data.procurement.ledgerEntries = [
+      { id: "main-debt", supplierId: "A", branchId: "main", shipmentId: "s-main", type: "invoice", amountKurus: -50000, transactionDate: "2026-09-05" },
+      { id: "other-debt", supplierId: "A", branchId: "other", shipmentId: "s-other", type: "invoice", amountKurus: -90000, transactionDate: "2026-09-05" }
+    ];
+    data.procurement.payments = [{ id: "other-payment", supplierId: "A", branchId: "other", amountKurus: 80000, paymentDate: "2026-09-05" }];
+  });
+  const service = createService(store);
+  const reader = { type: "personel", id: "reader", branchId: "main", capabilities: ["supplier.read"], sectionAccess: { suppliers: "view" } };
+  const history = await service.listShipments(reader, { supplierId: "A" });
+  assert.deepEqual(history.shipments.map((item) => item.id), ["s-main"]);
+  assert.equal(history.shipments[0].financial, null);
+  assert.equal(history.shipments[0].pricesVisible, false);
+  assert.equal(Object.keys(history.shipments[0].items[0]).some((key) => /kurus|price|cost/i.test(key)), false);
+  const detail = await service.getShipment(reader, "s-main");
+  assert.deepEqual(detail.ledgerEntries, []);
+  assert.equal(detail.shipment.financial, null);
+  const supplier = (await service.listSuppliers(reader)).suppliers[0];
+  assert.equal(supplier.debtKurus, null);
+  assert.equal(supplier.paymentKurus, null);
+  assert.equal(supplier.remainingKurus, null);
+  const accountant = { ...reader, capabilities: ["supplier.read", "accounting.read", "procurement.read"], sectionAccess: { ledger: "view", dashboard: "view", suppliers: "view" } };
+  const ledger = await service.listLedger(accountant, { supplierId: "A", date: "2026-09-05" });
+  assert.deepEqual([ledger.debtKurus, ledger.paymentKurus, ledger.remainingKurus], [50000, 0, 50000]);
+  assert.equal((await service.dashboard(accountant)).dashboard.debtKurus, 50000);
+  assert.equal((await service.getShipment(accountant, "s-main")).shipment.financial.remainingKurus, 50000);
+  const workbookFile = await service.exportData(accountant, { kind: "ledger", supplierId: "A", date: "2026-09-05" });
+  const workbook = new (require("exceljs").Workbook)();
+  await workbook.xlsx.load(workbookFile.body);
+  const sheet = workbook.getWorksheet("Cari Hesap");
+  assert.deepEqual([sheet.getCell("A9").value, sheet.getCell("D9").value, sheet.getCell("G9").value], [500, 0, 500]);
+  const empty = await service.listLedger(accountant, { date: "2026-09-04" });
+  assert.deepEqual([empty.debtKurus, empty.paymentKurus, empty.remainingKurus], [0, 0, 0]);
+});
+
+test("finance regression: stock approval accounting and removal preserve stock and ledger history", async () => {
+  const stockService = require("../src/stock-service");
+  const store = createMemoryStore();
+  const initial = await store.read();
+  const locationId = initial.stockState.balances.find((balance) => balance.productId === "stock-1" && balance.quantity > 0).locationId;
+  const before = stockService.getProductBalance(initial.stockState, locationId, "stock-1").quantity;
+  await store.update((data) => {
+    data.procurement.suppliers = [{ id: "supplier-stock-finance", name: "Stok Finans", active: true }];
+    const applied = stockService.applyStockMovement(data.stockState, {
+      requestId: "finance-stock-receive", productId: "stock-1", locationId, quantity: 1, unit: "kg", type: "inbound_shipment",
+      shipmentId: "stock-finance-shipment", referenceType: "shipment", referenceId: "stock-finance-shipment"
+    }, ADMIN, { now: "2026-08-22T09:00:00Z" });
+    data.stockState = applied.stockState;
+    data.workforceShipments = [{ id: "stock-finance-shipment", supplierId: "supplier-stock-finance", branchId: "main", status: "onaylandı",
+      stockAppliedAt: "2026-08-22T09:00:00Z", stockMovementRefs: [applied.movement.id], items: [{ productId: "stock-1", quantity: 1, unit: "kg", totalKurus: 50000 }], revision: 1 }];
+  });
+  const service = createService(store);
+  const accounted = await service.accountShipmentAfterStock(ADMIN, "stock-finance-shipment", {}, mutation("finance-stock-account", 0));
+  assert.equal((await service.listLedger(ADMIN)).debtKurus, 50000);
+  const reversed = await service.reverseShipmentAccounting(ADMIN, "stock-finance-shipment", { reason: "Cari düzeltmesi" }, mutation("finance-stock-reverse", accounted.revision));
+  assert.equal((await service.listLedger(ADMIN)).remainingKurus, 0);
+  const beforeRemoval = await store.read();
+  assert.equal(stockService.getProductBalance(beforeRemoval.stockState, locationId, "stock-1").quantity, before + 1);
+  await service.removeShipment(ADMIN, "stock-finance-shipment", { reason: "Sevkiyat kaldırıldı" }, mutation("finance-stock-remove", reversed.revision));
+  const after = await store.read();
+  assert.equal(stockService.getProductBalance(after.stockState, locationId, "stock-1").quantity, before);
+  assert.equal(after.procurement.ledgerEntries.length, 2);
+  assert.equal(after.procurement.ledgerEntries[1].reversalOf, accounted.ledgerEntry.id);
+  assert.equal(after.stockState.movements.some((movement) => movement.type === "reversal"), true);
+});
 
 test("procurement migration geriye uyumlu ve tekrar çalıştırıldığında idempotenttir", () => {
   const legacy = {

@@ -119,11 +119,16 @@ function createProcurementService(options = {}) {
     const invoiceEntries = visibleLedgerEntries.filter((entry) => entry.type === "invoice" && !isReversed(entry, visibleLedgerEntries));
     const payments = visibleLedgerEntries.filter((entry) => entry.type === "payment" && !isReversed(entry, visibleLedgerEntries));
     const financialVisible = ledgerVisible && hasCapability(actor, "accounting.read");
+    const visibleFinance = visibleLedgerData(data, procurement, actor);
+    const financialSummary = financialVisible ? calculateLedgerSummary(visibleFinance.entries, visibleFinance.payments) : null;
     return {
       ok: true,
       revision: procurement.revision,
       dashboard: {
         financialVisible,
+        debtKurus: financialSummary ? financialSummary.debtKurus : null,
+        paymentKurus: financialSummary ? financialSummary.paymentKurus : null,
+        remainingKurus: financialSummary ? financialSummary.remainingKurus : null,
         visibility: { stock: stockVisible, shipments: shipmentVisible, suppliers: supplierVisible, links: linkVisible, ledger: ledgerVisible },
         supplierDebtKurus: financialVisible ? [...balances.values()].reduce((sum, balance) => addKurus(sum, Math.max(0, -balance)), 0) : 0,
         monthPurchasesKurus: financialVisible ? invoiceEntries
@@ -164,12 +169,14 @@ function createProcurementService(options = {}) {
       ? procurement.ledgerEntries
       : procurement.ledgerEntries.filter((entry) => ledgerBranchId(entry, data, procurement) === actorBranchId(actor));
     const balances = hasCapability(actor, "accounting.read") ? supplierBalances(visibleLedgerEntries) : null;
+    const visibleFinance = visibleLedgerData(data, procurement, actor);
     const search = normalizeLookup(filters.search);
     const activeFilter = parseActiveFilter(filters.active);
     const suppliers = procurement.suppliers
       .filter((supplier) => activeFilter === null || supplier.active === activeFilter)
       .filter((supplier) => !search || normalizeLookup(`${supplier.code} ${supplier.name} ${supplier.contactName} ${supplier.phone}`).includes(search))
-      .map((supplier) => publicSupplier(supplier, balances ? balances.get(supplier.id) || 0 : null))
+      .map((supplier) => publicSupplier(supplier, balances ? balances.get(supplier.id) || 0 : null,
+        balances ? calculateLedgerSummary(visibleFinance.entries, visibleFinance.payments, { supplierId: supplier.id }) : null))
       .sort((left, right) => left.name.localeCompare(right.name, "tr"));
     return { ok: true, revision: procurement.revision, suppliers };
   }
@@ -192,7 +199,8 @@ function createProcurementService(options = {}) {
         updatedBy: actor.id
       };
       procurement.suppliers.push(supplier);
-      return helpers.result("supplier", supplier.id, { supplier: publicSupplier(supplier, hasCapability(actor, "accounting.read") ? 0 : null) });
+      return helpers.result("supplier", supplier.id, { supplier: publicSupplier(supplier, hasCapability(actor, "accounting.read") ? 0 : null,
+        hasCapability(actor, "accounting.read") ? calculateLedgerSummary([], []) : null) });
     });
   }
 
@@ -203,8 +211,10 @@ function createProcurementService(options = {}) {
       const values = validateSupplierInput(input, { partial: true });
       assertUniqueSupplier(procurement.suppliers, { ...supplier, ...values }, supplier.id);
       Object.assign(supplier, values, { updatedAt: isoNow(now), updatedBy: actor.id });
-      const balance = hasCapability(actor, "accounting.read") ? balanceForSupplier(procurement.ledgerEntries, supplier.id) : null;
-      return helpers.result("supplier", supplier.id, { supplier: publicSupplier(supplier, balance) });
+      const finance = visibleLedgerData(data, procurement, actor);
+      const balance = hasCapability(actor, "accounting.read") ? balanceForSupplier(finance.entries, supplier.id) : null;
+      return helpers.result("supplier", supplier.id, { supplier: publicSupplier(supplier, balance,
+        balance === null ? null : calculateLedgerSummary(finance.entries, finance.payments, { supplierId: supplier.id })) });
     });
   }
 
@@ -223,10 +233,11 @@ function createProcurementService(options = {}) {
           shipment.supplierName = supplier.name;
         }
       }
+      const finance = visibleLedgerData(data, procurement, actor);
       return helpers.result("supplier", supplier.id, {
         supplier: publicSupplier(supplier, hasCapability(actor, "accounting.read")
-          ? balanceForSupplier(procurement.ledgerEntries, supplier.id)
-          : null)
+          ? balanceForSupplier(finance.entries, supplier.id)
+          : null, hasCapability(actor, "accounting.read") ? calculateLedgerSummary(finance.entries, finance.payments, { supplierId: supplier.id }) : null)
       });
     });
   }
@@ -492,7 +503,7 @@ function createProcurementService(options = {}) {
   }
 
   async function listShipments(actor, filters = {}) {
-    requireAnyCapability(actor, ["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]);
+    requireAnyCapability(actor, ["procurement.read", "supplier.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]);
     const { data, procurement } = await readSnapshot();
     const supplierIndex = new Map(procurement.suppliers.map((supplier) => [supplier.id, supplier]));
     let shipments = visibleShipments(data.workforceShipments, actor);
@@ -501,17 +512,19 @@ function createProcurementService(options = {}) {
     if (filters.supplierId) shipments = shipments.filter((shipment) => shipment.supplierId === String(filters.supplierId));
     if (filters.status) shipments = shipments.filter((shipment) => shipment.status === String(filters.status));
     if (filters.accountingStatus) shipments = shipments.filter((shipment) => shipment.accountingStatus === String(filters.accountingStatus));
+    const finance = visibleLedgerData(data, procurement, actor);
+    const summary = hasCapability(actor, "accounting.read") ? calculateLedgerSummary(finance.entries, finance.payments) : null;
     return {
       ok: true,
       revision: procurement.revision,
       workforceRevision: workforceRevision(data),
-      shipments: shipments.map((shipment) => publicShipment(shipment, supplierIndex.get(shipment.supplierId), actor, procurement))
+      shipments: shipments.map((shipment) => publicShipment(shipment, supplierIndex.get(shipment.supplierId), actor, procurement, summary))
         .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))
     };
   }
 
   async function getShipment(actor, shipmentId) {
-    requireAnyCapability(actor, ["procurement.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]);
+    requireAnyCapability(actor, ["procurement.read", "supplier.read", "receipt.create", "receipt.submit", "receipt.approve", "receipt.reject", "accounting.read", "accounting.post", "accounting.reverse", "supplier.manage"]);
     const { data, procurement } = await readSnapshot();
     const shipment = findVisibleShipment(data, actor, shipmentId);
     const supplier = procurement.suppliers.find((item) => item.id === shipment.supplierId);
@@ -522,11 +535,13 @@ function createProcurementService(options = {}) {
       ? withRunningBalances(procurement.ledgerEntries.filter((entry) => entry.shipmentId === shipment.id
         && (actor.type === "admin" || ledgerBranchId(entry, data, procurement) === actorBranchId(actor))))
       : [];
+    const finance = visibleLedgerData(data, procurement, actor);
+    const summary = hasCapability(actor, "accounting.read") ? calculateLedgerSummary(finance.entries, finance.payments) : null;
     return {
       ok: true,
       revision: procurement.revision,
       workforceRevision: workforceRevision(data),
-      shipment: publicShipment(shipment, supplier, actor, procurement),
+      shipment: publicShipment(shipment, supplier, actor, procurement, summary),
       documents,
       ledgerEntries: entries
     };
@@ -1247,15 +1262,16 @@ function createProcurementService(options = {}) {
   async function listLedger(actor, filters = {}) {
     requireCapability(actor, "accounting.read");
     const { data, procurement } = await readSnapshot();
-    let entries = procurement.ledgerEntries;
-    if (actor.type !== "admin") entries = entries.filter((entry) => ledgerBranchId(entry, data, procurement) === actorBranchId(actor));
+    const visible = visibleLedgerData(data, procurement, actor);
+    const summary = calculateLedgerSummary(visible.entries, visible.payments, filters);
+    const reversedIds = new Set(visible.entries.filter((entry) => entry.reversalOf).map((entry) => entry.reversalOf));
+    let entries = visible.entries;
     if (filters.supplierId) entries = entries.filter((entry) => entry.supplierId === String(filters.supplierId));
-    const balances = supplierBalances(entries);
-    let running = withRunningBalances(entries);
+    let running = withRunningBalances(entries).map((entry) => ({ ...entry, reversed: reversedIds.has(entry.id) }));
     if (filters.date) running = running.filter((entry) => String(entry.transactionDate || entry.createdAt || "").slice(0, 10) === String(filters.date));
     if (filters.type && LEDGER_TYPES.has(String(filters.type))) running = running.filter((entry) => entry.type === String(filters.type));
-    let payments = procurement.payments || [];
-    if (actor.type !== "admin") payments = payments.filter((payment) => String(payment.branchId || "main") === actorBranchId(actor));
+    const balances = supplierBalances(running);
+    let payments = visible.payments;
     if (filters.supplierId) payments = payments.filter((payment) => payment.supplierId === String(filters.supplierId));
     if (filters.date) payments = payments.filter((payment) => String(payment.paymentDate || payment.createdAt || "").slice(0, 10) === String(filters.date));
     return {
@@ -1264,7 +1280,8 @@ function createProcurementService(options = {}) {
       entries: running,
       payments: [...payments].sort((left, right) => String(right.paymentDate || right.createdAt || "").localeCompare(String(left.paymentDate || left.createdAt || ""))),
       balanceKurus: [...balances.values()].reduce((sum, balance) => addKurus(sum, balance), 0),
-      debtKurus: [...balances.values()].reduce((sum, balance) => addKurus(sum, Math.max(0, -balance)), 0)
+      debtKurus: summary.debtKurus, paymentKurus: summary.paymentKurus, remainingKurus: summary.remainingKurus,
+      summary
     };
   }
 
@@ -1507,11 +1524,11 @@ function createProcurementService(options = {}) {
       records.push({
         id: shipment.id, type: "shipment", title: `Sevkiyat · ${String(shipment.shipmentDate || shipment.documentDate || shipment.id)}`,
         supplierId: shipment.supplierId, supplierName: suppliers.get(String(shipment.supplierId))?.name || shipment.supplierName || "Tedarikçi belirtilmedi",
-        amountKurus: shipmentTotalKurus(shipment), reason: shipment.removalReason || "—", actorName: shipment.removedByName || shipment.removedBy || "—",
+        amountKurus: hasCapability(actor, "accounting.read") ? shipmentTotalKurus(shipment) : null, reason: shipment.removalReason || "—", actorName: shipment.removedByName || shipment.removedBy || "—",
         removedAt: shipment.removedAt, stockReversalMovementIds: shipment.stockReversalMovementIds || [], ledgerEntryId: shipment.accountingReversalEntryId || ""
       });
     }
-    for (const payment of procurement.payments || []) {
+    for (const payment of hasCapability(actor, "accounting.read") ? procurement.payments || [] : []) {
       if (payment.status !== "reversed") continue;
       if (actor.type !== "admin" && String(payment.branchId || "main") !== actorBranchId(actor)) continue;
       records.push({
@@ -1521,12 +1538,13 @@ function createProcurementService(options = {}) {
         ledgerEntryId: payment.reversalLedgerEntryId || ""
       });
     }
-    for (const entry of procurement.ledgerEntries || []) {
+    for (const entry of hasCapability(actor, "accounting.read") ? procurement.ledgerEntries || [] : []) {
       if (entry.type !== "reversal" || ["payment_reversal", "shipment_removal"].includes(entry.sourceType)) continue;
       if (actor.type !== "admin" && ledgerBranchId(entry, data, procurement) !== actorBranchId(actor)) continue;
       records.push({
         id: entry.id, type: "ledger", title: "Cari ters kayıt", supplierId: entry.supplierId,
         supplierName: suppliers.get(String(entry.supplierId))?.name || "Tedarikçi belirtilmedi", amountKurus: Math.abs(Number(entry.amountKurus || 0)),
+        amountType: entry.amountKurus > 0 ? "debt" : "payment",
         reason: entry.note || "—", actorName: actorNames.get(String(entry.createdBy || "")) || entry.createdBy || "—", removedAt: entry.createdAt, ledgerEntryId: entry.id
       });
     }
@@ -1767,20 +1785,16 @@ function createProcurementService(options = {}) {
       const filteredEntries = selectedDate
         ? runningEntries.filter((entry) => String(entry.transactionDate || entry.createdAt || "").slice(0, 10) === selectedDate)
         : runningEntries;
-      let visiblePayments = (procurement.payments || []).filter((payment) => payment.status !== "reversed");
-      if (actor.type !== "admin") visiblePayments = visiblePayments.filter((payment) => String(payment.branchId || "main") === actorBranchId(actor));
-      if (supplierId) visiblePayments = visiblePayments.filter((payment) => String(payment.supplierId) === supplierId);
-      if (selectedDate) visiblePayments = visiblePayments.filter((payment) => String(payment.paymentDate || payment.createdAt || "").slice(0, 10) === selectedDate);
-      const balances = supplierBalances(scopedEntries);
-      const currentDebtKurus = [...balances.values()].reduce((sum, balance) => addKurus(sum, Math.max(0, -balance)), 0);
-      const paymentTotalKurus = visiblePayments.reduce((sum, payment) => addKurus(sum, Number(payment.amountKurus || 0)), 0);
+      const finance = visibleLedgerData(data, procurement, actor);
+      const summary = calculateLedgerSummary(finance.entries, finance.payments, { supplierId, date: selectedDate });
       return createLedgerWorkbookFile({
         entries: filteredEntries,
         supplierIndex,
         supplierName: selectedSupplier ? selectedSupplier.name : "Tüm Tedarikçiler",
         selectedDate,
-        currentDebtKurus,
-        paymentTotalKurus,
+        currentDebtKurus: summary.debtKurus,
+        paymentTotalKurus: summary.paymentKurus,
+        remainingKurus: summary.remainingKurus,
         reportDate: now()
       });
     }
@@ -2066,7 +2080,8 @@ function visibleShipments(shipments, actor) {
 }
 
 function canViewAllShipments(actor) {
-  return Boolean(actor && (actor.type === "admin" || PRIVILEGED_SHIPMENT_CAPABILITIES.some((capability) => hasCapability(actor, capability))));
+  return Boolean(actor && (actor.type === "admin" || PRIVILEGED_SHIPMENT_CAPABILITIES.some((capability) => hasCapability(actor, capability))
+    || hasSectionAccess(actor, "suppliers", "view") && hasCapability(actor, "supplier.read")));
 }
 
 function canEditShipment(actor, shipment) {
@@ -2159,12 +2174,15 @@ function publicAccessTemplates() {
   }));
 }
 
-function publicShipment(shipment, supplier, actor, procurement = null) {
+function publicShipment(shipment, supplier, actor, procurement = null, financialSummary = null) {
   const canViewFinancials = Boolean(actor && (actor.type === "admin"
     || ["accounting.read", "accounting.post", "supplier.manage", "supplierProduct.manage"]
       .some((capability) => hasCapability(actor, capability))));
   return {
-    ...shipment,
+    ...(canViewFinancials ? shipment : omitFinancialShipmentFields(shipment)),
+    financialVisible: hasCapability(actor, "accounting.read"),
+    pricesVisible: canViewFinancials,
+    financial: financialSummary && hasCapability(actor, "accounting.read") ? shipmentLedgerSummary(shipment, financialSummary) : null,
     items: (Array.isArray(shipment.items) ? shipment.items : []).map((item) => canViewFinancials
       ? { ...item }
       : omitFinancialShipmentFields(item)),
@@ -2187,17 +2205,19 @@ function publicShipment(shipment, supplier, actor, procurement = null) {
 function omitFinancialShipmentFields(item) {
   const source = item && typeof item === "object" && !Array.isArray(item) ? item : {};
   const result = { ...source };
-  for (const key of ["unitPriceKurus", "lineTotalKurus", "totalKurus", "purchasePriceKurus", "priceKurus", "costKurus"]) delete result[key];
+  for (const key of Object.keys(result)) if (/(kurus|price|cost|financial)/i.test(key)) delete result[key];
   return result;
 }
 
-function publicSupplier(supplier, balanceKurus) {
+function publicSupplier(supplier, balanceKurus, summary = null) {
   const visibleBalance = Number.isSafeInteger(balanceKurus) ? balanceKurus : null;
   return {
     ...supplier,
     contactName: String(supplier.contactName || ""),
     balanceKurus: visibleBalance,
-    debtKurus: visibleBalance === null ? null : Math.max(0, -visibleBalance)
+    debtKurus: summary ? summary.debtKurus : visibleBalance === null ? null : Math.max(0, -visibleBalance),
+    paymentKurus: summary ? summary.paymentKurus : null,
+    remainingKurus: summary ? summary.remainingKurus : null
   };
 }
 
@@ -2599,6 +2619,75 @@ function supplierBalances(entries) {
   return result;
 }
 
+function visibleLedgerData(data, procurement, actor) {
+  const actorNames = new Map([["admin", "Yönetici"], ...(data.recipeUsers || []).map((user) => [String(user.id), String(user.name || user.username || user.id)])]);
+  return {
+    entries: procurement.ledgerEntries.filter((entry) => actor.type === "admin" || ledgerBranchId(entry, data, procurement) === actorBranchId(actor)),
+    payments: (procurement.payments || []).filter((payment) => actor.type === "admin" || String(payment.branchId || "main") === actorBranchId(actor))
+      .map((payment) => ({ ...payment, createdByName: actorNames.get(String(payment.createdBy)) || payment.createdByName || payment.createdBy || "" }))
+  };
+}
+
+function calculateLedgerSummary(entries = [], payments = [], filters = {}) {
+  const reversedIds = new Set(entries.filter((entry) => entry.reversalOf).map((entry) => String(entry.reversalOf)));
+  const inScope = (item, date) => (!filters.supplierId || String(item.supplierId) === String(filters.supplierId))
+    && (!filters.date || String(date || item.createdAt || "").slice(0, 10) === String(filters.date));
+  const active = entries.filter((entry) => entry.type !== "reversal" && !entry.reversalOf && !reversedIds.has(String(entry.id))
+    && !entry.removedAt && !entry.archivedAt);
+  const activePayments = payments.filter((payment) => payment.status !== "reversed" && !payment.reversedAt && !payment.removedAt
+    && !reversedIds.has(String(payment.ledgerEntryId))
+    && !entries.some((entry) => entry.sourceType === "payment" && entry.sourceId === payment.id && reversedIds.has(String(entry.id)))
+    && inScope(payment, payment.paymentDate)).map((payment) => ({ ...payment }));
+  const scoped = active.filter((entry) => inScope(entry, entry.transactionDate));
+  const obligations = scoped.filter((entry) => entry.amountKurus < 0 && entry.type !== "payment").map((entry) => ({
+    ...entry, debtKurus: Math.abs(entry.amountKurus), allocatedPaymentKurus: 0, allocatedCreditKurus: 0,
+    remainingKurus: Math.abs(entry.amountKurus), paymentStatus: "open", paymentAllocations: []
+  })).sort(ledgerOrder);
+  const credits = scoped.filter((entry) => entry.amountKurus > 0 && entry.type !== "payment")
+    .map((entry) => ({ ...entry, credit: true }));
+  const funds = [...activePayments.map((payment) => ({ ...payment, transactionDate: payment.paymentDate })), ...credits].sort(ledgerOrder);
+  for (const fund of funds) {
+    let available = Number(fund.amountKurus || 0);
+    for (const obligation of obligations) {
+      if (available <= 0) break;
+      if (String(obligation.supplierId) !== String(fund.supplierId) || !obligation.remainingKurus) continue;
+      const amount = Math.min(available, obligation.remainingKurus);
+      obligation.remainingKurus -= amount;
+      available -= amount;
+      const key = fund.credit ? "allocatedCreditKurus" : "allocatedPaymentKurus";
+      obligation[key] = addKurus(obligation[key], amount);
+      if (!fund.credit) obligation.paymentAllocations.push({ paymentId: fund.id, amountKurus: amount, paymentDate: fund.paymentDate, documentId: fund.documentId });
+    }
+  }
+  for (const obligation of obligations) obligation.paymentStatus = obligation.remainingKurus === 0 ? "paid"
+    : obligation.remainingKurus < obligation.debtKurus ? "partial" : "open";
+  return {
+    debtKurus: obligations.reduce((sum, item) => addKurus(sum, item.debtKurus), 0),
+    paymentKurus: activePayments.reduce((sum, item) => addKurus(sum, Number(item.amountKurus || 0)), 0),
+    remainingKurus: obligations.reduce((sum, item) => addKurus(sum, item.remainingKurus), 0),
+    obligations, openObligations: obligations.filter((item) => item.remainingKurus > 0), activePayments
+  };
+}
+
+function ledgerOrder(left, right) {
+  return String(left.transactionDate || left.createdAt || "").localeCompare(String(right.transactionDate || right.createdAt || ""))
+    || String(left.createdAt || "").localeCompare(String(right.createdAt || "")) || String(left.id).localeCompare(String(right.id));
+}
+
+function shipmentLedgerSummary(shipment, summary) {
+  const obligations = summary.obligations.filter((entry) => String(entry.shipmentId) === String(shipment.id));
+  const debtKurus = obligations.reduce((sum, entry) => addKurus(sum, entry.debtKurus), 0);
+  const remainingKurus = obligations.reduce((sum, entry) => addKurus(sum, entry.remainingKurus), 0);
+  return {
+    debtKurus, remainingKurus,
+    paymentKurus: obligations.reduce((sum, entry) => addKurus(sum, entry.allocatedPaymentKurus), 0),
+    creditKurus: obligations.reduce((sum, entry) => addKurus(sum, entry.allocatedCreditKurus), 0),
+    paymentStatus: shipment.removedAt ? "removed" : !debtKurus ? (shipment.accountingStatus === "reversed" ? "reversed" : "not_posted")
+      : remainingKurus === 0 ? "paid" : remainingKurus < debtKurus ? "partial" : "open",
+    obligations
+  };
+}
+
 function balanceForSupplier(entries, supplierId) {
   return (entries || []).filter((entry) => entry.supplierId === supplierId)
     .reduce((sum, entry) => addKurus(sum, Number(entry.amountKurus || 0)), 0);
@@ -2775,8 +2864,8 @@ async function createLedgerWorkbookFile(options) {
 
   const summaries = [
     [1, 3, "Güncel Borç", Number(options.currentDebtKurus || 0) / 100, currencyFormat],
-    [4, 6, "Toplam Ödeme", Number(options.paymentTotalKurus || 0) / 100, currencyFormat],
-    [7, 9, "Hareket Sayısı", options.entries.length, "0"]
+    [4, 6, "Yapılan Ödemeler", Number(options.paymentTotalKurus || 0) / 100, currencyFormat],
+    [7, 9, "Kalan Ödemeler", Number(options.remainingKurus || 0) / 100, currencyFormat]
   ];
   summaries.forEach(([from, to, label, value, format]) => {
     worksheet.mergeCells(8, from, 8, to);
@@ -2786,7 +2875,7 @@ async function createLedgerWorkbookFile(options) {
     labelCell.value = label;
     valueCell.value = value;
     labelCell.font = { name: "Aptos", size: 9, bold: true, color: { argb: muted } };
-    valueCell.font = { name: "Aptos Display", size: 14, bold: true, color: { argb: darkBrown } };
+    valueCell.font = { name: "Aptos Display", size: 14, bold: true, color: { argb: from === 1 ? "FFA53B2B" : from === 4 ? "FF326950" : "FF326A91" } };
     valueCell.numFmt = format;
     for (const row of [8, 9]) {
       const cell = worksheet.getCell(row, from);
@@ -2983,6 +3072,7 @@ function fail(message, status = 400, code = "PROCUREMENT_ERROR", details) {
 
 module.exports = {
   DOCUMENT_TYPES,
+  calculateLedgerSummary,
   createProcurementService,
   hasCapability,
   publicProcurementUser,
