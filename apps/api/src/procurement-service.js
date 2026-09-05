@@ -337,6 +337,83 @@ function createProcurementService(options = {}) {
     });
   }
 
+  async function createSupplierIndependentProductsBulk(actor, supplierId, input, mutation) {
+    requireAnyCapability(actor, ["supplier.manage", "supplierProduct.manage"]);
+    if (!Array.isArray(input && input.items) || input.items.length < 1 || input.items.length > 200) {
+      throw fail("Bir işlemde 1 ile 200 arasında stok ürünü seçin.", 422, "INVALID_SUPPLIER_PRODUCT_ITEMS");
+    }
+    const ids = [...new Set(input.items.map((item) => {
+      if (!item || typeof item.stockProductId !== "string" || !item.stockProductId.trim()) {
+        throw fail("Her ürün için geçerli bir stok ürün kimliği gerekli.", 422, "STOCK_PRODUCT_ID_REQUIRED");
+      }
+      return item.stockProductId.trim();
+    }))];
+    return mutate("supplier-independent-product.bulk-create", actor, mutation, (data, procurement, helpers) => {
+      const supplier = findSupplier(procurement, supplierId, { active: true });
+      const products = indexStockProducts(data.stockState, { normalize: false }).byId;
+      const supplierProducts = procurement.supplierIndependentProducts.filter((item) => item.supplierId === supplier.id);
+      const legacyIds = new Set(procurement.supplierProductLinks
+        .filter((item) => item.supplierId === supplier.id && item.active !== false)
+        .map((item) => String(item.stockProductId || "")));
+      const timestamp = isoNow(now);
+      const created = [];
+      const reactivated = [];
+      const skipped = [];
+      for (const stockProductId of ids) {
+        const stockProduct = products.get(stockProductId);
+        if (!isActiveStockProduct(stockProduct) || stockProduct.trashed === true
+          || stockProduct.removedAt || stockProduct.deletedAt || stockProduct.purgedAt) {
+          skipped.push({ stockProductId, reason: "stock_product_not_found" });
+          continue;
+        }
+        const existing = supplierProducts.filter((item) => String(item.stockProductId || "") === stockProductId);
+        if (existing.some((item) => item.active !== false && !item.archivedAt && !item.removedAt)) {
+          skipped.push({ stockProductId, reason: "already_linked" });
+          continue;
+        }
+        const baseUnit = text(stockProduct.baseUnit || stockProduct.unit, 40);
+        const bulkUnit = text(stockProduct.bulkUnit || stockProduct.caseUnit, 40);
+        const conversionFactor = Number(stockProduct.unitsPerBulkUnit || stockProduct.unitsPerCase || 0);
+        if (!baseUnit || !bulkUnit || !Number.isFinite(conversionFactor) || conversionFactor <= 0) {
+          skipped.push({ stockProductId, reason: "unit_information_incomplete" });
+          continue;
+        }
+        const inactive = existing.find((item) => item.active === false || item.archivedAt || item.removedAt);
+        if (!inactive && legacyIds.has(stockProductId)) {
+          skipped.push({ stockProductId, reason: "already_linked" });
+          continue;
+        }
+        const values = {
+          stockProductId, stockMatchStatus: "matched", name: text(stockProduct.name || stockProduct.productName, 180),
+          baseUnit, bulkUnit, purchaseUnit: bulkUnit, conversionFactor,
+          active: true, archivedAt: null, removedAt: null, updatedAt: timestamp, updatedBy: actor.id
+        };
+        assertUniqueIndependentProduct(procurement.supplierIndependentProducts, supplier.id, values, inactive && inactive.id);
+        if (inactive) {
+          Object.assign(inactive, values);
+          reactivated.push(publicIndependentProduct(inactive));
+        } else {
+          const item = {
+            id: createId("supplier-independent-product"), supplierId: supplier.id,
+            code: "", ...values, createdAt: timestamp, createdBy: actor.id
+          };
+          procurement.supplierIndependentProducts.push(item);
+          created.push(publicIndependentProduct(item));
+        }
+      }
+      return helpers.result("supplierIndependentProduct", supplier.id, {
+        supplierId: supplier.id, created, reactivated, skipped,
+        createdCount: created.length, reactivatedCount: reactivated.length, skippedCount: skipped.length,
+        revisions: {
+          procurement: procurement.revision + 1,
+          inventory: Math.max(0, Number(data.revisions && data.revisions.inventory || 0)),
+          catalog: Math.max(0, Number(data.revisions && data.revisions.catalog || 0)),
+          stock: Math.max(0, Number(data.revisions && data.revisions.stock || 0))
+        }
+      }, { supplierId: supplier.id, createdCount: created.length, reactivatedCount: reactivated.length, skippedCount: skipped.length });
+    });
+  }
+
   async function updateSupplierIndependentProduct(actor, supplierId, itemId, input, mutation) {
     requireAnyCapability(actor, ["supplier.manage", "supplierProduct.manage"]);
     return mutate("supplier-independent-product.update", actor, mutation, (data, procurement, helpers) => {
@@ -1869,6 +1946,7 @@ function createProcurementService(options = {}) {
     createLedgerEntry,
     createProductLink,
     createSupplierIndependentProduct,
+    createSupplierIndependentProductsBulk,
     createShipment,
     createSupplier,
     dashboard,
@@ -2308,8 +2386,12 @@ function validateIndependentProductInput(input, options = {}) {
 function assertUniqueIndependentProduct(items, supplierId, values, ignoredId = "") {
   const code = normalizeLookup(values.code);
   const name = normalizeLookup(values.name);
+  const stockProductId = String(values.stockProductId || "").trim();
+  if (stockProductId && values.active === false) return;
   const duplicate = (Array.isArray(items) ? items : []).find((item) => item.id !== ignoredId && item.supplierId === supplierId
-    && (code ? normalizeLookup(item.code) === code : normalizeLookup(item.name) === name));
+    && (stockProductId
+      ? item.active !== false && !item.archivedAt && !item.removedAt && String(item.stockProductId || "") === stockProductId
+      : code ? normalizeLookup(item.code) === code : normalizeLookup(item.name) === name));
   if (duplicate) throw fail("Bu tedarikçi için aynı bağımsız ürün zaten kayıtlı.", 409, "SUPPLIER_INDEPENDENT_PRODUCT_EXISTS");
 }
 
@@ -2493,8 +2575,10 @@ function findStockProduct(stockStateInput, input) {
   return product;
 }
 
-function indexStockProducts(stockStateInput) {
-  const products = normalizeStockState(stockStateInput).products;
+function indexStockProducts(stockStateInput, options = {}) {
+  const products = options.normalize === false
+    ? (Array.isArray(stockStateInput && stockStateInput.products) ? stockStateInput.products : []).filter((product) => product && product.id)
+    : normalizeStockState(stockStateInput).products;
   return {
     byId: new Map(products.map((product) => [String(product.id), product])),
     byCode: new Map(products.map((product) => [normalizeProductCode(product.productCode), product]).filter(([code]) => code))

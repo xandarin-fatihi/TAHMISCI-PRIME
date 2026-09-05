@@ -175,3 +175,61 @@
 
 .supplier-secondary-menu button.is-danger{color:#a13f31}.supplier-secondary-menu button.is-danger:hover{background:#fff0ec}
 .row-button--icon{width:40px;min-width:40px;height:40px;padding:0;display:inline-grid;place-items:center}.row-button--icon svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.supplier-stock-add-button{min-height:44px;border:1px solid var(--panel-coffee);background:var(--panel-surface-soft);color:var(--panel-coffee);border-radius:var(--panel-control-radius);gap:8px}
+.supplier-stock-add-button:hover{background:var(--panel-focus)}
+.supplier-stock-add-button svg{width:20px;height:20px;flex:0 0 20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.fatura-dialog--supplier-stock-bulk{width:min(1080px,calc(100vw - 28px));height:min(850px,92dvh)}
+.fatura-dialog--supplier-stock-bulk form{height:100%;min-height:0}
+.fatura-dialog--supplier-stock-bulk header{flex:0 0 auto}
+.fatura-dialog--supplier-stock-bulk .dialog-body{display:flex;flex:1 1 auto;min-height:0;overflow:hidden}
+.fatura-dialog--supplier-stock-bulk .form-message{flex:0 0 auto;margin:0;padding-block:0 8px;font-size:11px}
+.fatura-dialog--supplier-stock-bulk .form-message:empty{display:none}
+.fatura-dialog--supplier-stock-bulk footer{flex-wrap:wrap}
+.supplier-stock-bulk{display:flex;flex-direction:column;flex:1 1 auto;min-width:0;min-height:0;gap:10px}
+.supplier-stock-bulk__toolbar{display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,.55fr);gap:10px;flex:0 0 auto}
+.supplier-stock-bulk__toolbar label{min-width:0}
+.supplier-stock-bulk__toolbar .toolbar-control{width:100%;max-width:100%;min-width:0;box-sizing:border-box}
+.supplier-stock-bulk__selection{display:flex;justify-content:space-between;align-items:center;gap:8px;flex:0 0 auto}
+.supplier-stock-bulk__selection label{display:flex;align-items:center;gap:8px;min-height:44px;font-size:12px;font-weight:700;cursor:pointer}
+.supplier-stock-bulk__selection small{color:var(--panel-muted);font-size:10px;text-align:right}
+.supplier-stock-bulk input[type="checkbox"]{width:20px;height:20px;min-height:20px;margin:0;accent-color:var(--panel-coffee);cursor:pointer}
+.supplier-stock-bulk input[type="checkbox"]:focus-visible{outline:3px solid var(--panel-focus);outline-offset:3px}
+.supplier-stock-bulk input:disabled{cursor:default}
+.supplier-stock-bulk__summary{flex:0 0 auto;margin:0;color:var(--panel-muted);font-size:11px;line-height:1.5}
+.supplier-stock-bulk__list{flex:1 1 auto;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;border:1px solid var(--panel-line);border-radius:12px;background:var(--panel-surface)}
+.supplier-stock-bulk__row{display:grid;grid-template-columns:40px minmax(150px,1.5fr) minmax(65px,.55fr) minmax(65px,.55fr) minmax(120px,1fr) minmax(90px,.8fr);align-items:center;gap:10px;min-width:0;padding:12px 10px;border-bottom:1px solid var(--panel-line);cursor:pointer}
+.supplier-stock-bulk__row:last-child{border-bottom:0}
+.supplier-stock-bulk__row:hover,.supplier-stock-bulk__row.is-selected{background:var(--panel-surface-soft)}
+.supplier-stock-bulk__row.is-selected{box-shadow:inset 3px 0 var(--panel-coffee)}
+.supplier-stock-bulk__row.is-disabled{cursor:default;color:var(--panel-muted)}
+.supplier-stock-bulk__row>span{min-width:0;overflow-wrap:anywhere}
+.supplier-stock-bulk__check{min-width:40px;min-height:44px;display:grid;place-items:center}
+.supplier-stock-bulk__identity,.supplier-stock-bulk__units{display:grid;gap:5px}
+.supplier-stock-bulk__identity strong{font-size:12px;line-height:1.4}
+.supplier-stock-bulk__identity small,.supplier-stock-bulk__units small{font-size:10px;color:var(--panel-muted);line-height:1.4}
+.supplier-stock-bulk__units strong{font-size:11px;line-height:1.45;font-weight:650}
+.supplier-stock-bulk__status{justify-self:start;padding:5px 7px;border:1px solid var(--panel-line);border-radius:8px;background:var(--panel-surface-soft);color:var(--panel-coffee);font-size:10px;font-weight:700;line-height:1.4}
+.supplier-stock-bulk__empty{padding:18px;margin:0;color:var(--panel-muted);font-size:12px;text-align:center}
+@media(max-width:900px){
+  .supplier-stock-bulk__row{grid-template-columns:40px minmax(0,1fr) minmax(0,1fr) minmax(0,1.5fr)}
+  .supplier-stock-bulk__check{grid-column:1;grid-row:1/4;align-self:start}
+  .supplier-stock-bulk__identity{grid-column:2/-1}
+  .supplier-stock-bulk__units:nth-child(3){grid-column:2}
+  .supplier-stock-bulk__status{grid-column:2/-1}
+}
+@media(max-width:560px){
+  .fatura-dialog--supplier-stock-bulk{width:calc(100vw - 16px);max-width:calc(100vw - 16px);height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);border-radius:12px}
+  .fatura-dialog--supplier-stock-bulk form{max-height:100%}
+  .fatura-dialog--supplier-stock-bulk header{padding:12px;gap:8px}
+  .fatura-dialog--supplier-stock-bulk h2{font-size:19px}
+  .fatura-dialog--supplier-stock-bulk .dialog-body{padding:10px}
+  .fatura-dialog--supplier-stock-bulk footer{padding:10px 10px max(10px,env(safe-area-inset-bottom));gap:6px}
+  .fatura-dialog--supplier-stock-bulk footer .ui-button{min-width:0;white-space:normal}
+  .supplier-stock-bulk__toolbar{grid-template-columns:minmax(0,1fr) minmax(0,.85fr);gap:6px}
+  .supplier-stock-bulk__toolbar .toolbar-control{font-size:16px;padding-inline:8px}
+  .supplier-stock-bulk{gap:6px}
+  .supplier-stock-bulk__selection small{max-width:130px}
+  .supplier-stock-bulk__row{grid-template-columns:36px minmax(0,1fr) minmax(0,1fr);gap:8px;padding:10px 7px}
+  .supplier-stock-bulk__check{min-width:36px;grid-row:1/5}
+  .supplier-stock-bulk__conversion{grid-column:2/-1}
+}

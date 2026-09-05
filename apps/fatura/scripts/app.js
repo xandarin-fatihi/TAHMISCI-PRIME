@@ -17,6 +17,7 @@ const content = document.getElementById("contentView");
 const entityDialog = document.getElementById("entityDialog");
 const detailDialog = document.getElementById("detailDialog");
 const entityForm = document.getElementById("entityForm");
+let supplierStockBulk = null;
 const profileMenu = document.getElementById("profileMenu");
 const notificationDrawer = document.getElementById("notificationDrawer");
 const notificationScrim = document.getElementById("notificationScrim");
@@ -43,6 +44,8 @@ const pendingEventScopes = new Set();
 const handledGatewayEventIds = new Set();
 const gatewayTopicRevisions = new Map();
 const EVENT_SCOPES = {
+  inventory: ["stock", "stockExcel", "dashboard", "trash"],
+  catalog: ["stock", "stockExcel", "dashboard", "trash"],
   shipment: ["shipments", "documents", "productAnalysis", "stock", "dashboard"],
   supplier: ["suppliers", "dashboard"],
   supplierProductLink: ["suppliers", "productAnalysis", "dashboard"],
@@ -67,7 +70,7 @@ document.addEventListener("focusin", (event) => {
 });
 document.addEventListener("submit", handleAppSubmit);
 entityForm.addEventListener("submit", submitEntityForm);
-entityDialog.addEventListener("cancel", (event) => { if (document.getElementById("dialogSubmit").disabled) event.preventDefault(); });
+entityDialog.addEventListener("cancel", (event) => { if (entityForm.dataset.mode === "supplier-stock-bulk-add" ? supplierStockBulk?.busy : document.getElementById("dialogSubmit").disabled) event.preventDefault(); });
 entityDialog.addEventListener("close", cleanupEntityDialog);
 detailDialog.addEventListener("close", cleanupDetailDialog);
 document.getElementById("adminLoginForm").addEventListener("submit", (event) => submitLogin(event, "admin"));
@@ -307,6 +310,7 @@ const loadStockReferences = (force) => cachedLoad("stock-references", () => api(
   state.context.stockProducts = Array.isArray(p.stockProducts) ? p.stockProducts : [];
   state.context.stockLocations = Array.isArray(p.stockLocations) ? p.stockLocations : [];
   state.context.unitDefinitions = p.unitDefinitions && typeof p.unitDefinitions === "object" ? p.unitDefinitions : { base: [], bulk: [] };
+  renderSupplierStockBulkDialogState();
 }, force, "catalog");
 const loadProductLinks = (force) => cachedLoad("links", () => api("/product-links?active=all"), (p) => { state.productLinks = p.productLinks || []; }, force);
 const loadShipments = (force) => cachedLoad("shipments", () => api("/shipments"), (p) => { state.shipments = p.shipments || []; }, force);
@@ -332,7 +336,10 @@ async function loadSupplierWorkspaceData(supplierId, force = false) {
     workspace.productLinks = linkedPayload.productLinks || [];
     workspace.independentProducts = independentPayload.independentProducts || [];
   } finally {
-    if (workspace.supplierId === id) workspace.loading = false;
+    if (workspace.supplierId === id) {
+      workspace.loading = false;
+      renderSupplierStockBulkDialogState();
+    }
   }
 }
 
@@ -738,6 +745,11 @@ async function handleClick(event) {
 }
 
 function handleFilterInput(event) {
+  if (event.target.id === "supplier-stock-bulk-search" && supplierStockBulk) {
+    if (supplierStockBulk.busy) return;
+    supplierStockBulk.query = event.target.value;
+    return renderSupplierStockBulkDialogState();
+  }
   if (event.target.matches("[data-supplier-product-search]")) {
     syncSupplierProductSearch(event.target);
     return;
@@ -756,6 +768,25 @@ function handleFilterInput(event) {
 }
 
 function handleChange(event) {
+  if (supplierStockBulk && entityForm.dataset.mode === "supplier-stock-bulk-add") {
+    if (supplierStockBulk.busy) return;
+    if (event.target.id === "supplier-stock-bulk-category") {
+      supplierStockBulk.category = event.target.value;
+      return renderSupplierStockBulkDialogState();
+    }
+    if (event.target.matches("[data-supplier-bulk-product], [data-supplier-bulk-all]")) {
+      const selectable = getSupplierBulkStockProducts().filter((item) => item.status === "selectable");
+      const ids = event.target.hasAttribute("data-supplier-bulk-all")
+        ? selectable.map((item) => item.id)
+        : selectable.filter((item) => item.id === event.target.dataset.supplierBulkProduct).map((item) => item.id);
+      for (const id of ids) {
+        if (event.target.checked) supplierStockBulk.selected.add(id);
+        else supplierStockBulk.selected.delete(id);
+      }
+      supplierStockBulk.pending = null;
+      return renderSupplierStockBulkDialogState();
+    }
+  }
   if (event.target.id === "stockExcelFile") {
     const file = event.target.files && event.target.files[0];
     state.stockExcel.fileName = file instanceof File ? file.name : "";
@@ -1087,6 +1118,7 @@ function handleAction(button, action) {
   if (action === "close-payment-history") { state.filters.paymentHistoryOpen = false; return renderActiveView(); }
   if (action === "new-ledger-entry") return openLedgerEntryForm();
   if (action === "supplier-add-product") return openIndependentProductForm();
+  if (action === "supplier-add-stock-products") return openSupplierStockBulkAddForm();
   if (action === "supplier-create-shipment") return openSupplierShipmentForm();
   if (action === "add-shipment-line") {
     const lines = document.getElementById("shipmentLines");
@@ -1103,6 +1135,7 @@ function normalizedDialogHeading(value) {
 }
 
 function openEntityDialog(config) {
+  if (config.mode !== "supplier-stock-bulk-add") supplierStockBulk = null;
   entityForm.dataset.mode = config.mode;
   entityForm.dataset.entityId = config.entityId || "";
   const kicker = config.kicker || "YENİ KAYIT";
@@ -1126,13 +1159,163 @@ function openEntityDialog(config) {
   }
   document.getElementById("dialogMessage").textContent = "";
   entityDialog.classList.toggle("fatura-dialog--receipt", ["shipment-create", "supplier-shipment-create"].includes(config.mode));
+  entityDialog.classList.toggle("fatura-dialog--supplier-stock-bulk", config.mode === "supplier-stock-bulk-add");
   entityDialog.showModal(); document.body.classList.add("dialog-open");
 }
-function closeEntityDialog() { if (entityDialog.open) entityDialog.close(); cleanupEntityDialog(); }
+function closeEntityDialog() { if (supplierStockBulk?.busy) return; if (entityDialog.open) entityDialog.close(); cleanupEntityDialog(); }
 function closeDetailDialog() { if (detailDialog.open) detailDialog.close(); cleanupDetailDialog(); }
-function cleanupEntityDialog() { entityForm.reset(); delete entityForm.dataset.mode; delete entityForm.dataset.entityId; const cancelButton = entityDialog.querySelector("footer .dialog-close"); if (cancelButton) { cancelButton.textContent = "Vazgeç"; delete cancelButton.dataset.cancelAction; } entityDialog.classList.remove("fatura-dialog--receipt"); syncDialogOpenState(); }
+function cleanupEntityDialog() { supplierStockBulk = null; entityForm.reset(); delete entityForm.dataset.mode; delete entityForm.dataset.entityId; const cancelButton = entityDialog.querySelector("footer .dialog-close"); if (cancelButton) { cancelButton.textContent = "Vazgeç"; delete cancelButton.dataset.cancelAction; } entityDialog.classList.remove("fatura-dialog--receipt", "fatura-dialog--supplier-stock-bulk"); syncDialogOpenState(); }
 function cleanupDetailDialog() { state.detail = null; if (currentObjectUrl) { URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = ""; } syncDialogOpenState(); }
 function syncDialogOpenState() { document.body.classList.toggle("dialog-open", entityDialog.open || detailDialog.open); }
+
+function openSupplierStockBulkAddForm() {
+  if (!has(CAPABILITIES.supplierManage) && !has(CAPABILITIES.links)) return;
+  const workspace = state.supplierWorkspace;
+  const supplier = state.suppliers.find((item) => String(item.id) === String(workspace.supplierId) && item.active !== false);
+  if (!supplier || workspace.loading) return;
+  supplierStockBulk = { supplierId: String(supplier.id), selected: new Set(), query: "", category: "", busy: false, pending: null };
+  const categories = [...new Set(getSupplierBulkStockProducts().map((item) => item.category).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, "tr"));
+  openEntityDialog({
+    mode: "supplier-stock-bulk-add", entityId: supplier.id,
+    kicker: "STOKTAN TOPLU EKLE", title: `${supplier.name} · Stoktan Ürün Seç`,
+    description: "Stoktaki mevcut ürünleri seçerek bu tedarikçiye toplu ürün kalemi ekleyin.",
+    submitLabel: "Seçilenleri Ekle", submitDisabled: true,
+    body: `<div class="supplier-stock-bulk">
+      <div class="supplier-stock-bulk__toolbar">
+        <label class="supplier-stock-bulk__search"><span class="sr-only">Stok ürünü ara</span><input class="toolbar-control" id="supplier-stock-bulk-search" type="search" placeholder="Stok ürünü ara…" autocomplete="off"></label>
+        <label class="supplier-stock-bulk__categories"><span class="sr-only">Kategori</span><select class="toolbar-control" id="supplier-stock-bulk-category"><option value="">Tüm kategoriler</option>${categories.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join("")}</select></label>
+      </div>
+      <div class="supplier-stock-bulk__selection"><label><input type="checkbox" data-supplier-bulk-all><span>Tümünü Seç</span></label><small>Tek işlemde en fazla 200 ürün</small></div>
+      <p class="supplier-stock-bulk__summary" id="supplier-stock-bulk-summary" aria-live="polite"></p>
+      <div class="supplier-stock-bulk__list" id="supplier-stock-bulk-list" role="group" aria-label="Stok ürünleri" tabindex="0"></div>
+    </div>`
+  });
+  renderSupplierStockBulkDialogState();
+  document.getElementById("supplier-stock-bulk-search")?.focus();
+}
+
+function getSupplierBulkStockProducts(filtered = true) {
+  if (!supplierStockBulk) return [];
+  const workspace = state.supplierWorkspace;
+  const linked = new Set([...(workspace.independentProducts || []), ...(workspace.productLinks || [])]
+    .filter((item) => String(item.supplierId) === supplierStockBulk.supplierId && item.active !== false && !item.archivedAt && !item.removedAt)
+    .map((item) => String(item.stockProductId || "")));
+  const seen = new Set();
+  const query = normalizeComboText(supplierStockBulk.query);
+  return (state.context?.stockProducts || []).filter((product) => {
+    const id = String(product.id || "");
+    if (!id || seen.has(id) || product.active === false || product.sourcePresent === false || product.trashed === true
+      || product.archivedAt || product.removedAt || product.deletedAt || product.purgedAt) return false;
+    seen.add(id);
+    return true;
+  }).map((product) => {
+    const id = String(product.id);
+    const baseUnit = String(product.baseUnit || product.unit || "").trim();
+    const bulkUnit = String(product.bulkUnit || product.caseUnit || "").trim();
+    const factor = Number(product.unitsPerBulkUnit || product.unitsPerCase || 0);
+    return {
+      id, name: String(product.name || product.productName || "Stok ürünü"),
+      productCode: String(product.productCode || ""), category: String(product.category || "").trim(),
+      baseUnit, bulkUnit, factor,
+      status: linked.has(id) ? "linked" : baseUnit && bulkUnit && Number.isFinite(factor) && factor > 0 ? "selectable" : "incomplete"
+    };
+  }).filter((item) => !filtered || ((!supplierStockBulk.category || item.category === supplierStockBulk.category)
+    && (!query || normalizeComboText(`${item.name} ${item.productCode} ${item.category}`).includes(query))))
+    .sort((left, right) => left.name.localeCompare(right.name, "tr"));
+}
+
+function renderSupplierStockBulkRows(products) {
+  return products.length ? products.map((item) => {
+    const selected = supplierStockBulk.selected.has(item.id);
+    const status = { selectable: "Seçilebilir", linked: "Zaten ekli", incomplete: "Birim bilgisi eksik" }[item.status];
+    const conversion = item.baseUnit && item.bulkUnit && Number.isFinite(item.factor) && item.factor > 0
+      ? `1 ${item.bulkUnit} = ${new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 6 }).format(item.factor)} ${item.baseUnit}` : "—";
+    return `<label class="supplier-stock-bulk__row${selected ? " is-selected" : ""}${item.status === "selectable" ? "" : " is-disabled"}">
+      <span class="supplier-stock-bulk__check"><input type="checkbox" data-supplier-bulk-product="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.name)} seç"${selected ? " checked" : ""}${item.status !== "selectable" || supplierStockBulk.busy ? " disabled" : ""}></span>
+      <span class="supplier-stock-bulk__identity"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml([item.category || "Kategorisiz", item.productCode].filter(Boolean).join(" · "))}</small>${item.status === "incomplete" ? "<small>Önce stok ürününün birim yapısını tamamlayın.</small>" : ""}</span>
+      <span class="supplier-stock-bulk__units"><small>Toplu birim</small><strong>${escapeHtml(item.bulkUnit || "—")}</strong></span>
+      <span class="supplier-stock-bulk__units"><small>Temel birim</small><strong>${escapeHtml(item.baseUnit || "—")}</strong></span>
+      <span class="supplier-stock-bulk__units supplier-stock-bulk__conversion"><small>Dönüşüm</small><strong>${escapeHtml(conversion)}</strong></span>
+      <span class="supplier-stock-bulk__status">${status}</span>
+    </label>`;
+  }).join("") : '<p class="supplier-stock-bulk__empty">Filtreye uygun stok ürünü bulunamadı.</p>';
+}
+
+function updateSupplierStockBulkSubmitState() {
+  if (!supplierStockBulk || entityForm.dataset.mode !== "supplier-stock-bulk-add") return;
+  const count = supplierStockBulk.selected.size;
+  const submit = document.getElementById("dialogSubmit");
+  submit.disabled = supplierStockBulk.busy || count === 0 || count > 200;
+  submit.textContent = supplierStockBulk.busy ? "Ekleniyor…" : `Seçilenleri Ekle${count ? ` (${count})` : ""}`;
+  submit.setAttribute("aria-busy", String(supplierStockBulk.busy));
+}
+
+function renderSupplierStockBulkDialogState() {
+  if (!supplierStockBulk || entityForm.dataset.mode !== "supplier-stock-bulk-add") return;
+  if (String(state.supplierWorkspace.supplierId) !== supplierStockBulk.supplierId) {
+    supplierStockBulk = null;
+    return closeEntityDialog();
+  }
+  const allProducts = getSupplierBulkStockProducts(false);
+  const selectableIds = new Set(allProducts.filter((item) => item.status === "selectable").map((item) => item.id));
+  for (const id of supplierStockBulk.selected) if (!selectableIds.has(id)) supplierStockBulk.selected.delete(id);
+  const products = getSupplierBulkStockProducts();
+  const list = document.getElementById("supplier-stock-bulk-list");
+  const scrollTop = list.scrollTop;
+  const focusedId = document.activeElement?.dataset.supplierBulkProduct;
+  list.innerHTML = renderSupplierStockBulkRows(products);
+  list.scrollTop = scrollTop;
+  if (focusedId) list.querySelector(`[data-supplier-bulk-product="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
+  const selectable = products.filter((item) => item.status === "selectable");
+  const selectedVisible = selectable.filter((item) => supplierStockBulk.selected.has(item.id)).length;
+  const selectAll = entityForm.querySelector("[data-supplier-bulk-all]");
+  selectAll.checked = selectable.length > 0 && selectedVisible === selectable.length;
+  selectAll.indeterminate = selectedVisible > 0 && selectedVisible < selectable.length;
+  selectAll.disabled = supplierStockBulk.busy || selectable.length === 0;
+  document.getElementById("supplier-stock-bulk-search").disabled = supplierStockBulk.busy;
+  document.getElementById("supplier-stock-bulk-category").disabled = supplierStockBulk.busy;
+  document.getElementById("supplier-stock-bulk-summary").textContent = `${products.length} ${supplierStockBulk.query || supplierStockBulk.category ? "sonuç" : "stok ürünü"} · ${supplierStockBulk.selected.size} seçili · ${products.filter((item) => item.status === "linked").length} zaten ekli`;
+  document.getElementById("dialogMessage").textContent = supplierStockBulk.selected.size > 200 ? "Bir işlemde en fazla 200 ürün ekleyebilirsiniz. Seçiminizi azaltın." : "";
+  updateSupplierStockBulkSubmitState();
+}
+
+async function saveSupplierStockBulkAdd() {
+  const draft = supplierStockBulk;
+  if (!draft || draft.busy || draft.supplierId !== String(state.supplierWorkspace.supplierId)) throw new Error("Tedarikçi seçimi güncel değil.");
+  if (!has(CAPABILITIES.supplierManage) && !has(CAPABILITIES.links)) throw new Error("Ürün yönetimi yetkiniz yok.");
+  renderSupplierStockBulkDialogState();
+  if (!draft.selected.size || draft.selected.size > 200) throw new Error("1 ile 200 arasında ürün seçin.");
+  if (!draft.pending) draft.pending = {
+    method: "POST", requestId: requestId("supplier-stock-bulk"), expectedRevision: state.revision,
+    body: { items: [...draft.selected].map((stockProductId) => ({ stockProductId })) }
+  };
+  draft.busy = true;
+  renderSupplierStockBulkDialogState();
+  try {
+    const payload = await api(`/suppliers/${encodeURIComponent(draft.supplierId)}/independent-products/bulk`, draft.pending);
+    mutationComplete(payload, ["suppliers", "productAnalysis", "dashboard"]);
+    draft.pending = null;
+    draft.selected.clear();
+    const parts = [`${Number(payload.createdCount || 0)} ürün eklendi`];
+    if (payload.reactivatedCount) parts.push(`${Number(payload.reactivatedCount)} ürün yeniden aktifleştirildi`);
+    const message = `${parts.join(", ")}.${payload.skippedCount ? ` ${Number(payload.skippedCount)} ürün zaten bağlı, kullanılamaz veya birim bilgisi eksik olduğu için atlandı.` : ""}`;
+    return { supplierId: draft.supplierId, message, draft };
+  } catch (error) {
+    if (error.status >= 400 && error.status < 500) draft.pending = null;
+    if (error.code === "PROCUREMENT_REVISION_CONFLICT") {
+      if (Number.isInteger(error.payload?.actualRevision)) state.revision = Math.max(state.revision, error.payload.actualRevision);
+      await loadSupplierWorkspaceData(draft.supplierId, true);
+      renderActiveView();
+    }
+    throw error;
+  } finally {
+    draft.busy = false;
+    if (supplierStockBulk === draft) {
+      renderSupplierStockBulkDialogState();
+    }
+  }
+}
 
 function openSupplierForm(supplier = null) {
   openEntityDialog({ mode: supplier ? "supplier-edit" : "supplier-create", entityId: supplier && supplier.id, title: supplier ? "Tedarikçiyi düzenle" : "Tedarikçi Ekle", description: "Firma ve iletişim bilgilerini kaydedin.", submitLabel: "Kaydet", hideCancel: true, body: `<div class="form-grid supplier-simple-form"><label>Tedarikçi Firma Adı<input name="name" value="${escapeHtml(supplier && supplier.name || "")}" maxlength="180" required></label><label>Tedarikçinin Adı<input name="contactName" value="${escapeHtml(supplier && supplier.contactName || "")}" maxlength="180"></label><label>Tedarikçinin Tel No<input name="phone" value="${escapeHtml(supplier && supplier.phone || "")}" maxlength="40" inputmode="tel"></label></div>` });
@@ -1305,15 +1488,27 @@ async function submitEntityForm(event) {
   event.preventDefault();
   const submit = document.getElementById("dialogSubmit");
   if (submit.disabled) return;
-  setBusy(submit, true, "Kaydediliyor…");
-  const data = new FormData(entityForm);
   const mode = entityForm.dataset.mode;
+  if (mode !== "supplier-stock-bulk-add") setBusy(submit, true, "Kaydediliyor…");
+  const data = new FormData(entityForm);
   let deferredStockFailure = null;
   let completionMessage = "İşlem backend tarafından kaydedildi.";
   let completionError = false;
   try {
     let followUpShipment = null;
     if (mode === "supplier-create" || mode === "supplier-edit") await saveSupplier(mode, data);
+    else if (mode === "supplier-stock-bulk-add") {
+      const result = await saveSupplierStockBulkAdd();
+      if (supplierStockBulk === result.draft) closeEntityDialog();
+      toast(result.message);
+      try {
+        if (String(state.supplierWorkspace.supplierId) === result.supplierId) {
+          await loadSupplierWorkspaceData(result.supplierId, true);
+          renderActiveView();
+        }
+      } catch (error) { toast(error.message || "Tedarikçi ürünleri yenilenemedi.", true); }
+      return;
+    }
     else if (mode === "link-create" || mode === "link-edit") await saveLink(mode, data);
     else if (mode === "shipment-create") await saveShipment(data);
     else if (mode === "document-upload") await saveDocument(data);
@@ -1343,7 +1538,7 @@ async function submitEntityForm(event) {
       deferredStockFailure = { shipmentId: entityForm.dataset.entityId, message: error.message };
     }
     else document.getElementById("dialogMessage").textContent = error.message || "İşlem tamamlanamadı.";
-  } finally { setBusy(submit, false); updateSupplierShipmentSubmitState(); }
+  } finally { if (mode !== "supplier-stock-bulk-add") setBusy(submit, false); updateSupplierShipmentSubmitState(); updateSupplierStockBulkSubmitState(); }
   if (deferredStockFailure) {
     closeEntityDialog();
     openStockFailureAccountingDecision(deferredStockFailure.shipmentId, deferredStockFailure.message);
@@ -1507,6 +1702,7 @@ async function saveShipmentAccounting(data) {
 
 async function openSupplier(id, options = {}) {
   const supplier = state.suppliers.find((item) => String(item.id) === String(id)); if (!supplier) return;
+  if (supplierStockBulk && supplierStockBulk.supplierId !== String(id)) { supplierStockBulk = null; closeEntityDialog(); }
   const workspace = state.supplierWorkspace;
   if (!workspace.supplierId) workspace.returnScrollY = window.scrollY;
   workspace.supplierId = String(id);
@@ -1523,6 +1719,7 @@ async function openSupplier(id, options = {}) {
 }
 
 function closeSupplierWorkspace(options = {}) {
+  if (supplierStockBulk) { supplierStockBulk = null; closeEntityDialog(); }
   const scrollY = state.supplierWorkspace.returnScrollY || 0;
   state.supplierWorkspace = { supplierId: "", productLinks: [], independentProducts: [], loading: false, returnScrollY: 0 };
   if (!options.fromPopstate) history.replaceState({ ...(history.state || {}), faturaView: "suppliers", supplierId: "" }, "", "/fatura/");
@@ -1776,6 +1973,9 @@ function handleGatewayEvent(message){
   if(topic==="inventory"||topic==="catalog"){
     handleStockGatewayEvent(event);
     if(topic==="catalog")state.loaded.delete("stock-references");
+    ["stockExcel","dashboard","trash"].forEach((scope)=>pendingEventScopes.add(scope));
+    window.clearTimeout(eventRefreshTimer);
+    eventRefreshTimer=window.setTimeout(flushEventScopes,180);
     return;
   }
   const scopes=topic==="shipment"||topic==="workforce"

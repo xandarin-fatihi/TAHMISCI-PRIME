@@ -131,6 +131,13 @@ function registerProcurementRoutes(deps = {}) {
       res.status(result.idempotent ? 200 : 201).json(result);
     }));
 
+  app.post(`${API_ROOT}/suppliers/:id/independent-products/bulk`, ...mutationMiddlewares,
+    anySectionAccess(["suppliers", "links"], "operate"), anyCapability(["supplier.manage", "supplierProduct.manage"]),
+    asyncRoute(async (req, res) => {
+      const result = await service.createSupplierIndependentProductsBulk(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req));
+      res.status(result.idempotent ? 200 : 201).json(result);
+    }));
+
   app.put(`${API_ROOT}/suppliers/:id/independent-products/:itemId`, ...mutationMiddlewares,
     anySectionAccess(["suppliers", "links"], "operate"), anyCapability(["supplier.manage", "supplierProduct.manage"]),
     asyncRoute(async (req, res) => {
@@ -478,14 +485,16 @@ function registerStockReferenceProjection(deps) {
     asyncRoute(async (req, res) => {
       const data = req.storeSnapshot || await store.read();
       const stock = normalizeStockState(data.stockState);
-      const stockProducts = stock.products.filter((item) => item.active !== false).map((item) => ({
+      const products = Array.isArray(data.stockState && data.stockState.products) ? data.stockState.products : [];
+      const stockProducts = products.filter((item) => item && item.id && item.active !== false && item.sourcePresent !== false
+        && item.trashed !== true && !item.archivedAt && !item.removedAt && !item.deletedAt && !item.purgedAt).map((item) => ({
         id: String(item.id),
         name: String(item.name || item.productName || "Stok ürünü"),
         productCode: String(item.productCode || ""),
         categoryId: String(item.categoryId || ""),
-        category: String(item.category || ""),
-        baseUnit: String(item.baseUnit || item.unit || "adet"),
-        unit: String(item.baseUnit || item.unit || "adet"),
+        category: String(item.category || stock.categories.find((category) => String(category.id) === String(item.categoryId))?.name || "Genel"),
+        baseUnit: String(item.baseUnit || item.unit || ""),
+        unit: String(item.baseUnit || item.unit || ""),
         bulkUnit: String(item.bulkUnit || item.caseUnit || ""),
         unitsPerBulkUnit: Number(item.unitsPerBulkUnit || item.unitsPerCase || 0),
         defaultMovementUnit: String(item.defaultMovementUnit || item.baseUnit || item.unit || "adet"),
