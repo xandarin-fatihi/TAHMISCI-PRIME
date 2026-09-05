@@ -1,13 +1,13 @@
-import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260905-finance-mobile-upload-v1";
-import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260905-finance-mobile-upload-v1";
-import { renderDashboard } from "./dashboard.js?v=20260905-finance-mobile-upload-v1";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260905-finance-mobile-upload-v1";
-import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260905-finance-mobile-upload-v1";
-import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260905-finance-mobile-upload-v1";
-import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260905-finance-mobile-upload-v1";
-import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260905-finance-mobile-upload-v1";
-import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260905-finance-mobile-upload-v1";
-import { confirmAction, requestText } from "./ui-dialogs.js?v=20260905-finance-mobile-upload-v1";
+import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260905-cari-actions-v1";
+import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260905-cari-actions-v1";
+import { renderDashboard } from "./dashboard.js?v=20260905-cari-actions-v1";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260905-cari-actions-v1";
+import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260905-cari-actions-v1";
+import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260905-cari-actions-v1";
+import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260905-cari-actions-v1";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260905-cari-actions-v1";
+import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260905-cari-actions-v1";
+import { confirmAction, requestText } from "./ui-dialogs.js?v=20260905-cari-actions-v1";
 
 const app = document.getElementById("faturaApp");
 const shell = document.getElementById("shell");
