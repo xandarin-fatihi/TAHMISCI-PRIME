@@ -920,7 +920,8 @@ function createProcurementService(options = {}) {
         return Boolean(latest && latest.reversedMovementId);
       });
 
-      const originalLedger = procurement.ledgerEntries.find((entry) => entry.shipmentId === shipment.id && entry.type === "invoice");
+      const shipmentInvoices = procurement.ledgerEntries.filter((entry) => entry.shipmentId === shipment.id && entry.type === "invoice");
+      const originalLedger = shipmentInvoices.find((entry) => !isReversed(entry, procurement.ledgerEntries)) || shipmentInvoices.at(-1);
       if (shipment.accountingStatus === "posted" && !originalLedger) {
         throw fail("Sevkiyatın cari hareketi bulunamadığı için güvenli ters kayıt oluşturulamadı.", 409, "SHIPMENT_LEDGER_TRACE_MISSING");
       }
@@ -974,7 +975,7 @@ function createProcurementService(options = {}) {
   }
 
   async function accountShipmentWithoutStock(actor, shipmentId, input, mutation) {
-    requireAnyCapability(actor, ["receipt.approve", "accounting.post"]);
+    requireCapability(actor, "accounting.post");
     return accountShipmentInternal("shipment.account.without-stock", actor, shipmentId, input, mutation, { requireNoStock: true });
   }
 
@@ -982,16 +983,17 @@ function createProcurementService(options = {}) {
     return mutate(operation, actor, mutation, (data, procurement, helpers) => {
       const shipment = findVisibleShipment(data, actor, shipmentId);
       if (shipment.removedAt) throw fail("Kaldırılmış sevkiyat cari hesaba işlenemez.", 409, "SHIPMENT_REMOVED");
+      if (shipment.accountingStatus === "reversed") throw fail("Terslenmiş sevkiyat için Çöp Kutusu geri alma işlemini kullanın.", 409, "ACCOUNTING_ALREADY_REVERSED");
       if (["taslak", "reddedildi"].includes(shipment.status)) {
         throw fail("Taslak veya reddedilmiş sevkiyat muhasebeleştirilemez.", 409, "SHIPMENT_STATE_CONFLICT");
       }
       if (options.requireStock && !shipment.stockAppliedAt) throw fail("Stok aktarımı tamamlanmadan otomatik cari kayıt oluşturulamaz.", 409, "STOCK_NOT_APPLIED");
       if (options.requireNoStock && shipment.stockAppliedAt) throw fail("Bu sevkiyat zaten stoğa işlendi.", 409, "STOCK_ALREADY_APPLIED");
-      if (options.requireNoStock && shipment.stockStatus !== "failed") {
-        throw fail("Cari kararı yalnızca başarısız stok aktarımından sonra verilebilir.", 409, "STOCK_FAILURE_REQUIRED");
+      if (options.requireNoStock && !["failed", "not_applied"].includes(shipment.stockStatus) && shipment.stockDecision !== "declined") {
+        throw fail("Önce sevkiyatın stok kararı tamamlanmalıdır.", 409, "STOCK_DECISION_REQUIRED");
       }
       const supplier = findSupplier(procurement, shipment.supplierId);
-      const existing = procurement.ledgerEntries.find((entry) => entry.shipmentId === shipment.id && entry.type === "invoice");
+      const existing = procurement.ledgerEntries.find((entry) => entry.shipmentId === shipment.id && entry.type === "invoice" && !isReversed(entry, procurement.ledgerEntries));
       if (existing) {
         return helpers.result("ledgerEntry", existing.id, {
           shipment: publicShipment(shipment, supplier, actor, procurement),
@@ -999,6 +1001,10 @@ function createProcurementService(options = {}) {
           alreadyAccounted: true
         });
       }
+      if (procurement.ledgerEntries.some((entry) => entry.shipmentId === shipment.id && entry.type === "invoice")) {
+        throw fail("Sevkiyatın borcu terslenmiş; Çöp Kutusu geri alma işlemini kullanın.", 409, "ACCOUNTING_ALREADY_REVERSED");
+      }
+      if (shipment.accountingStatus === "posted") throw fail("Sevkiyatın mevcut cari kaydı doğrulanamadı.", 409, "SHIPMENT_LEDGER_TRACE_MISSING");
       const document = options.requireDocument
         ? resolveAccountingDocument(procurement, shipment, input)
         : resolveShipmentEvidenceDocument(procurement, shipment, input);
@@ -1043,7 +1049,8 @@ function createProcurementService(options = {}) {
       shipment.accountingEntryIds = [...new Set([...(shipment.accountingEntryIds || []), entry.id])];
       shipment.accountingPostedAt = timestamp;
       shipment.accountingPostedBy = actor.id;
-      shipment.accountingSource = options.requireStock ? "stock_success" : options.requireNoStock ? "stock_failure_override" : "manual";
+      shipment.accountingSource = options.requireStock ? "stock_success" : options.requireNoStock
+        ? shipment.stockStatus === "failed" ? "stock_failure_override" : "stock_declined_override" : "manual";
       shipment.updatedAt = timestamp;
       shipment.revision = positiveRevision(shipment.revision) + 1;
       shipment.expectedRevision = shipment.revision;
@@ -1073,7 +1080,7 @@ function createProcurementService(options = {}) {
     requireCapability(actor, "accounting.reverse");
     return mutate("shipment.account.reverse", actor, mutation, (data, procurement, helpers) => {
       const shipment = findVisibleShipment(data, actor, shipmentId);
-      const original = procurement.ledgerEntries.find((entry) => entry.shipmentId === shipment.id && entry.type === "invoice");
+      const original = procurement.ledgerEntries.find((entry) => entry.shipmentId === shipment.id && entry.type === "invoice" && !isReversed(entry, procurement.ledgerEntries));
       if (!original) throw fail("Ters çevrilecek muhasebe kaydı bulunamadı.", 409, "ACCOUNTING_ENTRY_NOT_FOUND");
       if (procurement.ledgerEntries.some((entry) => entry.reversalOf === original.id)) {
         throw fail("Muhasebe kaydı daha önce ters çevrilmiş.", 409, "ACCOUNTING_ALREADY_REVERSED");
@@ -1331,7 +1338,9 @@ function createProcurementService(options = {}) {
         transactionDate: validateOptionalDate(input && input.transactionDate, "İşlem tarihi") || timestamp.slice(0, 10),
         dueDate: validateOptionalDate(input && input.dueDate, "Vade tarihi"),
         note: text(input && input.note, 1000),
-        sourceType: document ? "procurement_document" : "manual_accounting",
+        sourceType: type === "opening_balance" ? "opening_balance"
+          : type === "adjustment" && input.sourceType === "manual_debt" && amountKurus < 0 ? "manual_debt"
+          : document ? "procurement_document" : "manual_accounting",
         sourceId: document ? document.id : "",
         reversalOf: "",
         createdBy: actor.id,
@@ -1349,7 +1358,7 @@ function createProcurementService(options = {}) {
       const original = findById(procurement.ledgerEntries, entryId, "Cari hareket");
       assertLedgerVisibility(data, procurement, original, actor);
       if (original.type === "reversal" || original.reversalOf) throw fail("Ters kayıt yeniden ters çevrilemez.", 409, "REVERSAL_NOT_REVERSIBLE");
-      if (original.shipmentId) throw fail("Sevkiyat hareketini sevkiyat ters muhasebe işlemiyle düzeltin.", 409, "USE_SHIPMENT_REVERSAL");
+      if (original.shipmentId || original.sourceType === "workforce_shipment") throw fail("Sevkiyat hareketini sevkiyat ters muhasebe işlemiyle düzeltin.", 409, "USE_SHIPMENT_REVERSAL");
       if (original.sourceType === "payment") throw fail("Ödeme hareketini ödeme ters işlemiyle düzeltin.", 409, "USE_PAYMENT_REVERSAL");
       if (procurement.ledgerEntries.some((entry) => entry.reversalOf === original.id)) {
         throw fail("Cari hareket daha önce ters çevrilmiş.", 409, "LEDGER_ALREADY_REVERSED");
@@ -1525,27 +1534,33 @@ function createProcurementService(options = {}) {
         id: shipment.id, type: "shipment", title: `Sevkiyat · ${String(shipment.shipmentDate || shipment.documentDate || shipment.id)}`,
         supplierId: shipment.supplierId, supplierName: suppliers.get(String(shipment.supplierId))?.name || shipment.supplierName || "Tedarikçi belirtilmedi",
         amountKurus: hasCapability(actor, "accounting.read") ? shipmentTotalKurus(shipment) : null, reason: shipment.removalReason || "—", actorName: shipment.removedByName || shipment.removedBy || "—",
-        removedAt: shipment.removedAt, stockReversalMovementIds: shipment.stockReversalMovementIds || [], ledgerEntryId: shipment.accountingReversalEntryId || ""
+        removedAt: shipment.removedAt, stockReversalMovementIds: shipment.stockReversalMovementIds || [], ledgerEntryId: shipment.accountingReversalEntryId || "",
+        canPurge: hasCapability(actor, "receipt.reject") && !procurement.ledgerEntries.some((entry) => entry.shipmentId === shipment.id)
       });
     }
     for (const payment of hasCapability(actor, "accounting.read") ? procurement.payments || [] : []) {
-      if (payment.status !== "reversed") continue;
+      if (payment.status !== "reversed" || payment.trashPurgedAt || payment.restoredPaymentId) continue;
       if (actor.type !== "admin" && String(payment.branchId || "main") !== actorBranchId(actor)) continue;
       records.push({
         id: payment.id, type: "payment", title: "Tedarikçi ödemesi", supplierId: payment.supplierId,
         supplierName: suppliers.get(String(payment.supplierId))?.name || "Tedarikçi belirtilmedi", amountKurus: payment.amountKurus,
         reason: payment.reversalReason || "—", actorName: payment.reversedByName || payment.reversedBy || "—", removedAt: payment.reversedAt,
-        ledgerEntryId: payment.reversalLedgerEntryId || ""
+        ledgerEntryId: payment.reversalLedgerEntryId || "", status: "reversed",
+        canRestore: hasCapability(actor, "payment.create") && hasCapability(actor, "payment.reverse"),
+        canPurge: hasCapability(actor, "payment.reverse")
       });
     }
     for (const entry of hasCapability(actor, "accounting.read") ? procurement.ledgerEntries || [] : []) {
-      if (entry.type !== "reversal" || ["payment_reversal", "shipment_removal"].includes(entry.sourceType)) continue;
+      if (entry.type !== "reversal" || ["payment_reversal", "shipment_removal"].includes(entry.sourceType) || entry.trashPurgedAt || entry.restoredEntryId) continue;
       if (actor.type !== "admin" && ledgerBranchId(entry, data, procurement) !== actorBranchId(actor)) continue;
       records.push({
         id: entry.id, type: "ledger", title: "Cari ters kayıt", supplierId: entry.supplierId,
         supplierName: suppliers.get(String(entry.supplierId))?.name || "Tedarikçi belirtilmedi", amountKurus: Math.abs(Number(entry.amountKurus || 0)),
         amountType: entry.amountKurus > 0 ? "debt" : "payment",
-        reason: entry.note || "—", actorName: actorNames.get(String(entry.createdBy || "")) || entry.createdBy || "—", removedAt: entry.createdAt, ledgerEntryId: entry.id
+        reason: entry.note || "—", actorName: actorNames.get(String(entry.createdBy || "")) || entry.createdBy || "—", removedAt: entry.createdAt, ledgerEntryId: entry.id,
+        status: "reversed", canRestore: hasCapability(actor, "accounting.post") && hasCapability(actor, "accounting.reverse")
+          && (!entry.shipmentId || !(data.workforceShipments || []).find((shipment) => shipment.id === entry.shipmentId)?.removedAt),
+        canPurge: hasCapability(actor, "accounting.reverse")
       });
     }
     return {
@@ -1567,6 +1582,10 @@ function createProcurementService(options = {}) {
       if (type === "shipment") {
         const shipment = findVisibleShipment(data, actor, recordId);
         if (!shipment.removedAt) throw fail("Yalnız Çöp Kutusu'ndaki sevkiyat kalıcı silinebilir.", 409, "SHIPMENT_NOT_IN_TRASH");
+        if (procurement.ledgerEntries.some((entry) => entry.shipmentId === shipment.id
+          || ["workforce_shipment", "shipment_removal"].includes(entry.sourceType) && entry.sourceId === shipment.id)) {
+          throw fail("Finansal geçmişi bulunan sevkiyat kalıcı silinemez.", 409, "FINANCIAL_HISTORY_PROTECTED");
+        }
         const itemIds = new Set((shipment.items || []).map((item) => String(item.id || "")).filter(Boolean));
         let unlinkedDocuments = 0;
         for (const document of procurement.documents || []) {
@@ -1599,12 +1618,12 @@ function createProcurementService(options = {}) {
         const payment = findById(procurement.payments, recordId, "Ödeme");
         assertPaymentVisibility(payment, actor);
         if (payment.status !== "reversed") throw fail("Yalnız Çöp Kutusu'ndaki ödeme kalıcı silinebilir.", 409, "PAYMENT_NOT_IN_TRASH");
-        const ledgerIds = new Set([payment.ledgerEntryId, payment.reversalLedgerEntryId].map(String).filter(Boolean));
-        procurement.ledgerEntries = procurement.ledgerEntries.filter((entry) => !ledgerIds.has(String(entry.id)));
-        procurement.payments = procurement.payments.filter((item) => String(item.id) !== String(payment.id));
+        if (payment.restoredPaymentId) throw fail("Geri alınmış ödeme Çöp Kutusu'nda değil.", 409, "PAYMENT_NOT_IN_TRASH");
+        payment.trashPurgedAt = payment.trashPurgedAt || isoNow(now);
+        payment.trashPurgedBy = actor.id;
         return helpers.result("payment", payment.id, { purged: true, type, id: payment.id }, {
           branchId: payment.branchId,
-          removedLedgerEntries: ledgerIds.size
+          removedLedgerEntries: 0, auditPreserved: true
         });
       }
 
@@ -1613,12 +1632,75 @@ function createProcurementService(options = {}) {
       if (reversal.type !== "reversal" || ["payment_reversal", "shipment_removal"].includes(reversal.sourceType)) {
         throw fail("Yalnız bağımsız Çöp Kutusu ters kaydı kalıcı silinebilir.", 409, "LEDGER_ENTRY_NOT_IN_TRASH");
       }
-      const ledgerIds = new Set([reversal.id, reversal.reversalOf].map(String).filter(Boolean));
-      procurement.ledgerEntries = procurement.ledgerEntries.filter((entry) => !ledgerIds.has(String(entry.id)));
+      if (reversal.restoredEntryId) throw fail("Geri alınmış hareket Çöp Kutusu'nda değil.", 409, "LEDGER_ENTRY_NOT_IN_TRASH");
+      reversal.trashPurgedAt = reversal.trashPurgedAt || isoNow(now);
+      reversal.trashPurgedBy = actor.id;
       return helpers.result("ledgerEntry", reversal.id, { purged: true, type, id: reversal.id }, {
         branchId: ledgerBranchId(reversal, data, procurement),
-        removedLedgerEntries: ledgerIds.size
+        removedLedgerEntries: 0, auditPreserved: true
       });
+    });
+  }
+
+  async function restoreTrashRecord(actor, recordType, recordId, input, mutation) {
+    const type = String(recordType || "");
+    if (!["payment", "ledger"].includes(type)) throw fail("Bu kayıt finansal geri alma işlemine uygun değil.", 422, "INVALID_TRASH_RECORD_TYPE");
+    requireCapability(actor, "accounting.read");
+    requireCapability(actor, type === "payment" ? "payment.reverse" : "accounting.reverse");
+    requireCapability(actor, type === "payment" ? "payment.create" : "accounting.post");
+    return mutate(`${type}.trash.restore`, actor, mutation, (data, procurement, helpers) => {
+      const payment = type === "payment" ? findById(procurement.payments, recordId, "Ödeme") : null;
+      if (payment) assertPaymentVisibility(payment, actor);
+      const reversal = findById(procurement.ledgerEntries, payment ? payment.reversalLedgerEntryId : recordId, "Cari ters kayıt");
+      assertLedgerVisibility(data, procurement, reversal, actor);
+      if (reversal.type !== "reversal" || (payment ? payment.status !== "reversed" : ["payment_reversal", "shipment_removal"].includes(reversal.sourceType))) {
+        throw fail("Kayıt geri almaya uygun değil.", 409, "LEDGER_ENTRY_NOT_IN_TRASH");
+      }
+      if (reversal.trashPurgedAt || payment?.trashPurgedAt) throw fail("Kalıcı kaldırılmış kayıt geri alınamaz.", 409, "TRASH_RECORD_PURGED");
+      const priorId = reversal.restoredEntryId;
+      if (priorId) return helpers.result("ledgerEntry", priorId, { alreadyRestored: true, ledgerEntry: findById(procurement.ledgerEntries, priorId, "Cari hareket") });
+      const original = findById(procurement.ledgerEntries, reversal.reversalOf, "Cari hareket");
+      assertLedgerVisibility(data, procurement, original, actor);
+      const shipment = original.shipmentId ? findVisibleShipment(data, actor, original.shipmentId) : null;
+      if (shipment && (shipment.removedAt || shipment.accountingStatus !== "reversed")) throw fail("Sevkiyat geri almaya uygun değil.", 409, "SHIPMENT_STATE_CONFLICT");
+      if (original.documentId) {
+        const document = findById(procurement.documents, original.documentId, "Belge");
+        assertDocumentVisibility(data, document, actor);
+        if (document.archivedAt) throw fail("Arşivlenmiş belge geri alınan harekete bağlanamaz.", 409, "DOCUMENT_ARCHIVED");
+      }
+      const timestamp = isoNow(now);
+      const restored = {
+        ...original, id: createId("ledger"), reversalOf: "", reinstatementOf: original.id, restoresReversalId: reversal.id,
+        note: text(input && input.reason, 1000) || original.note || "Çöp Kutusu'ndan geri alındı",
+        balanceAfterKurus: addKurus(balanceForSupplier(procurement.ledgerEntries, original.supplierId), original.amountKurus),
+        createdAt: timestamp, createdBy: actor.id, idempotencyKey: helpers.requestId,
+        trashPurgedAt: null, trashPurgedBy: "", restoredEntryId: ""
+      };
+      let restoredPayment = null;
+      if (payment) {
+        restoredPayment = { ...payment, id: createId("payment"), ledgerEntryId: restored.id, status: "recorded",
+          reinstatementOf: payment.id, restoresReversalId: reversal.id, restoredPaymentId: "",
+          reversalLedgerEntryId: "", reversedAt: null, reversedBy: "", reversedByName: "", reversalReason: "",
+          trashPurgedAt: null, trashPurgedBy: "", createdAt: timestamp, createdBy: actor.id };
+        restored.sourceId = restoredPayment.id;
+        payment.restoredPaymentId = restoredPayment.id;
+        procurement.payments.push(restoredPayment);
+      }
+      procurement.ledgerEntries.push(restored);
+      reversal.restoredEntryId = restored.id;
+      reversal.restoredAt = timestamp;
+      reversal.restoredBy = actor.id;
+      let workforceRevision = 0;
+      if (shipment) {
+        Object.assign(shipment, { accountingStatus: "posted", accountingPostedAt: timestamp, accountingPostedBy: actor.id,
+          updatedAt: timestamp, revision: positiveRevision(shipment.revision) + 1 });
+        shipment.expectedRevision = shipment.revision;
+        shipment.accountingEntryIds = [...new Set([...(shipment.accountingEntryIds || []), restored.id])];
+        workforceRevision = touchWorkforceRevision(data);
+      }
+      return helpers.result(payment ? "payment" : "ledgerEntry", restoredPayment?.id || restored.id,
+        { restored: true, ledgerEntry: restored, ...(restoredPayment ? { payment: restoredPayment } : {}) },
+        { branchId: restored.branchId, workforceRevision, originalId: original.id, reversalId: reversal.id });
     });
   }
 
@@ -1981,6 +2063,7 @@ function createProcurementService(options = {}) {
     listTrash,
     listUsers,
     purgeTrashRecord,
+    restoreTrashRecord,
     publishExternalEvent,
     recordDocument,
     recordShipmentAccountingFailure,
@@ -2197,7 +2280,11 @@ function publicShipment(shipment, supplier, actor, procurement = null, financial
     canRemove: !shipment.removedAt && hasCapability(actor, "receipt.reject"),
     canDelete: shipmentCanBeDeleted(shipment, procurement)
       && (hasCapability(actor, "receipt.reject") || hasCapability(actor, "receipt.create") && canEditShipment(actor, shipment)),
-    canAccount: !shipment.removedAt && !["taslak", "reddedildi"].includes(shipment.status) && shipment.accountingStatus !== "posted"
+    canAccountWithoutStock: !shipment.removedAt && !shipment.stockAppliedAt && !["taslak", "reddedildi"].includes(shipment.status)
+      && ["not_posted", "failed"].includes(shipment.accountingStatus || "not_posted")
+      && (["not_applied", "failed"].includes(shipment.stockStatus) || shipment.stockDecision === "declined")
+      && shipmentTotalKurus(shipment) > 0 && hasCapability(actor, "accounting.post"),
+    canAccount: !shipment.removedAt && !["taslak", "reddedildi"].includes(shipment.status) && !["posted", "reversed"].includes(shipment.accountingStatus)
       && hasCapability(actor, "accounting.post")
   };
 }

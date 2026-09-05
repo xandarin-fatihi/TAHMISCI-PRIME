@@ -16,6 +16,7 @@ export const state = {
   context: null, revision: 0, workforceRevision: 0, activeView: "dashboard", loaded: new Map(), eventSource: null,
   suppliers: [], productLinks: [], shipments: [], documents: [], ledgerEntries: [], payments: [], trash: [], users: [], auditEvents: [],
   ledgerSummary: null, ledgerFilterKey: "", ledgerDrilldown: "",
+  ledgerSelection: new Set(), trashSelection: new Set(), financeBusy: false, financeRequests: new Map(), financeMessage: "", trashMode: "all",
   notifications: [], unreadCount: 0,
   dashboard: null, settings: null, accessTemplates: [], sectionDefinitions: [], sectionAccess: Object.create(null), filters: Object.create(null), detail: null,
   supplierWorkspace: { supplierId: "", productLinks: [], independentProducts: [], loading: false, returnScrollY: 0 },

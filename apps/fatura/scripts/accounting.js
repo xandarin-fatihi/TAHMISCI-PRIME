@@ -1,18 +1,20 @@
-import { CAPABILITIES, escapeHtml, financeValues, has, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260905-finance-mobile-upload-v1";
+import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260905-finance-mobile-upload-v1";
 
 export function renderLedger() {
   const supplierId = String(state.filters.ledgerSupplier || "");
   const dateFilter = String(state.filters.ledgerDate || "");
-  const entries = state.ledgerEntries;
+  const entries = state.ledgerEntries.filter((entry) => entry.type !== "reversal" && !entry.reversalOf && !entry.reversed);
+  const visibleIds = new Set(entries.filter(ledgerReversalTarget).map((entry) => entry.id));
+  for (const id of state.ledgerSelection) if (!visibleIds.has(id)) state.ledgerSelection.delete(id);
   const summary = state.ledgerSummary || {};
   const mode = state.ledgerDrilldown;
   const titles = { debt: "Güncel Borç", payments: "Yapılan Ödemeler", remaining: "Kalan Ödemeler" };
   const rows = mode === "payments" ? summary.activePayments || [] : mode === "remaining" ? summary.openObligations || [] : summary.obligations || [];
   const detailPanel = titles[mode] ? `<article class="panel-card finance-drilldown"><div class="panel-head"><div><h2>${titles[mode]}</h2><p>Seçili tedarikçi ve tarih kapsamındaki ${rows.length} kayıt.</p></div><button type="button" class="row-button" data-action="close-ledger-drilldown">Kapat</button></div>${rows.length ? `<div class="finance-list">${rows.map((item) => mode === "payments" ? paymentRow(item) : debtRow(item, mode)).join("")}</div>` : empty("Kayıt bulunmuyor", "Seçili filtrelerde bu kapsamda hareket yok.")}</article>` : "";
-  return `<div class="section-toolbar"><div class="filters ledger-filters"><label><span>Tedarikçi</span><select class="toolbar-control" id="ledger-supplier"><option value="">Tüm tedarikçiler</option>${state.suppliers.map((item) => `<option value="${escapeHtml(item.id)}" ${supplierId === item.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label><label><span>Tarih</span><input class="toolbar-control" id="ledger-date" type="date" value="${escapeHtml(dateFilter)}"></label></div><div class="toolbar-actions"><button class="ui-button ui-button--secondary" type="button" data-action="export-ledger">Excel Çıktı Al</button>${has(CAPABILITIES.paymentCreate) ? '<button class="ui-button ui-button--primary" data-action="new-payment">Ödeme gir</button>' : ""}</div></div>
+  return `<div class="section-toolbar"><div class="filters ledger-filters"><label><span>Tedarikçi</span><select class="toolbar-control" id="ledger-supplier"><option value="">Tüm tedarikçiler</option>${state.suppliers.map((item) => `<option value="${escapeHtml(item.id)}" ${supplierId === item.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label><label><span>Tarih</span><input class="toolbar-control" id="ledger-date" type="date" value="${escapeHtml(dateFilter)}"></label></div><div class="toolbar-actions"><button class="ui-button ui-button--secondary" type="button" data-action="finance-trash">Çöp Kutusu</button><button class="ui-button ui-button--secondary" type="button" data-action="export-ledger">Excel Çıktı Al</button>${has(CAPABILITIES.paymentCreate) ? '<button class="ui-button ui-button--primary" data-action="new-payment">Ödeme gir</button>' : ""}</div></div>
     <div class="metric-grid metric-grid--ledger">${[["debt", "debtKurus", "debt"], ["payments", "paymentKurus", "payment"], ["remaining", "remainingKurus", "remaining"]].map(([key, field, color]) => `<button class="metric-card metric-card--button" type="button" data-action="open-ledger-drilldown" data-ledger-mode="${key}" aria-pressed="${mode === key}"><span>${titles[key]}</span><strong class="finance-${color}">${trMoney(summary[field])}</strong><small>Detayları görüntüle</small></button>`).join("")}</div>
-    ${detailPanel}
-    ${entries.length ? `<article class="panel-card table-card"><div class="table-wrap"><table class="data-table"><thead><tr><th>Tarih</th><th>Tedarikçi</th><th>Tür</th><th>Açıklama</th><th class="right">Borç</th><th class="right">Ödeme / Alacak</th><th class="right">Hareket sonrası bakiye</th><th></th></tr></thead><tbody>${entries.map(ledgerRow).join("")}</tbody></table></div></article>` : empty("Cari hareket yok", "Seçilen tedarikçi ve tarihte cari hareket bulunmuyor.")}`;
+    ${detailPanel}${financeSelectionToolbar("ledger")}<p class="result-meta" role="status">${escapeHtml(state.financeMessage)}</p>
+    ${entries.length ? `<article class="panel-card table-card"><div class="table-wrap"><table class="data-table finance-selection-table"><thead><tr><th class="finance-select-cell"><input type="checkbox" data-finance-select-all="ledger" aria-label="Görünen cari hareketlerin tümünü seç" ${state.financeBusy ? "disabled" : ""}></th><th>Tarih</th><th>Tedarikçi</th><th>Tür</th><th>Açıklama</th><th class="right">Borç</th><th class="right">Ödeme / Alacak</th><th class="right">Hareket sonrası bakiye</th><th></th></tr></thead><tbody>${entries.map(ledgerRow).join("")}</tbody></table></div></article>` : empty("Cari hareket yok", "Seçilen tedarikçi ve tarihte cari hareket bulunmuyor.")}`;
 }
 
 export function paymentFormBody() {
@@ -20,8 +22,42 @@ export function paymentFormBody() {
 }
 
 export function renderTrash() {
-  const records = (state.trash || []).slice().sort((left, right) => String(right.removedAt || "").localeCompare(String(left.removedAt || "")));
-  return records.length ? `<article class="panel-card table-card trash-table-card"><div class="table-wrap"><table class="data-table data-table--compact"><thead><tr><th>Tür</th><th>Tedarikçi</th><th>Tutar</th><th>İşlem / Açıklama</th><th>Neden</th><th>İşlemi yapan</th><th>Tarih</th><th>İşlem</th></tr></thead><tbody>${records.map(trashRow).join("")}</tbody></table></div></article>` : empty("Çöp Kutusu boş", "Kaldırılan veya ters çevrilen kayıt bulunmuyor.");
+  const financial = state.trashMode === "finance";
+  const records = visibleTrashRecords();
+  const ids = new Set(records.map((record) => `${record.type}:${record.id}`));
+  for (const id of state.trashSelection) if (!ids.has(id)) state.trashSelection.delete(id);
+  return `${financial ? '<div class="section-toolbar"><h2>Cari Çöp Kutusu</h2><button class="ui-button ui-button--secondary" type="button" data-action="finance-trash-back">Cari Hesaba Dön</button></div>' : ""}${financeSelectionToolbar("trash")}<p class="result-meta" role="status">${escapeHtml(state.financeMessage)}</p>${records.length ? `<article class="panel-card table-card trash-table-card"><div class="table-wrap"><table class="data-table data-table--compact finance-selection-table"><thead><tr><th class="finance-select-cell"><input type="checkbox" data-finance-select-all="trash" aria-label="Görünen çöp kayıtlarının tümünü seç" ${state.financeBusy ? "disabled" : ""}></th><th>Tür</th><th>Tedarikçi</th><th>Tutar</th><th>İşlem / Açıklama</th><th>Neden</th><th>İşlemi yapan</th><th>Tarih</th><th>Durum / İşlem</th></tr></thead><tbody>${records.map((record) => trashRow(record).replace('<tr>', `<tr><td class="finance-select-cell" data-label="Seç">${["ledger", "payment"].includes(record.type) ? `<input type="checkbox" data-trash-select="${escapeHtml(`${record.type}:${record.id}`)}" aria-label="${escapeHtml(record.supplierName)} ${escapeHtml(record.title)} seç" ${state.trashSelection.has(`${record.type}:${record.id}`) ? "checked" : ""} ${state.financeBusy ? "disabled" : ""}>` : ""}</td>`)).join("")}</tbody></table></div></article>` : empty("Çöp Kutusu boş", "Kaldırılan veya ters çevrilen kayıt bulunmuyor.")}`;
+}
+
+export function visibleTrashRecords() {
+  return (state.trash || []).filter((record) => state.trashMode !== "finance" || (["ledger", "payment"].includes(record.type)
+    && (!state.filters.ledgerSupplier || String(record.supplierId) === String(state.filters.ledgerSupplier))
+    && (!state.filters.ledgerDate || String(record.removedAt || "").slice(0, 10) === state.filters.ledgerDate)))
+    .sort((left, right) => String(right.removedAt || "").localeCompare(String(left.removedAt || "")));
+}
+
+export function ledgerReversalTarget(entry) {
+  if (!entry || entry.type === "reversal" || entry.reversalOf || entry.reversed || !hasSection("ledger", "full")) return null;
+  if (entry.sourceType === "payment" || entry.type === "payment") {
+    const payment = state.payments.find((item) => item.id === entry.sourceId || item.ledgerEntryId === entry.id);
+    return payment && payment.status !== "reversed" && has(CAPABILITIES.paymentReverse) ? `/payments/${encodeURIComponent(payment.id)}/reverse` : null;
+  }
+  if (!has(CAPABILITIES.accountingReverse)) return null;
+  const shipmentId = entry.shipmentId || (entry.sourceType === "workforce_shipment" ? entry.sourceId : "");
+  return shipmentId ? `/shipments/${encodeURIComponent(shipmentId)}/reverse-accounting` : `/ledger/${encodeURIComponent(entry.id)}/reverse`;
+}
+
+function financeSelectionToolbar(kind) {
+  const selected = kind === "ledger" ? state.ledgerSelection : state.trashSelection;
+  return `<div class="finance-selection-toolbar" data-finance-toolbar="${kind}" ${selected.size ? "" : "hidden"}><strong data-finance-count>${selected.size} kayıt seçildi</strong><div class="toolbar-actions">${kind === "ledger" ? '<button class="ui-button ui-button--danger" type="button" data-action="finance-bulk-reverse">Çöp Kutusuna Taşı</button>' : '<button class="ui-button ui-button--secondary" type="button" data-action="finance-bulk-restore">Seçilenleri Geri Al</button><button class="ui-button ui-button--danger" type="button" data-action="finance-bulk-purge">Seçilenleri Kalıcı Kaldır</button>'}<button class="ui-button ui-button--secondary" type="button" data-action="finance-clear-selection">Seçimi Kaldır</button></div></div>`;
+}
+
+export function supplierCariFormBody() {
+  const kinds = [];
+  if (has(CAPABILITIES.accountingPost)) kinds.push(["debt", "Borç Girişi"]);
+  if (has(CAPABILITIES.paymentCreate)) kinds.push(["payment", "Yapılan Ödeme"]);
+  if (has(CAPABILITIES.accountingPost)) kinds.push(["opening", "Açılış / Düzeltme Kaydı"]);
+  return `<div class="form-grid"><label class="span-2">İşlem Türü<select name="cariKind" required>${kinds.map(([id, label]) => `<option value="${id}">${label}</option>`).join("")}</select></label><label>Tutar (₺)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Tarih<input name="transactionDate" type="date" value="${today()}" required></label><label class="span-2">Açıklama / Not<textarea name="note" maxlength="1000"></textarea></label>${has(CAPABILITIES.documentsUpload) ? '<label class="span-2">Belge<input name="cariFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"><small id="cariDocumentHint"></small></label>' : '<label class="span-2">Ödeme belgesi<select name="cariDocumentId"><option value="">Belge seçin</option>' + state.documents.filter((item) => !item.archivedAt && (!item.supplierId || item.supplierId === state.supplierWorkspace.supplierId)).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.originalName)}</option>`).join("") + '</select><small id="cariDocumentHint"></small></label>'}</div>`;
 }
 
 export function ledgerEntryFormBody() {
@@ -55,7 +91,7 @@ function ledgerRow(entry) {
   const isDebt = Number(entry.amountKurus || 0) < 0;
   const active = entry.type !== "reversal" && !entry.reversalOf && !entry.reversed;
   const balance = Number(entry.runningBalanceKurus || 0);
-  return `<tr><td data-label="Tarih">${trDate(entry.transactionDate || entry.createdAt, true)}</td><td data-label="Tedarikçi">${escapeHtml(supplier && supplier.name || entry.supplierId)}</td><td data-label="Tür">${escapeHtml(typeLabel(entry.type))}${entry.reversed ? ' · Terslendi' : ''}</td><td data-label="Açıklama">${escapeHtml(entry.note || entry.sourceType || "—")}</td><td data-label="Borç" class="right ${active && isDebt ? "finance-debt" : ""}">${isDebt ? trMoney(Math.abs(entry.amountKurus)) : "—"}</td><td data-label="Ödeme / Alacak" class="right ${active && !isDebt ? "finance-payment" : ""}">${!isDebt ? trMoney(entry.amountKurus) : "—"}</td><td data-label="Hareket sonrası bakiye" class="right ${balance > 0 ? "finance-payment" : "finance-remaining"}">${balance > 0 ? "Alacak: " : "Borç: "}${trMoney(Math.abs(balance))}</td><td class="actions">${entryActions(entry)}</td></tr>`;
+  return `<tr><td class="finance-select-cell" data-label="Seç">${ledgerReversalTarget(entry) ? `<input type="checkbox" data-ledger-select="${escapeHtml(entry.id)}" aria-label="${escapeHtml(supplier?.name || entry.supplierId)} ${escapeHtml(typeLabel(entry.type))} seç" ${state.ledgerSelection.has(entry.id) ? "checked" : ""} ${state.financeBusy ? "disabled" : ""}>` : ""}</td><td data-label="Tarih">${trDate(entry.transactionDate || entry.createdAt, true)}</td><td data-label="Tedarikçi">${escapeHtml(supplier && supplier.name || entry.supplierId)}</td><td data-label="Tür">${escapeHtml(typeLabel(entry.type))}${entry.reversed ? ' · Terslendi' : ''}</td><td data-label="Açıklama">${escapeHtml(entry.note || entry.sourceType || "—")}</td><td data-label="Borç" class="right ${active && isDebt ? "finance-debt" : ""}">${isDebt ? trMoney(Math.abs(entry.amountKurus)) : "—"}</td><td data-label="Ödeme / Alacak" class="right ${active && !isDebt ? "finance-payment" : ""}">${!isDebt ? trMoney(entry.amountKurus) : "—"}</td><td data-label="Hareket sonrası bakiye" class="right ${balance > 0 ? "finance-payment" : "finance-remaining"}">${balance > 0 ? "Alacak: " : "Borç: "}${trMoney(Math.abs(balance))}</td><td class="actions">${entryActions(entry, false)}</td></tr>`;
 }
 function paymentRow(payment) {
   return `<article class="shipment-archive-row finance-row"><div class="shipment-archive-row__main"><strong>${escapeHtml(supplierName(payment))}</strong><span>${trDate(payment.paymentDate || payment.createdAt)} · Ödeme kaydı</span><span>${escapeHtml(payment.note || "—")}</span></div><strong class="finance-payment">${trMoney(payment.amountKurus)}</strong><div class="shipment-archive-row__actions"><button class="row-button" type="button" data-open-payment="${escapeHtml(payment.id)}">Görüntüle</button>${payment.documentId ? `<button class="row-button" type="button" data-open-document="${escapeHtml(payment.documentId)}">Belge</button>` : ""}${has(CAPABILITIES.paymentReverse) ? `<button class="row-button danger" type="button" data-remove-payment="${escapeHtml(payment.id)}">Çöp Kutusu</button>` : ""}</div></article>`;
@@ -65,13 +101,13 @@ function debtRow(entry, mode) {
   return `<article class="shipment-archive-row finance-row"><div class="shipment-archive-row__main"><strong>${escapeHtml(supplierName(entry))}</strong><span>${trDate(entry.transactionDate || entry.createdAt)} · ${escapeHtml(entry.shipmentId ? `Sevkiyat ${entry.shipmentId}` : typeLabel(entry.type))}</span><span>${escapeHtml(entry.note || "—")}</span><span class="badge is-muted">${paymentStatusLabel(entry.paymentStatus)}</span></div>${mode === "remaining" ? financeValues({ debtKurus: entry.debtKurus, paymentKurus: entry.allocatedPaymentKurus, remainingKurus: entry.remainingKurus }) : `<strong class="finance-debt">${trMoney(entry.debtKurus)}</strong>`}<div class="shipment-archive-row__actions">${entryActions(entry)}</div></article>`;
 }
 
-function entryActions(entry) {
+function entryActions(entry, showRemove = true) {
   const active = entry.type !== "reversal" && !entry.reversalOf && !entry.reversed;
   const payment = entry.sourceType === "payment" ? state.payments.find((item) => item.id === entry.sourceId || item.ledgerEntryId === entry.id) : null;
   const view = entry.shipmentId ? `data-open-shipment="${escapeHtml(entry.shipmentId)}"` : payment ? `data-open-payment="${escapeHtml(payment.id)}"` : `data-open-ledger="${escapeHtml(entry.id)}"`;
   const remove = payment ? `data-remove-payment="${escapeHtml(payment.id)}"` : `data-trash-ledger="${escapeHtml(entry.id)}"`;
   const canRemove = payment ? has(CAPABILITIES.paymentReverse) && payment.status !== "reversed" : entry.sourceType !== "payment" && has(CAPABILITIES.accountingReverse);
-  return `<button class="row-button" type="button" ${view}>Görüntüle</button>${active && canRemove ? `<button class="row-button danger" type="button" ${remove}>Çöp Kutusu</button>` : ""}`;
+  return `<button class="row-button" type="button" ${view}>Görüntüle</button>${showRemove && active && canRemove ? `<button class="row-button danger" type="button" ${remove}>Çöp Kutusu</button>` : ""}`;
 }
 
 export function paymentDetail(payment) {
@@ -94,7 +130,16 @@ function allocationHistory(obligations) {
 }
 
 function supplierName(item) { return state.suppliers.find((supplier) => supplier.id === item.supplierId)?.name || item.supplierId || "Tedarikçi"; }
-function trashRow(record) { const isStock=record.type==="stock-product";const type=record.type==="shipment"?"Sevkiyat":record.type==="payment"?"Ödeme":isStock?"Stok ürünü":"Cari ters kayıt";const canPurge=isStock?has(CAPABILITIES.inventoryCatalogManage):record.type==="shipment"?has(CAPABILITIES.receiptReject):record.type==="payment"?has(CAPABILITIES.paymentReverse):has(CAPABILITIES.accountingReverse);const actions=canPurge?`${isStock?`<button class="row-button" type="button" data-restore-trash="${escapeHtml(record.id)}" data-trash-type="stock-product">Geri Al</button>`:""}<button class="row-button is-danger" type="button" data-purge-trash="${escapeHtml(record.id)}" data-trash-type="${escapeHtml(record.type)}">Kalıcı sil</button>`:"—";return `<tr><td data-label="Tür"><span class="badge is-muted">${type}</span></td><td data-label="Tedarikçi">${escapeHtml(record.supplierName||record.category||"Tedarikçi belirtilmedi")}</td><td data-label="Tutar" class="right ${record.type==="payment"?"finance-payment":record.amountType?`finance-${record.amountType}`:""}">${record.amountKurus?trMoney(record.amountKurus):"—"}</td><td data-label="İşlem / Açıklama"><strong>${escapeHtml(record.title||"Kaldırılmış kayıt")}</strong>${record.productCode?`<small>${escapeHtml(record.productCode)}</small>`:""}</td><td data-label="Neden">${escapeHtml(record.reason||"—")}</td><td data-label="İşlemi yapan">${escapeHtml(record.actorName||"—")}</td><td data-label="Tarih">${trDate(record.removedAt,true)}</td><td class="actions" data-label="İşlem">${actions}</td></tr>`; }
+function trashRow(record) {
+  const isStock = record.type === "stock-product";
+  const finance = ["ledger", "payment"].includes(record.type);
+  const type = record.type === "shipment" ? "Sevkiyat" : record.type === "payment" ? "Ödeme" : isStock ? "Stok ürünü" : "Cari ters kayıt";
+  const canPurge = isStock ? has(CAPABILITIES.inventoryCatalogManage) : finance ? record.canPurge && hasSection("trash") : record.canPurge !== false && has(CAPABILITIES.receiptReject);
+  const canRestore = isStock ? has(CAPABILITIES.inventoryCatalogManage) : record.canRestore && hasSection("ledger", "full");
+  const actions = `${canRestore ? `<button class="row-button" type="button" data-restore-trash="${escapeHtml(record.id)}" data-trash-type="${escapeHtml(record.type)}">Geri Al</button>` : ""}${canPurge ? `<button class="row-button is-danger" type="button" data-purge-trash="${escapeHtml(record.id)}" data-trash-type="${escapeHtml(record.type)}">Kalıcı Kaldır</button>` : ""}`;
+  return `<tr><td data-label="Tür"><span class="badge is-muted">${type}</span></td><td data-label="Tedarikçi">${escapeHtml(record.supplierName || record.category || "Tedarikçi belirtilmedi")}</td><td data-label="Tutar" class="right ${record.type === "payment" ? "finance-payment" : record.amountType ? `finance-${record.amountType}` : ""}">${record.amountKurus ? trMoney(record.amountKurus) : "—"}</td><td data-label="İşlem / Açıklama"><strong>${escapeHtml(record.title || "Kaldırılmış kayıt")}</strong></td><td data-label="Neden">${escapeHtml(record.reason || "—")}</td><td data-label="İşlemi yapan">${escapeHtml(record.actorName || "—")}</td><td data-label="Tarih">${trDate(record.removedAt, true)}</td><td class="actions" data-label="Durum / İşlem"><span class="badge is-muted">${finance ? "Terslendi" : "Kaldırıldı"}</span>${actions}</td></tr>`;
+}
+
 function userRow(user) { const access=user.faturaAccessEnabled!==false;const template=state.accessTemplates.find((item)=>item.key===user.faturaTemplate);const sectionAccess=user.faturaSectionAccess||{};const visible=access?Object.values(sectionAccess).filter((level)=>level&&level!=="off").length:0;const full=access?Object.values(sectionAccess).filter((level)=>level==="full").length:0;return `<tr><td data-label="Ad Soyad"><strong>${escapeHtml(user.name)}</strong></td><td data-label="Kullanıcı adı">@${escapeHtml(user.username)}</td><td data-label="Fatura erişimi"><span class="badge ${access?"is-success":"is-muted"}">${access?"Açık":"Kapalı"}</span></td><td data-label="Yetki türü / şablon">${escapeHtml(template&&template.label||user.faturaTemplate||user.faturaRole||"Özel Yetki")}</td><td data-label="Görünür bölüm" class="right">${visible}</td><td data-label="Tam yetkili bölüm" class="right">${full}</td><td class="actions"><button class="row-button" data-edit-user="${escapeHtml(user.id)}">Yetkileri Düzenle</button></td></tr>`; }
 function permissionSectionCard(definition, access, enabled){const level=String(access[definition.id]||"off");const open=level!=="off";const choices=(definition.levels||[]).filter((item)=>item!=="off");return `<article class="permission-section-card ${open?"is-open":""}" data-section-card="${escapeHtml(definition.id)}"><header><div><strong>${escapeHtml(definition.label)}</strong><small>${escapeHtml(definition.description||"")}</small></div><label class="permission-section-switch"><input type="checkbox" name="sectionEnabled" value="${escapeHtml(definition.id)}" data-section-toggle ${open?"checked":""} ${enabled?"":"disabled"}><span>${open?"Görünür":"Kapalı"}</span></label></header><fieldset data-section-levels ${open?"":"hidden"} ${enabled&&open?"":"disabled"}><legend>Yetki Seviyesi</legend>${choices.map((choice)=>`<label><input type="radio" name="sectionLevel:${escapeHtml(definition.id)}" value="${choice}" ${level===choice?"checked":""}><span>${levelLabel(choice)}</span></label>`).join("")}</fieldset></article>`}
 function levelLabel(level){return ({view:"Görüntüleyebilir",operate:"İşlem Yapabilir",full:"Tam Yetki"})[level]||level}

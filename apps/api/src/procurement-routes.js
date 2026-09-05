@@ -264,7 +264,7 @@ function registerProcurementRoutes(deps = {}) {
     res.json(await service.declineShipmentStock(req.procurementActor, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
-  app.post(`${API_ROOT}/shipments/:id/account-without-stock`, ...mutationMiddlewares, anySectionAccess(["shipments", "documents", "ledger"], "operate"), anyCapability(["receipt.approve", "accounting.post"]), asyncRoute(async (req, res) => {
+  app.post(`${API_ROOT}/shipments/:id/account-without-stock`, ...mutationMiddlewares, sectionAccess("ledger", "operate"), capability("accounting.post"), asyncRoute(async (req, res) => {
     const result = await withAuthoritativeProcurementRevision(service, req.procurementActor, mutationInput(req), (authoritativeMutation) =>
       service.accountShipmentWithoutStock(req.procurementActor, req.params.id, jsonBody(req), authoritativeMutation));
     res.status(result.idempotent ? 200 : 201).json(result);
@@ -375,12 +375,15 @@ function registerProcurementRoutes(deps = {}) {
     res.status(result.idempotent ? 200 : 201).json(result);
   }));
 
-  app.get(`${API_ROOT}/trash`, ...authenticated, sectionAccess("trash", "view"), anyCapability(["procurement.read", "accounting.read", "documents.read", "inventory.read"]), asyncRoute(async (req, res) => {
+  app.get(`${API_ROOT}/trash`, ...authenticated, anySectionAccess(["trash", "ledger"], "view"), anyCapability(["procurement.read", "accounting.read", "documents.read", "inventory.read"]), asyncRoute(async (req, res) => {
     res.json(await service.listTrash(req.procurementActor));
   }));
 
   app.post(`${API_ROOT}/trash/:type/:id/purge`, ...mutationMiddlewares, sectionAccess("trash", "view"), anyCapability(["receipt.reject", "payment.reverse", "accounting.reverse"]), asyncRoute(async (req, res) => {
     res.json(await service.purgeTrashRecord(req.procurementActor, req.params.type, req.params.id, mutationInput(req)));
+  }));
+  app.post(`${API_ROOT}/trash/:type/:id/restore`, ...mutationMiddlewares, sectionAccess("ledger", "full"), capability("accounting.read"), asyncRoute(async (req, res) => {
+    res.json(await service.restoreTrashRecord(req.procurementActor, req.params.type, req.params.id, jsonBody(req), mutationInput(req)));
   }));
 
   app.get(`${API_ROOT}/audit`, ...authenticated, sectionAccess("settings", "full"), capability("procurement.users.manage"), asyncRoute(async (req, res) => {

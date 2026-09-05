@@ -26,7 +26,7 @@ export function shipmentDetail(shipment, documents = [], ledgerEntries = []) {
       ${destinationSelect}
       ${shipment.canApprove ? '<button class="ui-button ui-button--primary" data-detail-action="approve-stock">Stoğu onayla</button>' : ""}
       ${shipment.canReject ? '<button class="ui-button ui-button--danger" data-detail-action="reject-shipment">Reddet</button>' : ""}
-      ${shipment.canAccount ? '<button class="ui-button ui-button--secondary" data-detail-action="account-shipment">Muhasebeleştir</button>' : ""}
+      ${shipment.canAccountWithoutStock ? '<button class="ui-button ui-button--secondary" type="button" data-detail-action="account-without-stock">Cari Hesaba İşle</button>' : ""}${shipment.canAccount ? '<button class="ui-button ui-button--secondary" data-detail-action="account-shipment">Muhasebeleştir</button>' : ""}
       ${has(CAPABILITIES.documentsUpload) ? '<button class="ui-button ui-button--secondary" data-detail-action="upload-shipment-document">Belge ekle</button>' : ""}
       ${shipment.canEdit && shipment.status === "taslak" && has(CAPABILITIES.receiptSubmit) ? '<button class="ui-button ui-button--primary" data-detail-action="submit-shipment">Yönetici onayına gönder</button>' : ""}
       ${shipment.canDelete ? '<button class="ui-button ui-button--danger" data-detail-action="delete-shipment">Sil</button>' : ""}

@@ -250,3 +250,13 @@
   .supplier-stock-bulk__check{min-width:36px;grid-row:1/5}
   .supplier-stock-bulk__conversion{grid-column:2/-1}
 }
+/* Cari toplu seçim ve tedarikçi işlemleri */
+.finance-selection-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 16px;margin:12px 0;border:1px solid #dfcbbb;border-radius:14px;background:#faf3eb}
+.finance-selection-toolbar[hidden]{display:none}
+.finance-selection-toolbar .toolbar-actions{display:flex;gap:8px;flex-wrap:wrap}
+.data-table .finance-select-cell{width:44px;min-width:44px;text-align:center}
+.finance-select-cell input[type="checkbox"]{width:20px;height:20px;cursor:pointer;accent-color:#6b351f}
+.finance-select-cell input:disabled{cursor:default}
+.supplier-workspace__actions{flex-wrap:wrap}
+@media(max-width:600px){.finance-selection-toolbar{align-items:stretch}.finance-selection-toolbar .toolbar-actions{width:100%}.finance-selection-toolbar .ui-button{flex:1 1 145px;white-space:normal}.data-table .finance-select-cell{width:auto;text-align:left}.supplier-workspace__actions>.ui-button{white-space:normal;min-width:0}}
+@media(max-width:720px){.fatura-app .table-card .finance-selection-table thead{display:block}.finance-selection-table thead tr{display:block}.finance-selection-table thead th{display:none}.finance-selection-table thead th.finance-select-cell{display:flex;align-items:center;gap:10px;width:auto;padding:10px 12px}.finance-selection-table thead th.finance-select-cell::after{content:"Tümünü seç"}}

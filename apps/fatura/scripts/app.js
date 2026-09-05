@@ -1,10 +1,10 @@
 import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260905-finance-mobile-upload-v1";
-import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, updateRevision, value } from "./state.js?v=20260905-finance-mobile-upload-v1";
+import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260905-finance-mobile-upload-v1";
 import { renderDashboard } from "./dashboard.js?v=20260905-finance-mobile-upload-v1";
 import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260905-finance-mobile-upload-v1";
 import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260905-finance-mobile-upload-v1";
 import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260905-finance-mobile-upload-v1";
-import { ledgerDetail, ledgerEntryFormBody, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, userAccessFormBody } from "./accounting.js?v=20260905-finance-mobile-upload-v1";
+import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260905-finance-mobile-upload-v1";
 import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260905-finance-mobile-upload-v1";
 import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260905-finance-mobile-upload-v1";
 import { confirmAction, requestText } from "./ui-dialogs.js?v=20260905-finance-mobile-upload-v1";
@@ -127,7 +127,7 @@ async function resolveContext() {
 function showAuth(message = "") {
   stopEvents();
   if (detailDialog.open) closeDetailDialog();
-  state.ledgerEntries = []; state.payments = []; state.ledgerSummary = null;
+  state.ledgerEntries = []; state.payments = []; state.ledgerSummary = null; state.ledgerSelection.clear(); state.trashSelection.clear(); state.financeRequests.clear(); state.financeMessage = ""; state.trashMode = "all";
   state.ledgerFilterKey = ""; state.ledgerDrilldown = ""; state.loaded.delete("ledger");
   disconnectStockEvents();
   resetStockState();
@@ -203,6 +203,7 @@ async function setView(viewId, options = {}) {
   const view = visibleViews.find((item) => item.id === viewId);
   if (!view) return;
   if (state.activeView === "stock" && viewId !== "stock") disconnectStockEvents();
+  if (state.activeView !== viewId) { state.ledgerSelection.clear(); state.trashSelection.clear(); state.financeMessage = ""; state.trashMode = "all"; }
   state.activeView = viewId;
   const pageHeading = document.querySelector(".page-heading");
   if (pageHeading) pageHeading.hidden = false;
@@ -284,7 +285,7 @@ async function loadView(view, force = false) {
       loadShipments(force),
       loadDocuments(force)
     ]),
-    ledger: () => Promise.all([loadSuppliers(force), loadLedger(force)]),
+    ledger: () => state.trashMode === "finance" ? loadTrash(force) : Promise.all([loadSuppliers(force), loadLedger(force)]),
     trash: () => loadTrash(force),
     users: () => loadUsers(force),
     stock: () => loadStockView({ force }),
@@ -321,7 +322,7 @@ const loadShipments = (force) => cachedLoad("shipments", () => api("/shipments")
 const loadDocuments = (force) => cachedLoad("documents", () => api("/documents"), (p) => { state.documents = p.documents || []; }, force);
 const loadLedger = (force) => {
   const query = new URLSearchParams({ supplierId: state.filters.ledgerSupplier || "", date: state.filters.ledgerDate || "" }).toString();
-  if (state.ledgerFilterKey !== query) { state.loaded.delete("ledger"); state.ledgerSummary = null; }
+  if (state.ledgerFilterKey !== query) { state.loaded.delete("ledger"); state.ledgerSummary = null; state.ledgerSelection.clear(); state.trashSelection.clear(); state.financeMessage = ""; }
   state.ledgerFilterKey = query;
   return cachedLoad("ledger", () => api(`/ledger?${query}`), (p) => {
     state.ledgerEntries = p.entries || []; state.payments = p.payments || []; state.ledgerSummary = p.summary || null;
@@ -373,7 +374,8 @@ function renderActiveView() {
     return;
   }
   const renderer = { dashboard: renderDashboard, suppliers: renderSuppliers, documents: renderDocuments, ledger: renderLedger, trash: renderTrash, users: renderUsers }[state.activeView];
-  content.innerHTML = renderer ? renderer() : '<div class="empty-state"><p>Bu bölüm kullanılamıyor.</p></div>';
+  content.innerHTML = state.activeView === "ledger" && state.trashMode === "finance" ? renderTrash() : renderer ? renderer() : '<div class="empty-state"><p>Bu bölüm kullanılamıyor.</p></div>';
+  updateFinanceSelectionUI();
 }
 
 function renderStockExcelView() {
@@ -785,6 +787,8 @@ function handleFilterInput(event) {
 }
 
 function handleChange(event) {
+  if (event.target.matches("[data-ledger-select],[data-trash-select],[data-finance-select-all]")) return changeFinanceSelection(event.target);
+  if (event.target.name === "cariKind") return updateSupplierCariForm();
   if (supplierStockBulk && entityForm.dataset.mode === "supplier-stock-bulk-add") {
     if (supplierStockBulk.busy) return;
     if (event.target.id === "supplier-stock-bulk-category") {
@@ -849,8 +853,9 @@ function handleChange(event) {
     if (event.target.files?.length && entityForm.elements[otherName]) entityForm.elements[otherName].value = "";
     return updateSupplierShipmentSubmitState();
   }
-  if (["file", "paymentFile"].includes(event.target.name) && event.target.form === entityForm) {
+  if (["file", "paymentFile", "cariFile"].includes(event.target.name) && event.target.form === entityForm) {
     retainUploadFile(event.target, event.target.name);
+    if (event.target.name === "cariFile") updateSupplierCariForm();
     return;
   }
   if (event.target.id === "archive-supplier-filter") { state.filters.documentsSupplier = event.target.value; return renderActiveView(); }
@@ -1130,6 +1135,13 @@ function updatePermissionSectionCard(card) {
 }
 
 function handleAction(button, action) {
+  if (action === "supplier-cari") return openSupplierCariForm();
+  if (action === "finance-trash") { state.trashMode = "finance"; state.ledgerSelection.clear(); state.trashSelection.clear(); state.financeMessage = ""; return setView("ledger", { force: true }); }
+  if (action === "finance-trash-back") { state.trashMode = "all"; state.trashSelection.clear(); state.financeMessage = ""; return setView("ledger", { force: true }); }
+  if (action === "finance-clear-selection") { if (state.financeBusy) return; state.ledgerSelection.clear(); state.trashSelection.clear(); return updateFinanceSelectionUI(); }
+  if (action === "finance-bulk-reverse") return runFinanceBulk("reverse");
+  if (action === "finance-bulk-restore") return runFinanceBulk("restore");
+  if (action === "finance-bulk-purge") return runFinanceBulk("purge");
   if (action === "new-supplier") return openSupplierForm();
   if (action === "new-link") return openLinkForm();
   if (action === "new-shipment") return openShipmentForm();
@@ -1163,7 +1175,7 @@ function normalizedDialogHeading(value) {
 
 function openEntityDialog(config) {
   if (config.mode !== "supplier-stock-bulk-add") supplierStockBulk = null;
-  entityUploadState = ["supplier-shipment-create", "document-upload", "payment-create"].includes(config.mode)
+  entityUploadState = ["supplier-shipment-create", "document-upload", "payment-create", "supplier-cari"].includes(config.mode)
     ? { files: new Map(), operations: new Map(), shipment: null } : null;
   if (entityUploadState) entityForm.dataset.pwaDirty = "true";
   else delete entityForm.dataset.pwaDirty;
@@ -1489,6 +1501,139 @@ function openStockFailureAccountingDecision(shipmentId, message) {
   });
 }
 
+function openNoStockAccountingDecision(shipment) {
+  if (!shipment || !has(CAPABILITIES.accountingPost) || !hasSection("ledger", "operate")) return;
+  const total = (shipment.items || []).reduce((sum, item) => sum + Number(item.totalKurus || 0), 0);
+  openEntityDialog({ mode: "shipment-account-without-stock", entityId: shipment.id,
+    title: "Cari hesaba işlensin mi?", description: "Sevkiyat stoğa aktarılmadı.",
+    submitLabel: "Evet, Cari Hesaba İşle", cancelLabel: "Hayır",
+    body: `<p>${trMoney(total)} tutarındaki bu sevkiyat tedarikçi borcu olarak Cari Hesaba işlensin mi?</p>` });
+}
+
+async function openSupplierCariForm() {
+  const supplierId = state.supplierWorkspace.supplierId;
+  const supplier = state.suppliers.find((item) => item.id === supplierId);
+  if (!supplier || !hasSection("ledger", "operate") || !(has(CAPABILITIES.accountingPost) || has(CAPABILITIES.paymentCreate))) return;
+  if (!has(CAPABILITIES.documentsUpload) && has(CAPABILITIES.documentsRead)) {
+    try { await loadDocuments(true); } catch (error) { return toast(error.message, true); }
+  }
+  openEntityDialog({ mode: "supplier-cari", entityId: supplierId, title: `${supplier.name} · Cari İşle`,
+    description: "Ürün veya sevkiyat oluşturmadan tedarikçinin cari hesabına kayıt girin.", submitLabel: "Cari İşle", body: supplierCariFormBody() });
+  updateSupplierCariForm();
+}
+
+function updateSupplierCariForm() {
+  if (entityForm.dataset.mode !== "supplier-cari") return;
+  const payment = entityForm.elements.cariKind.value === "payment";
+  const file = entityForm.elements.cariFile;
+  const documentSelect = entityForm.elements.cariDocumentId;
+  if (file) file.required = payment && !entityUploadState?.files.get("cariFile");
+  if (documentSelect) documentSelect.required = payment;
+  document.getElementById("cariDocumentHint").textContent = payment ? "Ödeme için belge zorunludur." : "Belge isteğe bağlıdır.";
+}
+
+async function saveSupplierCari(data) {
+  const supplierId = entityForm.dataset.entityId;
+  const kind = value(data, "cariKind");
+  const amountKurus = integerKurus(value(data, "amount"));
+  const transactionDate = value(data, "transactionDate");
+  if (!Number.isSafeInteger(amountKurus) || amountKurus <= 0) throw new Error("Pozitif bir tutar girin.");
+  if (!transactionDate) throw new Error("İşlem tarihi zorunludur.");
+  if (!["debt", "payment", "opening"].includes(kind)) throw new Error("İşlem türü geçersiz.");
+  let documentId = value(data, "cariDocumentId");
+  const file = entityUploadState?.files.get("cariFile") || data.get("cariFile");
+  if (file instanceof File && file.size > 0) {
+    const uploaded = await uploadDocument(file, { documentType: "diğer", supplierId, documentDate: transactionDate }, state.revision);
+    mutationComplete(uploaded, ["documents"]);
+    documentId = uploaded.document.id;
+  }
+  if (kind === "payment" && !documentId) throw new Error("Ödeme belgesi zorunludur.");
+  const payload = kind === "payment"
+    ? await uploadFormMutation("/payments", { supplierId, amountKurus, paymentDate: transactionDate, documentId, note: value(data, "note") })
+    : await uploadFormMutation("/ledger", { supplierId, type: kind === "opening" ? "opening_balance" : "adjustment", sourceType: kind === "opening" ? "opening_balance" : "manual_debt", amountKurus: -amountKurus, transactionDate, documentId, note: value(data, "note") });
+  mutationComplete(payload, ["ledger", "suppliers", "dashboard", "documents"]);
+}
+
+function changeFinanceSelection(input) {
+  if (state.financeBusy) return;
+  const kind = input.dataset.financeSelectAll || (input.hasAttribute("data-ledger-select") ? "ledger" : "trash");
+  const selection = kind === "ledger" ? state.ledgerSelection : state.trashSelection;
+  const rows = [...content.querySelectorAll(`[data-${kind}-select]`)];
+  if (input.dataset.financeSelectAll) {
+    for (const row of rows) { const id = row.dataset[kind + "Select"]; if (input.checked) selection.add(id); else selection.delete(id); }
+  } else {
+    const id = input.dataset[kind + "Select"];
+    if (input.checked) selection.add(id); else selection.delete(id);
+  }
+  updateFinanceSelectionUI();
+}
+
+function updateFinanceSelectionUI() {
+  for (const kind of ["ledger", "trash"]) {
+    const selection = kind === "ledger" ? state.ledgerSelection : state.trashSelection;
+    const rows = [...content.querySelectorAll(`[data-${kind}-select]`)];
+    rows.forEach((row) => { row.checked = selection.has(row.dataset[kind + "Select"]); row.disabled = state.financeBusy; });
+    const header = content.querySelector(`[data-finance-select-all="${kind}"]`);
+    const count = rows.filter((row) => row.checked).length;
+    if (header) { header.checked = rows.length > 0 && count === rows.length; header.indeterminate = count > 0 && count < rows.length; header.disabled = state.financeBusy || !rows.length; }
+    const toolbar = content.querySelector(`[data-finance-toolbar="${kind}"]`);
+    if (toolbar) {
+      toolbar.hidden = !count;
+      toolbar.querySelector("[data-finance-count]").textContent = `${count} kayıt seçildi`;
+      toolbar.querySelectorAll("button").forEach((button) => { button.disabled = state.financeBusy; });
+      if (kind === "trash") {
+        const selected = visibleTrashRecords().filter((record) => selection.has(`${record.type}:${record.id}`));
+        toolbar.querySelector('[data-action="finance-bulk-restore"]').disabled ||= !hasSection("ledger", "full") || !selected.some((record) => record.canRestore);
+        toolbar.querySelector('[data-action="finance-bulk-purge"]').disabled ||= !hasSection("trash") || !selected.some((record) => record.canPurge);
+      }
+    }
+  }
+  content.querySelectorAll("#ledger-supplier,#ledger-date").forEach((input) => { input.disabled = state.financeBusy; });
+}
+
+async function runFinanceBulk(action) {
+  if (state.financeBusy) return;
+  const selection = action === "reverse" ? state.ledgerSelection : state.trashSelection;
+  const targets = action === "reverse"
+    ? state.ledgerEntries.filter((entry) => selection.has(entry.id) && ledgerReversalTarget(entry)).map((entry) => ({ key: entry.id, path: ledgerReversalTarget(entry), allowed: true }))
+    : visibleTrashRecords().filter((record) => selection.has(`${record.type}:${record.id}`) && ["payment", "ledger"].includes(record.type))
+      .map((record) => ({ key: `${record.type}:${record.id}`, path: `/trash/${encodeURIComponent(record.type)}/${encodeURIComponent(record.id)}/${action}`, allowed: action === "restore" ? record.canRestore && hasSection("ledger", "full") : record.canPurge && hasSection("trash") }));
+  if (!targets.length) return;
+  state.financeBusy = true;
+  updateFinanceSelectionUI();
+  let succeeded = 0;
+  const failures = [];
+  try {
+    const title = action === "reverse" ? `${targets.length} cari hareketi Çöp Kutusuna taşınacak.` : action === "restore" ? `${targets.length} kayıt geri alınacak.` : `${targets.length} kayıt kalıcı kaldırılacak.`;
+    const reason = await requestText({ title, label: "Sebep", description: action === "reverse" ? "Seçilen hareketler ortak sebeple terslenecek; finansal geçmiş korunacak."
+      : action === "restore" ? "Yeni bir karşı hareket oluşturulacak; eski hareket ve ters kayıt korunacak." : "Kayıtlar Çöp Kutusu görünümünden kaldırılacak; finansal denetim geçmişi korunacak.",
+      confirmLabel: action === "reverse" ? `${targets.length} Kaydı Çöp Kutusuna Taşı` : action === "restore" ? "Seçilenleri Geri Al" : "Seçilenleri Kalıcı Kaldır", danger: action !== "restore" });
+    if (reason === null) return;
+    for (const target of targets) {
+      if (!target.allowed) { failures.push("Bu kayıt için işlem yetkisi veya uygun durum bulunmuyor."); continue; }
+      const operationKey = `${action}:${target.key}`;
+      if (!state.financeRequests.has(operationKey)) state.financeRequests.set(operationKey, requestId("cari-bulk"));
+      try {
+        const payload = await api(target.path, { method: "POST", body: { reason }, expectedRevision: state.revision, requestId: state.financeRequests.get(operationKey) });
+        mutationComplete(payload, ["ledger", "suppliers", "dashboard", "trash", "shipments", "documents"]);
+        selection.delete(target.key);
+        succeeded += 1;
+      } catch (error) {
+        if (error.payload?.actualRevision !== undefined) updateRevision({ revision: error.payload.actualRevision });
+        else if (error.code === "PROCUREMENT_REVISION_CONFLICT") {
+          try { updateRevision(await api("/context", { dedupe: false })); } catch (_refreshError) { /* Başarısız satır seçili kalır. */ }
+        }
+        failures.push(error.message || "İşlem tamamlanamadı.");
+      }
+    }
+    const result = `${succeeded} kayıt ${action === "reverse" ? "Çöp Kutusuna taşındı" : action === "restore" ? "geri alındı" : "kalıcı kaldırıldı"}${failures.length ? `, ${failures.length} kayıt işlenemedi.` : "."}`;
+    state.financeMessage = result + (failures.length ? ` ${[...new Set(failures)].join(" ")}` : "");
+    if (succeeded && detailDialog.open) closeDetailDialog();
+    try { await setView(state.activeView, { force: true }); } catch (error) { toast(error.message, true); }
+    toast(result, Boolean(failures.length));
+  } finally { state.financeBusy = false; updateFinanceSelectionUI(); }
+}
+
 function supplierShipmentLine(item) {
   const bulkUnit = item.bulkUnit || item.purchaseUnit || "toplu birim";
   const baseUnit = item.baseUnit || "adet";
@@ -1548,6 +1693,7 @@ async function submitEntityForm(event) {
     else if (mode === "shipment-create") await saveShipment(data);
     else if (mode === "document-upload") await saveDocument(data);
     else if (mode === "payment-create") await savePayment(data);
+    else if (mode === "supplier-cari") await saveSupplierCari(data);
     else if (mode === "ledger-create") await saveLedgerEntry(data);
     else if (mode === "user-access") await saveUserAccess(data);
     else if (mode === "shipment-account") await saveShipmentAccounting(data);
@@ -1673,7 +1819,7 @@ async function saveSupplierShipmentStock(data) {
 async function saveShipmentWithoutStockAccounting() {
   const shipmentId = entityForm.dataset.entityId;
   if (!shipmentId) throw new Error("Sevkiyat kaydı bulunamadı.");
-  const payload = await api(`/shipments/${encodeURIComponent(shipmentId)}/account-without-stock`, { method: "POST", body: { note: "Stok aktarımı başarısız olduktan sonra kullanıcı onayıyla cari borç" }, expectedRevision: state.revision });
+  const payload = await api(`/shipments/${encodeURIComponent(shipmentId)}/account-without-stock`, { method: "POST", body: { note: "Stok aktarımı olmadan kullanıcı onayıyla cari borç" }, expectedRevision: state.revision });
   mutationComplete(payload, ["shipments","documents","dashboard","ledger","suppliers"]);
   return payload;
 }
@@ -1685,8 +1831,9 @@ async function declineSupplierShipmentStock(button) {
     const payload = await api(`/shipments/${encodeURIComponent(shipmentId)}/decline-stock`, { method: "POST", body: {}, expectedRevision: state.revision });
     mutationComplete(payload, ["shipments","documents","dashboard"]);
     closeEntityDialog();
-    toast("Sevkiyat arşivlendi; stok ve cari hareketi oluşturulmadı.");
-    await setView(state.activeView, { force: true });
+    await setView(state.activeView, { force: true }).catch((error) => toast(error.message, true));
+    if (has(CAPABILITIES.accountingPost) && hasSection("ledger", "operate")) openNoStockAccountingDecision(payload.shipment);
+    else toast("Sevkiyat arşivlendi; stok ve cari hareketi oluşturulmadı.");
   } catch (error) {
     document.getElementById("dialogMessage").textContent = error.message || "Sevkiyat kararı kaydedilemedi.";
   } finally { setBusy(button, false); }
@@ -1870,6 +2017,7 @@ async function handleDetailAction(button, action) {
   if (action === "remove-shipment") return removeShipment(button, detail.id);
   if (action === "submit-shipment") return submitShipment(button, detail.id);
   if (action === "account-shipment") return openAccountingForm(detail.payload);
+  if (action === "account-without-stock") { const shipment = detail.payload?.shipment; closeDetailDialog(); return openNoStockAccountingDecision(shipment); }
   if (action === "upload-shipment-document") { closeDetailDialog(); return openDocumentForm(detail.id); }
   if (action === "archive-document") return archiveDocument(button, detail.id);
 }
@@ -1925,6 +2073,7 @@ async function removePayment(button, id) {
   await runButtonMutation(button, () => api(`/payments/${encodeURIComponent(id)}/reverse`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["ledger","suppliers","dashboard","trash"], async () => { closeDetailDialog(); await setView("ledger", {force:true}); });
 }
 async function purgeTrashRecord(button, type, id) {
+  if (["payment", "ledger"].includes(type)) { state.trashSelection = new Set([`${type}:${id}`]); return runFinanceBulk("purge"); }
   if (!await confirmAction({ title: "Kalıcı silinsin mi?", description: "Bu kayıt Çöp Kutusu'ndan kalıcı olarak silinecek ve geri alınamayacak.", confirmLabel: "Kalıcı Sil", danger: true })) return;
   const stockProduct = type === "stock-product";
   const operation = stockProduct
@@ -1943,7 +2092,7 @@ async function purgeTrashRecord(button, type, id) {
 }
 
 async function restoreTrashRecord(button, type, id) {
-  if (type !== "stock-product") return;
+  if (type !== "stock-product") { state.trashSelection = new Set([`${type}:${id}`]); return runFinanceBulk("restore"); }
   await runButtonMutation(button, () => api(`/stock/catalog/products/${encodeURIComponent(id)}/restore`, {
     method: "POST",
     body: { expectedCatalogRevision: state.revisions.catalog, expectedInventoryRevision: state.revisions.inventory },
@@ -1996,7 +2145,7 @@ async function reverseLedger(button, id) {
   const entry = state.ledgerEntries.find((item) => item.id === id) || (state.detail?.entry?.id === id ? state.detail.entry : null);
   if (!entry) return toast("Cari hareket güncel listede bulunamadı.", true);
   if (entry.sourceType === "payment") return removePayment(button, entry.sourceId);
-  const shipmentId = entry.shipmentId;
+  const shipmentId = entry.shipmentId || (entry.sourceType === "workforce_shipment" ? entry.sourceId : "");
   const reason = await requestText({ title: "Cari kaydı Çöp Kutusuna taşı", description: shipmentId
     ? "Yalnız sevkiyatın cari borcu terslenecek. Sevkiyat ve stok etkisi korunacak; geçmiş silinmeyecek."
     : "Geçmiş silinmez; kaynağa bağlı dengeleyici ters kayıt oluşturulur.", label: "İşlem nedeni", confirmLabel: "Çöp Kutusuna Taşı", danger: true });
