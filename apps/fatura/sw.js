@@ -2,7 +2,7 @@
 importScripts("/shared/scripts/pwa-release.js");
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "fatura",
-  version: `${self.TAHMISCI_PWA_RELEASE.id}-fatura-20260905-cari-actions-v1`,
+  version: `${self.TAHMISCI_PWA_RELEASE.id}-fatura-20260905-cari-actions-v2`,
   scopePath: "/fatura/",
   offlineUrl: "/fatura/offline.html",
   offlineAssets: [
@@ -10,20 +10,20 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
     "/assets/app-icons/fatura/icon-192.png"
   ],
   precache: [
-    "/fatura/styles/fatura.css?v=20260905-cari-actions-v1",
-    "/fatura/styles/stock.css?v=20260905-cari-actions-v1",
-    "/fatura/styles/product-analysis.css?v=20260905-cari-actions-v1",
-    "/fatura/scripts/app.js?v=20260905-cari-actions-v1",
-    "/fatura/scripts/api.js?v=20260905-cari-actions-v1",
-    "/fatura/scripts/state.js?v=20260905-cari-actions-v1",
-    "/fatura/scripts/dashboard.js?v=20260905-cari-actions-v1",
-    "/fatura/scripts/suppliers.js?v=20260905-cari-actions-v1",
-    "/fatura/scripts/receipts.js?v=20260905-cari-actions-v1",
-    "/fatura/scripts/documents.js?v=20260905-cari-actions-v1",
-    "/fatura/scripts/accounting.js?v=20260905-cari-actions-v1",
-    "/fatura/scripts/ui-dialogs.js?v=20260905-cari-actions-v1",
-    "/fatura/scripts/stock.js?v=20260905-cari-actions-v1",
-    "/fatura/scripts/product-analysis.js?v=20260905-cari-actions-v1",
+    "/fatura/styles/fatura.css?v=20260905-cari-actions-v2",
+    "/fatura/styles/stock.css?v=20260905-cari-actions-v2",
+    "/fatura/styles/product-analysis.css?v=20260905-cari-actions-v2",
+    "/fatura/scripts/app.js?v=20260905-cari-actions-v2",
+    "/fatura/scripts/api.js?v=20260905-cari-actions-v2",
+    "/fatura/scripts/state.js?v=20260905-cari-actions-v2",
+    "/fatura/scripts/dashboard.js?v=20260905-cari-actions-v2",
+    "/fatura/scripts/suppliers.js?v=20260905-cari-actions-v2",
+    "/fatura/scripts/receipts.js?v=20260905-cari-actions-v2",
+    "/fatura/scripts/documents.js?v=20260905-cari-actions-v2",
+    "/fatura/scripts/accounting.js?v=20260905-cari-actions-v2",
+    "/fatura/scripts/ui-dialogs.js?v=20260905-cari-actions-v2",
+    "/fatura/scripts/stock.js?v=20260905-cari-actions-v2",
+    "/fatura/scripts/product-analysis.js?v=20260905-cari-actions-v2",
     "/shared/styles/panel-foundation.css",
     "/shared/scripts/pwa-client.js?v=20260831-panel-access",
     "/assets/brand/logo-compact.png"
