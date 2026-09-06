@@ -309,7 +309,7 @@ function registerStockLocationRoutes(deps) {
       if (!assignments.has(person.stockLocationId)) assignments.set(person.stockLocationId, []);
       assignments.get(person.stockLocationId).push(person.id);
     }
-    return stockService.getLocations(stockState, { includeInactive: true }).map((location) => {
+    return stockService.getLocations(stockState, { includeInactive: true }).filter((location) => !stockService.stockLocationIsRemoved(location)).map((location) => {
       const inventory = stockService.getLocationInventory(stockState, location.id, { includeInactive: false, allowInactive: true });
       const sufficientProducts = inventory.balances.filter((balance) => balance.status === "Yeterli").length;
       const openSuggestions = inventory.balances.filter((balance) => balance.recommendation).length;
@@ -843,6 +843,7 @@ function registerStockLocationRoutes(deps) {
       res.json({
         ok: true,
         locations: locationsForAdmin(data, state),
+        locationHistory: state.locations.map((location) => ({ id: location.id, name: location.name })),
         personnel: personnelForLocations(data),
         unitDefinitions: state.unitDefinitions,
         ...canonicalRevisionPayload(data, "inventory"),
@@ -1006,6 +1007,7 @@ function registerStockLocationRoutes(deps) {
         const state = replayState;
         location = state.locations.find((item) => String(item.id) === String(req.params.id));
         if (!location) throw fail("Stok lokasyonu bulunamadı.", 404);
+        if (stockService.stockLocationIsRemoved(location)) throw fail("Çöp Kutusu'ndaki depo önce geri alınmalıdır.", 409);
         const previous = { ...location };
         if (body.personnelVisible !== undefined) {
           if (typeof body.personnelVisible !== "boolean") throw fail("Personel görünürlüğü geçersiz.", 422);
@@ -1082,6 +1084,39 @@ function registerStockLocationRoutes(deps) {
       res.json({ ok: true, location, locations: locationsForAdmin(saved, stockState), personnel: personnelForLocations(saved), stockState, idempotent, ...canonicalRevisionPayload(saved, "inventory"), updatedAt: saved.stockUpdatedAt || timestamp });
     } catch (error) { next(error); }
   });
+
+  for (const action of ["trash", "restore", "purge"]) {
+    registerAdminStockRoute("post", `/locations/:id/${action}`, requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+      try {
+        const body = req.body || {};
+        const operationId = requestId(req, true);
+        const operationType = `location_${action}`;
+        const timestamp = nowIso();
+        let result;
+        const saved = await store.update((data, context) => {
+          const state = normalizeStockState(data.stockState);
+          const replay = routeOperation(state, operationType, operationId);
+          if (replay) {
+            if (String(replay.value && replay.value.locationId) !== String(req.params.id)) throw fail("Bu requestId başka bir depo için kullanıldı.", 409);
+            result = { location: state.locations.find((location) => String(location.id) === String(req.params.id)), idempotent: true };
+            return context.noChange;
+          }
+          assertExpectedDomainRevision(data, body, "inventory", operationType, operationId);
+          const previous = state.locations.find((location) => String(location.id) === String(req.params.id));
+          const before = previous ? { ...previous } : null;
+          result = stockService.applyStockLocationLifecycle(state, req.params.id, action, adminActor(req), { now: timestamp, data, reason: body.reason });
+          if (result.idempotent) return context.noChange;
+          rememberRouteOperation(result.stockState, operationType, operationId, { locationId: result.location.id }, timestamp);
+          persistStockMutation(data, result.stockState, timestamp);
+          appendStockAudit(data, adminActor(req), `stock.location.${action}`, result.location.id, operationId, before, result.location, timestamp);
+          return data;
+        });
+        if (!result.idempotent) broadcastStockUpdate(saved.stockState, timestamp, domainRevision(saved, "inventory"), "inventory");
+        res.json({ ok: true, location: result.location, locations: locationsForAdmin(saved, normalizeStockState(saved.stockState)),
+          idempotent: result.idempotent, ...canonicalRevisionPayload(saved, "inventory"), updatedAt: saved.stockUpdatedAt || timestamp });
+      } catch (error) { next(error); }
+    });
+  }
 
   registerAdminStockRoute("delete", "/locations/:id", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
     try {

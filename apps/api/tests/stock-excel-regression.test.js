@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const express = require("express");
 const ExcelJS = require("exceljs");
-const { normalizeStockState } = require("../src/store/migrations");
+const { normalizeStockState, migrateStore } = require("../src/store/migrations");
 const stock = require("../src/stock-service");
 const { registerStockLocationRoutes } = require("../src/stock-location-routes");
 const ADMIN = { type: "admin", id: "test-manager", name: "Yönetici" };
@@ -62,7 +62,7 @@ async function serverFor(t, initial = fixture()) {
     const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`, { method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
     return { status: response.status, body: await response.json() };
   };
-  return { request, read: () => data, events };
+  return { request, read: () => data, events, store };
 }
 
 test("Excel eksik temel birim uyarısı canonical birimi korur ve normalizasyonda yenilenir", () => {
@@ -335,4 +335,114 @@ test("Manuel birim migration aynı temel birimde de yalnız eksik Excel uyarıs�
   assert.ok(!fixed.product.attentionReasons.includes("MISSING_BASE_UNIT"));
   assert.ok(fixed.product.attentionReasons.includes("OTHER_WARNING"));
   assert.equal(fixed.product.needsAttention, true);
+});
+
+test("Depo trash: pasif ayrımı, gizleme, geri alma ve revision/idempotency korunur", async (t) => {
+  const api = await serverFor(t);
+  const before = structuredClone(api.read().stockState);
+  const base = `/api/procurement/v1/stock/locations/${FROM}`;
+  const trashed = await api.request(`${base}/trash`, "POST", { reason: "Depo kapandı", requestId: "location-trash-regression-1" });
+  assert.equal(trashed.status, 200, JSON.stringify(trashed.body));
+  assert.equal(trashed.body.location.trashed, true);
+  assert.equal(trashed.body.location.active, false);
+  assert.ok(!trashed.body.locations.some((location) => location.id === FROM));
+  assert.deepEqual(api.read().stockState.balances, before.balances);
+  assert.deepEqual(api.read().stockState.movements, before.movements);
+  assert.deepEqual(api.read().stockState.transfers, before.transfers);
+  const listed = await api.request("/api/procurement/v1/stock/locations");
+  assert.ok(!listed.body.locations.some((location) => location.id === FROM));
+  assert.equal(listed.body.locationHistory.find((location) => location.id === FROM).name, "Dış Depo");
+  const { createProcurementService } = require("../src/procurement-service");
+  const service = createProcurementService({ store: api.store });
+  const trash = await service.listTrash(ADMIN);
+  assert.ok(trash.records.some((record) => record.id === FROM && record.type === "stock-location"));
+  const replay = await api.request(`${base}/trash`, "POST", { expectedRevision: 0, requestId: "location-trash-regression-1" });
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.idempotent, true);
+  const saved = JSON.stringify(api.read());
+  assert.equal((await api.request(base, "PATCH", { active: true, requestId: "location-trash-edit-denied" })).status, 409);
+  assert.equal((await api.request(`${base}/restore`, "POST", { expectedRevision: 0, requestId: "location-restore-stale" })).status, 409);
+  assert.equal(JSON.stringify(api.read()), saved);
+  const restored = await api.request(`${base}/restore`, "POST", { requestId: "location-restore-regression" });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.body.location.active, true);
+  assert.equal(restored.body.location.trashed, false);
+  assert.equal(restored.body.location.removedAt, null);
+  assert.equal(restored.body.location.removedBy, null);
+  assert.ok(restored.body.locations.some((location) => location.id === FROM));
+  await api.request(base, "PATCH", { active: false, requestId: "location-passive-regression" });
+  assert.ok(!(await service.listTrash(ADMIN)).records.some((record) => record.id === FROM));
+  await api.request(`${base}/trash`, "POST", { requestId: "location-passive-trash" });
+  const passive = await api.request(`${base}/restore`, "POST", { requestId: "location-passive-restore" });
+  assert.equal(passive.body.location.active, false);
+  assert.ok(api.read().recipeActivity.some((entry) => entry.action === "stock.location.trash"));
+  assert.ok(api.read().recipeActivity.some((entry) => entry.action === "stock.location.restore"));
+});
+
+test("Depo trash kuralları korunur; purge sevkiyat referansını engellemez ve entity kaldırılır", () => {
+  const state = fixture();
+  const removed = stock.applyStockLocationLifecycle(state, TO, "trash", ADMIN);
+  assert.equal(removed.stockState.locations.find((location) => location.id === FROM).isDefault, true);
+  assert.throws(() => stock.applyStockLocationLifecycle(removed.stockState, FROM, "trash", ADMIN), /Son kullanılabilir/);
+  assert.throws(() => stock.applyStockLocationLifecycle(fixture(), TO, "trash", ADMIN, { data: { recipeUsers: [{ id: "person", active: true, stockLocationId: TO }] } }), /aktif personel/);
+  const empty = normalizeStockState({ locations: [{ id: "empty", code: "EMPTY", name: "Boş Depo", active: true }], locationMigrationVersion: 1 });
+  const trash = stock.applyStockLocationLifecycle(empty, "empty", "trash", ADMIN).stockState;
+  const purged = stock.applyStockLocationLifecycle(trash, "empty", "purge", ADMIN, { data: { workforceShipments: [{ destinationLocationId: "empty" }] } });
+  assert.ok(purged.location.purgedAt);
+  assert.equal(purged.location.active, false);
+  assert.equal(purged.location.trashed, false);
+  assert.ok(!normalizeStockState(purged.stockState).locations.some((location) => location.id === "empty"));
+  assert.throws(() => stock.applyStockLocationLifecycle(purged.stockState, "empty", "restore", ADMIN), /bulunamadı/);
+  assert.equal(stock.applyStockLocationLifecycle(purged.stockState, "empty", "purge", ADMIN).idempotent, true);
+});
+
+test("Depo purge: bakiyeli, hareketli, personel atanmış ve son varsayılan depo silinir; geçmiş korunur", async (t) => {
+  const initial = fixture();
+  Object.assign(initial.locations.find((location) => location.id === FROM), {
+    active: false, trashed: true, removedAt: "2026-09-06T00:00:00.000Z", assignedPersonnelIds: ["person"]
+  });
+  initial.movements = [{ id: "old-movement", productId: "cup", locationId: FROM, type: "manual_in", quantity: 2 }];
+  initial.transfers = [{ id: "old-transfer", productId: "cup", fromLocationId: FROM, toLocationId: TO, quantity: 2, status: "approved" }];
+  initial.counts = [{ id: "old-count", locationId: FROM, status: "completed", items: [{ productId: "cup", systemQuantity: 904, countedQuantity: 904 }] }];
+  const api = await serverFor(t, normalizeStockState(initial));
+  await api.store.update((data) => {
+    data.recipeUsers[0].stockLocationId = FROM;
+    data.workforceShipments = [{ id: "old-shipment", destinationLocationId: FROM, destinationLocationName: "Dış Depo", items: [] }];
+    data.recipeActivity = [{ id: "old-audit", action: "stock.adjustment", locationId: FROM }];
+    data.procurement = { shipments: [{ id: "old-procurement-shipment", locationId: FROM }], receipts: [{ id: "old-receipt", locationId: FROM }] };
+    Object.assign(data, migrateStore(migrateStore(data)));
+  });
+  const before = structuredClone(api.read());
+  const { createProcurementService } = require("../src/procurement-service");
+  const service = createProcurementService({ store: api.store });
+  assert.ok((await service.listTrash(ADMIN)).records.some((record) => record.id === FROM));
+  const base = `/api/procurement/v1/stock/locations/${FROM}/purge`;
+  assert.equal((await api.request(base, "POST", {})).status, 400);
+  assert.equal((await api.request(base, "POST", { expectedRevision: 99, requestId: "location-purge-stale" })).status, 409);
+  assert.deepEqual(api.read(), before);
+  const purged = await api.request(base, "POST", { requestId: "location-purge-referenced" });
+  assert.equal(purged.status, 200, JSON.stringify(purged.body));
+  assert.ok(!purged.body.locations.some((location) => location.id === FROM));
+  assert.ok(!api.read().stockState.locations.some((location) => location.id === FROM));
+  assert.ok(!(await service.listTrash(ADMIN)).records.some((record) => record.id === FROM));
+  const listed = await api.request("/api/procurement/v1/stock/locations");
+  assert.ok(!listed.body.locations.some((location) => location.id === FROM));
+  assert.ok(!listed.body.locationHistory.some((location) => location.id === FROM));
+  const replay = await api.request(base, "POST", { expectedRevision: 0, requestId: "location-purge-referenced" });
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.idempotent, true);
+  assert.equal((await api.request(base, "POST", { requestId: "location-purge-repeat" })).body.idempotent, true);
+  assert.equal((await api.request(`/api/procurement/v1/stock/locations/${FROM}/restore`, "POST", { requestId: "location-restore-purged" })).status, 404);
+  assert.equal(api.read().stockState.locations.length, 1);
+  assert.equal(api.read().stockState.locations[0].isDefault, true);
+  assert.equal(api.read().stockState.locations[0].active, true);
+  const last = await api.request(`/api/procurement/v1/stock/locations/${TO}/purge`, "POST", { requestId: "location-purge-last-default" });
+  assert.equal(last.status, 200, JSON.stringify(last.body));
+  assert.deepEqual(last.body.locations, []);
+  const reopened = migrateStore(JSON.parse(JSON.stringify(api.read())));
+  assert.deepEqual(reopened.stockState.locations, []);
+  for (const key of ["products", "balances", "movements", "transfers", "counts"]) assert.deepEqual(reopened.stockState[key], before.stockState[key], key);
+  for (const key of ["recipeUsers", "workforceShipments", "procurement"]) assert.deepEqual(reopened[key], before[key], key);
+  assert.deepEqual(reopened.recipeActivity.find((entry) => entry.id === "old-audit"), before.recipeActivity[0]);
+  assert.ok(reopened.recipeActivity.some((entry) => entry.action === "stock.location.purge"));
 });

@@ -1,4 +1,4 @@
-import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260906-stock-excel-export-v1";
+import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260906-cari-mobile-document-v1";
 
 export function renderLedger() {
   const supplierId = String(state.filters.ledgerSupplier || "");
@@ -131,12 +131,13 @@ function allocationHistory(obligations) {
 
 function supplierName(item) { return state.suppliers.find((supplier) => supplier.id === item.supplierId)?.name || item.supplierId || "Tedarikçi"; }
 function trashRow(record) {
+  const isLocation = record.type === "stock-location";
   const isStock = record.type === "stock-product";
   const finance = ["ledger", "payment"].includes(record.type);
-  const type = record.type === "shipment" ? "Sevkiyat" : record.type === "payment" ? "Ödeme" : isStock ? "Stok ürünü" : "Cari ters kayıt";
-  const canPurge = isStock ? has(CAPABILITIES.inventoryCatalogManage) : finance ? record.canPurge && hasSection("trash") : record.canPurge !== false && has(CAPABILITIES.receiptReject);
-  const canRestore = isStock ? has(CAPABILITIES.inventoryCatalogManage) : record.canRestore && hasSection("ledger", "full");
-  const actions = `${canRestore ? `<button class="row-button" type="button" data-restore-trash="${escapeHtml(record.id)}" data-trash-type="${escapeHtml(record.type)}">Geri Al</button>` : ""}${canPurge ? `<button class="row-button is-danger" type="button" data-purge-trash="${escapeHtml(record.id)}" data-trash-type="${escapeHtml(record.type)}">Kalıcı Kaldır</button>` : ""}`;
+  const type = record.type === "shipment" ? "Sevkiyat" : record.type === "payment" ? "Ödeme" : isLocation ? "Depo" : isStock ? "Stok ürünü" : "Cari ters kayıt";
+  const canPurge = isLocation ? has(CAPABILITIES.inventoryLocationManage) && hasSection("stock", "full") : isStock ? has(CAPABILITIES.inventoryCatalogManage) : finance ? record.canPurge && hasSection("trash") : record.canPurge !== false && has(CAPABILITIES.receiptReject);
+  const canRestore = isLocation ? has(CAPABILITIES.inventoryLocationManage) && hasSection("stock", "full") : isStock ? has(CAPABILITIES.inventoryCatalogManage) : record.canRestore && hasSection("ledger", "full");
+  const actions = `${canRestore ? `<button class="row-button" type="button" data-restore-trash="${escapeHtml(record.id)}" data-trash-type="${escapeHtml(record.type)}">Geri Al</button>` : ""}${canPurge ? `<button class="row-button is-danger" type="button" data-purge-trash="${escapeHtml(record.id)}" data-trash-type="${escapeHtml(record.type)}">${isLocation ? "Kalıcı Sil" : "Kalıcı Kaldır"}</button>` : ""}`;
   return `<tr><td data-label="Tür"><span class="badge is-muted">${type}</span></td><td data-label="Tedarikçi">${escapeHtml(record.supplierName || record.category || "Tedarikçi belirtilmedi")}</td><td data-label="Tutar" class="right ${record.type === "payment" ? "finance-payment" : record.amountType ? `finance-${record.amountType}` : ""}">${record.amountKurus ? trMoney(record.amountKurus) : "—"}</td><td data-label="İşlem / Açıklama"><strong>${escapeHtml(record.title || "Kaldırılmış kayıt")}</strong></td><td data-label="Neden">${escapeHtml(record.reason || "—")}</td><td data-label="İşlemi yapan">${escapeHtml(record.actorName || "—")}</td><td data-label="Tarih">${trDate(record.removedAt, true)}</td><td class="actions" data-label="Durum / İşlem"><span class="badge is-muted">${finance ? "Terslendi" : "Kaldırıldı"}</span>${actions}</td></tr>`;
 }
 

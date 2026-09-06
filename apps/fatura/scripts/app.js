@@ -1,13 +1,13 @@
-import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260906-stock-excel-export-v1";
-import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260906-stock-excel-export-v1";
-import { renderDashboard } from "./dashboard.js?v=20260906-stock-excel-export-v1";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260906-stock-excel-export-v1";
-import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260906-stock-excel-export-v1";
-import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260906-stock-excel-export-v1";
-import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260906-stock-excel-export-v1";
-import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260906-stock-excel-export-v1";
-import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260906-stock-excel-export-v1";
-import { confirmAction, requestText } from "./ui-dialogs.js?v=20260906-stock-excel-export-v1";
+import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260906-cari-mobile-document-v1";
+import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260906-cari-mobile-document-v1";
+import { renderDashboard } from "./dashboard.js?v=20260906-cari-mobile-document-v1";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260906-cari-mobile-document-v1";
+import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260906-cari-mobile-document-v1";
+import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260906-cari-mobile-document-v1";
+import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260906-cari-mobile-document-v1";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260906-cari-mobile-document-v1";
+import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260906-cari-mobile-document-v1";
+import { confirmAction, requestText } from "./ui-dialogs.js?v=20260906-cari-mobile-document-v1";
 
 const app = document.getElementById("faturaApp");
 const shell = document.getElementById("shell");
@@ -1703,8 +1703,12 @@ async function submitEntityForm(event) {
   const submit = document.getElementById("dialogSubmit");
   if (submit.disabled) return;
   const mode = entityForm.dataset.mode;
-  if (mode !== "supplier-stock-bulk-add") setBusy(submit, true, "Kaydediliyor…");
+  if (mode !== "supplier-stock-bulk-add") setBusy(submit, true, mode === "supplier-cari" ? "İşleniyor…" : "Kaydediliyor…");
   const data = new FormData(entityForm);
+  // Keep the submitted Cari values/file stable until upload and ledger posting finish.
+  const cariControls = mode === "supplier-cari" ? [...entityForm.querySelectorAll("input,select,textarea")].filter((control) => !control.disabled) : [];
+  cariControls.forEach((control) => { control.disabled = true; });
+  document.getElementById("dialogMessage").textContent = "";
   let deferredStockFailure = null;
   let completionMessage = "İşlem backend tarafından kaydedildi.";
   let completionError = false;
@@ -1752,8 +1756,13 @@ async function submitEntityForm(event) {
       updateRevision(error.payload || {});
       deferredStockFailure = { shipmentId: entityForm.dataset.entityId, message: error.message };
     }
-    else document.getElementById("dialogMessage").textContent = error.message || "İşlem tamamlanamadı.";
-  } finally { if (mode !== "supplier-stock-bulk-add") setBusy(submit, false); updateSupplierShipmentSubmitState(); updateSupplierStockBulkSubmitState(); }
+    else {
+      if (mode === "supplier-cari" && error.code === "PROCUREMENT_REVISION_CONFLICT" && error.payload?.actualRevision !== undefined) {
+        updateRevision({ revision: error.payload.actualRevision });
+      }
+      document.getElementById("dialogMessage").textContent = error.message || "İşlem tamamlanamadı.";
+    }
+  } finally { cariControls.forEach((control) => { control.disabled = false; }); if (mode !== "supplier-stock-bulk-add") setBusy(submit, false); updateSupplierShipmentSubmitState(); updateSupplierStockBulkSubmitState(); }
   if (deferredStockFailure) {
     closeEntityDialog();
     openStockFailureAccountingDecision(deferredStockFailure.shipmentId, deferredStockFailure.message);
@@ -2107,6 +2116,7 @@ async function removePayment(button, id) {
   await runButtonMutation(button, () => api(`/payments/${encodeURIComponent(id)}/reverse`, { method:"POST", body:{reason}, expectedRevision:state.revision }), ["ledger","suppliers","dashboard","trash"], async () => { closeDetailDialog(); await setView("ledger", {force:true}); });
 }
 async function purgeTrashRecord(button, type, id) {
+  if (type === "stock-location") return mutateTrashLocation(button, id, "purge");
   if (["payment", "ledger"].includes(type)) { state.trashSelection = new Set([`${type}:${id}`]); return runFinanceBulk("purge"); }
   if (!await confirmAction({ title: "Kalıcı silinsin mi?", description: "Bu kayıt Çöp Kutusu'ndan kalıcı olarak silinecek ve geri alınamayacak.", confirmLabel: "Kalıcı Sil", danger: true })) return;
   const stockProduct = type === "stock-product";
@@ -2126,6 +2136,7 @@ async function purgeTrashRecord(button, type, id) {
 }
 
 async function restoreTrashRecord(button, type, id) {
+  if (type === "stock-location") return mutateTrashLocation(button, id, "restore");
   if (type !== "stock-product") { state.trashSelection = new Set([`${type}:${id}`]); return runFinanceBulk("restore"); }
   await runButtonMutation(button, () => api(`/stock/catalog/products/${encodeURIComponent(id)}/restore`, {
     method: "POST",
@@ -2139,6 +2150,21 @@ async function restoreTrashRecord(button, type, id) {
     toast("Stok ürünü aynı kimlikle geri alındı.");
   });
 }
+async function mutateTrashLocation(button, id, action) {
+  if (button.disabled) return;
+  if (action === "purge" && !await confirmAction({ title: "Depo kalıcı silinsin mi?", description: "Depo kalıcı silinecek. Bağlı stok, hareket ve denetim geçmişi korunacaktır. Bu işlem geri alınamaz.", confirmLabel: "Kalıcı Sil", danger: true })) return;
+  await runButtonMutation(button, () => api(`/stock/locations/${encodeURIComponent(id)}/${action}`, {
+    method: "POST", body: { expectedInventoryRevision: state.revisions.inventory }, expectedInventoryRevision: state.revisions.inventory
+  }), ["trash", "stock-references", "stockExcel", "dashboard"], async () => {
+    state.trash = (state.trash || []).filter((record) => !(record.type === "stock-location" && String(record.id) === String(id)));
+    state.stock.locations = [];
+    invalidateStockState();
+    await loadStockReferences(true);
+    renderActiveView();
+    toast(action === "restore" ? "Depo geri alındı." : "Depo kalıcı kaldırıldı.");
+  });
+}
+
 async function exportLedger(button) {
   if (button.disabled) return;
   setBusy(button, true, "Hazırlanıyor…");

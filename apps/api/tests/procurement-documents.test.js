@@ -17,6 +17,69 @@ const {
 const { createProcurementImageProcessor } = require("../src/procurement-image-processor");
 const sharp = require("sharp");
 
+test("cari mobile upload: common credentials, error codes and retry idempotency", async (t) => {
+  const source = await fs.readFile(path.resolve(__dirname, "../../fatura/scripts/api.js"), "utf8");
+  const { uploadDocument } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+  const metadata = { supplierId: "supplier-test", documentType: "diğer", documentDate: "2026-06-01" };
+  const requests = [];
+  let status = 401;
+  let code = "PROCUREMENT_AUTH_REQUIRED";
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    requests.push({ url, ...options });
+    if (status === 0) throw new TypeError("Failed to fetch");
+    return new Response(JSON.stringify(status < 400 ? { document: { id: "document-test" }, revision: 2 } : { code, message: "Server error" }), { status, headers: { "Content-Type": "application/json" } });
+  });
+  const file = new File(["%PDF-1.4\n%%EOF\n"], "eski-fatura.pdf", { type: "application/octet-stream" });
+  const cases = [[401, "PROCUREMENT_AUTH_REQUIRED", /Oturum doğrulanamadı/], [403, "PROCUREMENT_CAPABILITY_REQUIRED", /yetkiniz bulunmuyor/], [413, "DOCUMENT_TOO_LARGE", /Belge çok büyük/], [415, "UNSUPPORTED_DOCUMENT_TYPE", /türü desteklenmiyor/], [0, "", /Bağlantı sırasında/]];
+  for (const scenario of cases) {
+    [status, code] = scenario;
+    await assert.rejects(uploadDocument(file, metadata, 1), error => {
+      assert.equal(error.status, status);
+      assert.equal(error.code, code);
+      assert.match(error.message, scenario[2]);
+      return true;
+    });
+  }
+  status = 201;
+  const results = await Promise.all([uploadDocument(file, metadata, 1), uploadDocument(file, metadata, 1)]);
+  assert.equal(requests.length, cases.length + 1);
+  assert.equal(results[0].document.id, results[1].document.id);
+  assert.equal(new Set(requests.map(r => r.headers.get("Idempotency-Key"))).size, 1);
+  for (const request of requests) {
+    assert.equal(request.url, "/api/procurement/v1/documents");
+    assert.equal(request.credentials, "include");
+    assert.equal(request.cache, "no-store");
+    assert.equal(request.headers.get("Content-Type"), "application/pdf");
+    assert.equal(request.headers.get("X-Document-Date"), "2026-06-01");
+    assert.equal(request.headers.get("X-Request-ID"), request.headers.get("Idempotency-Key"));
+  }
+});
+
+test("cari mobile upload: HTML 413 retries one smaller image with the same request ID", async (t) => {
+  const source = await fs.readFile(path.resolve(__dirname, "../../fatura/scripts/api.js"), "utf8");
+  const { uploadDocument } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+  const originals = new Map(["document", "HTMLImageElement", "createImageBitmap"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  t.after(() => { for (const [key, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key]; } });
+  globalThis.HTMLImageElement = class {};
+  globalThis.createImageBitmap = async () => ({ width: 1800, height: 1800, close() {} });
+  globalThis.document = { createElement: () => ({ width: 0, height: 0, getContext: () => ({ drawImage() {} }), toBlob: (done, type) => done(new Blob([new Uint8Array(700 * 1024)], { type })) }) };
+  const requests = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    requests.push({ url, ...options, headers: new Headers(options.headers) });
+    return requests.length === 1 ? new Response('<h1>413 Request Entity Too Large</h1>', { status: 413, headers: { "Content-Type": "text/html" } })
+      : new Response(JSON.stringify({ document: { id: "small-image" } }), { status: 201, headers: { "Content-Type": "application/json" } });
+  });
+  const file = new File([new Uint8Array([255, 216, 255]), new Uint8Array(1500 * 1024)], "galeri.jpg", { type: "image/jpeg" });
+  const result = await uploadDocument(file, { documentType: "diğer", supplierId: "supplier-test", documentDate: "2026-06-01" }, 1);
+  assert.equal(result.document.id, "small-image");
+  assert.equal(requests.length, 2);
+  assert.ok(requests[1].body.size < requests[0].body.size);
+  assert.ok(requests[1].body.size <= 900 * 1024);
+  assert.equal(requests[0].headers.get("Idempotency-Key"), requests[1].headers.get("Idempotency-Key"));
+  assert.equal(requests[1].credentials, "include");
+  assert.equal(requests[1].headers.get("X-Document-Date"), "2026-06-01");
+});
+
 test("mobile upload: 48 MP JPEG küçültülür, EXIF yönü uygulanır ve metadata silinir", async (context) => {
   const runRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tahmisci-mobile-sharp-"));
   context.after(() => fs.rm(runRoot, { recursive: true, force: true }));

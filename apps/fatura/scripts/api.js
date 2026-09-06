@@ -107,9 +107,13 @@ export async function uploadDocument(file, metadata, expectedRevision) {
   if (attempt.task) return attempt.task;
   attempt.task = sendDocument(file, metadata, expectedRevision, attempt.id).catch((error) => {
     attempt.task = null;
-    const message = error.code === "DOCUMENT_TOO_LARGE" && error.payload?.mimeType === "application/pdf"
-      ? "Belge çok büyük. PDF en fazla 10 MB olabilir."
-      : DOCUMENT_ERRORS[error.code] || (error.status === 0 ? "Bağlantı nedeniyle yükleme tamamlanamadı." : error.message);
+    const message = error.status === 401 ? "Oturum doğrulanamadı. Lütfen tekrar deneyin."
+      : error.status === 403 ? (!error.code || error.code === "PROCUREMENT_CAPABILITY_REQUIRED" || error.code === "PROCUREMENT_SECTION_ACCESS_REQUIRED"
+        ? "Bu belgeyi yüklemek için yetkiniz bulunmuyor." : error.message)
+      : error.status === 413 || error.code === "DOCUMENT_TOO_LARGE" ? (error.payload?.mimeType === "application/pdf"
+        ? "Belge çok büyük. PDF en fazla 10 MB olabilir." : "Belge çok büyük. Daha küçük bir dosya seçin.")
+      : error.status === 415 ? "Dosya türü desteklenmiyor veya belge okunamadı."
+      : DOCUMENT_ERRORS[error.code] || (error.status === 0 ? "Bağlantı sırasında belge yüklenemedi. Tekrar deneyin." : error.message);
     throw new ApiError(message, error.status || 0, error.payload);
   });
   return attempt.task;
@@ -144,7 +148,19 @@ async function sendDocument(original, metadata, expectedRevision, operationId) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 90000);
   try {
-    const payload = await api("/documents", { method: "POST", headers, body: file, raw: true, expectedRevision, requestId: operationId, signal: controller.signal });
+    const send = (body) => api("/documents", { method: "POST", headers, body, raw: true, expectedRevision, requestId: operationId, signal: controller.signal });
+    let payload;
+    try { payload = await send(file); }
+    catch (error) {
+      if (error.status !== 413 || !["image/jpeg", "image/png", "image/webp"].includes(detectedType)) throw error;
+      // Some upload proxies reject the normal 4000px output before the API sees it.
+      // Reuse the same decoder and operation ID for one smaller, bounded retry.
+      const smaller = await prepareDocumentImage(file, file === original ? detectedType : file.type, { maxSide: 2000, maxBytes: 900 * 1024 });
+      if (smaller.size >= file.size) throw error;
+      headers.set("Content-Type", smaller.type);
+      headers.set("X-File-Name", encodeURIComponent(smaller.name));
+      payload = await send(smaller);
+    }
     if (!payload?.document?.id) throw new ApiError("Bağlantı nedeniyle yükleme tamamlanamadı.", 0);
     return payload;
   } finally { clearTimeout(timeout); }
@@ -172,7 +188,7 @@ async function documentSignature(file) {
   return "";
 }
 
-async function prepareDocumentImage(file, mimeType) {
+async function prepareDocumentImage(file, mimeType, options = {}) {
   if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) return file;
   let decoded;
   let canvas;
@@ -186,15 +202,23 @@ async function prepareDocumentImage(file, mimeType) {
     if (width > 24000 || height > 24000 || width * height > 60000000) {
       throw new ApiError(DOCUMENT_ERRORS.DOCUMENT_TOO_LARGE, 413, { code: "DOCUMENT_TOO_LARGE" });
     }
-    const scale = Math.min(1, 4000 / Math.max(width, height));
-    if (scale === 1 && file.size <= 2 * 1024 * 1024) return file;
+    let scale = Math.min(1, (options.maxSide || 4000) / Math.max(width, height));
+    const maxBytes = options.maxBytes || 2 * 1024 * 1024;
+    if (scale === 1 && file.size <= maxBytes) return file;
     canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(width * scale));
     canvas.height = Math.max(1, Math.round(height * scale));
     const context = canvas.getContext("2d");
     if (!context) return file;
-    context.drawImage(decoded, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, mimeType === "image/jpeg" ? "image/jpeg" : "image/webp", .85));
+    let blob;
+    for (let attempt = 0; attempt < (options.maxBytes ? 4 : 1); attempt += 1) {
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      context.drawImage(decoded, 0, 0, canvas.width, canvas.height);
+      blob = await new Promise((resolve) => canvas.toBlob(resolve, mimeType === "image/jpeg" ? "image/jpeg" : "image/webp", Math.max(.7, .85 - attempt * .05)));
+      if (!blob || !options.maxBytes || blob.size <= maxBytes) break;
+      scale *= Math.min(.85, Math.sqrt(maxBytes / blob.size) * .9);
+    }
     if (!blob || (scale === 1 && blob.size >= file.size)) return file;
     const extension = blob.type === "image/jpeg" ? "jpg" : blob.type === "image/webp" ? "webp" : "png";
     return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "belge"}.${extension}`, { type: blob.type, lastModified: file.lastModified });

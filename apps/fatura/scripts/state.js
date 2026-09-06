@@ -27,7 +27,7 @@ export const state = {
   revisions: { procurement: 0, workforce: 0, stock: 0, inventory: 0, shipment: 0, catalog: 0, notification: 0 },
   stock: {
     revision: 0, inventoryRevision: 0, catalogRevision: 0,
-    locations: [], personnel: [], unitDefinitions: { base: [], bulk: [] }, selectedLocationId: "",
+    locations: [], locationHistory: [], personnel: [], unitDefinitions: { base: [], bulk: [] }, selectedLocationId: "",
     balances: [], summary: {}, transfers: [], transferLocations: [], movements: [], counts: [], activeCount: null,
     secondaryLoaded: false, secondaryLoadPromise: null, secondaryLocationId: "", selectedCategory: "all",
     selectedProductId: "", viewMode: "overview", drawerReturnFocus: null, inventoryController: null,

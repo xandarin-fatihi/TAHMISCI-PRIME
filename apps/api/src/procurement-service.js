@@ -1511,6 +1511,15 @@ function createProcurementService(options = {}) {
       ...(data.recipeUsers || []).map((user) => [String(user.id || ""), String(user.name || user.username || user.id || "")])
     ]);
     const records = [];
+    if (hasCapability(actor, "inventory.location.manage") && hasSectionAccess(actor, "stock", "full")) {
+      const stockState = normalizeStockState(data.stockState);
+      for (const location of stockState.locations) {
+        if (location.trashed !== true || !location.removedAt || location.purgedAt || location.archivedAt) continue;
+        records.push({ id: location.id, type: "stock-location", title: location.name, category: "Depo",
+          removedAt: location.removedAt, actorName: location.removedByName || actorNames.get(String(location.removedBy)) || "Yönetici",
+          reason: location.removeReason || "Depo Çöp Kutusuna taşındı.", canRestore: true, canPurge: true });
+      }
+    }
     if (actor.type === "admin" || hasCapability(actor, "inventory.catalog.manage")) {
       const stockState = normalizeStockState(data.stockState);
       for (const product of stockState.products || []) {

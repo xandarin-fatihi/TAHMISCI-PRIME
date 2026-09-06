@@ -1051,13 +1051,14 @@ function normalizeStockState(stockState) {
     ? source.products.map((product, index) => normalizeStockProduct(product, index, categoryNames)).filter(Boolean)
     : defaultStockState().products;
   const unitDefinitions = normalizeStockUnitDefinitions(source.unitDefinitions, products);
-  const locations = normalizeStockLocations(source.locations);
+  const purgedLocationIds = [...new Set(normalizeArray(source.purgedLocationIds).map((id) => String(id || "").trim()).filter(Boolean))];
+  const locations = normalizeStockLocations(source.locations, purgedLocationIds);
   const generalLocation = locations.find((location) => location.code === "GENEL" || location.type === "central") || locations[0];
   const cafeLocation = locations.find((location) => location.code === "CAFE" || location.type === "cafe") || locations[0];
   const legacyMigrationRequired = !Array.isArray(source.balances) || Number(source.locationMigrationVersion || 0) < 1;
   // Yalnız henüz lokasyon migration'ı yapılmamış eski tekil stoklar operasyon
   // kaynağı olan Kafe Deposuna bağlanır. Mevcut çok-depolu dağılım asla taşınmaz.
-  const balances = normalizeStockBalances(source.balances, products, locations, legacyMigrationRequired, cafeLocation && cafeLocation.id);
+  const balances = normalizeStockBalances(source.balances, products, locations, legacyMigrationRequired, cafeLocation && cafeLocation.id, purgedLocationIds);
   const productsById = new Map(products.map((product) => [String(product.id), product]));
   const movements = normalizeArray(source.movements)
     .map((movement) => normalizeStockMovement(movement, productsById, legacyMigrationRequired ? cafeLocation && cafeLocation.id : generalLocation && generalLocation.id))
@@ -1072,10 +1073,11 @@ function normalizeStockState(stockState) {
     products,
     unitDefinitions,
     locations,
+    ...(purgedLocationIds.length ? { purgedLocationIds } : {}),
     balances,
     movements,
-    transfers: normalizeStockTransfers(source.transfers, productsById, locations),
-    counts: normalizeStockCounts(source.counts || source.stockCounts, productsById, locations),
+    transfers: normalizeStockTransfers(source.transfers, productsById, locations, purgedLocationIds),
+    counts: normalizeStockCounts(source.counts || source.stockCounts, productsById, locations, purgedLocationIds),
     operationKeys: normalizeStockOperationKeys(source.operationKeys),
     notificationSettings: source.notificationSettings && typeof source.notificationSettings === "object" && !Array.isArray(source.notificationSettings)
       ? source.notificationSettings
@@ -1148,7 +1150,7 @@ function stockUnitIdentity(value) {
     .replace(/\s+/g, " ");
 }
 
-function normalizeStockLocations(value) {
+function normalizeStockLocations(value, purgedLocationIds = []) {
   const required = [
     { id: "stock-location-cafe", code: "CAFE", name: "Kafe Deposu", type: "cafe", personnelVisible: true, active: true, sortOrder: 10, isDefault: true },
     { id: "stock-location-general", code: "GENEL", name: "Genel Depo", type: "central", personnelVisible: false, active: true, sortOrder: 20, isDefault: false }
@@ -1172,7 +1174,7 @@ function normalizeStockLocations(value) {
       description: String(item.description || "").trim().slice(0, 500),
       type: ["cafe", "central", "other"].includes(item.type) ? item.type : "other",
       personnelVisible: typeof item.personnelVisible === "boolean" ? item.personnelVisible : item.type === "cafe",
-      active: item.active !== false,
+      active: item.active !== false && item.trashed !== true && !item.removedAt && !item.purgedAt && !item.archivedAt,
       sortOrder: Math.max(0, Math.trunc(finiteNumber(item.sortOrder, result.length * 10))),
       isDefault: item.isDefault === true,
       assignedPersonnelIds: normalizeArray(item.assignedPersonnelIds).map((idValue) => String(idValue || "").trim()).filter(Boolean).slice(0, 1000),
@@ -1182,6 +1184,7 @@ function normalizeStockLocations(value) {
     });
   }
   for (const location of required) {
+    if (purgedLocationIds.includes(location.id)) continue;
     const existing = result.find((item) => item.code === location.code || item.id === location.id);
     if (existing) {
       if (!existing.id) existing.id = location.id;
@@ -1204,9 +1207,9 @@ function normalizeStockLocations(value) {
   return result.sort((first, second) => Number(first.sortOrder || 0) - Number(second.sortOrder || 0) || String(first.name).localeCompare(String(second.name), "tr"));
 }
 
-function normalizeStockBalances(value, products, locations, legacyMigrationRequired, legacyLocationId) {
+function normalizeStockBalances(value, products, locations, legacyMigrationRequired, legacyLocationId, purgedLocationIds = []) {
   const validProducts = new Set(products.map((product) => String(product.id)));
-  const validLocations = new Set(locations.map((location) => String(location.id)));
+  const validLocations = new Set([...locations.map((location) => String(location.id)), ...purgedLocationIds]);
   const seen = new Set();
   const balances = [];
   if (!legacyMigrationRequired) {
@@ -1302,8 +1305,8 @@ function normalizeStockMigrationAudit(value, legacyMigrationRequired, balances, 
   }).slice(-100);
 }
 
-function normalizeStockTransfers(value, productsById, locations) {
-  const locationIds = new Set(locations.map((location) => String(location.id)));
+function normalizeStockTransfers(value, productsById, locations, purgedLocationIds = []) {
+  const locationIds = new Set([...locations.map((location) => String(location.id)), ...purgedLocationIds]);
   const seen = new Set();
   return normalizeArray(value).map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return null;
@@ -1374,8 +1377,8 @@ function normalizeStockTransfers(value, productsById, locations) {
   }).filter(Boolean).slice(0, 2000);
 }
 
-function normalizeStockCounts(value, productsById, locations) {
-  const locationIds = new Set(locations.map((location) => String(location.id)));
+function normalizeStockCounts(value, productsById, locations, purgedLocationIds = []) {
+  const locationIds = new Set([...locations.map((location) => String(location.id)), ...purgedLocationIds]);
   const seen = new Set();
   return normalizeArray(value).map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return null;
@@ -2156,6 +2159,7 @@ function markWorkforcePersonnelState(data) {
 }
 
 function normalizeWorkforceShipments(value, stockState, productCodeRegistry) {
+  const purgedLocationIds = new Set(stockState && stockState.purgedLocationIds || []);
   const products = new Map((stockState && stockState.products || []).map((product) => [String(product.id), product]));
   const locations = new Map((stockState && stockState.locations || []).map((location) => [String(location.id), location]));
   const movementsByShipment = new Map();
@@ -2208,7 +2212,7 @@ function normalizeWorkforceShipments(value, stockState, productCodeRegistry) {
       stockAppliedAt: shipment.stockAppliedAt || (status === "onaylandı" && stockMovementRefs.length ? shipment.approvedAt || shipment.updatedAt || shipment.createdAt || null : null),
       stockMovementRef: String(shipment.stockMovementRef || stockMovementRefs[0] || "") || null,
       stockMovementRefs,
-      destinationLocationId: destination ? destination.id : null,
+      destinationLocationId: destination ? destination.id : purgedLocationIds.has(requestedDestinationId) ? requestedDestinationId : null,
       destinationLocationName: destination ? destination.name : String(shipment.destinationLocationName || "") || null,
       items: normalizeArray(shipment.items).map((item) => {
         if (!item || typeof item !== "object" || Array.isArray(item)) return null;

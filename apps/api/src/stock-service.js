@@ -175,6 +175,62 @@ function getLocations(stockState, options = {}) {
       || String(first.name).localeCompare(String(second.name), "tr"));
 }
 
+function stockLocationIsRemoved(location) {
+  return Boolean(location && (location.trashed === true || location.removedAt || location.purgedAt || location.archivedAt));
+}
+
+function applyStockLocationLifecycle(stockState, locationId, action, actor = {}, options = {}) {
+  const state = normalizeState(stockState);
+  const location = state.locations.find((item) => String(item.id) === String(locationId));
+  if (!location) {
+    if (action === "purge" && (state.purgedLocationIds || []).includes(String(locationId))) {
+      return { stockState: state, location: { id: String(locationId) }, idempotent: true };
+    }
+    throw stockError("Depo bulunamadı.", 404);
+  }
+  const timestamp = nowIso(options.now);
+  if (!["trash", "restore", "purge"].includes(action)) throw stockError("Geçersiz depo işlemi.", 422);
+  if ((location.purgedAt || location.archivedAt) && action !== "purge") {
+    throw stockError("Kalıcı kaldırılmış depo geri alınamaz veya düzenlenemez.", 409);
+  }
+  if (action === "trash") {
+    if (location.trashed === true) return { stockState: state, location, idempotent: true };
+    const fallback = state.locations.find((candidate) => candidate.id !== location.id && candidate.active !== false && !stockLocationIsRemoved(candidate));
+    if (!fallback) throw stockError("Son kullanılabilir depo silinemez.", 409);
+    const users = options.data && options.data.recipeUsers || [];
+    if (users.some((user) => user.active !== false && (String(user.stockLocationId || "") === String(location.id)
+      || (location.assignedPersonnelIds || []).includes(String(user.id))))) {
+      throw stockError("Bu depoya aktif personel atanmış. Önce personel depo atamasını kaldırın.", 409);
+    }
+    location.activeBeforeTrash = location.active !== false;
+    if (location.isDefault) {
+      location.isDefault = false;
+      fallback.isDefault = true;
+      fallback.updatedAt = timestamp;
+    }
+    Object.assign(location, { active: false, trashed: true, removedAt: timestamp,
+      removedBy: String(actor.id || "system"), removedByName: String(actor.name || "Yönetici"),
+      removeReason: String(options.reason || "").trim().slice(0, 500) });
+  } else if (action === "restore") {
+    if (location.trashed !== true) return { stockState: state, location, idempotent: true };
+    const canReactivate = location.activeBeforeTrash === true && !state.locations.some((candidate) =>
+      candidate.id !== location.id && candidate.active !== false && excelIdentity(candidate.name) === excelIdentity(location.name));
+    Object.assign(location, { active: canReactivate, trashed: false, removedAt: null, removedBy: null,
+      removedByName: null, removeReason: "", restoredAt: timestamp, restoredBy: String(actor.id || "system") });
+  } else {
+    // Retain only reference IDs: history must survive without recreating a system depot.
+    const systemId = location.code === "CAFE" ? CAFE_LOCATION_ID : location.code === "GENEL" ? GENERAL_LOCATION_ID : null;
+    state.purgedLocationIds = [...new Set([...(state.purgedLocationIds || []), location.id, systemId].filter(Boolean))];
+    state.locations = state.locations.filter((item) => item.id !== location.id);
+    // This snapshot is returned for the response/audit only, never stored as a location.
+    Object.assign(location, { active: false, trashed: false, removedAt: null,
+      purgedAt: timestamp, archivedAt: timestamp, purgedBy: String(actor.id || "system") });
+  }
+  location.updatedAt = timestamp;
+  state.updatedAt = timestamp;
+  return { stockState: state, location, idempotent: false };
+}
+
 function defaultCafeLocation(state) {
   const locations = getLocations(state, { includeInactive: true });
   return locations.find((location) => location.active !== false && location.code === "CAFE")
@@ -2426,6 +2482,7 @@ module.exports = {
   TRANSFER_STATUSES,
   actorLocationId,
   applyStockExcelImport,
+  applyStockLocationLifecycle,
   applyStockMovement,
   allowedProductUnits,
   approveStockCount,
@@ -2458,6 +2515,7 @@ module.exports = {
   startStockCount,
   softDeleteStockProduct,
   stockError,
+  stockLocationIsRemoved,
   stockStatus,
   restoreStockProduct,
   updateStockCount,

@@ -1,6 +1,6 @@
-import { api as faturaApi, requestId as createRequestId } from "./api.js?v=20260906-stock-excel-export-v1";
-import { CAPABILITIES, has, hasSection, invalidate as invalidateFatura, state as faturaState, updateRevision as syncRevision } from "./state.js?v=20260906-stock-excel-export-v1";
-import { requestText } from "./ui-dialogs.js?v=20260906-stock-excel-export-v1";
+import { api as faturaApi, requestId as createRequestId } from "./api.js?v=20260906-cari-mobile-document-v1";
+import { CAPABILITIES, has, hasSection, invalidate as invalidateFatura, state as faturaState, updateRevision as syncRevision } from "./state.js?v=20260906-cari-mobile-document-v1";
+import { requestText } from "./ui-dialogs.js?v=20260906-cari-mobile-document-v1";
 
 "use strict";
 
@@ -123,7 +123,8 @@ import { requestText } from "./ui-dialogs.js?v=20260906-stock-excel-export-v1";
 
   function locationName(id) {
     if (String(id) === "total") return "Tüm Depolar";
-    return (state.locations.find((item) => String(item.id) === String(id)) || {}).name || "Bilinmeyen depo";
+    return (state.locations.find((item) => String(item.id) === String(id))
+      || (state.locationHistory || []).find((item) => String(item.id) === String(id)) || {}).name || "Bilinmeyen depo";
   }
 
   function productOf(balance) {
@@ -272,6 +273,7 @@ import { requestText } from "./ui-dialogs.js?v=20260906-stock-excel-export-v1";
     if (state.locations.length && !options.force) return { locations: state.locations, personnel: state.personnel, revision: state.inventoryRevision };
     const result = await api("/api/procurement/v1/stock/locations");
     state.locations = Array.isArray(result.locations) ? result.locations : [];
+    state.locationHistory = Array.isArray(result.locationHistory) ? result.locationHistory : state.locations;
     state.personnel = Array.isArray(result.personnel) ? result.personnel : [];
     if (result.unitDefinitions) state.unitDefinitions = normalizeUnitDefinitions(result.unitDefinitions);
     updateRevision(result);
@@ -281,7 +283,8 @@ import { requestText } from "./ui-dialogs.js?v=20260906-stock-excel-export-v1";
     const valid = state.selectedLocationId === "total"
       || state.locations.some((location) => String(location.id) === String(state.selectedLocationId));
     if (!valid) {
-      const cafe = state.locations.find((location) => location.code === "CAFE" || location.type === "cafe");
+      const cafe = state.locations.find((location) => location.active !== false && location.isDefault)
+        || state.locations.find((location) => location.active !== false);
       state.selectedLocationId = String((cafe || state.locations[0] || {}).id || "total");
     }
     try { localStorage.setItem(LOCATION_STORAGE_KEY, state.selectedLocationId); } catch (_error) {}
@@ -1608,12 +1611,13 @@ import { requestText } from "./ui-dialogs.js?v=20260906-stock-excel-export-v1";
     }
   }
 
-  function requestConfirmation(title, message, confirmLabel = "Onayla") {
+  function requestConfirmation(title, message, confirmLabel = "Onayla", cancelLabel = "Vazgeç") {
     const dialog = $("#stockConfirmDialog");
     if (!dialog) return Promise.resolve(false);
     $("#stockConfirmTitle").textContent = title;
     $("#stockConfirmMessage").textContent = message;
     $("#stockConfirmSubmit").textContent = confirmLabel;
+    $("button[value=cancel]", dialog).textContent = cancelLabel;
     dialog.returnValue = "cancel";
     if (!dialog.open) dialog.showModal();
     return new Promise((resolve) => {
@@ -1771,6 +1775,7 @@ import { requestText } from "./ui-dialogs.js?v=20260906-stock-excel-export-v1";
   }
 
   async function saveLocationEdit(form) {
+    if ($("#stockLocationDelete")?.disabled || $("#stockLocationEditSubmit")?.disabled) return;
     if (!can(CAPABILITIES.inventoryLocationManage)) throw new Error("Depo yönetimi yetkiniz yok.");
     const id = $("#stockLocationEditId")?.value || "";
     const name = $("#stockLocationEditName")?.value.trim() || "";
@@ -1789,6 +1794,32 @@ import { requestText } from "./ui-dialogs.js?v=20260906-stock-excel-export-v1";
       const result = await api(`/api/procurement/v1/stock/locations/${encodeURIComponent(id)}`, mutation("PATCH", { name, active, personnelVisible: $("#stockLocationEditPersonnelVisible")?.value === "true" }, "fatura-stock-location-edit"));
       $("#stockLocationEditDialog")?.close();
       await reloadAfterMutation(result, "Depo bilgileri güncellendi.");
+    });
+  }
+
+  async function trashLocation(button) {
+    if (!can(CAPABILITIES.inventoryLocationManage)) throw new Error("Depo yönetimi yetkiniz yok.");
+    const id = $("#stockLocationEditId")?.value;
+    const save = $("#stockLocationEditSubmit");
+    if (!id || button.disabled || save?.disabled) return;
+    return runOperation(`location-trash:${id}`, button, async () => {
+      if (save) save.disabled = true;
+      try {
+        if (!await requestConfirmation("Depoyu Sil", "Bu depo aktif sistemden kaldırılacak ve Çöp Kutusuna taşınacak. Geçmiş stok ve hareket kayıtları korunacaktır.", "Depoyu Sil", "İptal")) return;
+        const result = await api(`/api/procurement/v1/stock/locations/${encodeURIComponent(id)}/trash`, mutation("POST", {}, "fatura-stock-location-trash"));
+        $("#stockLocationEditDialog")?.close();
+        invalidateFatura(["trash", "stock-references", "stockExcel", "dashboard"]);
+        if (faturaState.context) faturaState.context.stockLocations = (faturaState.context.stockLocations || []).filter((location) => String(location.id) !== String(id));
+        if (String(state.selectedLocationId) === String(id)) {
+          state.selectedLocationId = "total";
+          state.viewMode = "overview";
+          closeProductDrawer({ restoreFocus: false });
+          const next = { ...(history.state || {}), stockWorkspace: false, stockOverviewBack: false };
+          delete next.locationId;
+          history.replaceState(next, "", stockWorkspaceUrl());
+        }
+        await reloadAfterMutation(result, "Depo Çöp Kutusuna taşındı.");
+      } finally { if (save) save.disabled = false; }
     });
   }
 
@@ -2447,6 +2478,7 @@ import { requestText } from "./ui-dialogs.js?v=20260906-stock-excel-export-v1";
     $("#stockUnitSchemaSubmit")?.addEventListener("click", (event) => { submitUnitSchema(event.currentTarget).catch((error) => { $("#stockThresholdDialogMessage").textContent = error.message; }); });
     $("#stockUnitMigrationForm")?.addEventListener("submit", (event) => { event.preventDefault(); confirmUnitMigration($("#stockUnitMigrationConfirm")).catch((error) => { $("#stockUnitMigrationMessage").textContent = error.message; }); });
     $("#stockLocationEditForm")?.addEventListener("submit", (event) => { event.preventDefault(); saveLocationEdit(event.currentTarget).catch((error) => { $("#stockLocationEditMessage").textContent = error.message; }); });
+    $("#stockLocationDelete")?.addEventListener("click", (event) => { trashLocation(event.currentTarget).catch((error) => { $("#stockLocationEditMessage").textContent = error.message; }); });
     $("#stockLocationCreateForm")?.addEventListener("submit", (event) => { event.preventDefault(); createLocation(event.currentTarget).catch((error) => { $("#stockLocationCreateMessage").textContent = error.message; }); });
     $$('[data-stock-dialog-close]').forEach((button) => button.addEventListener("click", () => closeDialog(button.dataset.stockDialogClose)));
     if (stockKeydownHandler) document.removeEventListener("keydown", stockKeydownHandler);
@@ -2587,6 +2619,7 @@ export function resetStockState() {
   state.inventoryRevision = 0;
   state.catalogRevision = 0;
   state.locations = [];
+  state.locationHistory = [];
   state.personnel = [];
   state.unitDefinitions = { base: [], bulk: [] };
   state.balances = [];
