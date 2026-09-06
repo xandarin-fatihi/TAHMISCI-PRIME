@@ -10,6 +10,7 @@ const crypto = require("crypto");
 const { normalizeStockState } = require("./store/migrations");
 const { isValidProductCode, normalizeProductCode, normalizeProductCodeList } = require("./store/product-code-registry");
 const { FORMULA_VALUE_MISSING, readWorkbookCells } = require("./simple-xlsx");
+const { createStockExcelWorkbook, stockExcelSheetNames } = require("./stock-excel-workbook");
 
 const CAFE_LOCATION_ID = "stock-location-cafe";
 const GENERAL_LOCATION_ID = "stock-location-general";
@@ -1692,6 +1693,45 @@ function excelBlockLabelsAreValid(sheet, row) {
     && quantities[2] === "toplam";
 }
 
+async function exportStockExcelWorkbook(stockState, locationId) {
+  if (!String(locationId || "").trim()) throw stockError("Excel çıktısı almak için önce depo seçin.", 422);
+  // Work on an isolated snapshot: export never normalizes or writes the persistent store.
+  const snapshot = normalizeState(structuredClone(stockState || {}));
+  const location = getLocation(snapshot, locationId);
+  const inventory = getLocationInventory(snapshot, location.id);
+  const active = (item) => item && item.active !== false && item.sourcePresent !== false
+    && item.manuallyInactive !== true && item.trashed !== true
+    && !item.removedAt && !item.deletedAt && !item.purgedAt && !item.archivedAt;
+  const categoryById = new Map(snapshot.categories.map((category) => [String(category.id), category]));
+  const groups = new Map(snapshot.categories.filter(active).map((category) => [category.name, { name: category.name, products: [] }]));
+  for (const balance of inventory.balances) {
+    const product = balance.product;
+    if (!active(product)) continue;
+    const category = categoryById.get(String(product.categoryId));
+    if (category && !active(category)) continue;
+    if (balance.reconciliationRequired) throw stockError(`${productName(product)} için depo birim mutabakatını tamamlayın.`, 409);
+    const name = String(category && category.name || product.category || "Genel");
+    if (!groups.has(name)) groups.set(name, { name, products: [] });
+    const units = productUnitMetadata(product, { allowDefaultBaseUnit: false });
+    const quantity = round(Number(balance.quantity || 0));
+    const split = formatBaseQuantity({ ...product, ...units }, quantity);
+    groups.get(name).products.push({
+      name: String(product.name || product.productName || ""),
+      productCode: product.productCode || "",
+      ...units,
+      quantity,
+      bulkQuantity: split.bulkQuantity,
+      baseQuantity: split.remainderQuantity,
+      quantityDisplay: split.display,
+      criticalThreshold: round(Number(balance.criticalThreshold || 0)),
+      orderThreshold: round(Number(balance.orderThreshold || 0)),
+      targetLevel: round(Number(balance.targetLevel || 0))
+    });
+  }
+  if (![...groups.values()].some((category) => category.products.length)) throw stockError("Excel çıktısı için aktif stok ürünü bulunamadı.", 422);
+  return { buffer: await createStockExcelWorkbook([...groups.values()]), location };
+}
+
 async function parseStockExcelWorkbook(buffer) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
     throw stockError("Geçerli bir .xlsx stok dosyası yükleyin.", 422);
@@ -1704,9 +1744,11 @@ async function parseStockExcelWorkbook(buffer) {
   }
   const codeSheet = workbook.worksheets.find((sheet) => excelIdentity(sheet.name) === "urun kodlari");
   const codes = new Map();
+  const codeCategories = new Set();
   if (codeSheet) {
     for (let row = 2; row <= codeSheet.actualRowCount; row += 1) {
       const category = excelText(codeSheet.getCell(row, 1));
+      if (category) codeCategories.add(category);
       const productNameValue = excelText(codeSheet.getCell(row, 2));
       const code = normalizeProductCode(excelText(codeSheet.getCell(row, 3)));
       if (category && productNameValue && isValidProductCode(code, { stock: true })) {
@@ -1716,10 +1758,12 @@ async function parseStockExcelWorkbook(buffer) {
   }
   const products = [];
   const errors = [];
+  const categoryBySheet = new Map([...stockExcelSheetNames(codeCategories)].map(([category, name]) => [name, category]));
   const categoryNames = new Set();
   for (const sheet of workbook.worksheets) {
     if (sheet === codeSheet || excelIdentity(sheet.name) === "urun kodlari") continue;
-    categoryNames.add(String(sheet.name || "").trim());
+    const categoryName = categoryBySheet.get(sheet.name) || String(sheet.name || "").trim();
+    categoryNames.add(categoryName);
     for (let row = 1; row <= Math.max(1, sheet.actualRowCount); row += 8) {
       const productNameValue = excelText(sheet.getCell(row, 1));
       if (!productNameValue || excelProductHeadingIsPlaceholder(productNameValue)) continue;
@@ -1740,9 +1784,9 @@ async function parseStockExcelWorkbook(buffer) {
       if (!baseUnit) warnings.push("Temel birim eksik.");
       if (bulkUnit && (factor.empty || !factor.valid)) warnings.push("Toplu birim çarpanı eksik.");
       products.push({
-        category: String(sheet.name || "").trim().slice(0, 120),
+        category: categoryName.slice(0, 120),
         productName: productNameValue.slice(0, 180),
-        productCode: codes.get(`${excelIdentity(sheet.name)}\u0000${excelIdentity(productNameValue)}`) || "",
+        productCode: codes.get(`${excelIdentity(categoryName)}\u0000${excelIdentity(productNameValue)}`) || "",
         bulkUnit,
         baseUnit,
         unitsPerBulkUnit: factor.value,
@@ -2395,6 +2439,7 @@ module.exports = {
   createTransferRequest,
   defaultCafeLocation,
   defaultGeneralLocation,
+  exportStockExcelWorkbook,
   getLocation,
   getLocationInventory,
   getLocations,

@@ -255,7 +255,8 @@ export async function downloadExport(kind, filters = {}) {
   }
   let response;
   try {
-    response = await fetch(`${API_ROOT}/export?${params}`, { credentials: "include", cache: "no-store" });
+    const path = kind === "stock-excel" ? "/stock/excel/export" : "/export";
+    response = await fetch(`${API_ROOT}${path}?${params}`, { credentials: "include", cache: "no-store" });
   } catch (error) {
     throw new ApiError(navigator.onLine ? "Excel çıktısı alınırken sunucuya ulaşılamadı." : "Çevrimdışıyken Excel çıktısı alınamaz.", 0, { cause: error && error.message });
   }

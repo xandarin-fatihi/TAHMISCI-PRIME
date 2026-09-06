@@ -776,3 +776,6 @@
   #stockLocationManagementList > article { grid-template-columns: minmax(0, 1fr) auto; }
   #stockLocationManagementList > article > div { grid-column: 1 / -1; }
 }
+
+.stock-excel-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:10px}.stock-excel-actions .ui-button{flex:0 1 auto}.stock-excel-form{grid-template-columns:minmax(0,1fr) minmax(0,1.35fr)}
+@media(max-width:560px){.stock-excel-form{grid-template-columns:1fr}.stock-excel-actions .ui-button{flex:1 1 100%;width:100%}}

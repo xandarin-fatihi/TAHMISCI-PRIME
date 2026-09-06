@@ -1,6 +1,6 @@
-import { api } from "./api.js?v=20260905-cari-actions-v2";
-import { shipmentFinance } from "./accounting.js?v=20260905-cari-actions-v2";
-import { escapeHtml, financeValues, paymentStatusLabel, state, statusBadge, trDate, trMoney } from "./state.js?v=20260905-cari-actions-v2";
+import { api } from "./api.js?v=20260906-stock-excel-export-v1";
+import { shipmentFinance } from "./accounting.js?v=20260906-stock-excel-export-v1";
+import { escapeHtml, financeValues, paymentStatusLabel, state, statusBadge, trDate, trMoney } from "./state.js?v=20260906-stock-excel-export-v1";
 
 export function renderDocuments() {
   const supplierId = String(state.filters.documentsSupplier || "");

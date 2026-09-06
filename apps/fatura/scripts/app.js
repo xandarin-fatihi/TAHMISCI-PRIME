@@ -1,13 +1,13 @@
-import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260905-cari-actions-v2";
-import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260905-cari-actions-v2";
-import { renderDashboard } from "./dashboard.js?v=20260905-cari-actions-v2";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260905-cari-actions-v2";
-import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260905-cari-actions-v2";
-import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260905-cari-actions-v2";
-import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260905-cari-actions-v2";
-import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260905-cari-actions-v2";
-import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260905-cari-actions-v2";
-import { confirmAction, requestText } from "./ui-dialogs.js?v=20260905-cari-actions-v2";
+import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260906-stock-excel-export-v1";
+import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260906-stock-excel-export-v1";
+import { renderDashboard } from "./dashboard.js?v=20260906-stock-excel-export-v1";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260906-stock-excel-export-v1";
+import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260906-stock-excel-export-v1";
+import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260906-stock-excel-export-v1";
+import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260906-stock-excel-export-v1";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260906-stock-excel-export-v1";
+import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260906-stock-excel-export-v1";
+import { confirmAction, requestText } from "./ui-dialogs.js?v=20260906-stock-excel-export-v1";
 
 const app = document.getElementById("faturaApp");
 const shell = document.getElementById("shell");
@@ -386,7 +386,7 @@ function renderStockExcelView() {
   const processedCount = Number(result && result.processedProducts || groups.updatedProducts.length + groups.createdProducts.length);
   const fileName = String(state.stockExcel.fileName || "");
   const summary = result ? `<section class="stock-excel-result" aria-live="polite"><header><div><span>İçe aktarım tamamlandı</span><strong>${processedCount} ürün işlendi</strong></div><span class="badge ${attentionCount ? "is-warning" : "is-success"}">${attentionCount ? `${attentionCount} ürün dikkat gerektiriyor` : "Kontrol gerektirmiyor"}</span></header><div class="stock-excel-result__metrics">${stockExcelMetric("updatedProducts", "Güncellenen ürün", groups.updatedProducts.length)}${stockExcelMetric("createdProducts", "Yeni ürün", groups.createdProducts.length)}${stockExcelMetric("createdCategories", "Yeni kategori", groups.createdCategories.length)}${stockExcelMetric("balanceChanges", "Bakiyesi değişen", groups.balanceChanges.length)}${stockExcelMetric("attentionProducts", "Dikkat gerektiren", attentionCount)}</div></section>` : "";
-  return `<section class="stock-excel-view"><article class="stock-excel-card"><header><span class="stock-excel-card__icon">${icon("stockExcel")}</span><div><p class="eyebrow">CANONICAL STOK AKTARIMI</p><h2>Stok Excel</h2><p>Excel stok şablonundaki ürün, birim, eşik ve stok miktarlarını toplu olarak aktarın.</p></div></header><form id="stockExcelImportForm" class="stock-excel-form" enctype="multipart/form-data" novalidate><label><span>Hedef Depo</span><select name="targetLocationId" required><option value="">Depo seçin</option>${locations.map((location) => `<option value="${escapeHtml(location.id)}">${escapeHtml(location.name)}</option>`).join("")}</select></label><label class="stock-excel-field"><span>Excel Dosyası</span><span class="stock-excel-file${fileName ? " is-selected" : ""}" id="stockExcelFilePicker"><input id="stockExcelFile" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required aria-describedby="stockExcelFileMeta"><span class="stock-excel-file__icon">${icon("stockExcel")}</span><span class="stock-excel-file__copy"><strong id="stockExcelFileName">${escapeHtml(fileName || "Excel dosyası seç")}</strong><small id="stockExcelFileMeta">${fileName ? ".xlsx dosyası" : "Yalnız .xlsx · en fazla 20 MB"}</small></span><span class="stock-excel-file__action" id="stockExcelFileAction">${fileName ? "Değiştir" : "Seç"}</span></span></label><p class="stock-excel-message" id="stockExcelMessage" role="alert"></p><button class="ui-button ui-button--primary" id="stockExcelSubmit" type="submit" ${locations.length ? "" : "disabled"}>Stok Bilgilerini İçe Aktar</button></form>${locations.length ? "" : '<p class="stock-excel-empty">İçe aktarım için aktif bir depo bulunamadı.</p>'}</article>${summary}</section>`;
+  return `<section class="stock-excel-view"><article class="stock-excel-card"><header><span class="stock-excel-card__icon">${icon("stockExcel")}</span><div><p class="eyebrow">CANONICAL STOK AKTARIMI</p><h2>Stok Excel</h2><p>Excel stok şablonundaki ürün, birim, eşik ve stok miktarlarını toplu olarak aktarın.</p></div></header><form id="stockExcelImportForm" class="stock-excel-form" enctype="multipart/form-data" novalidate><label><span>Hedef Depo</span><select name="targetLocationId" required><option value="">Depo seçin</option>${locations.map((location) => `<option value="${escapeHtml(location.id)}">${escapeHtml(location.name)}</option>`).join("")}</select></label><label class="stock-excel-field"><span>Excel Dosyası</span><span class="stock-excel-file${fileName ? " is-selected" : ""}" id="stockExcelFilePicker"><input id="stockExcelFile" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required aria-describedby="stockExcelFileMeta"><span class="stock-excel-file__icon">${icon("stockExcel")}</span><span class="stock-excel-file__copy"><strong id="stockExcelFileName">${escapeHtml(fileName || "Excel dosyası seç")}</strong><small id="stockExcelFileMeta">${fileName ? ".xlsx dosyası" : "Yalnız .xlsx · en fazla 20 MB"}</small></span><span class="stock-excel-file__action" id="stockExcelFileAction">${fileName ? "Değiştir" : "Seç"}</span></span></label><p class="stock-excel-message" id="stockExcelMessage" role="alert"></p><div class="stock-excel-actions"><button class="ui-button ui-button--primary" id="stockExcelSubmit" type="submit" ${locations.length ? "" : "disabled"}>Stok Bilgilerini İçe Aktar</button><button class="ui-button" id="stockExcelExport" type="button" ${locations.length ? "" : "disabled"}>Excel Çıktı Al</button></div></form>${locations.length ? "" : '<p class="stock-excel-empty">İçe aktarım için aktif bir depo bulunamadı.</p>'}</article>${summary}</section>`;
 }
 
 const STOCK_EXCEL_DETAIL_META = {
@@ -478,6 +478,39 @@ function handleAppSubmit(event) {
   if (event.target && event.target.id === "stockExcelImportForm") {
     event.preventDefault();
     importStockExcel(event.target);
+  }
+}
+
+async function exportStockExcel(button) {
+  if (button.disabled || state.stockExcel.busy) return;
+  const form = button.closest("form");
+  const message = form.querySelector("#stockExcelMessage");
+  const targetLocationId = String(form.elements.targetLocationId.value || "").trim();
+  if (!targetLocationId) { message.textContent = "Excel çıktısı almak için önce depo seçin."; return; }
+  state.stockExcel.busy = true;
+  message.textContent = "";
+  const controls = [...form.querySelectorAll("input,select,button")].filter((control) => control !== button)
+    .map((control) => ({ control, disabled: control.disabled }));
+  controls.forEach(({ control }) => { control.disabled = true; });
+  setBusy(button, true, "Excel Hazırlanıyor...");
+  try {
+    const file = await downloadExport("stock-excel", { targetLocationId });
+    const objectUrl = URL.createObjectURL(file.blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = file.filename;
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    toast("Güncel stok Excel çıktısı hazırlandı.");
+  } catch (error) {
+    message.textContent = error.message || "Excel çıktısı hazırlanamadı.";
+  } finally {
+    state.stockExcel.busy = false;
+    controls.forEach(({ control, disabled }) => { control.disabled = disabled; });
+    setBusy(button, false);
   }
 }
 
@@ -731,6 +764,7 @@ async function handleClick(event) {
     return applyStockIntent(intent);
   }
   if (button.dataset.stockExcelDetail) return openStockExcelDetail(button.dataset.stockExcelDetail);
+  if (button.id === "stockExcelExport") return exportStockExcel(button);
   if (button.dataset.view || button.dataset.viewTarget) return setView(button.dataset.view || button.dataset.viewTarget);
   if (button.hasAttribute("data-supplier-product-new")) return selectNewSupplierStockProduct();
   if (button.dataset.supplierStockProductId) return selectSupplierStockProduct(button.dataset.supplierStockProductId);

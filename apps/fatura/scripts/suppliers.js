@@ -1,4 +1,4 @@
-import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, state, statusBadge } from "./state.js?v=20260905-cari-actions-v2";
+import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, state, statusBadge } from "./state.js?v=20260906-stock-excel-export-v1";
 
 function canManageSuppliers() {
   const actor = state.context && state.context.actor;

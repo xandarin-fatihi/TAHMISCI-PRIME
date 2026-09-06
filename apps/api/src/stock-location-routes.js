@@ -1449,6 +1449,24 @@ function registerStockLocationRoutes(deps) {
     } catch (error) { next(error); }
   });
 
+  app.get("/api/procurement/v1/stock/excel/export",
+    requireAdminOrMainRequestOrigin,
+    auth.requireRecipe,
+    attachProcurementActor,
+    requireCanonicalSection("full"),
+    requireCanonicalCapability("inventory.manage"),
+    async (req, res, next) => {
+      try {
+        const data = await store.read();
+        const { buffer, location } = await stockService.exportStockExcelWorkbook(data.stockState, req.query.targetLocationId);
+        const filename = `tahmisci-stok-${location.name}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+        res.set("Cache-Control", "no-store");
+        res.set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.set("Content-Disposition", `attachment; filename="tahmisci-stok.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        res.send(buffer);
+      } catch (error) { next(error); }
+    });
+
   app.post("/api/procurement/v1/stock/excel/import",
     requireAdminOrMainRequestOrigin,
     auth.requireRecipe,
