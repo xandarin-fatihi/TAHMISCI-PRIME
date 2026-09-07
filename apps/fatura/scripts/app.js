@@ -1,13 +1,13 @@
-import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260907-shipment-mixed-quantity-v1";
-import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260907-shipment-mixed-quantity-v1";
-import { renderDashboard } from "./dashboard.js?v=20260907-shipment-mixed-quantity-v1";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260907-shipment-mixed-quantity-v1";
-import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260907-shipment-mixed-quantity-v1";
-import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260907-shipment-mixed-quantity-v1";
-import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260907-shipment-mixed-quantity-v1";
-import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260907-shipment-mixed-quantity-v1";
-import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260907-shipment-mixed-quantity-v1";
-import { confirmAction, requestText } from "./ui-dialogs.js?v=20260907-shipment-mixed-quantity-v1";
+import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260907-pdf-document-picker-v1";
+import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260907-pdf-document-picker-v1";
+import { renderDashboard } from "./dashboard.js?v=20260907-pdf-document-picker-v1";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260907-pdf-document-picker-v1";
+import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260907-pdf-document-picker-v1";
+import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260907-pdf-document-picker-v1";
+import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260907-pdf-document-picker-v1";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260907-pdf-document-picker-v1";
+import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260907-pdf-document-picker-v1";
+import { confirmAction, requestText, documentUploadPicker, DOCUMENT_UPLOAD_INPUTS } from "./ui-dialogs.js?v=20260907-pdf-document-picker-v1";
 
 const app = document.getElementById("faturaApp");
 const shell = document.getElementById("shell");
@@ -881,15 +881,16 @@ function handleChange(event) {
     });
     return updateSupplierShipmentSubmitState();
   }
-  if (["shipmentFile", "shipmentCameraFile"].includes(event.target.name)) {
-    retainUploadFile(event.target, "shipment");
-    const otherName = event.target.name === "shipmentFile" ? "shipmentCameraFile" : "shipmentFile";
-    if (event.target.files?.length && entityForm.elements[otherName]) entityForm.elements[otherName].value = "";
-    return updateSupplierShipmentSubmitState();
-  }
-  if (["file", "paymentFile", "cariFile"].includes(event.target.name) && event.target.form === entityForm) {
-    retainUploadFile(event.target, event.target.name);
-    if (event.target.name === "cariFile") updateSupplierCariForm();
+  if (event.target.dataset.documentUploadKey && event.target.form === entityForm) {
+    const key = event.target.dataset.documentUploadKey;
+    retainUploadFile(event.target, key);
+    if (event.target.files?.[0]?.size) {
+      for (const name of DOCUMENT_UPLOAD_INPUTS[key] || []) {
+        if (name !== event.target.name && entityForm.elements[name]) entityForm.elements[name].value = "";
+      }
+    }
+    if (key === "shipment") updateSupplierShipmentSubmitState();
+    if (key === "cariFile") updateSupplierCariForm();
     return;
   }
   if (event.target.id === "archive-supplier-filter") { state.filters.documentsSupplier = event.target.value; return renderActiveView(); }
@@ -1461,7 +1462,7 @@ function openSupplierShipmentForm() {
     submitLabel: "Sevkiyatı Oluştur",
     hideCancel: true,
     submitDisabled: true,
-    body: `<div class="supplier-shipment-form"><section class="supplier-shipment-products"><strong>ÜRÜNLER</strong><div class="supplier-shipment-lines" id="supplierShipmentLines">${products.map(supplierShipmentLine).join("")}</div></section><div class="supplier-shipment-meta"><label>Hedef Depo<select name="destinationLocationId" required><option value="">Depo seçin</option>${locations.map((location) => `<option value="${escapeHtml(location.id)}" ${defaultLocation && String(defaultLocation.id) === String(location.id) ? "selected" : ""}>${escapeHtml(location.name)}</option>`).join("")}</select></label><label>Sevkiyat Tarihi<input name="shipmentDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></label></div><fieldset class="supplier-shipment-upload"><legend>Belge Ekle</legend><div class="supplier-shipment-upload__actions"><label class="ui-button ui-button--secondary">Dosya / Galeri Seç<input name="shipmentFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" aria-describedby="supplierShipmentFileName"></label><label class="ui-button ui-button--secondary">Kamera ile Çek<input name="shipmentCameraFile" type="file" accept="image/*" capture="environment" aria-describedby="supplierShipmentFileName"></label></div><small>PDF, JPEG, PNG, WebP, HEIC veya HEIF. Belge olmadan sevkiyat oluşturulamaz.</small><span class="supplier-shipment-upload__name" id="supplierShipmentFileName">Belge seçilmedi</span></fieldset></div>`
+    body: `<div class="supplier-shipment-form"><section class="supplier-shipment-products"><strong>ÜRÜNLER</strong><div class="supplier-shipment-lines" id="supplierShipmentLines">${products.map(supplierShipmentLine).join("")}</div></section><div class="supplier-shipment-meta"><label>Hedef Depo<select name="destinationLocationId" required><option value="">Depo seçin</option>${locations.map((location) => `<option value="${escapeHtml(location.id)}" ${defaultLocation && String(defaultLocation.id) === String(location.id) ? "selected" : ""}>${escapeHtml(location.name)}</option>`).join("")}</select></label><label>Sevkiyat Tarihi<input name="shipmentDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></label></div>${documentUploadPicker("shipment", "Belge Ekle", { nameId: "supplierShipmentFileName" })}</div>`
   });
   updateSupplierShipmentSubmitState();
 }
@@ -1476,7 +1477,12 @@ function updateSupplierShipmentSubmitState() {
 }
 
 function selectedSupplierShipmentFile() {
-  return entityUploadState?.files.get("shipment") || entityForm.elements.shipmentFile?.files?.[0] || entityForm.elements.shipmentCameraFile?.files?.[0] || null;
+  return selectedUploadFile("shipment");
+}
+
+function selectedUploadFile(key) {
+  const candidates = [entityUploadState?.files.get(key), ...(DOCUMENT_UPLOAD_INPUTS[key] || []).map((name) => entityForm.elements[name]?.files?.[0])];
+  return candidates.find((file) => file instanceof File && file.size > 0) || null;
 }
 
 function retainUploadFile(input, key) {
@@ -1484,12 +1490,8 @@ function retainUploadFile(input, key) {
   const file = input.files?.[0];
   if (file?.size) entityUploadState.files.set(key, file);
   const retained = entityUploadState.files.get(key);
-  if (key !== "shipment" && retained) {
-    input.required = false;
-    let name = input.parentElement.querySelector("[data-retained-file]");
-    if (!name) { name = document.createElement("small"); name.dataset.retainedFile = "true"; input.after(name); }
-    name.textContent = retained.name;
-  }
+  const name = input.closest(".document-upload-picker")?.querySelector("[data-selected-document-name]");
+  if (name) name.textContent = retained ? retained.name : "Belge seçilmedi";
 }
 
 function uploadFormMutation(path, body) {
@@ -1559,9 +1561,7 @@ async function openSupplierCariForm() {
 function updateSupplierCariForm() {
   if (entityForm.dataset.mode !== "supplier-cari") return;
   const payment = entityForm.elements.cariKind.value === "payment";
-  const file = entityForm.elements.cariFile;
   const documentSelect = entityForm.elements.cariDocumentId;
-  if (file) file.required = payment && !entityUploadState?.files.get("cariFile");
   if (documentSelect) documentSelect.required = payment;
   document.getElementById("cariDocumentHint").textContent = payment ? "Ödeme için belge zorunludur." : "Belge isteğe bağlıdır.";
 }
@@ -1575,7 +1575,7 @@ async function saveSupplierCari(data) {
   if (!transactionDate) throw new Error("İşlem tarihi zorunludur.");
   if (!["debt", "payment", "opening"].includes(kind)) throw new Error("İşlem türü geçersiz.");
   let documentId = value(data, "cariDocumentId");
-  const file = entityUploadState?.files.get("cariFile") || data.get("cariFile");
+  const file = selectedUploadFile("cariFile");
   if (file instanceof File && file.size > 0) {
     const uploaded = await uploadDocument(file, { documentType: "diğer", supplierId, documentDate: transactionDate }, state.revision);
     mutationComplete(uploaded, ["documents"]);
@@ -1896,14 +1896,14 @@ async function saveShipment(data) {
   }
 }
 async function saveDocument(data) {
-  const file = entityUploadState?.files.get("file") || data.get("file");
+  const file = selectedUploadFile("file");
   const payload = await uploadDocument(file, { documentType: value(data,"documentType"), supplierId: value(data,"supplierId"), shipmentIds: value(data,"shipmentId") ? [value(data,"shipmentId")] : [], documentNumber: value(data,"documentNumber"), documentDate: value(data,"documentDate") }, state.revision);
   mutationComplete(payload, ["documents","shipments","dashboard"]);
 }
 async function savePayment(data) {
   const supplierId = value(data,"supplierId");
   const paymentDate = value(data,"paymentDate");
-  const file = entityUploadState?.files.get("paymentFile") || data.get("paymentFile");
+  const file = selectedUploadFile("paymentFile");
   if (!(file instanceof File) || file.size <= 0) throw new Error("Dekont veya fatura belgesi seçin.");
   const documentPayload = await uploadDocument(file, { documentType: "diğer", supplierId, documentDate: paymentDate }, state.revision);
   mutationComplete(documentPayload, ["documents"]);
@@ -2049,7 +2049,7 @@ async function openDocument(id) {
     const isPdf = mimeType === "application/pdf";
     const fileName = documentMeta && documentMeta.originalName || (isPdf ? "belge.pdf" : "belge");
     document.getElementById("detailKicker").textContent = "ÖZEL BELGE"; document.getElementById("detailTitle").textContent = documentMeta && (documentMeta.documentNumber || documentMeta.originalName) || "Belge"; document.getElementById("detailDescription").textContent = "İçerik yetki kontrolünden sonra yüklendi; public media yolu kullanılmadı.";
-    document.getElementById("detailBody").innerHTML = `${isPdf ? `<iframe class="document-preview document-preview--pdf" src="${escapeHtml(currentObjectUrl)}#toolbar=1" title="PDF belge önizlemesi" sandbox referrerpolicy="no-referrer"></iframe>` : `<img class="document-preview" src="${escapeHtml(currentObjectUrl)}" alt="Belge önizlemesi">`}<div class="detail-actions detail-actions--spaced"><a class="ui-button ui-button--secondary" href="${escapeHtml(currentObjectUrl)}" download="${escapeHtml(fileName)}">Belgeyi İndir</a>${documentMeta && !documentMeta.archivedAt && has(CAPABILITIES.documentsArchive) ? '<button class="ui-button ui-button--danger" data-detail-action="archive-document">Belgeyi arşivle</button>' : ""}</div>`;
+    document.getElementById("detailBody").innerHTML = `${isPdf ? `<iframe class="document-preview document-preview--pdf" src="${escapeHtml(currentObjectUrl)}#toolbar=1" title="PDF belge önizlemesi" sandbox referrerpolicy="no-referrer"></iframe>` : `<img class="document-preview" src="${escapeHtml(currentObjectUrl)}" alt="Belge önizlemesi">`}<div class="detail-actions detail-actions--spaced">${isPdf ? `<a class="ui-button ui-button--secondary" href="${escapeHtml(currentObjectUrl)}#toolbar=1" target="_blank" rel="noopener noreferrer">PDF'yi Aç (Tüm Sayfalar)</a>` : ""}<a class="ui-button ui-button--secondary" href="${escapeHtml(currentObjectUrl)}" download="${escapeHtml(fileName)}">Belgeyi İndir</a>${documentMeta && !documentMeta.archivedAt && has(CAPABILITIES.documentsArchive) ? '<button class="ui-button ui-button--danger" data-detail-action="archive-document">Belgeyi arşivle</button>' : ""}</div>`;
     if (!detailDialog.open) detailDialog.showModal(); document.body.classList.add("dialog-open");
   } catch (error) { toast(error.message, true); }
 }

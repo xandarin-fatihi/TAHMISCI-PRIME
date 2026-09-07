@@ -1,5 +1,23 @@
 let activeDialog = null;
 
+export const DOCUMENT_UPLOAD_INPUTS = Object.freeze({
+  shipment: Object.freeze(["shipmentFile", "shipmentGalleryFile", "shipmentCameraFile"]),
+  file: Object.freeze(["file", "fileGallery", "fileCamera"]),
+  paymentFile: Object.freeze(["paymentFile", "paymentGalleryFile", "paymentCameraFile"]),
+  cariFile: Object.freeze(["cariFile", "cariGalleryFile", "cariCameraFile"])
+});
+
+export function documentUploadPicker(key, title = "Belge Ekle", options = {}) {
+  const names = DOCUMENT_UPLOAD_INPUTS[key];
+  const nameId = options.nameId || `${key}UploadFileName`;
+  const choices = [
+    ["PDF / Dosya Seç", "application/pdf,.pdf"],
+    ["Galeriden Seç", "image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"],
+    ["Kamera ile Çek", "image/*"]
+  ];
+  return `<fieldset class="document-upload-picker span-2${key === "shipment" ? " supplier-shipment-upload" : ""}"><legend>${escapeHtml(title)}</legend><div class="document-upload-picker__actions">${choices.map(([label, accept], index) => `<label class="ui-button ui-button--secondary">${label}<input name="${names[index]}" data-document-upload-key="${key}" type="file" accept="${accept}"${index === 2 ? ' capture="environment"' : ""} aria-describedby="${escapeHtml(nameId)}"></label>`).join("")}</div><span class="document-upload-picker__name" data-selected-document-name id="${escapeHtml(nameId)}" role="status">Belge seçilmedi</span><small>PDF en fazla 10 MB. JPEG, PNG, WebP, HEIC ve HEIF desteklenir.</small>${options.hintId ? `<small id="${escapeHtml(options.hintId)}"></small>` : ""}</fieldset>`;
+}
+
 export function requestText(options = {}) {
   return openDialog({ ...options, kind: "text" });
 }

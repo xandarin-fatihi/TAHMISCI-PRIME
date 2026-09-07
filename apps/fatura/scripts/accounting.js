@@ -1,4 +1,5 @@
-import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260907-shipment-mixed-quantity-v1";
+import { documentUploadPicker } from "./ui-dialogs.js?v=20260907-pdf-document-picker-v1";
+import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260907-pdf-document-picker-v1";
 
 export function renderLedger() {
   const supplierId = String(state.filters.ledgerSupplier || "");
@@ -18,7 +19,7 @@ export function renderLedger() {
 }
 
 export function paymentFormBody() {
-  return `<div class="form-grid"><label>Tedarikçi<select name="supplierId" required><option value="">Seçin</option>${state.suppliers.filter((item) => item.active !== false).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}</select></label><label>Ödeme tutarı (₺)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Ödeme tarihi<input name="paymentDate" type="date" value="${today()}" required></label><label>Dekont / Fatura<input name="paymentFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" required></label><label class="span-2">Not<textarea name="note" maxlength="1000"></textarea></label></div><p class="result-meta form-note">Belge özel depoda tutulur; ödeme stok miktarını değiştirmez.</p>`;
+  return `<div class="form-grid"><label>Tedarikçi<select name="supplierId" required><option value="">Seçin</option>${state.suppliers.filter((item) => item.active !== false).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}</select></label><label>Ödeme tutarı (₺)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Ödeme tarihi<input name="paymentDate" type="date" value="${today()}" required></label>${documentUploadPicker("paymentFile", "Dekont / Fatura")}<label class="span-2">Not<textarea name="note" maxlength="1000"></textarea></label></div><p class="result-meta form-note">Belge özel depoda tutulur; ödeme stok miktarını değiştirmez.</p>`;
 }
 
 export function renderTrash() {
@@ -57,7 +58,7 @@ export function supplierCariFormBody() {
   if (has(CAPABILITIES.accountingPost)) kinds.push(["debt", "Borç Girişi"]);
   if (has(CAPABILITIES.paymentCreate)) kinds.push(["payment", "Yapılan Ödeme"]);
   if (has(CAPABILITIES.accountingPost)) kinds.push(["opening", "Açılış / Düzeltme Kaydı"]);
-  return `<div class="form-grid"><label class="span-2">İşlem Türü<select name="cariKind" required>${kinds.map(([id, label]) => `<option value="${id}">${label}</option>`).join("")}</select></label><label>Tutar (₺)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Tarih<input name="transactionDate" type="date" value="${today()}" required></label><label class="span-2">Açıklama / Not<textarea name="note" maxlength="1000"></textarea></label>${has(CAPABILITIES.documentsUpload) ? '<label class="span-2">Belge<input name="cariFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"><small id="cariDocumentHint"></small></label>' : '<label class="span-2">Ödeme belgesi<select name="cariDocumentId"><option value="">Belge seçin</option>' + state.documents.filter((item) => !item.archivedAt && (!item.supplierId || item.supplierId === state.supplierWorkspace.supplierId)).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.originalName)}</option>`).join("") + '</select><small id="cariDocumentHint"></small></label>'}</div>`;
+  return `<div class="form-grid"><label class="span-2">İşlem Türü<select name="cariKind" required>${kinds.map(([id, label]) => `<option value="${id}">${label}</option>`).join("")}</select></label><label>Tutar (₺)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Tarih<input name="transactionDate" type="date" value="${today()}" required></label><label class="span-2">Açıklama / Not<textarea name="note" maxlength="1000"></textarea></label>${has(CAPABILITIES.documentsUpload) ? documentUploadPicker("cariFile", "Belge", { hintId: "cariDocumentHint" }) : '<label class="span-2">Ödeme belgesi<select name="cariDocumentId"><option value="">Belge seçin</option>' + state.documents.filter((item) => !item.archivedAt && (!item.supplierId || item.supplierId === state.supplierWorkspace.supplierId)).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.originalName)}</option>`).join("") + '</select><small id="cariDocumentHint"></small></label>'}</div>`;
 }
 
 export function ledgerEntryFormBody() {

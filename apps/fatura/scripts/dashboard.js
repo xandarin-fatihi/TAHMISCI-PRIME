@@ -1,4 +1,4 @@
-import { escapeHtml, hasSection, state, statusBadge, trDate, trMoney } from "./state.js?v=20260907-shipment-mixed-quantity-v1";
+import { escapeHtml, hasSection, state, statusBadge, trDate, trMoney } from "./state.js?v=20260907-pdf-document-picker-v1";
 
 export function renderDashboard() {
   const dashboard = state.dashboard || {};
