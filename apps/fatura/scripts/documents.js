@@ -1,6 +1,6 @@
-import { api } from "./api.js?v=20260906-cari-mobile-document-v1";
-import { shipmentFinance } from "./accounting.js?v=20260906-cari-mobile-document-v1";
-import { escapeHtml, financeValues, paymentStatusLabel, state, statusBadge, trDate, trMoney } from "./state.js?v=20260906-cari-mobile-document-v1";
+import { api } from "./api.js?v=20260907-shipment-mixed-quantity-v1";
+import { shipmentFinance } from "./accounting.js?v=20260907-shipment-mixed-quantity-v1";
+import { escapeHtml, financeValues, paymentStatusLabel, state, statusBadge, trDate, trMoney } from "./state.js?v=20260907-shipment-mixed-quantity-v1";
 
 export function renderDocuments() {
   const supplierId = String(state.filters.documentsSupplier || "");
@@ -42,12 +42,21 @@ export function shipmentArchiveDetail(shipment, documents = []) {
   return `<section class="shipment-receipt-detail"><div class="shipment-receipt-toolbar"><div><small>SEVKİYAT FİŞİ</small><strong>${escapeHtml(shipment.supplier?.name || "Tedarikçi belirtilmedi")} - ${escapeHtml(numericDate(shipmentDate(shipment)))}</strong></div><button class="ui-button ui-button--primary" type="button" data-print-shipment="${escapeHtml(shipment.id)}" aria-label="Sevkiyat fişini PDF olarak indir">İndir</button></div><div class="shipment-impact-summary"><div><small>STOK</small><strong>${escapeHtml(destination)} · ${escapeHtml(stockState)}</strong></div><div><small>CARİ</small><strong>${escapeHtml(accountingState)}</strong></div><div><small>BELGE</small><strong>${evidence ? "Mevcut" : "Bulunmuyor"}</strong></div></div>${shipmentFinance(shipment)}<div class="shipment-receipt-meta"><div><small>TEDARİKÇİ</small><strong>${escapeHtml(shipment.supplier?.name || "Tedarikçi belirtilmedi")}</strong></div><div><small>SEVKİYAT TARİHİ</small><strong>${trDate(shipmentDate(shipment))}</strong></div><div><small>HEDEF DEPO</small><strong>${escapeHtml(destination)}</strong></div><div><small>STOK DURUMU</small><strong>${escapeHtml(stockState)}</strong></div></div><div class="shipment-receipt-lines">${rows.map((item) => shipmentLine(item, stockState, shipment.pricesVisible !== false)).join("") || '<p>Ürün satırı bulunmuyor.</p>'}</div>${shipment.pricesVisible !== false ? `<footer><span>GENEL TOPLAM</span><strong>${trMoney(total)}</strong></footer>` : ""}<div class="detail-actions detail-actions--spaced">${evidence ? `<button class="ui-button ui-button--secondary" type="button" data-open-document="${escapeHtml(evidence.id)}">Belgeyi Görüntüle</button>` : ""}${shipment.canAccountWithoutStock ? '<button class="ui-button ui-button--secondary" type="button" data-detail-action="account-without-stock">Cari Hesaba İşle</button>' : ""}${shipment.canRemove ? '<button class="ui-button ui-button--danger" type="button" data-detail-action="remove-shipment">Çöp Kutusu</button>' : ""}</div></section>`;
 }
 
+function shipmentQuantityText(item) {
+  const bulkUnit = item.bulkUnitSnapshot || item.bulkUnit || item.purchaseUnit || item.unit || "";
+  if (item.quantityBase === undefined || item.quantityBase === null) return `${formatNumber(Number(item.quantityBulk ?? item.quantity ?? 0))} ${bulkUnit}`.trim();
+  const bulk = Number(item.quantityBulk || 0);
+  const base = Number(item.quantityBase || 0);
+  const baseUnit = item.baseUnitSnapshot || item.baseUnit || item.unit || "";
+  return [bulk > 0 ? `${formatNumber(bulk)} ${bulkUnit}`.trim() : "", base > 0 ? `${formatNumber(base)} ${baseUnit}`.trim() : ""].filter(Boolean).join(" + ") || `0 ${baseUnit}`.trim();
+}
+
 function shipmentLine(item, stockState, pricesVisible = true) {
   const quantity = Number(item.quantityBulk ?? item.quantity ?? 0);
   const total = Number(item.totalKurus || item.lineTotalKurus || 0);
   const unitPrice = Number(item.unitPriceKurus || (quantity > 0 ? Math.round(total / quantity) : 0));
   const status = item.stockMatchStatus === "unit_mismatch" ? "Birim eşleşmedi" : item.stockMatchStatus === "unmatched" ? "Stokla eşleşmedi" : stockState;
-  return `<article><div class="shipment-receipt-line__product"><strong>${escapeHtml(item.name || item.productName || "Ürün")}</strong><small>${escapeHtml(status)}</small></div><div class="shipment-receipt-line__value"><small>MİKTAR</small><span>${formatNumber(quantity)} ${escapeHtml(item.bulkUnit || item.purchaseUnit || item.unit || "")}</span></div><div class="shipment-receipt-line__value"><small>FİYAT</small><span>${pricesVisible ? trMoney(unitPrice) : "—"}</span></div><div class="shipment-receipt-line__value shipment-receipt-line__total"><small>TOPLAM</small><b>${pricesVisible ? trMoney(total) : "—"}</b></div></article>`;
+  return `<article><div class="shipment-receipt-line__product"><strong>${escapeHtml(item.name || item.productName || "Ürün")}</strong><small>${escapeHtml(status)}</small></div><div class="shipment-receipt-line__value"><small>MİKTAR</small><span>${escapeHtml(shipmentQuantityText(item))}</span></div><div class="shipment-receipt-line__value"><small>FİYAT</small><span>${pricesVisible ? trMoney(unitPrice) : "—"}</span></div><div class="shipment-receipt-line__value shipment-receipt-line__total"><small>TOPLAM</small><b>${pricesVisible ? trMoney(total) : "—"}</b></div></article>`;
 }
 
 export async function printShipmentArchive(shipmentId) {
@@ -132,7 +141,7 @@ function drawReceiptRow(context, item, y) {
   const unitPrice = Number(item.unitPriceKurus || (quantity > 0 ? Math.round(total / quantity) : 0));
   context.fillStyle = "#fff"; context.strokeStyle = "#e4d6c8"; context.lineWidth = 2; roundRect(context, 96, y, 1048, 66, 9); context.fill(); context.stroke();
   context.fillStyle = "#32190e"; context.font = "600 19px Poppins, Arial"; context.fillText(fitText(context, item.name || item.productName || "Ürün", 460), 114, y + 41);
-  context.font = "400 18px Poppins, Arial"; context.fillText(`${formatNumber(quantity)} ${item.bulkUnit || item.purchaseUnit || item.unit || ""}`, 616, y + 41); context.fillText(trMoney(unitPrice), 812, y + 41);
+  context.font = "400 18px Poppins, Arial"; context.fillText(shipmentQuantityText(item), 616, y + 41, 184); context.fillText(trMoney(unitPrice), 812, y + 41);
   context.font = "700 18px Poppins, Arial"; context.fillText(trMoney(total), 1008, y + 41);
 }
 

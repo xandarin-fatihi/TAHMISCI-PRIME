@@ -1,5 +1,5 @@
-import { api } from "./api.js?v=20260906-cari-mobile-document-v1";
-import { escapeHtml, state, trDate, trMoney, updateRevision } from "./state.js?v=20260906-cari-mobile-document-v1";
+import { api } from "./api.js?v=20260907-shipment-mixed-quantity-v1";
+import { escapeHtml, state, trDate, trMoney, updateRevision } from "./state.js?v=20260907-shipment-mixed-quantity-v1";
 
 let searchTimer = null;
 let eventTimer = null;

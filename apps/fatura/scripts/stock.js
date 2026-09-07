@@ -1,6 +1,6 @@
-import { api as faturaApi, requestId as createRequestId } from "./api.js?v=20260906-cari-mobile-document-v1";
-import { CAPABILITIES, has, hasSection, invalidate as invalidateFatura, state as faturaState, updateRevision as syncRevision } from "./state.js?v=20260906-cari-mobile-document-v1";
-import { requestText } from "./ui-dialogs.js?v=20260906-cari-mobile-document-v1";
+import { api as faturaApi, requestId as createRequestId } from "./api.js?v=20260907-shipment-mixed-quantity-v1";
+import { CAPABILITIES, has, hasSection, invalidate as invalidateFatura, state as faturaState, updateRevision as syncRevision } from "./state.js?v=20260907-shipment-mixed-quantity-v1";
+import { requestText } from "./ui-dialogs.js?v=20260907-shipment-mixed-quantity-v1";
 
 "use strict";
 

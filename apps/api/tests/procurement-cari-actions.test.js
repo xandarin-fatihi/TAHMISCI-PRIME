@@ -38,6 +38,65 @@ async function setup(context) {
   return { store, service, mutate, supplier, product, shipment, document, totals };
 }
 
+test("shipment mixed quantity: bulk/base/mixed snapshots, legacy, validation and actual stock approval", async (context) => {
+  const f = await setup(context);
+  await f.store.update(data => {
+    Object.assign(data.procurement.supplierIndependentProducts.find(p => p.id === f.product.id), { bulkUnit: "koli", purchaseUnit: "koli", baseUnit: "adet", conversionFactor: 6 });
+    Object.assign(data.stockState.products.find(p => p.id === f.product.stockProductId), { unit: "adet", baseUnit: "adet", bulkUnit: "koli", caseUnit: "koli", unitsPerBulkUnit: 6, unitsPerCase: 6 });
+  });
+  const express = require("express");
+  const { registerWorkforceRoutes } = require("../src/workforce-routes");
+  const { normalizeStockState } = require("../src/store/migrations");
+  const pass = (req, res, next) => next();
+  const workforce = registerWorkforceRoutes({ app: express(), store: f.store, crypto: require("node:crypto"), normalizeStockState,
+    auth: { requireAdmin: pass, requirePersonelOrPreview: pass, requireActivePersonel: pass, requirePersonelSection: () => pass },
+    requireAdminRequestOrigin: pass, requireAdminOrMainRequestOrigin: pass, broadcastStockUpdate: () => {} });
+  const locationId = (await f.store.read()).stockState.locations[0].id;
+  const input = quantities => ({ supplierId: f.supplier.id, destinationLocationId: locationId, items: [{ supplierProductId: f.product.id,
+    stockProductId: f.product.stockProductId, purchaseUnit: "koli", bulkUnit: "sahte", baseUnit: "sahte", conversionFactor: 999, totalKurus: 150000, ...quantities }] });
+  const startingBalance = stockService.getProductBalance((await f.store.read()).stockState, locationId, f.product.stockProductId).quantity;
+  let appliedTotal = 0;
+  for (const [quantityBulk, quantityBase, expected] of [[2, 0, 12], [0, 3, 3], [2, 3, 15]]) {
+    const created = await f.mutate("createShipment", input({ quantityBulk, quantityBase }));
+    const line = created.shipment.items[0];
+    assert.equal(line.quantityBulk, quantityBulk);
+    assert.equal(line.quantityBase, quantityBase);
+    assert.equal(line.baseQuantity, expected);
+    assert.equal(line.conversionFactor, 6);
+    assert.equal(line.bulkUnitSnapshot, "koli");
+    assert.equal(line.baseUnitSnapshot, "adet");
+    assert.equal(line.totalKurus, 150000);
+    assert.equal(line.baseUnitPriceKurus, Math.round(150000 / expected));
+    assert.equal(line.bulkUnitPriceKurus, Math.round(150000 / expected * 6));
+    const submitted = await f.mutate("submitShipment", created.shipment.id, {});
+    const request = { shipmentId: created.shipment.id, actor: ADMIN, requestId: `mixed-approval-${expected}`,
+      expectedRevision: submitted.workforceRevision, procurementExpectedRevision: submitted.revision, destinationLocationId: locationId };
+    await workforce.approveWorkforceShipment(request);
+    assert.equal((await workforce.approveWorkforceShipment(request)).idempotent, true);
+    const current = await f.store.read();
+    const movements = current.stockState.movements.filter(m => m.shipmentId === created.shipment.id);
+    assert.equal(movements.length, 1);
+    assert.equal(movements[0].quantity, expected);
+    appliedTotal += expected;
+    assert.equal(stockService.getProductBalance(current.stockState, locationId, f.product.stockProductId).quantity, startingBalance + appliedTotal);
+    await f.mutate("accountShipmentAfterStock", created.shipment.id, {});
+  }
+  assert.deepEqual(await f.totals(), [450000, 0, 450000]);
+  for (const quantities of [{ quantityBulk: 2 }, { quantity: 2, unit: "koli" }]) {
+    assert.equal((await f.mutate("createShipment", input(quantities))).shipment.items[0].baseQuantity, 12);
+  }
+  assert.equal((await f.mutate("createShipment", input({ quantity: 3, unit: "adet", purchaseUnit: "adet" }))).shipment.items[0].baseQuantity, 3);
+  for (const quantities of [{ quantityBulk: 0, quantityBase: 0 }, { quantityBulk: -1, quantityBase: 3 }, { quantityBulk: 1, quantityBase: -3 }, { quantityBase: "invalid" }]) {
+    await assert.rejects(f.mutate("createShipment", input(quantities)), error => error.status === 400);
+  }
+  await f.store.update(data => { Object.assign(data.procurement.supplierIndependentProducts.find(p => p.id === f.product.id), { bulkUnit: "", purchaseUnit: "", conversionFactor: 0 }); });
+  const single = (await f.mutate("createShipment", input({ quantityBulk: 0, quantityBase: 50 }))).shipment.items[0];
+  assert.equal(single.baseQuantity, 50);
+  assert.equal(single.bulkUnitSnapshot, "");
+  assert.equal(single.purchaseUnitSnapshot, "adet");
+  await assert.rejects(f.mutate("createShipment", input({ quantityBulk: 1, quantityBase: 0 })), error => error.code === "SHIPMENT_BULK_UNIT_REQUIRED");
+});
+
 test("cari actions: opening/payment/no-stock scenario, no/no, legacy, idempotency and permission", async (context) => {
   const f = await setup(context);
   await f.mutate("createLedgerEntry", { supplierId: f.supplier.id, type: "opening_balance", amountKurus: -200000, transactionDate: "2026-09-05" });

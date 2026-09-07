@@ -2535,11 +2535,16 @@ function validateShipmentItems(stockStateInput, requestedItems, createId, option
     const identity = product ? stockIdentity(product) : `supplier:${supplierProduct && supplierProduct.id || normalizeLookup(requested && requested.supplierProductName)}`;
     if (seen.has(identity)) throw fail("Aynı stok ürünü sevkiyata birden fazla kez eklenemez.", 400, "DUPLICATE_SHIPMENT_PRODUCT");
     seen.add(identity);
-    const quantity = positiveDecimal(requested.quantityBulk ?? requested.quantity, "Miktar");
+    const explicitQuantities = requested.quantityBase !== undefined;
+    const requestedBulk = explicitQuantities ? nonNegativeDecimal(requested.quantityBulk ?? requested.quantity ?? 0, "Toplu miktar") : positiveDecimal(requested.quantityBulk ?? requested.quantity, "Miktar");
+    const quantityBase = nonNegativeDecimal(requested.quantityBase ?? 0, "Temel miktar");
+    if (requestedBulk === 0 && quantityBase === 0) throw fail("Toplu veya temel miktardan en az birini girin.", 400, "SHIPMENT_QUANTITY_REQUIRED");
     const baseUnitSnapshot = text(supplierProduct && supplierProduct.baseUnit || requested.baseUnit || product && (product.baseUnit || product.unit) || "adet", 40) || "adet";
-    const bulkUnitSnapshot = text(supplierProduct && (supplierProduct.bulkUnit || supplierProduct.purchaseUnit) || requested.bulkUnit || product && (product.bulkUnit || product.caseUnit) || "", 40);
-    const unitsPerBulkUnitSnapshot = Math.max(0, Number(supplierProduct && supplierProduct.conversionFactor || requested.conversionFactor || product && (product.unitsPerBulkUnit ?? product.unitsPerCase) || 0) || 0);
-    const purchaseUnitSnapshot = text(requested.purchaseUnit || requested.unit || product && product.defaultMovementUnit || baseUnitSnapshot, 40) || baseUnitSnapshot;
+    const bulkUnitSnapshot = text(supplierProduct ? supplierProduct.bulkUnit || supplierProduct.purchaseUnit || "" : requested.bulkUnit || product && (product.bulkUnit || product.caseUnit) || "", 40);
+    const unitsPerBulkUnitSnapshot = Math.max(0, Number(supplierProduct ? supplierProduct.conversionFactor : requested.conversionFactor || product && (product.unitsPerBulkUnit ?? product.unitsPerCase) || 0) || 0);
+    const hasBulk = bulkUnitSnapshot && bulkUnitSnapshot.toLocaleLowerCase("tr-TR") !== baseUnitSnapshot.toLocaleLowerCase("tr-TR") && Number.isFinite(unitsPerBulkUnitSnapshot) && unitsPerBulkUnitSnapshot > 0;
+    if (explicitQuantities && requestedBulk > 0 && !hasBulk) throw fail("Ürünün geçerli toplu birimi yok; temel miktarı girin.", 400, "SHIPMENT_BULK_UNIT_REQUIRED");
+    const purchaseUnitSnapshot = explicitQuantities ? (hasBulk ? bulkUnitSnapshot : baseUnitSnapshot) : text(requested.purchaseUnit || requested.unit || product && product.defaultMovementUnit || baseUnitSnapshot, 40) || baseUnitSnapshot;
     const normalizedPurchaseUnit = purchaseUnitSnapshot.toLocaleLowerCase("tr-TR");
     const normalizedBulkUnit = bulkUnitSnapshot.toLocaleLowerCase("tr-TR");
     const normalizedBaseUnit = baseUnitSnapshot.toLocaleLowerCase("tr-TR");
@@ -2547,8 +2552,11 @@ function validateShipmentItems(stockStateInput, requestedItems, createId, option
     if (normalizedPurchaseUnit !== normalizedBulkUnit && normalizedPurchaseUnit !== normalizedBaseUnit && requested.conversionFactor !== undefined) {
       conversionFactor = positiveDecimal(requested.conversionFactor, "Dönüşüm katsayısı");
     }
-    const baseQuantity = quantity * conversionFactor;
-    const unitPriceKurus = nonNegativeInteger(requested.unitPriceKurus || 0, "Birim fiyat");
+    const baseQuantity = Math.round((requestedBulk * conversionFactor + quantityBase) * 1000) / 1000;
+    if (!Number.isFinite(baseQuantity) || baseQuantity <= 0 || baseQuantity > Number.MAX_SAFE_INTEGER) throw fail("Temel miktar geçersiz.", 400, "INVALID_POSITIVE_NUMBER");
+    // Legacy quantity remains expressed in the purchase unit; physical stock uses baseQuantity.
+    const quantity = explicitQuantities ? baseQuantity / conversionFactor : requestedBulk;
+    let unitPriceKurus = nonNegativeInteger(requested.unitPriceKurus || 0, "Birim fiyat");
     const taxKurus = nonNegativeInteger(requested.taxKurus || 0, "Vergi");
     const calculatedTotal = multiplyKurus(unitPriceKurus, quantity) + taxKurus;
     const totalKurus = requested.totalKurus === undefined
@@ -2557,6 +2565,7 @@ function validateShipmentItems(stockStateInput, requestedItems, createId, option
     if (supplierProduct && totalKurus <= 0) {
       throw fail("Satır toplamı sıfırdan büyük olmalıdır.", 422, "SHIPMENT_LINE_TOTAL_REQUIRED");
     }
+    if (explicitQuantities) unitPriceKurus = Math.round(totalKurus / baseQuantity * conversionFactor);
     const line = {
       id: text(requested.id, 180) || createId("shipment-item"),
       supplierProductId: supplierProduct ? String(supplierProduct.id) : "",
@@ -2569,7 +2578,8 @@ function validateShipmentItems(stockStateInput, requestedItems, createId, option
       categoryId: product ? String(product.categoryId || "") : "",
       category: product ? String(product.category || "") : "",
       quantity,
-      quantityBulk: quantity,
+      quantityBulk: requestedBulk,
+      ...(explicitQuantities ? { quantityBase } : {}),
       unit: purchaseUnitSnapshot,
       baseQuantity,
       baseUnit: baseUnitSnapshot,
@@ -3098,6 +3108,12 @@ function uniqueStrings(value, maxLength) {
 function positiveDecimal(value, label) {
   const number = Number(String(value).replace(",", "."));
   if (!Number.isFinite(number) || number <= 0) throw fail(`${label} sıfırdan büyük olmalıdır.`, 400, "INVALID_POSITIVE_NUMBER");
+  return Math.round(number * 1000) / 1000;
+}
+
+function nonNegativeDecimal(value, label) {
+  const number = Number(String(value).replace(",", "."));
+  if (!Number.isFinite(number) || number < 0 || number > Number.MAX_SAFE_INTEGER) throw fail(`${label} negatif veya geçersiz olamaz.`, 400, "INVALID_NON_NEGATIVE_NUMBER");
   return Math.round(number * 1000) / 1000;
 }
 

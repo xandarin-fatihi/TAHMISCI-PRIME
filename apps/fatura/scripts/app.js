@@ -1,13 +1,13 @@
-import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260906-cari-mobile-document-v1";
-import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260906-cari-mobile-document-v1";
-import { renderDashboard } from "./dashboard.js?v=20260906-cari-mobile-document-v1";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260906-cari-mobile-document-v1";
-import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260906-cari-mobile-document-v1";
-import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260906-cari-mobile-document-v1";
-import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260906-cari-mobile-document-v1";
-import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260906-cari-mobile-document-v1";
-import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260906-cari-mobile-document-v1";
-import { confirmAction, requestText } from "./ui-dialogs.js?v=20260906-cari-mobile-document-v1";
+import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260907-shipment-mixed-quantity-v1";
+import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260907-shipment-mixed-quantity-v1";
+import { renderDashboard } from "./dashboard.js?v=20260907-shipment-mixed-quantity-v1";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260907-shipment-mixed-quantity-v1";
+import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260907-shipment-mixed-quantity-v1";
+import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260907-shipment-mixed-quantity-v1";
+import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260907-shipment-mixed-quantity-v1";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260907-shipment-mixed-quantity-v1";
+import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260907-shipment-mixed-quantity-v1";
+import { confirmAction, requestText } from "./ui-dialogs.js?v=20260907-shipment-mixed-quantity-v1";
 
 const app = document.getElementById("faturaApp");
 const shell = document.getElementById("shell");
@@ -874,12 +874,12 @@ function handleChange(event) {
   if (event.target.id === "fatura-role") return markAccessAsCustom(false);
   if (event.target.matches("[data-supplier-line-enabled]")) {
     const row = event.target.closest("[data-supplier-shipment-line]");
-    row?.querySelectorAll("[data-supplier-line-quantity],[data-supplier-line-total]").forEach((input) => {
+    row?.querySelectorAll("[data-supplier-line-quantity],[data-supplier-line-quantity-base],[data-supplier-line-total]").forEach((input) => {
       input.disabled = !event.target.checked;
-      input.required = event.target.checked;
+      input.required = event.target.checked && input.matches("[data-supplier-line-total]");
       if (!event.target.checked) input.value = "";
     });
-    return;
+    return updateSupplierShipmentSubmitState();
   }
   if (["shipmentFile", "shipmentCameraFile"].includes(event.target.name)) {
     retainUploadFile(event.target, "shipment");
@@ -1457,7 +1457,7 @@ function openSupplierShipmentForm() {
     entityId: supplierId,
     kicker: "TEDARİKÇİ SEVKİYATI",
     title: `${supplier.name} · Sevkiyat Oluştur`,
-    description: "Toplu miktar ve toplam tutarı girin; temel birim fiyatı sunucu tarafından hesaplanır.",
+    description: "Toplu ve/veya temel miktar ile toplam tutarı girin; stok miktarı birim dönüşümüne göre hesaplanır.",
     submitLabel: "Sevkiyatı Oluştur",
     hideCancel: true,
     submitDisabled: true,
@@ -1472,7 +1472,7 @@ function updateSupplierShipmentSubmitState() {
   const submit = document.getElementById("dialogSubmit");
   const fileName = document.getElementById("supplierShipmentFileName");
   if (fileName) fileName.textContent = file instanceof File && file.size > 0 ? file.name : "Belge seçilmedi";
-  if (submit && !submit.hasAttribute("aria-busy")) submit.disabled = !(file instanceof File && file.size > 0);
+  if (submit && !submit.hasAttribute("aria-busy")) submit.disabled = !(file instanceof File && file.size > 0) || !entityForm.querySelector("[data-supplier-line-enabled]:checked");
 }
 
 function selectedSupplierShipmentFile() {
@@ -1669,10 +1669,11 @@ async function runFinanceBulk(action) {
 }
 
 function supplierShipmentLine(item) {
-  const bulkUnit = item.bulkUnit || item.purchaseUnit || "toplu birim";
+  const bulkUnit = item.bulkUnit || item.purchaseUnit || "";
   const baseUnit = item.baseUnit || "adet";
-  const factor = Number(item.conversionFactor || 1);
-  return `<article class="supplier-shipment-line" data-supplier-shipment-line data-product-id="${escapeHtml(item.id)}"><label class="supplier-shipment-select"><input type="checkbox" data-supplier-line-enabled><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(conversionText(bulkUnit, baseUnit, factor))}</small></span></label><label>Miktar (${escapeHtml(bulkUnit)})<input data-supplier-line-quantity type="number" min="0.001" step="0.001" disabled></label><label>Toplam (₺)<input data-supplier-line-total type="number" min="0.01" step="0.01" disabled></label></article>`;
+  const factor = Number(item.conversionFactor || 0);
+  const hasBulk = bulkUnit && bulkUnit.trim().toLocaleLowerCase("tr-TR") !== baseUnit.trim().toLocaleLowerCase("tr-TR") && Number.isFinite(factor) && factor > 0;
+  return `<article class="supplier-shipment-line${hasBulk ? "" : " supplier-shipment-line--base-only"}" data-supplier-shipment-line data-product-id="${escapeHtml(item.id)}"><label class="supplier-shipment-select"><input type="checkbox" data-supplier-line-enabled><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(hasBulk ? conversionText(bulkUnit, baseUnit, factor) : `Temel birim: ${baseUnit}`)}</small></span></label>${hasBulk ? `<label>Miktar (${escapeHtml(bulkUnit)})<input data-supplier-line-quantity type="number" min="0" step="0.001" disabled></label>` : ""}<label>Miktar (${escapeHtml(baseUnit)})<input data-supplier-line-quantity-base type="number" min="0" step="0.001" disabled></label><label>Toplam (₺)<input data-supplier-line-total type="number" min="0.01" step="0.01" disabled></label></article>`;
 }
 
 function unitOptions(kind, selected = "") {
@@ -1833,9 +1834,13 @@ async function saveSupplierShipment(data) {
   if (!destinationLocationId) throw new Error("Hedef depo seçin.");
   const items = selectedRows.map((row) => {
     const product = products.get(String(row.dataset.productId));
-    const quantityBulk = Number(row.querySelector("[data-supplier-line-quantity]").value);
+    const quantityBulk = Number(row.querySelector("[data-supplier-line-quantity]")?.value || 0);
+    const quantityBase = Number(row.querySelector("[data-supplier-line-quantity-base]").value || 0);
+    if (![quantityBulk, quantityBase].every((quantity) => Number.isFinite(quantity) && quantity >= 0)) throw new Error(`${product.name} için miktar negatif veya geçersiz olamaz.`);
+    if (quantityBulk === 0 && quantityBase === 0) throw new Error(`${product.name} için toplu veya temel miktardan en az birini girin.`);
     const lineTotalKurus = integerKurus(row.querySelector("[data-supplier-line-total]").value);
-    return { supplierProductId: product.id, supplierProductName: product.name, stockProductId: product.stockProductId || "", quantity: quantityBulk, quantityBulk, unit: product.bulkUnit || product.purchaseUnit, purchaseUnit: product.bulkUnit || product.purchaseUnit, bulkUnit: product.bulkUnit || product.purchaseUnit, baseUnit: product.baseUnit, conversionFactor: Number(product.conversionFactor || 1), totalKurus: lineTotalKurus, unitPriceKurus: quantityBulk > 0 ? Math.round(lineTotalKurus / quantityBulk) : 0 };
+    if (!Number.isSafeInteger(lineTotalKurus) || lineTotalKurus <= 0) throw new Error(`${product.name} için toplam tutar sıfırdan büyük olmalıdır.`);
+    return { supplierProductId: product.id, supplierProductName: product.name, stockProductId: product.stockProductId || "", quantityBulk, quantityBase, unit: product.bulkUnit || product.purchaseUnit || product.baseUnit, purchaseUnit: product.bulkUnit || product.purchaseUnit || product.baseUnit, bulkUnit: product.bulkUnit || product.purchaseUnit || "", baseUnit: product.baseUnit, conversionFactor: Number(product.conversionFactor || 0), totalKurus: lineTotalKurus };
   });
   let shipment = entityUploadState.shipment;
   if (!shipment) {

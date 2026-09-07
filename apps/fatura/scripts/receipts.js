@@ -1,5 +1,5 @@
-import { shipmentFinance } from "./accounting.js?v=20260906-cari-mobile-document-v1";
-import { CAPABILITIES, comboField, escapeHtml, has, state, statusBadge, trDate, trMoney } from "./state.js?v=20260906-cari-mobile-document-v1";
+import { shipmentFinance } from "./accounting.js?v=20260907-shipment-mixed-quantity-v1";
+import { CAPABILITIES, comboField, escapeHtml, has, state, statusBadge, trDate, trMoney } from "./state.js?v=20260907-shipment-mixed-quantity-v1";
 
 export function renderShipments() {
   const query = String(state.filters.shipments || "").toLocaleLowerCase("tr-TR");

@@ -1,4 +1,4 @@
-import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260906-cari-mobile-document-v1";
+import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260907-shipment-mixed-quantity-v1";
 
 export function renderLedger() {
   const supplierId = String(state.filters.ledgerSupplier || "");
