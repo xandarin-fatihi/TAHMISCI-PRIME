@@ -61,7 +61,8 @@ async function execute(url, method, options) {
   try {
     response = await fetch(url, { method, headers, body, credentials: "include", cache: "no-store", signal: options.signal });
   } catch (error) {
-    throw new ApiError(navigator.onLine ? "Sunucuya ulaşılamadı. Lütfen tekrar deneyin." : "Çevrimdışısınız. Mali işlemler çevrimdışı sıraya alınmaz.", 0, { cause: error && error.message });
+    const isOnline = typeof navigator === "undefined" || navigator.onLine;
+    throw new ApiError(isOnline ? "Sunucuya ulaşılamadı. Lütfen tekrar deneyin." : "Çevrimdışısınız. Mali işlemler çevrimdışı sıraya alınmaz.", 0, { cause: error && error.message });
   }
   if (options.responseType === "blob") {
     if (!response.ok) throw await responseError(response);
