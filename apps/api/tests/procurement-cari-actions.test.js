@@ -89,7 +89,47 @@ test("shipment mixed quantity: bulk/base/mixed snapshots, legacy, validation and
   for (const quantities of [{ quantityBulk: 0, quantityBase: 0 }, { quantityBulk: -1, quantityBase: 3 }, { quantityBulk: 1, quantityBase: -3 }, { quantityBase: "invalid" }]) {
     await assert.rejects(f.mutate("createShipment", input(quantities)), error => error.status === 400);
   }
-  await f.store.update(data => { Object.assign(data.procurement.supplierIndependentProducts.find(p => p.id === f.product.id), { bulkUnit: "", purchaseUnit: "", conversionFactor: 0 }); });
+  const configureUnits = async (bulkUnit, baseUnit, conversionFactor) => f.store.update(data => {
+    Object.assign(data.procurement.supplierIndependentProducts.find(p => p.id === f.product.id), { bulkUnit, purchaseUnit: bulkUnit, baseUnit, conversionFactor });
+    Object.assign(data.stockState.products.find(p => p.id === f.product.stockProductId), {
+      unit: baseUnit, baseUnit, bulkUnit, caseUnit: bulkUnit, unitsPerBulkUnit: conversionFactor, unitsPerCase: conversionFactor
+    });
+  });
+  const approveAndAssertMovement = async (created, expectedQuantity, suffix) => {
+    const submitted = await f.mutate("submitShipment", created.shipment.id, {});
+    await workforce.approveWorkforceShipment({ shipmentId: created.shipment.id, actor: ADMIN, requestId: `mixed-regression-${suffix}`,
+      expectedRevision: submitted.workforceRevision, procurementExpectedRevision: submitted.revision, destinationLocationId: locationId });
+    const movement = (await f.store.read()).stockState.movements.find(item => item.shipmentId === created.shipment.id);
+    assert.equal(movement.quantity, expectedQuantity);
+  };
+
+  await configureUnits("kasa", "kg", 10);
+  const scenarioA = await f.mutate("createShipment", input({ quantityBulk: 1, quantityBase: 3, totalKurus: 130000 }));
+  assert.equal(scenarioA.shipment.items[0].baseQuantity, 13);
+  assert.equal(scenarioA.shipment.items[0].totalKurus, 130000);
+  await approveAndAssertMovement(scenarioA, 13, "kasa-10");
+
+  await configureUnits("kasa", "kg", 15);
+  const scenarioB = await f.mutate("createShipment", input({ quantityBulk: 1, quantityBase: 1, totalKurus: undefined, unitPriceKurus: 150000 }));
+  assert.equal(scenarioB.shipment.items[0].baseQuantity, 16);
+  assert.equal(scenarioB.shipment.items[0].quantity, 1.067);
+  assert.equal(scenarioB.shipment.items[0].totalKurus, 160000);
+
+  await configureUnits("koli", "adet", 24);
+  const scenarioC = await f.mutate("createShipment", input({ quantityBulk: 1, quantityBase: 1, totalKurus: 250000 }));
+  assert.equal(scenarioC.shipment.items[0].baseQuantity, 25);
+  await approveAndAssertMovement(scenarioC, 25, "koli-24");
+
+  await configureUnits("kasa", "kg", 15);
+  const scenarioD = await f.mutate("createShipment", input({ quantityBulk: 0, quantityBase: 1, totalKurus: 10000 }));
+  assert.equal(scenarioD.shipment.items[0].baseQuantity, 1);
+  await approveAndAssertMovement(scenarioD, 1, "base-only");
+
+  const scenarioE = await f.mutate("createShipment", input({ quantity: 2, unit: "kasa", purchaseUnit: "kasa" }));
+  assert.equal(scenarioE.shipment.items[0].quantity, 2);
+  assert.equal(scenarioE.shipment.items[0].baseQuantity, 30);
+
+  await configureUnits("", "adet", 0);
   const single = (await f.mutate("createShipment", input({ quantityBulk: 0, quantityBase: 50 }))).shipment.items[0];
   assert.equal(single.baseQuantity, 50);
   assert.equal(single.bulkUnitSnapshot, "");

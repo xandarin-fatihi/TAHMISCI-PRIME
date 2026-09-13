@@ -2554,14 +2554,19 @@ function validateShipmentItems(stockStateInput, requestedItems, createId, option
     }
     const baseQuantity = Math.round((requestedBulk * conversionFactor + quantityBase) * 1000) / 1000;
     if (!Number.isFinite(baseQuantity) || baseQuantity <= 0 || baseQuantity > Number.MAX_SAFE_INTEGER) throw fail("Temel miktar geçersiz.", 400, "INVALID_POSITIVE_NUMBER");
-    // Legacy quantity remains expressed in the purchase unit; physical stock uses baseQuantity.
-    const quantity = explicitQuantities ? baseQuantity / conversionFactor : requestedBulk;
+    // Legacy quantity remains a normalized purchase-unit snapshot; physical stock uses baseQuantity.
+    const quantity = explicitQuantities ? Math.round((baseQuantity / conversionFactor) * 1000) / 1000 : requestedBulk;
     let unitPriceKurus = nonNegativeInteger(requested.unitPriceKurus || 0, "Birim fiyat");
     const taxKurus = nonNegativeInteger(requested.taxKurus || 0, "Vergi");
-    const calculatedTotal = multiplyKurus(unitPriceKurus, quantity) + taxKurus;
-    const totalKurus = requested.totalKurus === undefined
-      ? calculatedTotal
-      : nonNegativeInteger(requested.totalKurus, "Satır toplamı");
+    let totalKurus;
+    if (requested.totalKurus !== undefined) {
+      totalKurus = nonNegativeInteger(requested.totalKurus, "Satır toplamı");
+    } else {
+      const calculatedSubtotal = explicitQuantities
+        ? multiplyKurusByRatio(unitPriceKurus, baseQuantity, conversionFactor)
+        : multiplyKurus(unitPriceKurus, quantity);
+      totalKurus = calculatedSubtotal + taxKurus;
+    }
     if (supplierProduct && totalKurus <= 0) {
       throw fail("Satır toplamı sıfırdan büyük olmalıdır.", 422, "SHIPMENT_LINE_TOTAL_REQUIRED");
     }
@@ -2832,6 +2837,12 @@ function multiplyKurus(unitPriceKurus, quantity) {
   const total = (BigInt(unitPriceKurus) * scaled + 500n) / 1000n;
   if (total > BigInt(Number.MAX_SAFE_INTEGER)) throw fail("Parasal tutar güvenli sınırı aşıyor.", 400, "AMOUNT_TOO_LARGE");
   return Number(total);
+}
+
+function multiplyKurusByRatio(unitPriceKurus, baseQuantity, conversionFactor) {
+  const total = Math.round(Number(unitPriceKurus) * Number(baseQuantity) / Number(conversionFactor));
+  if (!Number.isSafeInteger(total) || total < 0) throw fail("Parasal tutar güvenli sınırı aşıyor.", 400, "AMOUNT_TOO_LARGE");
+  return total;
 }
 
 function findById(items, id, label) {
