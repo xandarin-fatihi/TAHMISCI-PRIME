@@ -1,13 +1,13 @@
-import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260907-pdf-document-picker-v1";
-import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260907-pdf-document-picker-v1";
-import { renderDashboard } from "./dashboard.js?v=20260907-pdf-document-picker-v1";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260907-pdf-document-picker-v1";
-import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260907-pdf-document-picker-v1";
-import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260907-pdf-document-picker-v1";
-import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260907-pdf-document-picker-v1";
-import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260907-pdf-document-picker-v1";
-import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260907-pdf-document-picker-v1";
-import { confirmAction, requestText, documentUploadPicker, DOCUMENT_UPLOAD_INPUTS } from "./ui-dialogs.js?v=20260907-pdf-document-picker-v1";
+import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260918-ledger-range-v1";
+import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260918-ledger-range-v1";
+import { renderDashboard } from "./dashboard.js?v=20260918-ledger-range-v1";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260918-ledger-range-v1";
+import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260918-ledger-range-v1";
+import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260918-ledger-range-v1";
+import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260918-ledger-range-v1";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260918-ledger-range-v1";
+import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260918-ledger-range-v1";
+import { confirmAction, requestText, documentUploadPicker, DOCUMENT_UPLOAD_INPUTS } from "./ui-dialogs.js?v=20260918-ledger-range-v1";
 
 const app = document.getElementById("faturaApp");
 const shell = document.getElementById("shell");
@@ -321,7 +321,7 @@ const loadProductLinks = (force) => cachedLoad("links", () => api("/product-link
 const loadShipments = (force) => cachedLoad("shipments", () => api("/shipments"), (p) => { state.shipments = p.shipments || []; }, force);
 const loadDocuments = (force) => cachedLoad("documents", () => api("/documents"), (p) => { state.documents = p.documents || []; }, force);
 const loadLedger = (force) => {
-  const query = new URLSearchParams({ supplierId: state.filters.ledgerSupplier || "", date: state.filters.ledgerDate || "" }).toString();
+  const query = new URLSearchParams({ supplierId: state.filters.ledgerSupplier || "", dateFrom: state.filters.ledgerDateFrom || "", dateTo: state.filters.ledgerDateTo || "" }).toString();
   if (state.ledgerFilterKey !== query) { state.loaded.delete("ledger"); state.ledgerSummary = null; state.ledgerSelection.clear(); state.trashSelection.clear(); state.financeMessage = ""; }
   state.ledgerFilterKey = query;
   return cachedLoad("ledger", () => api(`/ledger?${query}`), (p) => {
@@ -898,8 +898,23 @@ function handleChange(event) {
   if (["bulkUnit", "baseUnit", "conversionFactor"].includes(event.target.name)) return updateSupplierConversionPreview();
   if (event.target.id === "shipment-status") { state.filters.shipmentStatus = event.target.value; return renderActiveView(); }
   if (event.target.id === "shipment-evidence") { state.filters.shipmentEvidence = event.target.value; return renderActiveView(); }
-  if (event.target.id === "ledger-supplier") { state.filters.ledgerSupplier = event.target.value; return setView("ledger", { force: true }); }
-  if (event.target.id === "ledger-date") { state.filters.ledgerDate = event.target.value; return setView("ledger", { force: true }); }
+  if (event.target.id === "ledger-supplier") { state.filters.ledgerSupplier = event.target.value; return setView("ledger"); }
+  if (event.target.id === "ledger-date-from" || event.target.id === "ledger-date-to") {
+    const key = event.target.id === "ledger-date-from" ? "ledgerDateFrom" : "ledgerDateTo";
+    const previous = state.filters[key] || "";
+    state.filters[key] = event.target.value;
+    if (state.filters.ledgerDateFrom && state.filters.ledgerDateTo && state.filters.ledgerDateFrom > state.filters.ledgerDateTo) {
+      state.filters[key] = previous;
+      event.target.value = previous;
+      toast("Başlangıç tarihi bitiş tarihinden büyük olamaz.", true);
+      return;
+    }
+    const fromInput = content.querySelector("#ledger-date-from");
+    const toInput = content.querySelector("#ledger-date-to");
+    if (fromInput) fromInput.max = state.filters.ledgerDateTo || "";
+    if (toInput) toInput.min = state.filters.ledgerDateFrom || "";
+    return setView("ledger");
+  }
 }
 
 function supplierStockProducts(query = "") {
@@ -1050,7 +1065,10 @@ async function navigateFromDashboard(view, filter) {
     state.filters.shipmentEvidence = filter === "missing-documents" ? "missing" : filter === "unaccounted" ? "unaccounted" : "";
     view = "documents";
   }
-  if (view === "ledger" && /^\d{4}-\d{2}-\d{2}$/.test(filter)) state.filters.ledgerDate = filter;
+  if (view === "ledger" && /^\d{4}-\d{2}-\d{2}$/.test(filter)) {
+    state.filters.ledgerDateFrom = filter;
+    state.filters.ledgerDateTo = filter;
+  }
   await setView(view);
 }
 
@@ -1171,6 +1189,16 @@ function updatePermissionSectionCard(card) {
 
 function handleAction(button, action) {
   if (action === "supplier-cari") return openSupplierCariForm();
+  if (action === "reset-ledger-filters") {
+    state.filters.ledgerSupplier = "";
+    state.filters.ledgerDateFrom = "";
+    state.filters.ledgerDateTo = "";
+    state.ledgerDrilldown = "";
+    state.ledgerSelection.clear();
+    state.trashSelection.clear();
+    state.financeMessage = "";
+    return setView("ledger");
+  }
   if (action === "finance-trash") { state.trashMode = "finance"; state.ledgerSelection.clear(); state.trashSelection.clear(); state.financeMessage = ""; return setView("ledger", { force: true }); }
   if (action === "finance-trash-back") { state.trashMode = "all"; state.trashSelection.clear(); state.financeMessage = ""; return setView("ledger", { force: true }); }
   if (action === "finance-clear-selection") { if (state.financeBusy) return; state.ledgerSelection.clear(); state.trashSelection.clear(); return updateFinanceSelectionUI(); }
@@ -1186,7 +1214,7 @@ function handleAction(button, action) {
   if (action === "open-ledger-drilldown") { state.ledgerDrilldown = button.dataset.ledgerMode; return renderActiveView(); }
   if (action === "close-ledger-drilldown") { state.ledgerDrilldown = ""; return renderActiveView(); }
   if (action === "dashboard-ledger") {
-    state.filters.ledgerSupplier = ""; state.filters.ledgerDate = ""; state.ledgerDrilldown = button.dataset.ledgerMode;
+    state.filters.ledgerSupplier = ""; state.filters.ledgerDateFrom = ""; state.filters.ledgerDateTo = ""; state.ledgerDrilldown = button.dataset.ledgerMode;
     return setView("ledger", { force: true });
   }
   if (action === "new-ledger-entry") return openLedgerEntryForm();
@@ -1622,7 +1650,9 @@ function updateFinanceSelectionUI() {
       }
     }
   }
-  content.querySelectorAll("#ledger-supplier,#ledger-date").forEach((input) => { input.disabled = state.financeBusy; });
+  content.querySelectorAll("#ledger-supplier,#ledger-date-from,#ledger-date-to").forEach((input) => { input.disabled = state.financeBusy; });
+  const resetLedgerFilters = content.querySelector('[data-action="reset-ledger-filters"]');
+  if (resetLedgerFilters) resetLedgerFilters.disabled = state.financeBusy || !(state.filters.ledgerSupplier || state.filters.ledgerDateFrom || state.filters.ledgerDateTo);
 }
 
 async function runFinanceBulk(action) {
@@ -2176,7 +2206,8 @@ async function exportLedger(button) {
   try {
     const file = await downloadExport("ledger", {
       supplierId: state.filters.ledgerSupplier || "",
-      date: state.filters.ledgerDate || ""
+      dateFrom: state.filters.ledgerDateFrom || "",
+      dateTo: state.filters.ledgerDateTo || ""
     });
     const objectUrl = URL.createObjectURL(file.blob);
     const link = document.createElement("a");

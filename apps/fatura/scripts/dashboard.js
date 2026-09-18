@@ -1,4 +1,4 @@
-import { escapeHtml, hasSection, state, statusBadge, trDate, trMoney } from "./state.js?v=20260907-pdf-document-picker-v1";
+import { escapeHtml, hasSection, state, statusBadge, trDate, trMoney } from "./state.js?v=20260918-ledger-range-v1";
 
 export function renderDashboard() {
   const dashboard = state.dashboard || {};
@@ -8,11 +8,10 @@ export function renderDashboard() {
     .slice(0, 10);
   const actor = state.context && state.context.actor;
   const metrics = ((actor && actor.type === "admin") || hasSection("ledger")) ? [
-    metric("Güncel Borç", dashboard.debtKurus, "debt", "debt"),
     metric("Yapılan Ödemeler", dashboard.paymentKurus, "payments", "payment"),
     metric("Kalan Ödemeler", dashboard.remainingKurus, "remaining", "remaining")
   ] : [];
-  return `${metrics.length ? `<div class="metric-grid metric-grid--three">${metrics.join("")}</div>` : ""}
+  return `${metrics.length ? `<div class="metric-grid metric-grid--dashboard">${metrics.join("")}</div>` : ""}
     <article class="panel-card dashboard-shipments"><div class="panel-head"><div><p class="eyebrow">SON YAPILAN SEVKİYATLAR</p><h2>Son Yapılan Sevkiyatlar</h2><p>Tedarikçi sevkiyatları en yeni kayıttan başlayarak listelenir.</p></div><button class="row-button" data-view-target="documents">Arşivi aç</button></div><div class="list">${shipments.length ? shipments.map(shipmentRow).join("") : emptyInline("Henüz tamamlanmış sevkiyat bulunmuyor.")}</div></article>`;
 }
 

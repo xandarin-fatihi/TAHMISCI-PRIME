@@ -1268,6 +1268,7 @@ function createProcurementService(options = {}) {
 
   async function listLedger(actor, filters = {}) {
     requireCapability(actor, "accounting.read");
+    const dateRange = ledgerDateRange(filters);
     const { data, procurement } = await readSnapshot();
     const visible = visibleLedgerData(data, procurement, actor);
     const summary = calculateLedgerSummary(visible.entries, visible.payments, filters);
@@ -1275,12 +1276,12 @@ function createProcurementService(options = {}) {
     let entries = visible.entries;
     if (filters.supplierId) entries = entries.filter((entry) => entry.supplierId === String(filters.supplierId));
     let running = withRunningBalances(entries).map((entry) => ({ ...entry, reversed: reversedIds.has(entry.id) }));
-    if (filters.date) running = running.filter((entry) => String(entry.transactionDate || entry.createdAt || "").slice(0, 10) === String(filters.date));
+    running = running.filter((entry) => ledgerDateInRange(entry.transactionDate || entry.createdAt, dateRange));
     if (filters.type && LEDGER_TYPES.has(String(filters.type))) running = running.filter((entry) => entry.type === String(filters.type));
     const balances = supplierBalances(running);
     let payments = visible.payments;
     if (filters.supplierId) payments = payments.filter((payment) => payment.supplierId === String(filters.supplierId));
-    if (filters.date) payments = payments.filter((payment) => String(payment.paymentDate || payment.createdAt || "").slice(0, 10) === String(filters.date));
+    payments = payments.filter((payment) => ledgerDateInRange(payment.paymentDate || payment.createdAt, dateRange));
     return {
       ok: true,
       revision: procurement.revision,
@@ -1868,21 +1869,21 @@ function createProcurementService(options = {}) {
     if (kind === "ledger") {
       const supplierId = text(filters.supplierId, 180);
       const selectedSupplier = supplierId ? findSupplier(procurement, supplierId) : null;
-      const selectedDate = validateOptionalDate(filters.date, "Tarih");
+      const dateRange = ledgerDateRange(filters);
       const scopedEntries = supplierId
         ? visibleLedgerEntries.filter((entry) => String(entry.supplierId) === supplierId)
         : visibleLedgerEntries;
       const runningEntries = withRunningBalances(scopedEntries);
-      const filteredEntries = selectedDate
-        ? runningEntries.filter((entry) => String(entry.transactionDate || entry.createdAt || "").slice(0, 10) === selectedDate)
-        : runningEntries;
+      const reversedIds = new Set(visibleLedgerEntries.filter((entry) => entry.reversalOf).map((entry) => String(entry.reversalOf)));
+      const filteredEntries = runningEntries.filter((entry) => ledgerDateInRange(entry.transactionDate || entry.createdAt, dateRange)
+        && entry.type !== "reversal" && !entry.reversalOf && !reversedIds.has(String(entry.id)));
       const finance = visibleLedgerData(data, procurement, actor);
-      const summary = calculateLedgerSummary(finance.entries, finance.payments, { supplierId, date: selectedDate });
+      const summary = calculateLedgerSummary(finance.entries, finance.payments, { supplierId, ...dateRange });
       return createLedgerWorkbookFile({
         entries: filteredEntries,
         supplierIndex,
         supplierName: selectedSupplier ? selectedSupplier.name : "Tüm Tedarikçiler",
-        selectedDate,
+        ...dateRange,
         currentDebtKurus: summary.debtKurus,
         paymentTotalKurus: summary.paymentKurus,
         remainingKurus: summary.remainingKurus,
@@ -2739,10 +2740,24 @@ function visibleLedgerData(data, procurement, actor) {
   };
 }
 
+function ledgerDateRange(filters = {}) {
+  const legacyDate = validateOptionalDate(filters.date, "Tarih");
+  const dateFrom = legacyDate || validateOptionalDate(filters.dateFrom, "Başlangıç tarihi");
+  const dateTo = legacyDate || validateOptionalDate(filters.dateTo, "Bitiş tarihi");
+  if (dateFrom && dateTo && dateFrom > dateTo) throw fail("Başlangıç tarihi bitiş tarihinden büyük olamaz.", 400, "INVALID_DATE_RANGE");
+  return { dateFrom, dateTo };
+}
+
+function ledgerDateInRange(value, { dateFrom, dateTo }) {
+  const date = String(value || "").slice(0, 10);
+  return (!dateFrom || date >= dateFrom) && (!dateTo || date <= dateTo);
+}
+
 function calculateLedgerSummary(entries = [], payments = [], filters = {}) {
+  const dateRange = ledgerDateRange(filters);
   const reversedIds = new Set(entries.filter((entry) => entry.reversalOf).map((entry) => String(entry.reversalOf)));
   const inScope = (item, date) => (!filters.supplierId || String(item.supplierId) === String(filters.supplierId))
-    && (!filters.date || String(date || item.createdAt || "").slice(0, 10) === String(filters.date));
+    && ledgerDateInRange(date || item.createdAt, dateRange);
   const active = entries.filter((entry) => entry.type !== "reversal" && !entry.reversalOf && !reversedIds.has(String(entry.id))
     && !entry.removedAt && !entry.archivedAt);
   const activePayments = payments.filter((payment) => payment.status !== "reversed" && !payment.reversedAt && !payment.removedAt
@@ -2966,7 +2981,7 @@ async function createLedgerWorkbookFile(options) {
 
   const reportInfo = [
     ["Tedarikçi", options.supplierName],
-    ["Tarih", options.selectedDate ? displayDate(options.selectedDate) : "Tüm tarihler"],
+    ["Tarih Aralığı", options.dateFrom && options.dateTo ? `${displayDate(options.dateFrom)} – ${displayDate(options.dateTo)}` : options.dateFrom ? `${displayDate(options.dateFrom)} ve sonrası` : options.dateTo ? `${displayDate(options.dateTo)} ve öncesi` : "Tüm tarihler"],
     ["Rapor tarihi", formatReportDate(reportDate)]
   ];
   reportInfo.forEach(([label, value], index) => {
@@ -2980,7 +2995,7 @@ async function createLedgerWorkbookFile(options) {
   });
 
   const summaries = [
-    [1, 3, "Güncel Borç", Number(options.currentDebtKurus || 0) / 100, currencyFormat],
+    [1, 3, "DÖNEM İÇİ ALIM", Number(options.currentDebtKurus || 0) / 100, currencyFormat],
     [4, 6, "Yapılan Ödemeler", Number(options.paymentTotalKurus || 0) / 100, currencyFormat],
     [7, 9, "Kalan Ödemeler", Number(options.remainingKurus || 0) / 100, currencyFormat]
   ];
@@ -3054,7 +3069,7 @@ async function createLedgerWorkbookFile(options) {
   worksheet.pageSetup.printTitlesRow = `1:${tableHeaderRow}`;
   worksheet.pageMargins = { left: 0.35, right: 0.35, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 };
 
-  const fileDate = options.selectedDate || istanbulDateKey(reportDate);
+  const fileDate = options.dateFrom || options.dateTo || istanbulDateKey(reportDate);
   const fileBase = options.supplierName === "Tüm Tedarikçiler" ? "tum-tedarikciler" : filenameSlug(options.supplierName);
   return {
     filename: `${fileBase}-cari-${displayDate(fileDate)}.xlsx`,

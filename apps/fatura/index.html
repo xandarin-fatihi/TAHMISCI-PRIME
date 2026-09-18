@@ -11,9 +11,23 @@
   <link rel="apple-touch-icon" href="/assets/app-icons/fatura/apple-touch-icon-180.png" sizes="180x180">
   <link rel="manifest" href="/fatura/manifest.webmanifest">
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css">
-  <link rel="stylesheet" href="/fatura/styles/fatura.css?v=20260907-pdf-document-picker-v1">
-  <link rel="stylesheet" href="/fatura/styles/stock.css?v=20260907-pdf-document-picker-v1">
-  <link rel="stylesheet" href="/fatura/styles/product-analysis.css?v=20260907-pdf-document-picker-v1">
+  <link rel="stylesheet" href="/fatura/styles/fatura.css?v=20260918-ledger-range-v1">
+  <link rel="stylesheet" href="/fatura/styles/stock.css?v=20260918-ledger-range-v1">
+  <link rel="stylesheet" href="/fatura/styles/product-analysis.css?v=20260918-ledger-range-v1">
+  <script type="importmap">
+    {"imports": {
+      "/fatura/scripts/api.js?v=20260907-pdf-document-picker-v1": "/fatura/scripts/api.js?v=20260918-ledger-range-v1",
+      "/fatura/scripts/state.js?v=20260907-pdf-document-picker-v1": "/fatura/scripts/state.js?v=20260918-ledger-range-v1",
+      "/fatura/scripts/dashboard.js?v=20260907-pdf-document-picker-v1": "/fatura/scripts/dashboard.js?v=20260918-ledger-range-v1",
+      "/fatura/scripts/suppliers.js?v=20260907-pdf-document-picker-v1": "/fatura/scripts/suppliers.js?v=20260918-ledger-range-v1",
+      "/fatura/scripts/receipts.js?v=20260907-pdf-document-picker-v1": "/fatura/scripts/receipts.js?v=20260918-ledger-range-v1",
+      "/fatura/scripts/documents.js?v=20260907-pdf-document-picker-v1": "/fatura/scripts/documents.js?v=20260918-ledger-range-v1",
+      "/fatura/scripts/accounting.js?v=20260907-pdf-document-picker-v1": "/fatura/scripts/accounting.js?v=20260918-ledger-range-v1",
+      "/fatura/scripts/stock.js?v=20260907-pdf-document-picker-v1": "/fatura/scripts/stock.js?v=20260918-ledger-range-v1",
+      "/fatura/scripts/product-analysis.js?v=20260907-pdf-document-picker-v1": "/fatura/scripts/product-analysis.js?v=20260918-ledger-range-v1",
+      "/fatura/scripts/ui-dialogs.js?v=20260907-pdf-document-picker-v1": "/fatura/scripts/ui-dialogs.js?v=20260918-ledger-range-v1"
+    }}
+  </script>
 </head>
 <body class="fatura-page">
   <div class="fatura-app" id="faturaApp" data-status="loading">
@@ -197,7 +211,7 @@
   </template>
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
-  <script type="module" src="/fatura/scripts/app.js?v=20260907-pdf-document-picker-v1"></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260907-pdf-document-picker-v1" defer></script>
+  <script type="module" src="/fatura/scripts/app.js?v=20260918-ledger-range-v1"></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260918-ledger-range-v1" defer></script>
 </body>
 </html>

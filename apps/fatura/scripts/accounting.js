@@ -1,18 +1,19 @@
-import { documentUploadPicker } from "./ui-dialogs.js?v=20260907-pdf-document-picker-v1";
-import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260907-pdf-document-picker-v1";
+import { documentUploadPicker } from "./ui-dialogs.js?v=20260918-ledger-range-v1";
+import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260918-ledger-range-v1";
 
 export function renderLedger() {
   const supplierId = String(state.filters.ledgerSupplier || "");
-  const dateFilter = String(state.filters.ledgerDate || "");
+  const dateFrom = String(state.filters.ledgerDateFrom || "");
+  const dateTo = String(state.filters.ledgerDateTo || "");
   const entries = state.ledgerEntries.filter((entry) => entry.type !== "reversal" && !entry.reversalOf && !entry.reversed);
   const visibleIds = new Set(entries.filter(ledgerReversalTarget).map((entry) => entry.id));
   for (const id of state.ledgerSelection) if (!visibleIds.has(id)) state.ledgerSelection.delete(id);
   const summary = state.ledgerSummary || {};
   const mode = state.ledgerDrilldown;
-  const titles = { debt: "Güncel Borç", payments: "Yapılan Ödemeler", remaining: "Kalan Ödemeler" };
+  const titles = { debt: "DÖNEM İÇİ ALIM", payments: "Yapılan Ödemeler", remaining: "Kalan Ödemeler" };
   const rows = mode === "payments" ? summary.activePayments || [] : mode === "remaining" ? summary.openObligations || [] : summary.obligations || [];
   const detailPanel = titles[mode] ? `<article class="panel-card finance-drilldown"><div class="panel-head"><div><h2>${titles[mode]}</h2><p>Seçili tedarikçi ve tarih kapsamındaki ${rows.length} kayıt.</p></div><button type="button" class="row-button" data-action="close-ledger-drilldown">Kapat</button></div>${rows.length ? `<div class="finance-list">${rows.map((item) => mode === "payments" ? paymentRow(item) : debtRow(item, mode)).join("")}</div>` : empty("Kayıt bulunmuyor", "Seçili filtrelerde bu kapsamda hareket yok.")}</article>` : "";
-  return `<div class="section-toolbar"><div class="filters ledger-filters"><label><span>Tedarikçi</span><select class="toolbar-control" id="ledger-supplier"><option value="">Tüm tedarikçiler</option>${state.suppliers.map((item) => `<option value="${escapeHtml(item.id)}" ${supplierId === item.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label><label><span>Tarih</span><input class="toolbar-control" id="ledger-date" type="date" value="${escapeHtml(dateFilter)}"></label></div><div class="toolbar-actions"><button class="ui-button ui-button--secondary" type="button" data-action="finance-trash">Çöp Kutusu</button><button class="ui-button ui-button--secondary" type="button" data-action="export-ledger">Excel Çıktı Al</button>${has(CAPABILITIES.paymentCreate) ? '<button class="ui-button ui-button--primary" data-action="new-payment">Ödeme gir</button>' : ""}</div></div>
+  return `<div class="section-toolbar ledger-toolbar"><div class="filters ledger-filters"><label><span>Tedarikçi</span><select class="toolbar-control" id="ledger-supplier"><option value="">Tüm tedarikçiler</option>${state.suppliers.map((item) => `<option value="${escapeHtml(item.id)}" ${supplierId === item.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label><label><span>Başlangıç Tarihi</span><input class="toolbar-control" id="ledger-date-from" type="date" value="${escapeHtml(dateFrom)}" ${dateTo ? `max="${escapeHtml(dateTo)}"` : ""}></label><label><span>Bitiş Tarihi</span><input class="toolbar-control" id="ledger-date-to" type="date" value="${escapeHtml(dateTo)}" ${dateFrom ? `min="${escapeHtml(dateFrom)}"` : ""}></label><button class="ui-button ui-button--secondary" type="button" data-action="reset-ledger-filters" aria-label="Tüm filtreleri sıfırla" ${supplierId || dateFrom || dateTo ? "" : "disabled"}>Sıfırla</button></div><div class="toolbar-actions"><button class="ui-button ui-button--secondary" type="button" data-action="finance-trash">Çöp Kutusu</button><button class="ui-button ui-button--secondary" type="button" data-action="export-ledger">Excel Çıktı Al</button>${has(CAPABILITIES.paymentCreate) ? '<button class="ui-button ui-button--primary" data-action="new-payment">Ödeme gir</button>' : ""}</div></div>
     <div class="metric-grid metric-grid--ledger">${[["debt", "debtKurus", "debt"], ["payments", "paymentKurus", "payment"], ["remaining", "remainingKurus", "remaining"]].map(([key, field, color]) => `<button class="metric-card metric-card--button" type="button" data-action="open-ledger-drilldown" data-ledger-mode="${key}" aria-pressed="${mode === key}"><span>${titles[key]}</span><strong class="finance-${color}">${trMoney(summary[field])}</strong><small>Detayları görüntüle</small></button>`).join("")}</div>
     ${detailPanel}${financeSelectionToolbar("ledger")}<p class="result-meta" role="status">${escapeHtml(state.financeMessage)}</p>
     ${entries.length ? `<article class="panel-card table-card"><div class="table-wrap"><table class="data-table finance-selection-table"><thead><tr><th class="finance-select-cell"><input type="checkbox" data-finance-select-all="ledger" aria-label="Görünen cari hareketlerin tümünü seç" ${state.financeBusy ? "disabled" : ""}></th><th>Tarih</th><th>Tedarikçi</th><th>Tür</th><th>Açıklama</th><th class="right">Borç</th><th class="right">Ödeme / Alacak</th><th class="right">Hareket sonrası bakiye</th><th></th></tr></thead><tbody>${entries.map(ledgerRow).join("")}</tbody></table></div></article>` : empty("Cari hareket yok", "Seçilen tedarikçi ve tarihte cari hareket bulunmuyor.")}`;
@@ -33,7 +34,8 @@ export function renderTrash() {
 export function visibleTrashRecords() {
   return (state.trash || []).filter((record) => state.trashMode !== "finance" || (["ledger", "payment"].includes(record.type)
     && (!state.filters.ledgerSupplier || String(record.supplierId) === String(state.filters.ledgerSupplier))
-    && (!state.filters.ledgerDate || String(record.removedAt || "").slice(0, 10) === state.filters.ledgerDate)))
+    && (!state.filters.ledgerDateFrom || String(record.removedAt || "").slice(0, 10) >= state.filters.ledgerDateFrom)
+    && (!state.filters.ledgerDateTo || String(record.removedAt || "").slice(0, 10) <= state.filters.ledgerDateTo)))
     .sort((left, right) => String(right.removedAt || "").localeCompare(String(left.removedAt || "")));
 }
 
