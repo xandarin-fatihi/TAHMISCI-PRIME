@@ -11,6 +11,9 @@ const { normalizeStockState } = require("./store/migrations");
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 const DEFAULT_LEASE_MS = 90 * 1000;
+const ISTANBUL_TIME_ZONE = "Europe/Istanbul";
+const MAX_REMINDER_KEYS = 5000;
+const MAX_WEEKLY_STOCK_BODY_LENGTH = 1200;
 
 function createNotificationScheduler(options) {
   const {
@@ -45,15 +48,8 @@ function createNotificationScheduler(options) {
       if (!previewSchedulerChanges(snapshot, now)) return { created: 0, skipped: "no-work" };
       claimed = await claimLease(now);
       if (!claimed) return { created: 0, skipped: "leased" };
-      const diagnostics = { invalidTaskDates: 0, invalidShiftDates: 0 };
       await store.update((data) => {
-        const beforeCount = created.length;
-        createTaskReminders(data, now, created, diagnostics);
-        createShiftReminders(data, now, created, diagnostics);
-        const stockStateChanged = createCriticalStockNotifications(data, now, created);
-        createManagerPendingReminders(data, now, created);
-        createProcurementPaymentReminders(data, now, created);
-        if (created.length === beforeCount && !stockStateChanged) return noChange(store, data);
+        if (!createWeeklyStockSummary(data, now, created)) return noChange(store, data);
         data.notificationSchedulerState = {
           ...(data.notificationSchedulerState || {}),
           lastRunAt: now.toISOString(),
@@ -63,9 +59,6 @@ function createNotificationScheduler(options) {
         };
         return data;
       });
-      if (diagnostics.invalidTaskDates || diagnostics.invalidShiftDates) {
-        logError("Bildirim zamanlayıcısı geçersiz tarihleri atladı", diagnostics);
-      }
       for (const notification of created) publishNotificationEvent(notification);
       return { created: created.length };
     } catch (error) {
@@ -317,6 +310,138 @@ function createCriticalStockNotifications(data, now, created) {
   return stateChanged;
 }
 
+function createWeeklyStockSummary(data, now, created) {
+  const reminderKey = weeklyStockSummaryReminderKey(now);
+  if (!reminderKey) return false;
+  const state = data.notificationSchedulerState && typeof data.notificationSchedulerState === "object"
+    ? data.notificationSchedulerState
+    : {};
+  const reminderKeys = Array.isArray(state.reminderKeys) ? state.reminderKeys : [];
+  if (reminderKeys.includes(reminderKey)) return false;
+
+  const issues = weeklyStockIssues(data);
+  const notification = addNotification(data, created, {
+    recipientRole: "manager",
+    recipientId: "manager",
+    category: "stock",
+    eventType: "weekly_stock_summary",
+    title: "Haftalık stok özeti",
+    body: weeklyStockSummaryBody(issues),
+    severity: issues.length ? "warning" : "success",
+    entityType: "stock_summary",
+    entityId: reminderKey,
+    deepLink: "/fatura/?view=stock",
+    dedupeKey: reminderKey,
+    metadata: {
+      weekKey: reminderKey.slice("weekly-stock-summary:".length),
+      issueCount: issues.length,
+      criticalCount: issues.filter((issue) => issue.kind === "critical").length,
+      orderThresholdCount: issues.filter((issue) => issue.kind === "order").length
+    }
+  }, now);
+  if (!notification) return false;
+
+  data.notificationSchedulerState = {
+    ...state,
+    reminderKeys: [...reminderKeys, reminderKey].slice(-MAX_REMINDER_KEYS)
+  };
+  return true;
+}
+
+function weeklyStockIssues(data) {
+  const stockState = normalizeStockState(data.stockState);
+  const locations = (stockState.locations || []).filter((location) => location && location.active !== false);
+  const products = (stockState.products || []).filter((product) => product && product.id && product.active !== false);
+  const balancesByKey = new Map((stockState.balances || []).filter(Boolean).map((balance) => [
+    `${String(balance.locationId)}\u0000${String(balance.productId)}`, balance
+  ]));
+  const issues = [];
+  for (const location of locations) {
+    for (const product of products) {
+      const balance = balancesByKey.get(`${String(location.id)}\u0000${String(product.id)}`);
+      if (!balance) continue;
+      const quantity = finiteNumber(balance.quantity);
+      const criticalThreshold = finiteNumber(balance.criticalThreshold);
+      const orderThreshold = finiteNumber(balance.orderThreshold);
+      if (!Number.isFinite(quantity)) continue;
+      if (criticalThreshold > 0 && quantity <= criticalThreshold) {
+        issues.push({ kind: "critical", location, product, quantity, threshold: criticalThreshold });
+      } else if (orderThreshold > 0 && quantity <= orderThreshold) {
+        issues.push({ kind: "order", location, product, quantity, threshold: orderThreshold });
+      }
+    }
+  }
+  return issues;
+}
+
+function weeklyStockSummaryBody(issues) {
+  if (!issues.length) return "Kritik veya sipariş eşiği altında ürün bulunmuyor.";
+  const criticalCount = issues.filter((issue) => issue.kind === "critical").length;
+  const orderCount = issues.length - criticalCount;
+  const introduction = `Toplam ${issues.length} sorunlu stok bulundu (${criticalCount} kritik, ${orderCount} sipariş eşiği altında).`;
+  const details = [];
+  for (let index = 0; index < issues.length; index += 1) {
+    const issue = issues[index];
+    const productName = compactStockText(issue.product.name || issue.product.productName, "Stok ürünü");
+    const locationName = compactStockText(issue.location.name, "Stok noktası");
+    const unit = compactStockText(issue.product.unit, "adet", 24);
+    const thresholdLabel = issue.kind === "critical" ? "kritik eşik" : "sipariş eşiği";
+    const detail = `${productName} · ${locationName}: ${formatStockNumber(issue.quantity)} ${unit} (${thresholdLabel} ${formatStockNumber(issue.threshold)})`;
+    const candidateDetails = [...details, detail];
+    const remaining = issues.length - candidateDetails.length;
+    const suffix = remaining ? `; … ve ${remaining} kayıt daha.` : ".";
+    if (`${introduction} ${candidateDetails.join("; ")}${suffix}`.length > MAX_WEEKLY_STOCK_BODY_LENGTH) break;
+    details.push(detail);
+  }
+  const remaining = issues.length - details.length;
+  const suffix = remaining ? `; … ve ${remaining} kayıt daha.` : ".";
+  return `${introduction}${details.length ? ` ${details.join("; ")}` : ""}${suffix}`;
+}
+
+function compactStockText(value, fallback, maxLength = 72) {
+  const text = String(value || "").replace(/\s+/g, " ").trim() || fallback;
+  return text.slice(0, maxLength);
+}
+
+function formatStockNumber(value) {
+  return new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 3 }).format(value);
+}
+
+function weeklyStockSummaryReminderKey(value) {
+  const parts = istanbulDateTimeParts(value);
+  if (!parts || parts.weekday !== 5 || parts.hour < 17) return "";
+  return `weekly-stock-summary:${isoWeekKey(parts.year, parts.month, parts.day)}`;
+}
+
+function istanbulDateTimeParts(value) {
+  const date = validDate(value);
+  if (!date) return null;
+  const values = {};
+  for (const part of new Intl.DateTimeFormat("en-CA", {
+    timeZone: ISTANBUL_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date)) {
+    if (part.type !== "literal") values[part.type] = Number(part.value);
+  }
+  if (![values.year, values.month, values.day, values.hour].every(Number.isInteger)) return null;
+  const localDate = new Date(Date.UTC(values.year, values.month - 1, values.day));
+  return { year: values.year, month: values.month, day: values.day, hour: values.hour, weekday: localDate.getUTCDay() };
+}
+
+function isoWeekKey(year, month, day) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const weekday = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - weekday);
+  const weekYear = date.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(weekYear, 0, 1));
+  const week = Math.ceil((((date.getTime() - yearStart.getTime()) / (24 * HOUR_MS)) + 1) / 7);
+  return `${weekYear}-W${String(week).padStart(2, "0")}`;
+}
+
 function createManagerPendingReminders(data, now, created) {
   const shipments = (Array.isArray(data.workforceShipments) ? data.workforceShipments : [])
     .filter((item) => item && normalizeLookup(item.status) === "onay bekliyor").length;
@@ -384,6 +509,7 @@ function createProcurementPaymentReminders(data, now, created) {
 function addNotification(data, created, input, now) {
   const notification = createNotificationInStore(data, input, { now });
   if (notification) created.push(notification);
+  return notification;
 }
 
 function taskDueDate(task) {
@@ -454,6 +580,10 @@ function previewSchedulerChanges(data, now) {
   const state = data.notificationSchedulerState && typeof data.notificationSchedulerState === "object"
     ? data.notificationSchedulerState
     : {};
+  const reminderKey = weeklyStockSummaryReminderKey(now);
+  if (!reminderKey) return false;
+  const reminderKeys = Array.isArray(state.reminderKeys) ? state.reminderKeys : [];
+  if (reminderKeys.includes(reminderKey)) return false;
   const preview = {
     ...data,
     revisions: { ...(data.revisions && typeof data.revisions === "object" ? data.revisions : {}) },
@@ -461,16 +591,12 @@ function previewSchedulerChanges(data, now) {
     notificationOutbox: [...(Array.isArray(data.notificationOutbox) ? data.notificationOutbox : [])],
     notificationSchedulerState: {
       ...state,
-      criticalStockState: structuredClone(state.criticalStockState || {})
+      reminderKeys: [...reminderKeys]
     }
   };
   const created = [];
-  createTaskReminders(preview, now, created, {});
-  createShiftReminders(preview, now, created, {});
-  const stockStateChanged = createCriticalStockNotifications(preview, now, created);
-  createManagerPendingReminders(preview, now, created);
-  createProcurementPaymentReminders(preview, now, created);
-  return created.length > 0 || stockStateChanged;
+  createWeeklyStockSummary(preview, now, created);
+  return created.length > 0;
 }
 
 function noChange(store, data) {
