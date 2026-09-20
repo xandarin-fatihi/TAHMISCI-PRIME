@@ -10,11 +10,11 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
     "/assets/app-icons/mudavim/icon-192.png"
   ],
   precache: [
-    "/mudavim/mudavim.css?v=20260831-panel-access",
-    "/mudavim/mudavim.js?v=20260831-panel-access",
+    "/mudavim/mudavim.css?v=20260920-notification-center-v1",
+    "/mudavim/mudavim.js?v=20260920-notification-center-v1",
     "/shared/styles/account-security.css?v=20260829-mudavim",
     "/shared/scripts/account-security.js?v=20260829-mudavim",
-    "/shared/scripts/pwa-client.js?v=20260831-panel-access",
+    "/shared/scripts/pwa-client.js?v=20260920-notification-center-v1",
     "/assets/fonts/poppins-regular.ttf",
     "/assets/fonts/poppins-semibold.ttf",
     "/assets/fonts/poppins-bold.ttf",

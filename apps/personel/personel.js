@@ -1634,8 +1634,8 @@
   async function ensureNotificationsModule() {
     if (window.TahmisciPersonelNotifications) return window.TahmisciPersonelNotifications;
     await Promise.all([
-      loadLazyStyle("notifications", "/personel/notifications.css?v=20260831-panel-access"),
-      loadLazyScript("notifications", "/personel/notifications.js?v=20260831-panel-access")
+      loadLazyStyle("notifications", "/personel/notifications.css?v=20260920-notification-center-v1"),
+      loadLazyScript("notifications", "/personel/notifications.js?v=20260920-notification-center-v1")
     ]);
     const preferencesForm = document.getElementById("personelNotificationPreferencesForm");
     if (preferencesForm) preferencesForm.dataset.moduleReady = "true";

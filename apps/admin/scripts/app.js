@@ -479,8 +479,9 @@
     notificationCenter: {
       items: [],
       unreadCount: 0,
+      counts: { inbox: 0, unread: 0, read: 0, archived: 0 },
       nextCursor: "",
-      filter: "all",
+      filter: "inbox",
       category: "all",
       preferences: null,
       capabilities: {},
@@ -488,6 +489,7 @@
       loading: false,
       preferencesLoading: false,
       devicesLoading: false,
+      error: false,
       mutationKeys: new Set(),
       open: false,
       lastFocus: null
@@ -608,7 +610,7 @@
       "loginScreen", "loginForm", "passwordInput", "loginError", "panelShell", "miniStats",
       "sidebarPanel", "sidebarToggle", "adminSidebarOverlay", "adminProfileButton", "adminProfileMenu", "settingsToggle", "settingsMenu", "workspaceTitle",
       "adminNotificationTrigger", "adminNotificationBadge", "adminNotificationOverlay", "adminNotificationDrawer", "adminNotificationClose",
-      "adminNotificationTitle", "adminNotificationSummary", "adminNotificationCategory", "adminNotificationReadAll", "adminNotificationMessage",
+      "adminNotificationTitle", "adminNotificationSummary", "adminNotificationCategory", "adminNotificationReadAll", "adminNotificationArchiveRead", "adminNotificationMessage",
       "adminNotificationList", "adminNotificationLoadMore", "adminNotificationSettings", "adminNotificationPreferences",
       "adminNotificationPush", "adminNotificationTest", "adminNotificationSavePreferences", "adminNotificationHealth",
       "adminNotificationClearArchive", "adminNotificationManageEmail", "adminNotificationDevices", "adminNotificationDevicesRefresh",
@@ -2280,6 +2282,8 @@
     if (els.adminNotificationList) els.adminNotificationList.addEventListener("click", handleAdminNotificationListClick);
     if (els.adminNotificationLoadMore) els.adminNotificationLoadMore.addEventListener("click", () => loadAdminNotifications({ append: true }));
     if (els.adminNotificationReadAll) els.adminNotificationReadAll.addEventListener("click", markAllAdminNotificationsRead);
+    if (els.adminNotificationArchiveRead) els.adminNotificationArchiveRead.addEventListener("click", archiveReadAdminNotifications);
+    if (els.adminNotificationClearArchive) els.adminNotificationClearArchive.addEventListener("click", clearAdminNotificationArchive);
     if (els.adminNotificationCategory) {
       els.adminNotificationCategory.addEventListener("change", () => {
         state.notificationCenter.category = els.adminNotificationCategory.value || "all";
@@ -2288,8 +2292,8 @@
     }
     document.querySelectorAll("[data-notification-filter]").forEach((button) => {
       button.addEventListener("click", () => {
-        const requested = String(button.dataset.notificationFilter || "all");
-        state.notificationCenter.filter = requested === "unread" ? "unread" : "all";
+        const requested = String(button.dataset.notificationFilter || "inbox");
+        state.notificationCenter.filter = ["inbox", "unread", "archived"].includes(requested) ? requested : "inbox";
         syncAdminNotificationFilters();
         loadAdminNotifications().catch(() => {});
       });
@@ -2429,24 +2433,25 @@
     if (center.loading) return;
     const append = options.append === true;
     center.loading = true;
+    center.error = false;
     if (els.adminNotificationList) els.adminNotificationList.setAttribute("aria-busy", "true");
     if (!append) setAdminNotificationMessage("Bildirimler yükleniyor.");
     try {
-      const query = new URLSearchParams({ limit: "20" });
-      if (center.filter === "unread") query.set("unread", "true");
+      const query = new URLSearchParams({ limit: "30", status: center.filter });
       if (center.category !== "all") query.set("category", center.category);
       if (append && center.nextCursor) query.set("cursor", center.nextCursor);
       const result = await backendRequest(`${ADMIN_NOTIFICATION_API}?${query.toString()}`);
       const listed = Array.isArray(result.notifications)
         ? result.notifications.filter((item) => !isRetiredAdminNotification(item))
         : [];
-      const incoming = listed.filter((item) => !item || !item.archivedAt);
-      const merged = append ? center.items.concat(incoming) : incoming;
+      const merged = append ? center.items.concat(listed) : listed;
       center.items = uniqueAdminNotifications(merged);
       center.nextCursor = String(result.nextCursor || "");
+      center.counts = normalizeAdminNotificationCounts(result.counts);
       setAdminNotificationUnreadCount(result.unreadCount ?? center.unreadCount);
       setAdminNotificationMessage(center.items.length ? "" : "Bu filtrede bildirim bulunmuyor.");
     } catch (error) {
+      center.error = true;
       setAdminNotificationMessage(error.message || "Bildirimler alınamadı.", "error");
       if (!append) center.items = [];
     } finally {
@@ -2480,14 +2485,22 @@
       els.adminNotificationList.innerHTML = `<div class="admin-notification-empty"><div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z"></path><path d="M10 21h4"></path></svg><br>Bildirimler yükleniyor...</div></div>`;
       return;
     }
-    if (!center.items.length) {
-      const label = center.filter === "unread" ? "Okunmamış bildiriminiz yok." : "Henüz bildiriminiz yok.";
+    if (center.error && !center.items.length) {
+      els.adminNotificationList.innerHTML = `<div class="admin-notification-empty"><div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19zM12 9v4M12 17h.01"></path></svg><br>Bildirimler alınamadı.<br><button class="ui-button ui-button--secondary ui-button--sm" type="button" data-notification-retry>Yeniden dene</button></div></div>`;
+    } else if (!center.items.length) {
+      const label = center.filter === "unread" ? "Okunmamış bildiriminiz yok." : center.filter === "archived" ? "Arşiviniz boş." : "Henüz bildiriminiz yok.";
       els.adminNotificationList.innerHTML = `<div class="admin-notification-empty"><div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z"></path><path d="M9 17a3 3 0 0 0 6 0"></path></svg><br>${escapeHTML(label)}</div></div>`;
     } else {
       els.adminNotificationList.innerHTML = center.items.map(renderAdminNotificationCard).join("");
     }
     if (els.adminNotificationLoadMore) els.adminNotificationLoadMore.hidden = !center.nextCursor;
     if (els.adminNotificationReadAll) els.adminNotificationReadAll.disabled = center.unreadCount < 1 || center.loading;
+    if (els.adminNotificationArchiveRead) els.adminNotificationArchiveRead.disabled = center.counts.read < 1 || center.loading;
+    if (els.adminNotificationClearArchive) {
+      els.adminNotificationClearArchive.hidden = center.filter !== "archived";
+      els.adminNotificationClearArchive.disabled = center.counts.archived < 1 || center.loading;
+    }
+    syncAdminNotificationFilters();
   }
 
   function renderAdminNotificationCard(notification) {
@@ -2500,19 +2513,22 @@
     const createdAt = notification.createdAt || notification.timestamp || notification.sentAt;
     const readAction = read ? "unread" : "read";
     const readLabel = read ? "Okunmamış yap" : "Okundu yap";
+    const archived = Boolean(notification.archivedAt) || state.notificationCenter.filter === "archived";
+    const openControl = archived
+      ? `<div class="admin-notification-card__title"><strong>${escapeHTML(title)}</strong><p>${escapeHTML(body)}</p></div>`
+      : `<button type="button" data-notification-open="${escapeAttribute(id)}"><strong>${escapeHTML(title)}</strong><p>${escapeHTML(body)}</p></button>`;
+    const actions = archived
+      ? `<button type="button" data-notification-action="restore" data-notification-id="${escapeAttribute(id)}" aria-label="Geri al" title="Geri al">${adminNotificationIcon("restore")}</button><button type="button" data-notification-action="delete" data-notification-id="${escapeAttribute(id)}" aria-label="Kalıcı sil" title="Kalıcı sil">${adminNotificationIcon("delete")}</button>`
+      : `<button type="button" data-notification-action="${readAction}" data-notification-id="${escapeAttribute(id)}" aria-label="${readLabel}" title="${readLabel}">${read ? adminNotificationIcon("unread") : adminNotificationIcon("read")}</button><button type="button" data-notification-action="archive" data-notification-id="${escapeAttribute(id)}" aria-label="Arşivle" title="Arşivle">${adminNotificationIcon("archive")}</button><button type="button" data-notification-action="delete" data-notification-id="${escapeAttribute(id)}" aria-label="Kalıcı sil" title="Kalıcı sil">${adminNotificationIcon("delete")}</button>`;
     return `
-      <article class="admin-notification-card is-${escapeAttribute(severity)} ${read ? "" : "is-unread"}" data-notification-id="${escapeAttribute(id)}" data-severity="${escapeAttribute(severity)}">
+      <article class="admin-notification-card is-${escapeAttribute(severity)} ${read ? "" : "is-unread"} ${archived ? "is-archived" : ""}" data-notification-id="${escapeAttribute(id)}" data-severity="${escapeAttribute(severity)}">
         <span class="admin-notification-kind" data-kind="${escapeAttribute(category)}" aria-hidden="true">${adminNotificationIcon(category)}</span>
         <div class="admin-notification-copy">
-          <button type="button" data-notification-open="${escapeAttribute(id)}">
-            <strong>${escapeHTML(title)}</strong>
-            <p>${escapeHTML(body)}</p>
-          </button>
+          ${openControl}
           <div class="admin-notification-meta"><span>${escapeHTML(adminNotificationCategoryLabel(category))}</span><span class="admin-notification-severity" data-severity="${escapeAttribute(severity)}">${escapeHTML(adminNotificationSeverityLabel(severity))}</span><time datetime="${escapeAttribute(createdAt || "")}">${escapeHTML(formatDateTime(createdAt) || "Az önce")}</time></div>
         </div>
         <div class="admin-notification-actions">
-          <button type="button" data-notification-action="${readAction}" data-notification-id="${escapeAttribute(id)}" aria-label="${readLabel}" title="${readLabel}">${read ? adminNotificationIcon("unread") : adminNotificationIcon("read")}</button>
-          <button type="button" data-notification-action="delete" data-notification-id="${escapeAttribute(id)}" aria-label="Bildirimi sil" title="Bildirimi sil">${adminNotificationIcon("delete")}</button>
+          ${actions}
         </div>
       </article>`;
   }
@@ -2573,6 +2589,16 @@
     if (els.adminNotificationReadAll) els.adminNotificationReadAll.disabled = count < 1;
   }
 
+  function normalizeAdminNotificationCounts(value) {
+    const source = value && typeof value === "object" ? value : {};
+    return {
+      inbox: Math.max(0, Number(source.inbox || 0)),
+      unread: Math.max(0, Number(source.unread || 0)),
+      read: Math.max(0, Number(source.read || 0)),
+      archived: Math.max(0, Number(source.archived || 0))
+    };
+  }
+
   function setAdminNotificationMessage(message, tone = "") {
     if (!els.adminNotificationMessage) return;
     els.adminNotificationMessage.textContent = message || "";
@@ -2584,10 +2610,15 @@
     document.querySelectorAll("[data-notification-filter]").forEach((button) => {
       button.setAttribute("aria-pressed", String(button.dataset.notificationFilter === state.notificationCenter.filter));
     });
+    document.querySelectorAll("[data-notification-count]").forEach((node) => {
+      node.textContent = String(state.notificationCenter.counts[node.dataset.notificationCount] || 0);
+    });
     if (els.adminNotificationCategory) els.adminNotificationCategory.value = state.notificationCenter.category;
   }
 
   async function handleAdminNotificationListClick(event) {
+    const retry = event.target.closest("[data-notification-retry]");
+    if (retry) { await loadAdminNotifications(); return; }
     const actionButton = event.target.closest("[data-notification-action]");
     if (actionButton) {
       await mutateAdminNotification(actionButton.dataset.notificationId, actionButton.dataset.notificationAction, actionButton);
@@ -2606,7 +2637,7 @@
 
   async function mutateAdminNotification(id, action, button, options = {}) {
     const center = state.notificationCenter;
-    if (!["read", "unread", "delete"].includes(action)) return false;
+    if (!["read", "unread", "archive", "restore", "delete"].includes(action)) return false;
     if (action === "delete" && button && button.dataset.confirmDelete !== "true") {
       button.dataset.confirmDelete = "true";
       setAdminNotificationMessage("Bildirimi silmek için Sil düğmesine tekrar basın.");
@@ -2628,13 +2659,14 @@
         center.items = center.items.map((item) => String(item.id || item.notificationId) === String(id) ? result.notification : item);
       }
       if (action === "delete") center.items = center.items.filter((item) => String(item.id || item.notificationId) !== String(id));
+      center.counts = normalizeAdminNotificationCounts(result.counts);
       setAdminNotificationUnreadCount(result.unreadCount ?? center.unreadCount);
       const message = {
-        delete: "Bildirim silindi."
+        archive: "Bildirim arşivlendi.", restore: "Bildirim geri alındı.", delete: "Bildirim kalıcı olarak silindi."
       }[action] || "Bildirim durumu güncellendi.";
-      setAdminNotificationMessage(message, "success");
       if (options.refresh !== false) await loadAdminNotifications();
       else renderAdminNotifications();
+      setAdminNotificationMessage(message, "success");
       return true;
     } catch (error) {
       setAdminNotificationMessage(error.message || "Bildirim güncellenemedi.", "error");
@@ -2653,14 +2685,59 @@
     button.textContent = "Güncelleniyor...";
     try {
       const result = await backendRequest(`${ADMIN_NOTIFICATION_API}/read-all`, { method: "POST", body: {} });
+      state.notificationCenter.counts = normalizeAdminNotificationCounts(result.counts);
       setAdminNotificationUnreadCount(result.unreadCount ?? 0);
-      setAdminNotificationMessage("Tüm bildirimler okundu olarak işaretlendi.", "success");
       await loadAdminNotifications();
+      setAdminNotificationMessage("Tüm bildirimler okundu olarak işaretlendi.", "success");
     } catch (error) {
       setAdminNotificationMessage(error.message || "Bildirimler güncellenemedi.", "error");
     } finally {
       button.textContent = previous;
       button.disabled = state.notificationCenter.unreadCount < 1;
+    }
+  }
+
+  async function archiveReadAdminNotifications() {
+    const button = els.adminNotificationArchiveRead;
+    if (!button || button.disabled) return;
+    const previous = button.textContent;
+    button.disabled = true;
+    button.textContent = "Arşivleniyor...";
+    try {
+      const result = await backendRequest(`${ADMIN_NOTIFICATION_API}/archive-read`, { method: "POST", body: {} });
+      state.notificationCenter.counts = normalizeAdminNotificationCounts(result.counts);
+      setAdminNotificationUnreadCount(result.unreadCount ?? state.notificationCenter.unreadCount);
+      const archivedCount = Math.max(0, Number(result.archivedCount || 0));
+      await loadAdminNotifications();
+      setAdminNotificationMessage(`${archivedCount} okunan bildirim arşivlendi.`, "success");
+    } catch (error) {
+      setAdminNotificationMessage(error.message || "Okunan bildirimler arşivlenemedi.", "error");
+    } finally {
+      button.textContent = previous;
+      button.disabled = state.notificationCenter.counts.read < 1;
+    }
+  }
+
+  async function clearAdminNotificationArchive() {
+    const button = els.adminNotificationClearArchive;
+    const count = Math.max(0, Number(state.notificationCenter.counts.archived || 0));
+    if (!button || button.disabled || !count) return;
+    if (!window.confirm(`Arşivdeki ${count} bildirim kalıcı olarak silinecek. Devam edilsin mi?`)) return;
+    const previous = button.textContent;
+    button.disabled = true;
+    button.textContent = "Siliniyor...";
+    try {
+      const result = await backendRequest(`${ADMIN_NOTIFICATION_API}/archive`, { method: "DELETE" });
+      state.notificationCenter.counts = normalizeAdminNotificationCounts(result.counts);
+      setAdminNotificationUnreadCount(result.unreadCount ?? state.notificationCenter.unreadCount);
+      const deletedCount = Math.max(0, Number(result.deletedCount || 0));
+      await loadAdminNotifications();
+      setAdminNotificationMessage(`${deletedCount} bildirim kalıcı olarak silindi.`, "success");
+    } catch (error) {
+      setAdminNotificationMessage(error.message || "Arşiv boşaltılamadı.", "error");
+    } finally {
+      button.textContent = previous;
+      button.disabled = state.notificationCenter.counts.archived < 1;
     }
   }
 

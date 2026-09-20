@@ -1,4 +1,4 @@
-import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, state, statusBadge } from "./state.js?v=20260907-pdf-document-picker-v1";
+import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, state, statusBadge } from "./state.js?v=20260920-notification-center-v1";
 
 function canManageSuppliers() {
   const actor = state.context && state.context.actor;

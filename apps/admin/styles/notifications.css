@@ -219,8 +219,13 @@ body.is-notification-drawer-open { overflow: hidden; }
   background-color: #fffaf3;
 }
 
-#adminNotificationReadAll,
-#adminNotificationClearArchive { grid-column: 1 / -1; justify-self: end; }
+.admin-notification-bulk-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
 
 .admin-notification-message {
   min-height: 18px;
@@ -662,8 +667,8 @@ body.is-notification-drawer-open { overflow: hidden; }
 
   .admin-notification-toolbar { grid-template-columns: 1fr; }
   .admin-notification-drawer #adminNotificationCategory { width: 100%; }
-  #adminNotificationReadAll,
-  #adminNotificationClearArchive { justify-self: stretch; }
+  .admin-notification-bulk-actions { display: grid; grid-template-columns: 1fr; }
+  .admin-notification-bulk-actions .ui-button { width: 100%; }
   .admin-notification-trigger { width: 40px; }
 }
 

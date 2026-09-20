@@ -14,15 +14,15 @@
   <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20260801-phase2">
   <link rel="stylesheet" href="styles/admin-compact.css?v=20260809-prephase6-shift-layout">
   <link rel="stylesheet" href="styles/admin-components.css?v=20260827-stock-workspace">
-  <link rel="stylesheet" href="styles/notifications.css?v=20260816-notification-cleanup">
+  <link rel="stylesheet" href="styles/notifications.css?v=20260920-notification-center-v1">
   <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260816-account-notifications">
   <meta name="tahmisci-lazy-style" content="/shared/styles/account-security.css">
   <meta name="tahmisci-lazy-script" content="/shared/scripts/account-security.js">
   <script src="/shared/scripts/category-icons.js?v=20260714"></script>
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
   <script src="/shared/scripts/menu-design-schema.js?v=20260802-prephase4-design-chain"></script>
-  <script src="scripts/app.js?v=20260831-panel-access" defer></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260831-panel-access" defer></script>
+  <script src="scripts/app.js?v=20260920-notification-center-v1" defer></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260920-notification-center-v1" defer></script>
 </head>
 <body>
   <section class="login-screen" id="loginScreen">
@@ -2025,8 +2025,9 @@
 
     <div class="admin-notification-toolbar">
       <div class="admin-notification-filters" role="group" aria-label="Bildirim durumu">
-        <button type="button" data-notification-filter="all" aria-pressed="true">Gelen kutusu</button>
-        <button type="button" data-notification-filter="unread" aria-pressed="false">Okunmamış</button>
+        <button type="button" data-notification-filter="inbox" aria-pressed="true">Gelen Kutusu (<span data-notification-count="inbox">0</span>)</button>
+        <button type="button" data-notification-filter="unread" aria-pressed="false">Okunmamış (<span data-notification-count="unread">0</span>)</button>
+        <button type="button" data-notification-filter="archived" aria-pressed="false">Arşiv (<span data-notification-count="archived">0</span>)</button>
       </div>
       <label class="admin-notification-category">
         <span class="sr-only">Bildirim kategorisi</span>
@@ -2039,7 +2040,11 @@
           <option value="system">Sistem</option>
         </select>
       </label>
-      <button class="ui-button ui-button--ghost ui-button--sm" id="adminNotificationReadAll" type="button">Tümünü okundu yap</button>
+      <div class="admin-notification-bulk-actions">
+        <button class="ui-button ui-button--ghost ui-button--sm" id="adminNotificationReadAll" type="button">Tümünü okundu yap</button>
+        <button class="ui-button ui-button--ghost ui-button--sm" id="adminNotificationArchiveRead" type="button">Okunanları arşivle</button>
+        <button class="ui-button ui-button--danger ui-button--sm" id="adminNotificationClearArchive" type="button" hidden>Arşivi boşalt</button>
+      </div>
     </div>
 
     <p class="admin-notification-message" id="adminNotificationMessage" role="status" aria-live="polite"></p>

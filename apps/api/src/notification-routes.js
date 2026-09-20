@@ -62,18 +62,22 @@ function registerNotificationRoutes(options) {
             const timestamp = new Date().toISOString();
             if (action === "read") item.readAt = timestamp;
             if (action === "unread") item.readAt = null;
-            if (action === "archive") item.archivedAt = timestamp;
+            if (action === "archive") {
+              item.archivedAt = timestamp;
+              cancelNotificationOutbox(data, owner, new Set([notificationId]), "Bildirim kullanıcı tarafından arşivlendi.", timestamp);
+            }
             if (action === "restore") item.archivedAt = null;
             item.updatedAt = timestamp;
             notification = publicNotification(item);
             return data;
           });
           const count = unreadCount(saved, owner);
+          const counts = notificationCounts(saved, owner);
           publishNotificationStateEvent({
             recipientRole: owner.role, recipientId: owner.id, action,
-            notificationId, notification, unreadCount: count, updatedAt: notification.updatedAt
+            notificationId, notification, unreadCount: count, counts, updatedAt: notification.updatedAt
           });
-          noStore(res).json({ ok: true, notification, unreadCount: count });
+          noStore(res).json({ ok: true, notification, unreadCount: count, counts });
         } catch (error) { next(error); }
       });
     }
@@ -85,7 +89,7 @@ function registerNotificationRoutes(options) {
         const saved = await store.update((data) => {
           const archived = (data.notifications || [])
             .filter((item) => item && !isRetiredNotificationCategory(item.category, item.eventType)
-              && recipientMatches(item, owner.role, owner.id) && item.archivedAt && !item.deletedAt);
+              && recipientMatches(item, owner.role, owner.id) && item.inAppVisible !== false && item.archivedAt && !item.deletedAt);
           const archivedRecords = new Set(archived);
           const archivedIds = new Set(archived.map((item) => item.id));
           deletedCount = archived.length;
@@ -93,13 +97,14 @@ function registerNotificationRoutes(options) {
           data.notifications = (data.notifications || []).filter((item) => !archivedRecords.has(item));
           cancelNotificationOutbox(data, owner, archivedIds, "Bildirim arşivi kullanıcı tarafından temizlendi.");
           return data;
-        });
+        }, { backupLabel: `notification-archive-clear-${Date.now()}` });
         const count = unreadCount(saved, owner);
+        const counts = notificationCounts(saved, owner);
         publishNotificationStateEvent({
           recipientRole: owner.role, recipientId: owner.id, action: "archive-cleared",
-          deletedCount, unreadCount: count, updatedAt: new Date().toISOString()
+          deletedCount, unreadCount: count, counts, updatedAt: new Date().toISOString()
         });
-        noStore(res).json({ ok: true, deletedCount, unreadCount: count });
+        noStore(res).json({ ok: true, deletedCount, unreadCount: count, counts });
       } catch (error) { next(error); }
     });
 
@@ -114,11 +119,12 @@ function registerNotificationRoutes(options) {
           return data;
         });
         const count = unreadCount(saved, owner);
+        const counts = notificationCounts(saved, owner);
         publishNotificationStateEvent({
           recipientRole: owner.role, recipientId: owner.id, action: "deleted",
-          notificationId, unreadCount: count, updatedAt: new Date().toISOString()
+          notificationId, unreadCount: count, counts, updatedAt: new Date().toISOString()
         });
-        noStore(res).json({ ok: true, deletedId: notificationId, unreadCount: count });
+        noStore(res).json({ ok: true, deletedId: notificationId, unreadCount: count, counts });
       } catch (error) { next(error); }
     });
 
@@ -138,11 +144,40 @@ function registerNotificationRoutes(options) {
           return data;
         });
         const count = unreadCount(saved, owner);
+        const counts = notificationCounts(saved, owner);
         publishNotificationStateEvent({
           recipientRole: owner.role, recipientId: owner.id, action: "read-all",
-          updatedCount, unreadCount: count, updatedAt: timestamp
+          updatedCount, unreadCount: count, counts, updatedAt: timestamp
         });
-        noStore(res).json({ ok: true, updatedCount, unreadCount: count });
+        noStore(res).json({ ok: true, updatedCount, unreadCount: count, counts });
+      } catch (error) { next(error); }
+    });
+
+    app.post(`${prefix}/archive-read`, ...guards, riskOperationLimiter, async (req, res, next) => {
+      try {
+        const owner = recipientFromRequest(req, role);
+        const timestamp = new Date().toISOString();
+        let archivedCount = 0;
+        const saved = await store.update((data) => {
+          const archivedIds = new Set();
+          for (const item of data.notifications || []) {
+            if (!recipientMatches(item, owner.role, owner.id) || isRetiredNotificationCategory(item.category, item.eventType)
+              || item.deletedAt || item.archivedAt || !item.readAt || item.inAppVisible === false) continue;
+            item.archivedAt = timestamp;
+            item.updatedAt = timestamp;
+            archivedIds.add(item.id);
+            archivedCount += 1;
+          }
+          if (archivedIds.size) cancelNotificationOutbox(data, owner, archivedIds, "Okunmuş bildirimler kullanıcı tarafından arşivlendi.", timestamp);
+          return data;
+        }, { backupLabel: `notification-archive-read-${Date.now()}` });
+        const count = unreadCount(saved, owner);
+        const counts = notificationCounts(saved, owner);
+        publishNotificationStateEvent({
+          recipientRole: owner.role, recipientId: owner.id, action: "archive-read",
+          archivedCount, unreadCount: count, counts, updatedAt: timestamp
+        });
+        noStore(res).json({ ok: true, archivedCount, unreadCount: count, counts });
       } catch (error) { next(error); }
     });
 
@@ -389,6 +424,7 @@ function registerNotificationRoutes(options) {
         let closed = false;
         const initialData = req.storeSnapshot || await store.read();
         let currentUnreadCount = unreadCount(initialData, owner);
+        let currentCounts = notificationCounts(initialData, owner);
         notificationEventRevision = Math.max(notificationEventRevision, newestNotificationRevision(initialData, owner));
         const lastEventId = Number(String(req.get("Last-Event-ID") || "").split(":").pop() || 0);
         writeSse(res, "ready", {
@@ -396,7 +432,8 @@ function registerNotificationRoutes(options) {
           scope: "notifications",
           action: "ready",
           requiresRefetch: Number.isSafeInteger(lastEventId) && lastEventId > 0 && lastEventId < notificationEventRevision,
-          unreadCount: currentUnreadCount
+          unreadCount: currentUnreadCount,
+          counts: currentCounts
         }, notificationEventRevision);
         const deliveredIds = new Set();
         const listener = (notification) => {
@@ -408,7 +445,15 @@ function registerNotificationRoutes(options) {
             deliveredIds.add(notificationId);
             if (deliveredIds.size > 200) deliveredIds.delete(deliveredIds.values().next().value);
           }
-          if (!notification.archivedAt && !notification.readAt) currentUnreadCount += 1;
+          if (notification.archivedAt) currentCounts.archived += 1;
+          else {
+            currentCounts.inbox += 1;
+            if (notification.readAt) currentCounts.read += 1;
+            else {
+              currentCounts.unread += 1;
+              currentUnreadCount += 1;
+            }
+          }
           notificationEventRevision = nextNotificationRevision(notificationEventRevision, notification);
           writeSse(res, "notification", {
             revision: notificationEventRevision,
@@ -416,13 +461,15 @@ function registerNotificationRoutes(options) {
             action: "created",
             requiresRefetch: false,
             notification: publicNotification(notification),
-            unreadCount: currentUnreadCount
+            unreadCount: currentUnreadCount,
+            counts: currentCounts
           }, notificationEventRevision);
         };
         const unsubscribe = subscribeNotificationEvents(listener);
         const stateListener = (event) => {
           if (closed || !recipientMatches(event, owner.role, owner.id)) return;
           if (Number.isSafeInteger(Number(event.unreadCount))) currentUnreadCount = Math.max(0, Number(event.unreadCount));
+          if (event.counts && typeof event.counts === "object") currentCounts = normalizeNotificationCounts(event.counts);
           notificationEventRevision = nextNotificationRevision(notificationEventRevision, { updatedAt: event.updatedAt });
           writeSse(res, "notification", {
             revision: notificationEventRevision,
@@ -432,7 +479,9 @@ function registerNotificationRoutes(options) {
             notificationId: String(event.notificationId || ""),
             deletedCount: Math.max(0, Number(event.deletedCount || 0)),
             updatedCount: Math.max(0, Number(event.updatedCount || 0)),
-            unreadCount: currentUnreadCount
+            archivedCount: Math.max(0, Number(event.archivedCount || 0)),
+            unreadCount: currentUnreadCount,
+            counts: currentCounts
           }, notificationEventRevision);
         };
         const unsubscribeState = subscribeNotificationStateEvents(stateListener);
@@ -507,20 +556,25 @@ function listNotifications(data, owner, query) {
   const severity = parseSeverityFilter(query.severity);
   const cursor = String(query.cursor || "").trim();
   if (cursor.length > 180) throw badRequest("Bildirim imleci geçersiz.");
-  const archivedOnly = String(query.archived || "") === "true" || String(query.status || "").toLowerCase() === "archived";
-  const includeArchived = archivedOnly || String(query.includeArchived || "") === "true";
-  let items = (data.notifications || []).filter((item) => item
+  const requestedStatus = String(query.status || "").trim().toLowerCase();
+  if (requestedStatus && !["inbox", "unread", "archived"].includes(requestedStatus)) throw badRequest("Bildirim durumu geçersiz.");
+  const legacyUnread = [query.unread, query.unreadOnly].some((value) => String(value || "") === "true");
+  const legacyArchived = String(query.archived || "") === "true";
+  const legacyIncludeArchived = String(query.includeArchived || "") === "true";
+  const status = requestedStatus || (legacyArchived ? "archived" : legacyUnread ? "unread" : legacyIncludeArchived ? "all" : "inbox");
+  let scoped = (data.notifications || []).filter((item) => item
     && recipientMatches(item, owner.role, owner.id)
     && !isRetiredNotificationCategory(item.category, item.eventType)
     && !item.deletedAt
-    && item.inAppVisible !== false
-    && (includeArchived || !item.archivedAt));
-  if (archivedOnly) items = items.filter((item) => Boolean(item.archivedAt));
-  if ([query.unread, query.unreadOnly].some((value) => String(value || "") === "true")) {
-    items = items.filter((item) => !item.readAt && !item.archivedAt);
-  }
-  if (category) items = items.filter((item) => normalizeNotificationCategory(item.category) === category);
-  if (severity) items = items.filter((item) => item.severity === severity);
+    && item.inAppVisible !== false);
+  if (category) scoped = scoped.filter((item) => normalizeNotificationCategory(item.category) === category);
+  if (severity) scoped = scoped.filter((item) => item.severity === severity);
+  const counts = notificationCounts(data, owner);
+  let items = status === "archived"
+    ? scoped.filter((item) => Boolean(item.archivedAt))
+    : status === "unread"
+      ? scoped.filter((item) => !item.archivedAt && !item.readAt)
+      : status === "all" ? scoped : scoped.filter((item) => !item.archivedAt);
   items.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || String(b.id).localeCompare(String(a.id)));
   if (cursor) {
     const cursorIndex = items.findIndex((item) => item.id === cursor);
@@ -531,7 +585,39 @@ function listNotifications(data, owner, query) {
   return {
     notifications: page.map(publicNotification),
     unreadCount: unreadCount(data, owner),
-    nextCursor: items.length > limit && page.length ? page[page.length - 1].id : null
+    nextCursor: items.length > limit && page.length ? page[page.length - 1].id : null,
+    counts
+  };
+}
+
+function notificationCounts(data, owner) {
+  const items = (data.notifications || []).filter((item) => item
+    && recipientMatches(item, owner.role, owner.id)
+    && !isRetiredNotificationCategory(item.category, item.eventType)
+    && !item.deletedAt
+    && item.inAppVisible !== false);
+  return notificationCountsFromItems(items);
+}
+
+function notificationCountsFromItems(items) {
+  const counts = { inbox: 0, unread: 0, read: 0, archived: 0 };
+  for (const item of items) {
+    if (item.archivedAt) counts.archived += 1;
+    else {
+      counts.inbox += 1;
+      if (item.readAt) counts.read += 1;
+      else counts.unread += 1;
+    }
+  }
+  return counts;
+}
+
+function normalizeNotificationCounts(value) {
+  return {
+    inbox: Math.max(0, Number(value.inbox || 0)),
+    unread: Math.max(0, Number(value.unread || 0)),
+    read: Math.max(0, Number(value.read || 0)),
+    archived: Math.max(0, Number(value.archived || 0))
   };
 }
 

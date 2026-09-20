@@ -456,6 +456,7 @@ function previewSchedulerChanges(data, now) {
     : {};
   const preview = {
     ...data,
+    revisions: { ...(data.revisions && typeof data.revisions === "object" ? data.revisions : {}) },
     notifications: [...(Array.isArray(data.notifications) ? data.notifications : [])],
     notificationOutbox: [...(Array.isArray(data.notificationOutbox) ? data.notificationOutbox : [])],
     notificationSchedulerState: {

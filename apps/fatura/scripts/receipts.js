@@ -1,5 +1,5 @@
-import { shipmentFinance } from "./accounting.js?v=20260907-pdf-document-picker-v1";
-import { CAPABILITIES, comboField, escapeHtml, has, state, statusBadge, trDate, trMoney } from "./state.js?v=20260907-pdf-document-picker-v1";
+import { shipmentFinance } from "./accounting.js?v=20260920-notification-center-v1";
+import { CAPABILITIES, comboField, escapeHtml, has, state, statusBadge, trDate, trMoney } from "./state.js?v=20260920-notification-center-v1";
 
 export function renderShipments() {
   const query = String(state.filters.shipments || "").toLocaleLowerCase("tr-TR");

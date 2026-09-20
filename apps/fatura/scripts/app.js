@@ -1,13 +1,13 @@
-import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260918-ledger-range-v1";
-import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260918-ledger-range-v1";
-import { renderDashboard } from "./dashboard.js?v=20260918-ledger-range-v1";
-import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260918-ledger-range-v1";
-import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260918-ledger-range-v1";
-import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260918-ledger-range-v1";
-import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260918-ledger-range-v1";
-import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260918-ledger-range-v1";
-import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260918-ledger-range-v1";
-import { confirmAction, requestText, documentUploadPicker, DOCUMENT_UPLOAD_INPUTS } from "./ui-dialogs.js?v=20260918-ledger-range-v1";
+import { api, ApiError, downloadExport, login, logout, requestId, uploadDocument, uploadStockWorkbook } from "./api.js?v=20260920-notification-center-v1";
+import { CAPABILITIES, comboField, escapeHtml, has, hasSection, icon, integerKurus, invalidate, state, trDate, trMoney, updateRevision, value } from "./state.js?v=20260920-notification-center-v1";
+import { renderDashboard } from "./dashboard.js?v=20260920-notification-center-v1";
+import { renderProductLinks, renderSuppliers } from "./suppliers.js?v=20260920-notification-center-v1";
+import { renderShipments, shipmentDetail, shipmentFormBody, shipmentLine } from "./receipts.js?v=20260920-notification-center-v1";
+import { documentFormBody, printShipmentArchive, renderDocuments, renderSupplierShipmentHistory, shipmentArchiveDetail } from "./documents.js?v=20260920-notification-center-v1";
+import { ledgerDetail, ledgerEntryFormBody, ledgerReversalTarget, paymentDetail, paymentFormBody, renderLedger, renderTrash, renderUsers, supplierCariFormBody, userAccessFormBody, visibleTrashRecords } from "./accounting.js?v=20260920-notification-center-v1";
+import { applyStockIntent, connectStockEvents, disconnectStockEvents, handleStockGatewayEvent, invalidateStockState, loadStockView, renderStockView, resetStockState } from "./stock.js?v=20260920-notification-center-v1";
+import { bindProductAnalysisInteractions, handleProductAnalysisGatewayEvent, loadProductAnalysis, renderProductAnalysis, resetProductAnalysisState } from "./product-analysis.js?v=20260920-notification-center-v1";
+import { confirmAction, requestText, documentUploadPicker, DOCUMENT_UPLOAD_INPUTS } from "./ui-dialogs.js?v=20260920-notification-center-v1";
 
 const app = document.getElementById("faturaApp");
 const shell = document.getElementById("shell");
@@ -22,6 +22,11 @@ let entityUploadState = null;
 const profileMenu = document.getElementById("profileMenu");
 const notificationDrawer = document.getElementById("notificationDrawer");
 const notificationScrim = document.getElementById("notificationScrim");
+const notificationCenter = {
+  status: "inbox", items: [], unreadCount: 0,
+  counts: { inbox: 0, unread: 0, read: 0, archived: 0 },
+  nextCursor: "", loading: false, message: "", error: false
+};
 const viewDefinitions = [
   { id: "dashboard", label: "Genel Bakış", description: "Tedarik ve cari süreçlerin güncel özeti.", capability: CAPABILITIES.read },
   { id: "stock", label: "Stok", description: "Depoları ve gerçek stok bakiyelerini yönetin.", capability: CAPABILITIES.inventoryRead },
@@ -129,6 +134,8 @@ function showAuth(message = "") {
   if (detailDialog.open) closeDetailDialog();
   state.ledgerEntries = []; state.payments = []; state.ledgerSummary = null; state.ledgerSelection.clear(); state.trashSelection.clear(); state.financeRequests.clear(); state.financeMessage = ""; state.trashMode = "all";
   state.ledgerFilterKey = ""; state.ledgerDrilldown = ""; state.loaded.delete("ledger");
+  notificationCenter.status = "inbox"; notificationCenter.items = []; notificationCenter.unreadCount = 0;
+  notificationCenter.counts = { inbox: 0, unread: 0, read: 0, archived: 0 }; notificationCenter.nextCursor = "";
   disconnectStockEvents();
   resetStockState();
   resetProductAnalysisState();
@@ -616,26 +623,99 @@ function decodeBase64Url(valueText) {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 }
 
-async function loadNotifications(force = false) {
-  const payload = await cachedLoad("notifications", () => api(`${notificationApiRoot()}?limit=40`, { dedupe: !force }), (result) => {
-    state.notifications = Array.isArray(result.notifications) ? result.notifications : [];
-    state.unreadCount = Math.max(0, Number(result.unreadCount || 0));
-  }, force);
+async function loadNotifications(options = {}) {
+  const settings = typeof options === "boolean" ? { force: options } : options;
+  const append = settings.append === true && Boolean(notificationCenter.nextCursor);
+  if (notificationCenter.loading) return;
+  notificationCenter.loading = true;
+  notificationCenter.message = append ? "" : "Bildirimler yükleniyor…";
+  notificationCenter.error = false;
   renderNotificationState();
-  return payload;
+  try {
+    const query = new URLSearchParams({ limit: "30", status: notificationCenter.status });
+    if (append) query.set("cursor", notificationCenter.nextCursor);
+    const payload = await api(`${notificationApiRoot()}?${query.toString()}`, { dedupe: false });
+    const incoming = Array.isArray(payload.notifications) ? payload.notifications : [];
+    notificationCenter.items = append ? mergeNotificationItems(notificationCenter.items, incoming) : incoming;
+    notificationCenter.nextCursor = String(payload.nextCursor || "");
+    notificationCenter.unreadCount = Math.max(0, Number(payload.unreadCount || 0));
+    notificationCenter.counts = normalizeNotificationCounts(payload.counts);
+    notificationCenter.message = "";
+    state.notifications = notificationCenter.items;
+    state.unreadCount = notificationCenter.unreadCount;
+    return payload;
+  } catch (error) {
+    notificationCenter.error = true;
+    notificationCenter.message = error.message || "Bildirimler alınamadı.";
+    if (!append) notificationCenter.items = [];
+    throw error;
+  } finally {
+    notificationCenter.loading = false;
+    renderNotificationState();
+  }
+}
+
+function mergeNotificationItems(current, incoming) {
+  const items = new Map(current.map((item) => [String(item.id), item]));
+  incoming.forEach((item) => { if (item && item.id) items.set(String(item.id), item); });
+  return [...items.values()];
+}
+
+function normalizeNotificationCounts(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    inbox: Math.max(0, Number(source.inbox || 0)), unread: Math.max(0, Number(source.unread || 0)),
+    read: Math.max(0, Number(source.read || 0)), archived: Math.max(0, Number(source.archived || 0))
+  };
 }
 
 function renderNotificationState() {
-  const count = Math.max(0, Number(state.unreadCount || 0));
+  const count = Math.max(0, Number(notificationCenter.unreadCount || 0));
   void window.TahmisciPWA?.updateBadge?.(count);
   const badge = document.getElementById("notificationCount");
   badge.textContent = count > 99 ? "99+" : String(count);
   badge.hidden = count === 0;
   document.getElementById("notificationSummary").textContent = count ? `${count} okunmamış bildirim` : "Okunmamış bildirim yok";
-  document.getElementById("markAllNotificationsRead").disabled = count === 0;
+  document.querySelectorAll("[data-notification-status]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.notificationStatus === notificationCenter.status)));
+  document.querySelectorAll("[data-notification-count]").forEach((node) => { node.textContent = String(notificationCenter.counts[node.dataset.notificationCount] || 0); });
+  document.getElementById("markAllNotificationsRead").disabled = count === 0 || notificationCenter.loading;
+  document.getElementById("archiveReadNotifications").disabled = notificationCenter.counts.read < 1 || notificationCenter.loading;
+  const clear = document.getElementById("clearNotificationArchive");
+  clear.hidden = notificationCenter.status !== "archived";
+  clear.disabled = notificationCenter.counts.archived < 1 || notificationCenter.loading;
+  const more = document.getElementById("notificationLoadMore");
+  more.hidden = !notificationCenter.nextCursor;
+  more.disabled = notificationCenter.loading;
+  const message = document.getElementById("notificationMessage");
+  message.textContent = notificationCenter.message;
+  message.classList.toggle("is-error", notificationCenter.error);
   if (notificationDrawer.hidden) return;
   const list = document.getElementById("notificationList");
-  list.innerHTML = state.notifications.length ? state.notifications.map((item) => `<article class="notification-item ${item.readAt ? "" : "is-unread"}" data-notification-card="${escapeHtml(item.id)}"><i class="notification-item-dot" aria-hidden="true"></i><button class="notification-item-open" type="button" data-notification-id="${escapeHtml(item.id)}"><strong>${escapeHtml(item.title || "Bildirim")}</strong><span>${escapeHtml(item.body || "")}</span><time datetime="${escapeHtml(item.createdAt || "")}">${trDate(item.createdAt, true)}</time></button><span class="notification-item-actions"><button type="button" data-notification-action="${item.readAt ? "unread" : "read"}" data-notification-id="${escapeHtml(item.id)}">${item.readAt ? "Okunmadı" : "Okundu"}</button><button type="button" data-notification-action="delete" data-notification-id="${escapeHtml(item.id)}">Sil</button></span></article>`).join("") : '<div class="notification-empty"><div><strong>Yeni bildirim yok</strong><p>Sevkiyat, belge, ödeme ve yetki bildirimleri burada kalıcı olarak görünür.</p></div></div>';
+  if (notificationCenter.loading && !notificationCenter.items.length) {
+    list.innerHTML = '<div class="loading-skeleton loading-skeleton--compact" aria-label="Bildirimler yükleniyor"><span></span><span></span><span></span></div>';
+    return;
+  }
+  if (notificationCenter.error && !notificationCenter.items.length) {
+    list.innerHTML = '<div class="notification-empty"><div><strong>Bildirimler alınamadı</strong><p>Lütfen yeniden deneyin.</p><button class="ui-button ui-button--secondary" data-notification-retry type="button">Yeniden dene</button></div></div>';
+    return;
+  }
+  if (!notificationCenter.items.length) {
+    const title = notificationCenter.status === "unread" ? "Okunmamış bildirim yok" : notificationCenter.status === "archived" ? "Arşiv boş" : "Yeni bildirim yok";
+    list.innerHTML = `<div class="notification-empty"><div><strong>${title}</strong><p>Sevkiyat, belge, ödeme ve yetki bildirimleri burada görünür.</p></div></div>`;
+    return;
+  }
+  list.innerHTML = notificationCenter.items.map(renderNotificationCard).join("");
+}
+
+function renderNotificationCard(item) {
+  const archived = Boolean(item.archivedAt);
+  const content = archived
+    ? `<div class="notification-item-title"><strong>${escapeHtml(item.title || "Bildirim")}</strong><span>${escapeHtml(item.body || "")}</span><time datetime="${escapeHtml(item.createdAt || "")}">${trDate(item.createdAt, true)}</time></div>`
+    : `<button class="notification-item-open" type="button" data-notification-id="${escapeHtml(item.id)}"><strong>${escapeHtml(item.title || "Bildirim")}</strong><span>${escapeHtml(item.body || "")}</span><time datetime="${escapeHtml(item.createdAt || "")}">${trDate(item.createdAt, true)}</time></button>`;
+  const actions = archived
+    ? `<button type="button" data-notification-action="restore" data-notification-id="${escapeHtml(item.id)}">Geri al</button><button type="button" data-notification-action="delete" data-notification-id="${escapeHtml(item.id)}">Kalıcı sil</button>`
+    : `<button type="button" data-notification-action="${item.readAt ? "unread" : "read"}" data-notification-id="${escapeHtml(item.id)}">${item.readAt ? "Okunmadı" : "Okundu"}</button><button type="button" data-notification-action="archive" data-notification-id="${escapeHtml(item.id)}">Arşivle</button><button type="button" data-notification-action="delete" data-notification-id="${escapeHtml(item.id)}">Kalıcı sil</button>`;
+  return `<article class="notification-item ${item.readAt ? "" : "is-unread"} ${archived ? "is-archived" : ""}" data-notification-card="${escapeHtml(item.id)}"><i class="notification-item-dot" aria-hidden="true"></i>${content}<span class="notification-item-actions">${actions}</span></article>`;
 }
 
 async function openNotifications() {
@@ -645,9 +725,7 @@ async function openNotifications() {
   notificationDrawer.setAttribute("aria-hidden", "false");
   document.getElementById("notificationButton").setAttribute("aria-expanded", "true");
   document.body.classList.add("notification-open");
-  document.getElementById("notificationList").innerHTML = '<div class="loading-skeleton loading-skeleton--compact" aria-label="Bildirimler yükleniyor"><span></span><span></span><span></span></div>';
-  try { await loadNotifications(true); }
-  catch (error) { document.getElementById("notificationList").innerHTML = `<div class="notification-empty"><div><strong>Bildirimler alınamadı</strong><p>${escapeHtml(error.message || "Lütfen yeniden deneyin.")}</p><button class="ui-button ui-button--secondary" data-profile-action="notifications" type="button">Yeniden dene</button></div></div>`; }
+  try { await loadNotifications(true); } catch (_error) {}
 }
 
 function closeNotifications() {
@@ -659,59 +737,97 @@ function closeNotifications() {
 }
 
 async function markAllNotificationsRead(button) {
-  if (button.disabled || state.unreadCount === 0) return;
+  if (button.disabled || notificationCenter.unreadCount === 0) return;
   setBusy(button, true, "İşleniyor…");
   try {
     const payload = await api(`${notificationApiRoot()}/read-all`, { method: "POST", body: {} });
-    state.unreadCount = Math.max(0, Number(payload.unreadCount || 0));
-    state.notifications = state.notifications.map((item) => ({ ...item, readAt: item.readAt || new Date().toISOString() }));
-    state.loaded.delete("notifications");
+    notificationCenter.unreadCount = Math.max(0, Number(payload.unreadCount || 0));
+    notificationCenter.counts = normalizeNotificationCounts(payload.counts);
+    notificationCenter.items = notificationCenter.items.map((item) => ({ ...item, readAt: item.readAt || new Date().toISOString() }));
+    if (notificationCenter.status === "unread") notificationCenter.items = [];
+    notificationCenter.nextCursor = "";
+    await loadNotifications(true);
+    notificationCenter.message = "Tüm bildirimler okundu olarak işaretlendi.";
+    notificationCenter.error = false;
     renderNotificationState();
   } catch (error) { toast(error.message || "Bildirimler güncellenemedi.", true); }
-  finally { setBusy(button, false); button.disabled = state.unreadCount === 0; }
+  finally { setBusy(button, false); button.disabled = notificationCenter.unreadCount === 0; }
+}
+
+async function archiveReadNotifications(button) {
+  if (button.disabled) return;
+  setBusy(button, true, "Arşivleniyor…");
+  try {
+    const payload = await api(`${notificationApiRoot()}/archive-read`, { method: "POST", body: {} });
+    notificationCenter.unreadCount = Math.max(0, Number(payload.unreadCount || 0));
+    notificationCenter.counts = normalizeNotificationCounts(payload.counts);
+    const archivedCount = Math.max(0, Number(payload.archivedCount || 0));
+    await loadNotifications(true);
+    notificationCenter.message = `${archivedCount} okunan bildirim arşivlendi.`;
+    renderNotificationState();
+  } catch (error) { toast(error.message || "Okunan bildirimler arşivlenemedi.", true); }
+  finally { setBusy(button, false); renderNotificationState(); }
+}
+
+async function clearNotificationArchive(button) {
+  const count = Math.max(0, Number(notificationCenter.counts.archived || 0));
+  if (button.disabled || !count || !window.confirm(`Arşivdeki ${count} bildirim kalıcı olarak silinecek. Devam edilsin mi?`)) return;
+  setBusy(button, true, "Siliniyor…");
+  try {
+    const payload = await api(`${notificationApiRoot()}/archive`, { method: "DELETE" });
+    notificationCenter.unreadCount = Math.max(0, Number(payload.unreadCount || 0));
+    notificationCenter.counts = normalizeNotificationCounts(payload.counts);
+    const deletedCount = Math.max(0, Number(payload.deletedCount || 0));
+    await loadNotifications(true);
+    notificationCenter.message = `${deletedCount} bildirim kalıcı olarak silindi.`;
+    renderNotificationState();
+  } catch (error) { toast(error.message || "Arşiv boşaltılamadı.", true); }
+  finally { setBusy(button, false); renderNotificationState(); }
 }
 
 async function openNotification(notificationId) {
-  const notification = state.notifications.find((item) => item.id === notificationId);
+  const notification = notificationCenter.items.find((item) => item.id === notificationId);
   if (!notification) return;
   if (!notification.readAt) {
     try {
       const payload = await api(`${notificationApiRoot()}/${encodeURIComponent(notification.id)}/read`, { method: "PATCH", body: {} });
       notification.readAt = payload.notification && payload.notification.readAt || new Date().toISOString();
-      state.unreadCount = Math.max(0, Number(payload.unreadCount || 0));
-      state.loaded.delete("notifications");
+      notificationCenter.unreadCount = Math.max(0, Number(payload.unreadCount || 0));
+      notificationCenter.counts = normalizeNotificationCounts(payload.counts);
+      if (notificationCenter.status === "unread") notificationCenter.items = notificationCenter.items.filter((item) => item.id !== notification.id);
       renderNotificationState();
-    } catch (error) { toast(error.message || "Bildirim okundu olarak işaretlenemedi.", true); }
+    } catch (error) { toast(error.message || "Bildirim okundu olarak işaretlenemedi.", true); return; }
   }
   closeNotifications();
   const entityType = String(notification.entityType || "");
   const entityId = String(notification.entityId || "");
+  const target = String(notification.deepLink || "").trim();
+  let notificationTarget = null;
+  if (target) {
+    try {
+      const candidate = new URL(target, location.origin);
+      if (candidate.origin === location.origin && (candidate.pathname === "/fatura" || candidate.pathname.startsWith("/fatura/"))) notificationTarget = candidate;
+    } catch (_error) {}
+  }
   if (notification.eventType === "procurement_access_updated" || entityType === "procurement_access") {
     await refreshAccessContext(null, { firstVisible: true });
     return;
   }
-  const target = String(notification.deepLink || "");
-  if (target) {
-    const url = new URL(target, location.origin);
-    if (url.origin === location.origin && url.pathname.startsWith("/fatura/") && url.searchParams.get("view") === "stock") {
-      return activateIntentFromUrl(url);
-    }
+  if (notificationTarget?.searchParams.get("view") === "stock") {
+    return activateIntentFromUrl(notificationTarget);
   }
   if (entityType === "shipment" && visibleViews.some((item) => item.id === "documents")) { await setView("documents"); if (entityId) await openShipment(entityId); return; }
   if (entityType === "document" && visibleViews.some((item) => item.id === "documents")) { await setView("documents"); if (entityId) await openDocument(entityId); return; }
   if (entityType === "supplier" && visibleViews.some((item) => item.id === "suppliers")) { await setView("suppliers"); if (entityId) await openSupplier(entityId); return; }
   if (["ledgerEntry", "payment"].includes(entityType) && visibleViews.some((item) => item.id === "ledger")) { await setView("ledger"); return; }
-  if (target) {
-    const url = new URL(target, location.origin);
-    if (url.origin === location.origin && url.pathname.startsWith("/fatura/")) return activateIntentFromUrl(url);
-  }
+  if (notificationTarget) return activateIntentFromUrl(notificationTarget);
   toast("Bu bildirimin bağlı olduğu bölüm için erişiminiz bulunmuyor.", true);
 }
 
 async function mutateNotification(button) {
   const id = String(button.dataset.notificationId || "");
   const action = String(button.dataset.notificationAction || "");
-  if (!id || !["read", "unread", "delete"].includes(action)) return;
+  if (!id || !["read", "unread", "archive", "restore", "delete"].includes(action)) return;
   if (action === "delete" && button.dataset.confirmDelete !== "true") {
     button.dataset.confirmDelete = "true";
     toast("Bildirimi silmek için Sil düğmesine tekrar basın.");
@@ -725,10 +841,14 @@ async function mutateNotification(button) {
       method: action === "delete" ? "DELETE" : "PATCH",
       body: action === "delete" ? undefined : {}
     });
-    if (action === "delete") state.notifications = state.notifications.filter((item) => item.id !== id);
-    else state.notifications = state.notifications.map((item) => item.id === id ? { ...item, ...(payload.notification || {}), readAt: action === "read" ? (payload.notification?.readAt || new Date().toISOString()) : null } : item);
-    state.unreadCount = Math.max(0, Number(payload.unreadCount || 0));
-    state.loaded.delete("notifications");
+    if (["delete", "archive", "restore"].includes(action) || (notificationCenter.status === "unread" && action === "read")) notificationCenter.items = notificationCenter.items.filter((item) => item.id !== id);
+    else notificationCenter.items = notificationCenter.items.map((item) => item.id === id ? { ...item, ...(payload.notification || {}) } : item);
+    notificationCenter.unreadCount = Math.max(0, Number(payload.unreadCount || 0));
+    notificationCenter.counts = normalizeNotificationCounts(payload.counts);
+    notificationCenter.nextCursor = "";
+    await loadNotifications(true);
+    notificationCenter.message = ({ archive: "Bildirim arşivlendi.", restore: "Bildirim geri alındı.", delete: "Bildirim kalıcı olarak silindi." })[action] || "Bildirim durumu güncellendi.";
+    notificationCenter.error = false;
     renderNotificationState();
   } catch (error) { toast(error.message || "Bildirim güncellenemedi.", true); }
   finally { if (button.isConnected) button.disabled = false; }
@@ -751,7 +871,17 @@ async function handleClick(event) {
   if (button.id === "profileMenuButton") return toggleProfileMenu();
   if (button.id === "notificationButton" || button.dataset.profileAction === "notifications") return openNotifications();
   if (button.id === "notificationScrim" || button.classList.contains("notification-close")) return closeNotifications();
+  if (button.dataset.notificationStatus) {
+    notificationCenter.status = ["inbox", "unread", "archived"].includes(button.dataset.notificationStatus) ? button.dataset.notificationStatus : "inbox";
+    notificationCenter.items = [];
+    notificationCenter.nextCursor = "";
+    return loadNotifications(true).catch(() => null);
+  }
+  if (button.hasAttribute("data-notification-retry")) return loadNotifications(true).catch(() => null);
+  if (button.id === "notificationLoadMore") return loadNotifications({ append: true }).catch(() => null);
   if (button.id === "markAllNotificationsRead") return markAllNotificationsRead(button);
+  if (button.id === "archiveReadNotifications") return archiveReadNotifications(button);
+  if (button.id === "clearNotificationArchive") return clearNotificationArchive(button);
   if (button.dataset.notificationAction) return mutateNotification(button);
   if (button.dataset.notificationId) return openNotification(button.dataset.notificationId);
   if (button.dataset.profileAction === "install") return installApp(button);

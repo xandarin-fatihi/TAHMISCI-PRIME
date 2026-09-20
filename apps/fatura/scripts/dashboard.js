@@ -1,4 +1,4 @@
-import { escapeHtml, hasSection, state, statusBadge, trDate, trMoney } from "./state.js?v=20260918-ledger-range-v1";
+import { escapeHtml, hasSection, state, statusBadge, trDate, trMoney } from "./state.js?v=20260920-notification-center-v1";
 
 export function renderDashboard() {
   const dashboard = state.dashboard || {};

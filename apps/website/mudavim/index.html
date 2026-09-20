@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link rel="stylesheet" href="/shared/styles/account-security.css?v=20260829-mudavim">
   <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260831-mudavim-update">
-  <link rel="stylesheet" href="/mudavim/mudavim.css?v=20260831-panel-access">
+  <link rel="stylesheet" href="/mudavim/mudavim.css?v=20260920-notification-center-v1">
 </head>
 <body class="is-guest">
   <header class="mudavim-header">
@@ -141,12 +141,14 @@
 
             <div class="member-center-view member-drawer" data-member-view="notifications" hidden>
               <div class="member-drawer__head">
-                <button class="member-notifications-read-all" id="memberNotificationsReadAll" type="button">Tümünü okundu işaretle</button>
-                <h2>Bildirimler</h2>
+                <div><h2>Bildirim Merkezi</h2><p><strong id="memberNotificationUnreadText">0</strong> okunmamış bildirim</p></div>
                 <button type="button" data-member-panel-close aria-label="Bildirimleri kapat"><i class="fas fa-xmark" aria-hidden="true"></i></button>
               </div>
+              <div class="member-notification-tabs" id="memberNotificationTabs" role="group" aria-label="Bildirim kutusu"><button type="button" data-notification-status="inbox" aria-pressed="true">Gelen Kutusu (<span data-notification-count="inbox">0</span>)</button><button type="button" data-notification-status="unread" aria-pressed="false">Okunmamış (<span data-notification-count="unread">0</span>)</button><button type="button" data-notification-status="archived" aria-pressed="false">Arşiv (<span data-notification-count="archived">0</span>)</button></div>
+              <div class="member-notification-toolbar"><button class="member-notifications-read-all" id="memberNotificationsReadAll" type="button">Tümünü okundu yap</button><button type="button" id="memberNotificationsArchiveRead">Okunanları arşivle</button><button type="button" id="memberNotificationsClearArchive" hidden>Arşivi boşalt</button></div>
               <p class="member-notification-status" id="memberNotificationStatus" role="status" aria-live="polite"></p>
               <div class="member-notification-feed" id="memberNotificationFeed"></div>
+              <button class="member-notification-load-more" id="memberNotificationLoadMore" type="button" hidden>Daha fazla göster</button>
             </div>
           </section>
 
@@ -347,7 +349,7 @@
   </div>
 
   <script src="/shared/scripts/account-security.js?v=20260829-mudavim"></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260831-panel-access"></script>
-  <script src="/mudavim/mudavim.js?v=20260831-panel-access"></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260920-notification-center-v1"></script>
+  <script src="/mudavim/mudavim.js?v=20260920-notification-center-v1"></script>
 </body>
 </html>

@@ -2339,6 +2339,7 @@ body.profile-open .mudavim-app {
 .member-notification-item__open time { color: var(--muted); font-size: 0.64rem; }
 .member-notification-item__actions { display: grid; gap: 6px; align-content: center; }
 .member-notification-item__actions button { min-width: 70px; min-height: 36px; padding: 6px 9px; border: 1px solid rgba(90, 47, 29, 0.14); border-radius: 10px; background: rgba(255, 250, 243, 0.9); color: var(--coffee); font: 700 .68rem/1.2 var(--font-body); cursor: pointer; }
+[data-member-view="notifications"].member-drawer{grid-template-rows:auto auto auto auto minmax(0,1fr) auto;gap:10px}[data-member-view="notifications"] .member-drawer__head{grid-template-columns:minmax(0,1fr) 44px;text-align:left}[data-member-view="notifications"] .member-drawer__head p{margin:5px 0 0;color:var(--muted);font-size:.72rem}.member-notification-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:3px;border:1px solid rgba(90,47,29,.14);border-radius:11px;background:rgba(90,47,29,.06)}.member-notification-tabs button{min-width:0;min-height:36px;padding:5px;border:0;border-radius:8px;background:transparent;color:var(--muted);font:750 .65rem/1.2 var(--font-body);cursor:pointer}.member-notification-tabs button[aria-pressed="true"]{background:var(--coffee);color:var(--paper)}.member-notification-toolbar{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}.member-notification-toolbar button,.member-notification-load-more{min-height:38px;padding:7px 11px;border:1px solid rgba(90,47,29,.15);border-radius:10px;background:rgba(255,250,243,.9);color:var(--coffee);font:700 .67rem/1.2 var(--font-body);cursor:pointer}.member-notification-toolbar button[hidden],.member-notification-load-more[hidden]{display:none}.member-notification-load-more{width:100%}.member-notification-item{grid-template-columns:minmax(0,1fr) auto}.member-notification-item.is-archived{border-style:dashed}.member-notification-item__open{margin:0;padding:0;border:0;background:transparent;font:inherit}.member-notification-item.is-archived .member-notification-item__open{cursor:default}
 
 body.legal-open { overflow: hidden !important; }
 
@@ -2348,6 +2349,9 @@ body.legal-open { overflow: hidden !important; }
   .member-brand img { width: 50px; height: 50px; }
   .member-drawer__head { grid-template-columns: minmax(92px, auto) minmax(0, 1fr) 44px; }
   .member-notifications-read-all { white-space: normal; line-height: 1.2; }
+  [data-member-view="notifications"] .member-drawer__head { grid-template-columns: minmax(0, 1fr) 44px; }
+  .member-notification-toolbar { display:grid;grid-template-columns:1fr; }
+  .member-notification-toolbar button { width:100%; }
   .mudavim-legal-actions { display: grid; grid-template-columns: 1fr; }
   .mudavim-legal-actions button { width: 100%; }
 }

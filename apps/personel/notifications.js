@@ -46,8 +46,8 @@
     drawerOpen: false,
     notifications: [],
     unreadCount: 0,
+    counts: { inbox: 0, unread: 0, read: 0, archived: 0 },
     category: "all",
-    unreadOnly: false,
     view: "inbox",
     nextCursor: "",
     preferences: { ...DEFAULT_PREFERENCES },
@@ -77,7 +77,7 @@
     [
       "personelNotificationTrigger", "personelNotificationBadge", "personelNotificationDrawer",
       "personelNotificationBackdrop", "personelNotificationClose", "personelNotificationUnreadText",
-      "personelNotificationReadAll", "personelNotificationUnreadOnly", "personelNotificationFilters",
+      "personelNotificationReadAll", "personelNotificationArchiveRead", "personelNotificationClearArchive", "personelNotificationFilters",
       "personelNotificationViews",
       "personelNotificationMessage", "personelNotificationList", "personelNotificationLoadMore",
       "personelNotificationPreferencesForm", "personelNotificationPreferencesState",
@@ -107,16 +107,12 @@
     elements.personelNotificationTrigger?.addEventListener("click", openDrawer);
     elements.personelNotificationClose?.addEventListener("click", closeDrawer);
     elements.personelNotificationBackdrop?.addEventListener("click", closeDrawer);
-    elements.personelNotificationUnreadOnly?.addEventListener("change", () => {
-      state.unreadOnly = Boolean(elements.personelNotificationUnreadOnly.checked);
-      state.view = state.unreadOnly ? "unread" : "inbox";
-      syncNotificationViews();
-      void loadNotifications();
-    });
     elements.personelNotificationViews?.addEventListener("click", handleViewClick);
     elements.personelNotificationFilters?.addEventListener("click", handleFilterClick);
     elements.personelNotificationList?.addEventListener("click", handleListClick);
     elements.personelNotificationReadAll?.addEventListener("click", markAllRead);
+    elements.personelNotificationArchiveRead?.addEventListener("click", archiveReadNotifications);
+    elements.personelNotificationClearArchive?.addEventListener("click", clearNotificationArchive);
     elements.personelNotificationLoadMore?.addEventListener("click", () => loadNotifications({ append: true }));
     elements.personelNotificationPreferencesForm?.addEventListener("submit", savePreferences);
     elements.personelPushToggle?.addEventListener("click", togglePushSubscription);
@@ -198,8 +194,8 @@
     state.sessionEndNotified = false;
     state.notifications = [];
     state.unreadCount = 0;
+    state.counts = { inbox: 0, unread: 0, read: 0, archived: 0 };
     state.view = "inbox";
-    state.unreadOnly = false;
     state.nextCursor = "";
     state.preferences = { ...DEFAULT_PREFERENCES };
     state.capabilities = {};
@@ -214,7 +210,6 @@
     state.preferencesLoaded = false;
     if (elements.personelNotificationDevicesCount) elements.personelNotificationDevicesCount.textContent = "(…)";
     if (elements.personelNotificationDevicesPanel) elements.personelNotificationDevicesPanel.open = false;
-    if (elements.personelNotificationUnreadOnly) elements.personelNotificationUnreadOnly.checked = false;
     syncNotificationViews();
     updateUnreadUi();
   }
@@ -280,9 +275,7 @@
     const button = event.target.closest("[data-notification-view]");
     if (!button) return;
     const requested = String(button.dataset.notificationView || "inbox");
-    state.view = requested === "unread" ? "unread" : "inbox";
-    state.unreadOnly = state.view === "unread";
-    if (elements.personelNotificationUnreadOnly) elements.personelNotificationUnreadOnly.checked = state.unreadOnly;
+    state.view = ["inbox", "unread", "archived"].includes(requested) ? requested : "inbox";
     syncNotificationViews();
     void loadNotifications();
   }
@@ -293,7 +286,15 @@
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-pressed", active ? "true" : "false");
     });
+    elements.personelNotificationViews?.querySelectorAll("[data-notification-count]").forEach((node) => {
+      node.textContent = String(state.counts[node.dataset.notificationCount] || 0);
+    });
     if (elements.personelNotificationReadAll) elements.personelNotificationReadAll.hidden = false;
+    if (elements.personelNotificationArchiveRead) elements.personelNotificationArchiveRead.disabled = state.loading || state.counts.read < 1;
+    if (elements.personelNotificationClearArchive) {
+      elements.personelNotificationClearArchive.hidden = state.view !== "archived";
+      elements.personelNotificationClearArchive.disabled = state.loading || state.counts.archived < 1;
+    }
   }
 
   function handleFilterClick(event) {
@@ -315,15 +316,14 @@
     setListBusy(true, append);
     showMessage("");
     try {
-      const parameters = new URLSearchParams({ limit: String(PAGE_SIZE) });
+      const parameters = new URLSearchParams({ limit: String(PAGE_SIZE), status: state.view });
       if (state.category !== "all") parameters.set("category", state.category);
-      if (state.unreadOnly) parameters.set("unread", "true");
       if (append) parameters.set("cursor", state.nextCursor);
       const result = await request(`${API_ROOT}?${parameters.toString()}`);
       const listed = notificationArray(result).map(normalizeNotification).filter((item) => item.id);
-      const incoming = listed.filter((item) => !item.archivedAt);
-      state.notifications = append ? mergeUnique(state.notifications, incoming) : incoming;
+      state.notifications = append ? mergeUnique(state.notifications, listed) : listed;
       state.nextCursor = String(result.nextCursor || result.cursor && result.cursor.next || "");
+      state.counts = normalizeCounts(result.counts);
       applyUnreadCount(result);
       state.lastLoadedAt = Date.now();
       renderNotificationList();
@@ -389,10 +389,19 @@
   }
 
   function applyUnreadCount(result) {
+    if (result && result.counts) state.counts = normalizeCounts(result.counts);
     const value = Number(result && (result.unreadCount ?? result.count));
     if (Number.isSafeInteger(value) && value >= 0) state.unreadCount = value;
     else state.unreadCount = state.notifications.filter((item) => !item.readAt && !item.archivedAt).length;
     updateUnreadUi();
+  }
+
+  function normalizeCounts(value) {
+    const source = value && typeof value === "object" ? value : {};
+    return {
+      inbox: Math.max(0, Number(source.inbox || 0)), unread: Math.max(0, Number(source.unread || 0)),
+      read: Math.max(0, Number(source.read || 0)), archived: Math.max(0, Number(source.archived || 0))
+    };
   }
 
   function updateUnreadUi() {
@@ -409,6 +418,7 @@
         : count ? `Bildirimleri aç, ${count} okunmamış bildirim` : "Bildirimleri aç");
     }
     if (elements.personelNotificationReadAll) elements.personelNotificationReadAll.disabled = count === 0 || state.pending.has("read-all");
+    syncNotificationViews();
     document.title = count ? `(${count > 99 ? "99+" : count}) Tahmisçi Personel` : "Tahmisçi Personel";
   }
 
@@ -428,7 +438,7 @@
     else if (!state.notifications.length) root.append(createStateNode("empty"));
     else state.notifications.forEach((notification) => root.append(createNotificationCard(notification)));
     if (elements.personelNotificationLoadMore) elements.personelNotificationLoadMore.hidden = !state.nextCursor;
-    if (elements.personelNotificationClearArchive) elements.personelNotificationClearArchive.disabled = state.loading || !state.notifications.length;
+    syncNotificationViews();
   }
 
   function createStateNode(kind) {
@@ -451,7 +461,7 @@
       node.append(title, text, retry);
       return node;
     } else {
-      title.textContent = state.unreadOnly ? "Okunmamış bildirim yok" : "Henüz bildirim yok";
+      title.textContent = state.view === "unread" ? "Okunmamış bildirim yok" : state.view === "archived" ? "Arşiv boş" : "Henüz bildirim yok";
       text.textContent = "Yeni görev, sevkiyat ve vardiya gelişmeleri burada görünecek.";
     }
     node.append(title, text);
@@ -460,7 +470,7 @@
 
   function createNotificationCard(notification) {
     const card = document.createElement("article");
-    card.className = `personel-notification-card is-${notification.severity}${notification.readAt ? "" : " is-unread"}`;
+    card.className = `personel-notification-card is-${notification.severity}${notification.readAt ? "" : " is-unread"}${notification.archivedAt ? " is-archived" : ""}`;
     card.dataset.notificationId = notification.id;
 
     const iconNode = document.createElement("span");
@@ -470,10 +480,12 @@
 
     const copy = document.createElement("div");
     copy.className = "personel-notification-card__copy";
-    const open = document.createElement("button");
-    open.type = "button";
+    const open = document.createElement(notification.archivedAt ? "strong" : "button");
+    if (!notification.archivedAt) {
+      open.type = "button";
+      open.dataset.notificationAction = "open";
+    }
     open.className = "personel-notification-card__open";
-    open.dataset.notificationAction = "open";
     open.textContent = notification.title;
     const body = document.createElement("p");
     body.textContent = notification.body;
@@ -485,9 +497,10 @@
 
     const actions = document.createElement("div");
     actions.className = "personel-notification-card__actions";
-    actions.append(
+    if (notification.archivedAt) actions.append(actionButton("restore", "Geri al"), actionButton("delete", "Kalıcı sil"));
+    else actions.append(
       actionButton(notification.readAt ? "unread" : "read", notification.readAt ? "Okunmadı işaretle" : "Okundu işaretle"),
-      actionButton("delete", "Bildirimi sil")
+      actionButton("archive", "Arşivle"), actionButton("delete", "Kalıcı sil")
     );
     card.append(iconNode, copy, actions);
     return card;
@@ -499,7 +512,7 @@
     button.dataset.notificationAction = action;
     button.setAttribute("aria-label", label);
     button.title = label;
-    button.innerHTML = icon(action === "delete" ? "delete" : action === "read" ? "check" : "dot");
+    button.innerHTML = icon(action === "delete" ? "delete" : action === "archive" ? "archive" : action === "restore" ? "restore" : action === "read" ? "check" : "dot");
     return button;
   }
 
@@ -512,6 +525,8 @@
     if (action.dataset.notificationAction === "open") void openNotification(notification, action);
     if (action.dataset.notificationAction === "read") void setNotificationRead(notification, true, action);
     if (action.dataset.notificationAction === "unread") void setNotificationRead(notification, false, action);
+    if (action.dataset.notificationAction === "archive") void setNotificationArchive(notification, "archive", action);
+    if (action.dataset.notificationAction === "restore") void setNotificationArchive(notification, "restore", action);
     if (action.dataset.notificationAction === "delete") void deleteNotification(notification, action);
   }
 
@@ -533,14 +548,38 @@
       const result = await request(`${API_ROOT}/${encodeURIComponent(notification.id)}/${read ? "read" : "unread"}`, { method: "PATCH" });
       const updated = result.notification ? normalizeNotification(result.notification) : { ...notification, readAt: read ? new Date().toISOString() : "" };
       state.notifications = state.notifications.map((item) => item.id === notification.id ? updated : item);
-      if (read && state.unreadOnly) state.notifications = state.notifications.filter((item) => item.id !== notification.id);
+      state.counts = normalizeCounts(result.counts);
       applyUnreadCount(result);
-      renderNotificationList();
+      if (read && state.view === "unread") {
+        state.nextCursor = "";
+        await loadNotifications();
+      } else renderNotificationList();
       return true;
     } catch (error) {
       if (!options.quiet) showMessage(error.message || "Bildirim durumu kaydedilemedi.", true);
       else showMessage(error.message || "Bildirim açılamadı.", true);
       return false;
+    } finally {
+      state.pending.delete(key);
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function setNotificationArchive(notification, action, button) {
+    const key = `${action}:${notification.id}`;
+    if (state.pending.has(key)) return;
+    state.pending.add(key);
+    setButtonBusy(button, true);
+    try {
+      const result = await request(`${API_ROOT}/${encodeURIComponent(notification.id)}/${action}`, { method: "PATCH" });
+      state.notifications = state.notifications.filter((item) => item.id !== notification.id);
+      state.counts = normalizeCounts(result.counts);
+      applyUnreadCount(result);
+      state.nextCursor = "";
+      await loadNotifications();
+      showMessage(action === "archive" ? "Bildirim arşivlendi." : "Bildirim geri alındı.");
+    } catch (error) {
+      showMessage(error.message || "Bildirim güncellenemedi.", true);
     } finally {
       state.pending.delete(key);
       setButtonBusy(button, false);
@@ -562,8 +601,10 @@
     try {
       const result = await request(`${API_ROOT}/${encodeURIComponent(notification.id)}`, { method: "DELETE" });
       state.notifications = state.notifications.filter((item) => item.id !== notification.id);
+      state.counts = normalizeCounts(result.counts);
       applyUnreadCount(result);
-      renderNotificationList();
+      state.nextCursor = "";
+      await loadNotifications();
       showMessage("Bildirim kalıcı olarak silindi.");
     } catch (error) {
       showMessage(error.message || "Bildirim silinemedi.", true);
@@ -582,10 +623,12 @@
       const result = await request(`${API_ROOT}/read-all`, { method: "POST" });
       const now = String(result.readAt || new Date().toISOString());
       state.notifications = state.notifications.map((item) => ({ ...item, readAt: item.readAt || now }));
-      if (state.unreadOnly) state.notifications = [];
+      if (state.view === "unread") state.notifications = [];
+      state.counts = normalizeCounts(result.counts);
       state.unreadCount = Number.isSafeInteger(Number(result.unreadCount)) ? Number(result.unreadCount) : 0;
       updateUnreadUi();
-      renderNotificationList();
+      state.nextCursor = "";
+      await loadNotifications();
       showMessage("Tüm bildirimler okundu olarak işaretlendi.");
     } catch (error) {
       showMessage(error.message || "Bildirimler güncellenemedi.", true);
@@ -593,6 +636,48 @@
       state.pending.delete("read-all");
       setButtonBusy(elements.personelNotificationReadAll, false);
       updateUnreadUi();
+    }
+  }
+
+  async function archiveReadNotifications() {
+    if (state.pending.has("archive-read") || state.counts.read < 1) return;
+    state.pending.add("archive-read");
+    setButtonBusy(elements.personelNotificationArchiveRead, true, "Arşivleniyor…");
+    try {
+      const result = await request(`${API_ROOT}/archive-read`, { method: "POST" });
+      state.counts = normalizeCounts(result.counts);
+      applyUnreadCount(result);
+      const archivedCount = Math.max(0, Number(result.archivedCount || 0));
+      await loadNotifications();
+      showMessage(`${archivedCount} okunan bildirim arşivlendi.`);
+    } catch (error) {
+      showMessage(error.message || "Okunan bildirimler arşivlenemedi.", true);
+    } finally {
+      state.pending.delete("archive-read");
+      setButtonBusy(elements.personelNotificationArchiveRead, false);
+      syncNotificationViews();
+    }
+  }
+
+  async function clearNotificationArchive() {
+    const count = Math.max(0, Number(state.counts.archived || 0));
+    if (state.pending.has("archive-clear") || !count) return;
+    if (!window.confirm(`Arşivdeki ${count} bildirim kalıcı olarak silinecek. Devam edilsin mi?`)) return;
+    state.pending.add("archive-clear");
+    setButtonBusy(elements.personelNotificationClearArchive, true, "Siliniyor…");
+    try {
+      const result = await request(`${API_ROOT}/archive`, { method: "DELETE" });
+      state.counts = normalizeCounts(result.counts);
+      applyUnreadCount(result);
+      const deletedCount = Math.max(0, Number(result.deletedCount || 0));
+      await loadNotifications();
+      showMessage(`${deletedCount} bildirim kalıcı olarak silindi.`);
+    } catch (error) {
+      showMessage(error.message || "Arşiv boşaltılamadı.", true);
+    } finally {
+      state.pending.delete("archive-clear");
+      setButtonBusy(elements.personelNotificationClearArchive, false);
+      syncNotificationViews();
     }
   }
 
@@ -1348,6 +1433,8 @@
       calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 2v6M17 2v6M3 10h18"/>',
       box: '<path d="m4 7 8-4 8 4-8 4zM4 7v10l8 4 8-4V7M12 11v10"/>',
       delete: '<path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/>',
+      archive: '<path d="M4 8h16v12H4zM3 4h18v4H3zM9 12h6"/>',
+      restore: '<path d="M4 8h16v12H4zM3 4h18v4H3zM8 14h8M11 11l-3 3 3 3"/>',
       check: '<path d="m5 12 4 4L19 6"/>',
       dot: '<circle cx="12" cy="12" r="4"/>',
       clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',

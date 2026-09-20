@@ -258,10 +258,8 @@
   background: linear-gradient(135deg, rgba(255, 250, 243, 1), rgba(247, 236, 223, .84));
 }
 
-.personel-notification-card.is-archived {
-  border-style: dashed;
-  box-shadow: none;
-}
+.personel-notification-card.is-archived { border-style: dashed; box-shadow: none; }
+.personel-notification-card.is-archived .personel-notification-card__open { cursor: default; }
 
 .personel-notification-card.is-unread::before {
   content: "";
@@ -582,6 +580,8 @@ body.is-personel-notification-open {
     align-items: stretch;
     flex-direction: column;
   }
+
+  .personel-notification-toolbar .ui-button { width: 100%; }
 
   .personel-notification-toolbar > label {
     align-self: flex-start;

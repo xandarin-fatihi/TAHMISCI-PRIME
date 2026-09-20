@@ -17,6 +17,11 @@
     resendTimer: 0,
     resendInterval: 0,
     notifications: [],
+    notificationStatus: "inbox",
+    notificationCounts: { inbox: 0, unread: 0, read: 0, archived: 0 },
+    notificationNextCursor: "",
+    notificationLoading: false,
+    notificationError: false,
     notificationPreferences: null,
     notificationCapabilities: null,
     notificationEvents: null,
@@ -168,7 +173,8 @@
       "guestInfoClose", "guestInfoIcon", "guestInfoEyebrow", "guestInfoTitle", "guestInfoDescription", "guestInfoDetails", "guestInfoActions",
       "mudavimLegalOverlay", "mudavimLegalTitle", "mudavimLegalCopy", "mudavimLegalClose", "mudavimLegalCancel",
       "mudavimLegalApprove", "registerResend", "memberNotificationButton", "memberNotificationBadge",
-      "memberNotificationFeed", "memberNotificationStatus", "memberNotificationsReadAll"
+      "memberNotificationFeed", "memberNotificationStatus", "memberNotificationUnreadText", "memberNotificationTabs",
+      "memberNotificationsReadAll", "memberNotificationsArchiveRead", "memberNotificationsClearArchive", "memberNotificationLoadMore"
     ].forEach((id) => { elements[id] = document.getElementById(id); });
     elements.authClose = document.querySelector(".mudavim-auth-close");
   }
@@ -218,6 +224,18 @@
     elements.memberPushToggle?.addEventListener("click", togglePushNotifications);
     elements.memberInstallButton?.addEventListener("click", installMudavimApp);
     elements.memberNotificationsReadAll?.addEventListener("click", markAllNotificationsRead);
+    elements.memberNotificationsArchiveRead?.addEventListener("click", archiveReadNotifications);
+    elements.memberNotificationsClearArchive?.addEventListener("click", clearNotificationArchive);
+    elements.memberNotificationLoadMore?.addEventListener("click", () => loadNotifications({ append: true }));
+    elements.memberNotificationTabs?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-notification-status]");
+      if (!button) return;
+      state.notificationStatus = ["inbox", "unread", "archived"].includes(button.dataset.notificationStatus) ? button.dataset.notificationStatus : "inbox";
+      state.notifications = [];
+      state.notificationNextCursor = "";
+      renderNotifications();
+      void loadNotifications();
+    });
     elements.memberNotificationFeed?.addEventListener("click", handleNotificationAction);
     document.querySelector("[data-profile-password-reset]")?.addEventListener("click", () => {
       closeProfile();
@@ -396,6 +414,10 @@
     state.member = null;
     state.loyalty = emptyLoyalty();
     state.notifications = [];
+    state.notificationStatus = "inbox";
+    state.notificationCounts = { inbox: 0, unread: 0, read: 0, archived: 0 };
+    state.notificationNextCursor = "";
+    state.notificationError = false;
     closeNotificationEvents();
     renderNotificationBadge(0);
     document.body.classList.add("is-guest");
@@ -965,34 +987,79 @@
     setProfileMessage(isIos ? "Safari'de Paylaş → Ana Ekrana Ekle seçeneğini kullanın." : "Tarayıcınız yükleme seçeneğini henüz sunmuyor.", "error");
   }
 
-  async function loadNotifications() {
-    if (!state.member) return;
+  async function loadNotifications(options = {}) {
+    if (!state.member || state.notificationLoading) return;
+    const append = options.append === true && Boolean(state.notificationNextCursor);
+    state.notificationLoading = true;
+    state.notificationError = false;
+    if (!append) setText(elements.memberNotificationStatus, "Bildirimler yükleniyor…");
+    renderNotifications();
     try {
-      const payload = await request("/api/mudavim/notifications?limit=50");
-      state.notifications = Array.isArray(payload.notifications) ? payload.notifications : [];
+      const query = new URLSearchParams({ limit: "30", status: state.notificationStatus });
+      if (append) query.set("cursor", state.notificationNextCursor);
+      const payload = await request(`/api/mudavim/notifications?${query.toString()}`);
+      const incoming = Array.isArray(payload.notifications) ? payload.notifications : [];
+      state.notifications = append ? mergeNotifications(state.notifications, incoming) : incoming;
+      state.notificationNextCursor = String(payload.nextCursor || "");
+      state.notificationCounts = normalizeNotificationCounts(payload.counts);
       renderNotificationBadge(payload.unreadCount);
-      renderNotifications();
+      setText(elements.memberNotificationStatus, "");
     } catch (error) {
+      state.notificationError = true;
       setText(elements.memberNotificationStatus, error.message || "Bildirimler alınamadı.");
+      if (!append) state.notifications = [];
+    } finally {
+      state.notificationLoading = false;
+      renderNotifications();
     }
+  }
+
+  function mergeNotifications(current, incoming) {
+    const items = new Map(current.map((item) => [String(item.id), item]));
+    incoming.forEach((item) => { if (item && item.id) items.set(String(item.id), item); });
+    return [...items.values()];
+  }
+
+  function normalizeNotificationCounts(value) {
+    const source = value && typeof value === "object" ? value : {};
+    return { inbox: Math.max(0, Number(source.inbox || 0)), unread: Math.max(0, Number(source.unread || 0)), read: Math.max(0, Number(source.read || 0)), archived: Math.max(0, Number(source.archived || 0)) };
   }
 
   function renderNotifications() {
     if (!elements.memberNotificationFeed) return;
-    setText(elements.memberNotificationStatus, "");
+    elements.memberNotificationTabs?.querySelectorAll("[data-notification-status]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.notificationStatus === state.notificationStatus)));
+    elements.memberNotificationTabs?.querySelectorAll("[data-notification-count]").forEach((node) => { node.textContent = String(state.notificationCounts[node.dataset.notificationCount] || 0); });
+    if (elements.memberNotificationsReadAll) elements.memberNotificationsReadAll.disabled = state.notificationLoading || state.notificationCounts.unread < 1;
+    if (elements.memberNotificationsArchiveRead) elements.memberNotificationsArchiveRead.disabled = state.notificationLoading || state.notificationCounts.read < 1;
+    if (elements.memberNotificationsClearArchive) {
+      elements.memberNotificationsClearArchive.hidden = state.notificationStatus !== "archived";
+      elements.memberNotificationsClearArchive.disabled = state.notificationLoading || state.notificationCounts.archived < 1;
+    }
+    if (elements.memberNotificationLoadMore) {
+      elements.memberNotificationLoadMore.hidden = !state.notificationNextCursor;
+      elements.memberNotificationLoadMore.disabled = state.notificationLoading;
+    }
+    if (state.notificationLoading && !state.notifications.length) {
+      elements.memberNotificationFeed.innerHTML = '<div class="member-empty member-empty--panel"><strong>Bildirimler yükleniyor</strong><p>Güncel kayıtlar alınıyor.</p></div>';
+      return;
+    }
+    if (state.notificationError && !state.notifications.length) {
+      elements.memberNotificationFeed.innerHTML = '<div class="member-empty member-empty--panel"><strong>Bildirimler alınamadı</strong><p>Bağlantınızı kontrol edip yeniden deneyin.</p><button type="button" data-notification-retry>Yeniden dene</button></div>';
+      return;
+    }
     if (!state.notifications.length) {
-      elements.memberNotificationFeed.innerHTML = '<div class="member-empty member-empty--panel"><strong>Yeni bildirim yok</strong><p>Hesap ve Müdavim duyuruları burada kalıcı olarak görünür.</p></div>';
+      const title = state.notificationStatus === "unread" ? "Okunmamış bildirim yok" : state.notificationStatus === "archived" ? "Arşiv boş" : "Yeni bildirim yok";
+      elements.memberNotificationFeed.innerHTML = `<div class="member-empty member-empty--panel"><strong>${title}</strong><p>Hesap ve Müdavim duyuruları burada görünür.</p></div>`;
       return;
     }
     const fragment = document.createDocumentFragment();
     state.notifications.forEach((notification) => {
       const article = document.createElement("article");
-      article.className = `member-notification-item${notification.readAt ? "" : " is-unread"}`;
+      article.className = `member-notification-item${notification.readAt ? "" : " is-unread"}${notification.archivedAt ? " is-archived" : ""}`;
       article.dataset.notificationId = notification.id;
-      const open = document.createElement("button");
-      open.type = "button";
+      const open = document.createElement(notification.archivedAt ? "div" : "button");
+      if (!notification.archivedAt) { open.type = "button"; open.dataset.notificationAction = "open"; }
       open.className = "member-notification-item__open";
-      open.dataset.notificationAction = "open";
       const title = document.createElement("strong");
       const body = document.createElement("span");
       const time = document.createElement("time");
@@ -1002,64 +1069,152 @@
       open.append(title, body, time);
       const actions = document.createElement("span");
       actions.className = "member-notification-item__actions";
-      const read = document.createElement("button");
-      read.type = "button";
-      read.dataset.notificationAction = notification.readAt ? "unread" : "read";
-      read.textContent = notification.readAt ? "Okunmadı" : "Okundu";
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.dataset.notificationAction = "delete";
-      remove.textContent = "Sil";
-      actions.append(read, remove);
+      if (notification.archivedAt) actions.append(notificationActionButton("restore", "Geri al"), notificationActionButton("delete", "Kalıcı sil"));
+      else actions.append(notificationActionButton(notification.readAt ? "unread" : "read", notification.readAt ? "Okunmadı" : "Okundu"), notificationActionButton("archive", "Arşivle"), notificationActionButton("delete", "Kalıcı sil"));
       article.append(open, actions);
       fragment.appendChild(article);
     });
     elements.memberNotificationFeed.replaceChildren(fragment);
   }
 
+  function notificationActionButton(action, label) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.notificationAction = action;
+    button.textContent = label;
+    return button;
+  }
+
   async function handleNotificationAction(event) {
+    const retry = event.target.closest("[data-notification-retry]");
+    if (retry) { void loadNotifications(); return; }
     const button = event.target.closest("[data-notification-action]");
     const article = button?.closest("[data-notification-id]");
     if (!button || !article) return;
     const notification = state.notifications.find((item) => item.id === article.dataset.notificationId);
     if (!notification) return;
-    if (button.dataset.notificationAction === "delete") {
-      if (button.dataset.confirmDelete !== "true") {
-        button.dataset.confirmDelete = "true";
-        setText(elements.memberNotificationStatus, "Bildirimi silmek için Sil düğmesine tekrar basın.");
-        setTimeout(() => { if (button.isConnected) delete button.dataset.confirmDelete; }, 4000);
+    try {
+      if (button.dataset.notificationAction === "delete") {
+        if (button.dataset.confirmDelete !== "true") {
+          button.dataset.confirmDelete = "true";
+          setText(elements.memberNotificationStatus, "Bildirimi kalıcı silmek için düğmeye tekrar basın.");
+          setTimeout(() => { if (button.isConnected) delete button.dataset.confirmDelete; }, 4000);
+          return;
+        }
+        delete button.dataset.confirmDelete;
+        const payload = await request(`/api/mudavim/notifications/${encodeURIComponent(notification.id)}`, { method: "DELETE" });
+        state.notifications = state.notifications.filter((item) => item.id !== notification.id);
+        state.notificationCounts = normalizeNotificationCounts(payload.counts);
+        renderNotificationBadge(payload.unreadCount);
+        state.notificationNextCursor = "";
+        await loadNotifications();
+        setText(elements.memberNotificationStatus, "Bildirim kalıcı olarak silindi.");
         return;
       }
-      delete button.dataset.confirmDelete;
-      const payload = await request(`/api/mudavim/notifications/${encodeURIComponent(notification.id)}`, { method: "DELETE" });
-      state.notifications = state.notifications.filter((item) => item.id !== notification.id);
-      renderNotificationBadge(payload.unreadCount);
-      renderNotifications();
-      return;
+      if (["read", "unread"].includes(button.dataset.notificationAction)) {
+        const action = button.dataset.notificationAction;
+        const payload = await request(`/api/mudavim/notifications/${encodeURIComponent(notification.id)}/${action}`, { method: "PATCH" });
+        notification.readAt = action === "read" ? (payload.notification?.readAt || new Date().toISOString()) : null;
+        state.notificationCounts = normalizeNotificationCounts(payload.counts);
+        renderNotificationBadge(payload.unreadCount);
+        state.notificationNextCursor = "";
+        await loadNotifications();
+        return;
+      }
+      if (["archive", "restore"].includes(button.dataset.notificationAction)) {
+        const action = button.dataset.notificationAction;
+        const payload = await request(`/api/mudavim/notifications/${encodeURIComponent(notification.id)}/${action}`, { method: "PATCH" });
+        state.notifications = state.notifications.filter((item) => item.id !== notification.id);
+        state.notificationCounts = normalizeNotificationCounts(payload.counts);
+        renderNotificationBadge(payload.unreadCount);
+        state.notificationNextCursor = "";
+        await loadNotifications();
+        setText(elements.memberNotificationStatus, action === "archive" ? "Bildirim arşivlendi." : "Bildirim geri alındı.");
+        return;
+      }
+      if (!notification.readAt) {
+        const payload = await request(`/api/mudavim/notifications/${encodeURIComponent(notification.id)}/read`, { method: "PATCH" });
+        notification.readAt = payload.notification?.readAt || new Date().toISOString();
+        state.notificationCounts = normalizeNotificationCounts(payload.counts);
+        renderNotificationBadge(payload.unreadCount);
+        if (state.notificationStatus === "unread") {
+          state.notifications = state.notifications.filter((item) => item.id !== notification.id);
+          state.notificationNextCursor = "";
+        }
+        renderNotifications();
+      }
+      let target = null;
+      try { target = new URL(String(notification.deepLink || ""), window.location.origin); } catch (_error) {}
+      if (target?.origin === window.location.origin && (target.pathname === "/mudavim" || target.pathname.startsWith("/mudavim/"))) {
+        window.location.assign(`${target.pathname}${target.search}${target.hash}`);
+        return;
+      }
+      if (state.notificationStatus === "unread") await loadNotifications();
+    } catch (error) {
+      setText(elements.memberNotificationStatus, error.message || "Bildirim işlemi tamamlanamadı.");
     }
-    if (button.dataset.notificationAction === "read" || button.dataset.notificationAction === "unread") {
-      const action = button.dataset.notificationAction;
-      const payload = await request(`/api/mudavim/notifications/${encodeURIComponent(notification.id)}/${action}`, { method: "PATCH" });
-      notification.readAt = action === "read" ? (payload.notification?.readAt || new Date().toISOString()) : null;
-      renderNotificationBadge(payload.unreadCount);
-      renderNotifications();
-      return;
-    }
-    if (!notification.readAt) {
-      const payload = await request(`/api/mudavim/notifications/${encodeURIComponent(notification.id)}/read`, { method: "PATCH" });
-      notification.readAt = payload.notification?.readAt || new Date().toISOString();
-      renderNotificationBadge(payload.unreadCount);
-      renderNotifications();
-    }
-    if (String(notification.deepLink || "").startsWith("/mudavim/")) window.location.assign(notification.deepLink);
   }
 
   async function markAllNotificationsRead() {
-    const payload = await request("/api/mudavim/notifications/read-all", { method: "POST", body: {} });
-    const timestamp = new Date().toISOString();
-    state.notifications = state.notifications.map((item) => ({ ...item, readAt: item.readAt || timestamp }));
-    renderNotificationBadge(payload.unreadCount);
+    if (state.notificationLoading || state.notificationCounts.unread < 1) return;
+    state.notificationLoading = true;
     renderNotifications();
+    try {
+      const payload = await request("/api/mudavim/notifications/read-all", { method: "POST", body: {} });
+      const timestamp = new Date().toISOString();
+      state.notifications = state.notifications.map((item) => ({ ...item, readAt: item.readAt || timestamp }));
+      if (state.notificationStatus === "unread") state.notifications = [];
+      state.notificationCounts = normalizeNotificationCounts(payload.counts);
+      renderNotificationBadge(payload.unreadCount);
+      state.notificationNextCursor = "";
+      state.notificationLoading = false;
+      await loadNotifications();
+      setText(elements.memberNotificationStatus, "Tüm bildirimler okundu olarak işaretlendi.");
+    } catch (error) {
+      setText(elements.memberNotificationStatus, error.message || "Bildirimler güncellenemedi.");
+    } finally {
+      state.notificationLoading = false;
+      renderNotifications();
+    }
+  }
+
+  async function archiveReadNotifications() {
+    if (state.notificationLoading || state.notificationCounts.read < 1) return;
+    state.notificationLoading = true;
+    renderNotifications();
+    try {
+      const payload = await request("/api/mudavim/notifications/archive-read", { method: "POST", body: {} });
+      const archivedCount = Math.max(0, Number(payload.archivedCount || 0));
+      state.notificationCounts = normalizeNotificationCounts(payload.counts);
+      renderNotificationBadge(payload.unreadCount);
+      state.notificationLoading = false;
+      await loadNotifications();
+      setText(elements.memberNotificationStatus, `${archivedCount} okunan bildirim arşivlendi.`);
+    } catch (error) {
+      state.notificationLoading = false;
+      setText(elements.memberNotificationStatus, error.message || "Okunan bildirimler arşivlenemedi.");
+      renderNotifications();
+    }
+  }
+
+  async function clearNotificationArchive() {
+    const count = Math.max(0, Number(state.notificationCounts.archived || 0));
+    if (state.notificationLoading || !count || !window.confirm(`Arşivdeki ${count} bildirim kalıcı olarak silinecek. Devam edilsin mi?`)) return;
+    state.notificationLoading = true;
+    renderNotifications();
+    try {
+      const payload = await request("/api/mudavim/notifications/archive", { method: "DELETE" });
+      const deletedCount = Math.max(0, Number(payload.deletedCount || 0));
+      state.notificationCounts = normalizeNotificationCounts(payload.counts);
+      renderNotificationBadge(payload.unreadCount);
+      state.notificationLoading = false;
+      await loadNotifications();
+      setText(elements.memberNotificationStatus, `${deletedCount} bildirim kalıcı olarak silindi.`);
+    } catch (error) {
+      state.notificationLoading = false;
+      setText(elements.memberNotificationStatus, error.message || "Arşiv boşaltılamadı.");
+      renderNotifications();
+    }
   }
 
   function renderNotificationBadge(value) {
@@ -1068,6 +1223,7 @@
       elements.memberNotificationBadge.hidden = count < 1;
       elements.memberNotificationBadge.textContent = count > 99 ? "99+" : String(count);
     }
+    if (elements.memberNotificationUnreadText) elements.memberNotificationUnreadText.textContent = String(count);
     window.TahmisciPWA?.updateBadge(count);
   }
 
@@ -1083,8 +1239,9 @@
     try {
       const payload = JSON.parse(event.data || "{}");
       renderNotificationBadge(payload.unreadCount);
-      if (payload.notification && !state.notifications.some((item) => item.id === payload.notification.id)) state.notifications.unshift(payload.notification);
+      if (payload.counts) state.notificationCounts = normalizeNotificationCounts(payload.counts);
       if (state.activePanel === "notifications" || payload.requiresRefetch) void loadNotifications();
+      else renderNotifications();
     } catch (_error) {}
   }
 

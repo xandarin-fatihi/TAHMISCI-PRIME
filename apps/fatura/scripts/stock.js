@@ -1,6 +1,6 @@
-import { api as faturaApi, requestId as createRequestId } from "./api.js?v=20260907-pdf-document-picker-v1";
-import { CAPABILITIES, has, hasSection, invalidate as invalidateFatura, state as faturaState, updateRevision as syncRevision } from "./state.js?v=20260907-pdf-document-picker-v1";
-import { requestText } from "./ui-dialogs.js?v=20260907-pdf-document-picker-v1";
+import { api as faturaApi, requestId as createRequestId } from "./api.js?v=20260920-notification-center-v1";
+import { CAPABILITIES, has, hasSection, invalidate as invalidateFatura, state as faturaState, updateRevision as syncRevision } from "./state.js?v=20260920-notification-center-v1";
+import { requestText } from "./ui-dialogs.js?v=20260920-notification-center-v1";
 
 "use strict";
 

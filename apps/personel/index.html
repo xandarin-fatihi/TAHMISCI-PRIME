@@ -16,9 +16,9 @@
   <meta name="tahmisci-lazy-style" content="/shared/styles/account-security.css">
   <meta name="tahmisci-lazy-script" content="/shared/scripts/account-security.js">
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
-  <script src="/personel/personel.js?v=20260831-panel-access" defer></script>
+  <script src="/personel/personel.js?v=20260920-notification-center-v1" defer></script>
   <script src="/shared/scripts/live-preview-receiver.js?v=20260801-phase3" defer></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260831-panel-access" defer></script>
+  <script src="/shared/scripts/pwa-client.js?v=20260920-notification-center-v1" defer></script>
 </head>
 <body>
   <main class="personel-app" id="personelApp" data-view="booting">
@@ -243,13 +243,15 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
       </button>
     </header>
-    <div class="personel-notification-toolbar">
-      <button class="ui-button ui-button--secondary ui-button--sm" id="personelNotificationReadAll" type="button">Tümünü okundu işaretle</button>
-      <label><input id="personelNotificationUnreadOnly" type="checkbox"><span>Yalnızca okunmamış</span></label>
-    </div>
     <div class="personel-notification-views" id="personelNotificationViews" role="group" aria-label="Bildirim kutusu">
-      <button type="button" data-notification-view="inbox" class="is-active" aria-pressed="true">Gelen kutusu</button>
-      <button type="button" data-notification-view="unread" aria-pressed="false">Okunmamış</button>
+      <button type="button" data-notification-view="inbox" class="is-active" aria-pressed="true">Gelen Kutusu (<span data-notification-count="inbox">0</span>)</button>
+      <button type="button" data-notification-view="unread" aria-pressed="false">Okunmamış (<span data-notification-count="unread">0</span>)</button>
+      <button type="button" data-notification-view="archived" aria-pressed="false">Arşiv (<span data-notification-count="archived">0</span>)</button>
+    </div>
+    <div class="personel-notification-toolbar">
+      <button class="ui-button ui-button--secondary ui-button--sm" id="personelNotificationReadAll" type="button">Tümünü okundu yap</button>
+      <button class="ui-button ui-button--secondary ui-button--sm" id="personelNotificationArchiveRead" type="button">Okunanları arşivle</button>
+      <button class="ui-button ui-button--danger ui-button--sm" id="personelNotificationClearArchive" type="button" hidden>Arşivi boşalt</button>
     </div>
     <div class="personel-notification-filters" id="personelNotificationFilters" role="group" aria-label="Bildirim kategorileri">
       <button type="button" data-notification-category="all" class="is-active" aria-pressed="true">Tümü</button>

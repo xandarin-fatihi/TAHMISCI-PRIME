@@ -1,5 +1,5 @@
-import { documentUploadPicker } from "./ui-dialogs.js?v=20260918-ledger-range-v1";
-import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260918-ledger-range-v1";
+import { documentUploadPicker } from "./ui-dialogs.js?v=20260920-notification-center-v1";
+import { CAPABILITIES, escapeHtml, financeValues, has, hasSection, paymentStatusLabel, state, trDate, trMoney } from "./state.js?v=20260920-notification-center-v1";
 
 export function renderLedger() {
   const supplierId = String(state.filters.ledgerSupplier || "");
