@@ -2,7 +2,7 @@
 importScripts("/shared/scripts/pwa-release.js");
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "yonetici",
-  version: self.TAHMISCI_PWA_RELEASE.id,
+  version: self.TAHMISCI_PWA_RELEASE.id + "-admin-preview-widths",
   scopePath: "/yonetici/",
   offlineUrl: "/yonetici/offline.html",
   offlineAssets: [
@@ -10,11 +10,12 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
     "/assets/app-icons/yonetici/icon-192.png"
   ],
   precache: [
-    "/yonetici/styles/admin.css?v=20260831-panel-access",
+    "/yonetici/styles/admin.css?v=20261108-ready-shuffle-v2",
     "/yonetici/styles/admin-compact.css",
-    "/yonetici/styles/admin-components.css",
+    "/yonetici/styles/admin-components.css?v=20261108-preview-widths",
     "/yonetici/styles/notifications.css?v=20260920-notification-center-v1",
-    "/yonetici/scripts/app.js?v=20260920-notification-center-v1",
+    "/yonetici/scripts/app.js?v=20261108-theme-restore",
+    "/shared/scripts/menu-design-schema.js?v=20261108-emerald-throne",
     "/shared/styles/panel-foundation.css",
     "/shared/scripts/save-coordinator.js",
     "/shared/scripts/pwa-client.js?v=20260920-notification-center-v1",

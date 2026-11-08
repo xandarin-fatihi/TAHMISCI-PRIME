@@ -10,8 +10,8 @@ body[data-panel-theme="dark"] {
   --muted: var(--panel-muted);
   --line: var(--panel-line);
   --brand: var(--panel-coffee);
-  --brand-2: rgba(90, 47, 29, 0.09);
-  --on-brand: #fffaf3;
+  --brand-2: color-mix(in srgb, var(--admin-tone-ink, rgb(90, 47, 29)) 9%, transparent);
+  --on-brand: var(--admin-tone-on-solid, #fffaf3);
   --danger: var(--panel-danger);
   --shadow: var(--panel-shadow);
 }
@@ -36,12 +36,12 @@ body:has(.admin-shell[data-active-section]:not([hidden])) {
 }
 
 body:has(.admin-shell[data-active-section]:not([hidden]))::before {
-  background: radial-gradient(circle at 80% 4%, rgba(255, 255, 249, 0.78), transparent 30%);
+  background: radial-gradient(circle at 80% 4%, color-mix(in srgb, var(--admin-tone-surface, rgb(255, 255, 249)) 78%, transparent), transparent 30%);
   opacity: 1;
 }
 
 body::before {
-  background: radial-gradient(circle at 80% 4%, rgba(255, 255, 249, 0.78), transparent 30%);
+  background: radial-gradient(circle at 80% 4%, color-mix(in srgb, var(--admin-tone-surface, rgb(255, 255, 249)) 78%, transparent), transparent 30%);
   opacity: 1;
 }
 
@@ -68,7 +68,7 @@ body::before {
   height: 100%;
   padding: 0;
   border: 0;
-  background: rgba(44, 22, 9, 0.42);
+  background: color-mix(in srgb, var(--admin-tone-shadow, rgb(44, 22, 9)) 42%, transparent);
   opacity: 0;
   pointer-events: none;
   transition: opacity 160ms ease;
@@ -87,8 +87,8 @@ body::before {
   padding: 14px 12px;
   overflow: visible;
   border-right: 1px solid var(--panel-line);
-  background: linear-gradient(180deg, #fffaf3 0%, #f7ecdf 100%);
-  box-shadow: 7px 0 22px rgba(62, 31, 15, 0.04);
+  background: linear-gradient(180deg, var(--admin-tone-surface, #fffaf3) 0%, var(--admin-tone-soft, #f7ecdf) 100%);
+  box-shadow: 7px 0 22px color-mix(in srgb, var(--admin-tone-shadow, rgb(62, 31, 15)) 4%, transparent);
 }
 
 .admin-shell.is-sidebar-collapsed .sidebar,
@@ -132,7 +132,7 @@ body::before {
 
 .admin-shell .sidebar-scroll-region:focus-visible {
   border-radius: var(--panel-control-radius);
-  outline: 2px solid rgba(185, 80, 45, .28);
+  outline: 2px solid color-mix(in srgb, var(--admin-tone-accent, rgb(185, 80, 45)) 28%, transparent);
   outline-offset: -2px;
 }
 
@@ -155,7 +155,7 @@ body::before {
 }
 
 .admin-shell .sidebar-logo-toggle:hover {
-  background: rgba(255, 250, 243, 0.62);
+  background: color-mix(in srgb, var(--admin-tone-surface, rgb(255, 250, 243)) 62%, transparent);
 }
 
 .admin-shell .sidebar-logo-toggle:focus-visible {
@@ -263,7 +263,7 @@ body::before {
 .admin-shell[data-active-section] .panel-nav a:hover,
 .admin-shell .panel-nav a:focus-visible {
   border-color: var(--panel-line);
-  background: rgba(255, 250, 243, 0.82);
+  background: color-mix(in srgb, var(--admin-tone-surface, rgb(255, 250, 243)) 82%, transparent);
   color: var(--panel-coffee);
 }
 
@@ -272,9 +272,9 @@ body::before {
 .admin-shell[data-active-section="stock"] .panel-nav a[data-panel-section="stock"].is-active,
 .admin-shell[data-active-section="site"] .panel-nav a.is-active {
   border-color: var(--panel-coffee);
-  background: var(--panel-coffee);
-  color: #fffaf3;
-  box-shadow: 0 7px 16px rgba(61, 28, 13, 0.16);
+  background: var(--admin-tone-solid, var(--panel-coffee));
+  color: var(--admin-tone-on-solid, #fffaf3);
+  box-shadow: 0 7px 16px color-mix(in srgb, var(--admin-tone-shadow, rgb(61, 28, 13)) 16%, transparent);
 }
 
 .admin-shell .sidebar-profile,
@@ -284,7 +284,7 @@ body::before {
   padding: 8px;
   border: 1px solid var(--panel-line);
   border-radius: var(--panel-card-radius);
-  background: rgba(255, 250, 243, 0.78);
+  background: color-mix(in srgb, var(--admin-tone-surface, rgb(255, 250, 243)) 78%, transparent);
   color: var(--panel-ink);
   font-family: var(--panel-font-ui);
   text-align: left;
@@ -351,7 +351,7 @@ body::before {
   padding: 4px 0;
   overflow: visible;
   border-bottom: 1px solid var(--panel-line);
-  background: rgba(251, 246, 238, 0.94);
+  background: color-mix(in srgb, var(--admin-tone-canvas, rgb(251, 246, 238)) 94%, transparent);
   backdrop-filter: blur(12px);
 }
 
@@ -360,7 +360,7 @@ body::before {
 }
 
 .admin-shell .topbar .eyebrow {
-  color: #8b5630;
+  color: var(--admin-tone-link, #8b5630);
   font-size: var(--panel-kicker-size);
   letter-spacing: 0.16em;
 }
@@ -400,9 +400,9 @@ body::before {
 .admin-shell[data-active-section] .primary-action,
 .admin-shell[data-active-section] .topbar-save-button {
   border-color: var(--panel-coffee);
-  background: var(--panel-coffee);
-  color: #fffaf3;
-  box-shadow: 0 6px 14px rgba(90, 47, 29, 0.16);
+  background: var(--admin-tone-solid, var(--panel-coffee));
+  color: var(--admin-tone-on-solid, #fffaf3);
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--admin-tone-shadow, rgb(90, 47, 29)) 16%, transparent);
 }
 
 .admin-shell[data-active-section] :is(.line-action, .soft-action) {
@@ -451,7 +451,7 @@ body::before {
 }
 
 .admin-shell .save-state.is-saved {
-  border-color: rgba(102, 115, 62, 0.28);
+  border-color: color-mix(in srgb, var(--admin-tone-line-strong, rgb(102, 115, 62)) 28%, transparent);
   background: var(--panel-success-soft);
   color: var(--panel-success);
 }
@@ -476,14 +476,14 @@ body::before {
 .admin-shell[data-active-section="staffAccess"] :where(input, select, textarea) {
   border-color: var(--panel-line);
   border-radius: var(--panel-control-radius);
-  background: #fffdf9;
+  background: var(--admin-tone-surface, #fffdf9);
   color: var(--panel-ink);
   font-size: 12px;
 }
 
 body[data-panel-theme="dark"] .admin-shell :where(input, select, textarea) {
   border-color: var(--panel-line);
-  background: #fffdf9;
+  background: var(--admin-tone-surface, #fffdf9);
   color: var(--panel-ink);
 }
 
@@ -1164,7 +1164,7 @@ body[data-panel-theme="dark"] .admin-shell :where(input, select, textarea) {
 
 .workforce-request-card > div:last-child button.ui-button--primary {
   color: var(--panel-surface);
-  background: var(--panel-coffee);
+  background: var(--admin-tone-solid, var(--panel-coffee));
   border-color: var(--panel-coffee);
 }
 
@@ -1189,7 +1189,7 @@ body[data-panel-theme="dark"] .admin-shell :where(input, select, textarea) {
   place-items: center;
   padding: 18px;
   overflow-y: auto;
-  background: rgba(44, 22, 9, .52);
+  background: color-mix(in srgb, var(--admin-tone-solid-deep, rgb(44, 22, 9)) 52%, transparent);
   backdrop-filter: blur(7px);
 }
 
@@ -1207,7 +1207,7 @@ body.is-staff-delete-open .admin-shell > .workspace {
   border: 1px solid color-mix(in srgb, var(--panel-danger) 28%, var(--panel-line));
   border-radius: var(--panel-card-radius);
   background: var(--panel-surface);
-  box-shadow: 0 28px 72px rgba(44, 22, 9, .24);
+  box-shadow: 0 28px 72px color-mix(in srgb, var(--admin-tone-shadow, rgb(44, 22, 9)) 24%, transparent);
 }
 
 .staff-delete-dialog__head {

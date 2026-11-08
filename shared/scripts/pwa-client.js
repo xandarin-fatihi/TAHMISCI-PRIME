@@ -17,6 +17,7 @@
   const workerScope = String(root.dataset.pwaScope || "").trim();
   const isBackOffice = appId === "personel" || appId === "yonetici" || appId === "fatura";
   const supportsNotificationIntro = isBackOffice || appId === "mudavim";
+  const installNoticeKey = `tahmisci:pwa-install-notice:${appId}`;
   const updateCheckKey = `tahmisci:pwa-update-check:${appId}`;
   const notificationIntroKey = `tahmisci:pwa-notification-intro:${appId}:v1`;
   const updateCheckIntervalMs = 60 * 1000;
@@ -32,6 +33,7 @@
   let updateNotice = null;
   let offlineNotice = null;
   let installNotice = null;
+  let installNoticeShown = false;
   let notificationIntroNotice = null;
   let notificationPromptConfig = null;
   let notificationPromptCheckPending = false;
@@ -126,7 +128,12 @@
   }
 
   function showInstallReady() {
-    if (!deferredInstallPrompt || installNotice || isStandalone()) return;
+    if (!deferredInstallPrompt || installNoticeShown || isStandalone()) return;
+    try {
+      if (window.localStorage.getItem(installNoticeKey)) return;
+      window.localStorage.setItem(installNoticeKey, "seen");
+    } catch (_error) {}
+    installNoticeShown = true;
     installNotice = createNotice({
       kind: "install",
       title: "Uygulama olarak yükleyin",

@@ -59,8 +59,8 @@
 }
 
 html {
-  color-scheme: light;
-  scrollbar-color: rgba(90, 47, 29, 0.42) rgba(90, 47, 29, 0.07);
+  color-scheme: var(--admin-tone-scheme, light);
+  scrollbar-color: color-mix(in srgb, var(--admin-tone-line-strong, rgb(90, 47, 29)) 42%, transparent) color-mix(in srgb, var(--admin-tone-line, rgb(90, 47, 29)) 7%, transparent);
   scrollbar-width: thin;
 }
 
@@ -76,7 +76,7 @@ html::-webkit-scrollbar-track,
 body::-webkit-scrollbar-track,
 .admin-shell *::-webkit-scrollbar-track,
 .personel-dashboard *::-webkit-scrollbar-track {
-  background: rgba(90, 47, 29, 0.06);
+  background: color-mix(in srgb, var(--admin-tone-ink, rgb(90, 47, 29)) 6%, transparent);
 }
 
 html::-webkit-scrollbar-thumb,
@@ -85,7 +85,7 @@ body::-webkit-scrollbar-thumb,
 .personel-dashboard *::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: var(--panel-pill-radius);
-  background: rgba(90, 47, 29, 0.42);
+  background: color-mix(in srgb, var(--admin-tone-solid-deep, rgb(90, 47, 29)) 42%, transparent);
   background-clip: padding-box;
 }
 
@@ -142,9 +142,9 @@ body::-webkit-scrollbar-thumb,
 :where(.personel-dashboard, .personel-login) :where(.primary, .wf-button-primary),
 :where(.workforce-panel) .workforce-primary-button {
   border-color: var(--panel-coffee);
-  background: var(--panel-coffee);
-  color: #fffaf3;
-  box-shadow: 0 6px 14px rgba(90, 47, 29, 0.16);
+  background: var(--admin-tone-solid, var(--panel-coffee));
+  color: var(--admin-tone-on-solid, #fffaf3);
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--admin-tone-shadow, rgb(90, 47, 29)) 16%, transparent);
 }
 
 .ui-button--secondary,
@@ -167,7 +167,7 @@ body::-webkit-scrollbar-thumb,
 .ui-button--danger,
 :where(.admin-shell) .danger-action,
 :where(.workforce-panel) .workforce-reject-button {
-  border-color: rgba(165, 59, 43, 0.34);
+  border-color: color-mix(in srgb, var(--panel-danger, rgb(165, 59, 43)) 34%, transparent);
   background: var(--panel-danger-soft);
   color: var(--panel-danger);
   box-shadow: none;
@@ -194,7 +194,7 @@ body::-webkit-scrollbar-thumb,
 :where(.personel-dashboard, .personel-login) :where(.primary, .ghost, .wf-button):hover:not(:disabled),
 :where(.workforce-panel) :where(.workforce-primary-button, .workforce-line-button, .workforce-reject-button):hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 7px 18px rgba(73, 35, 17, 0.13);
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--admin-tone-shadow, rgb(73, 35, 17)) 13%, transparent);
 }
 
 .ui-button:active:not(:disabled),
@@ -251,8 +251,8 @@ body::-webkit-scrollbar-thumb,
   appearance: none;
   border: 1px solid var(--panel-line);
   border-radius: var(--panel-pill-radius);
-  background: #ded4c8;
-  box-shadow: inset 0 1px 2px rgba(44, 22, 9, 0.08);
+  background: var(--admin-tone-raised, #ded4c8);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--admin-tone-shadow, rgb(44, 22, 9)) 8%, transparent);
   cursor: pointer;
   transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
@@ -269,7 +269,7 @@ body::-webkit-scrollbar-thumb,
   height: 20px;
   border-radius: 50%;
   background: var(--panel-surface);
-  box-shadow: 0 2px 6px rgba(44, 22, 9, 0.2);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--admin-tone-shadow, rgb(44, 22, 9)) 20%, transparent);
   content: "";
   transform: translateX(0);
   transition: transform 150ms ease;
@@ -281,7 +281,7 @@ body::-webkit-scrollbar-thumb,
 .stock-editor-active > input[type="checkbox"]:checked,
 .pricing-value-field__toggle > input[type="checkbox"]:checked {
   border-color: var(--panel-coffee);
-  background: var(--panel-coffee);
+  background: var(--admin-tone-solid, var(--panel-coffee));
 }
 
 .ui-toggle-row > input[type="checkbox"]:checked::after,
@@ -331,7 +331,7 @@ html.is-panel-modal-open body {
   border: 1px solid var(--panel-line);
   border-radius: var(--panel-card-radius);
   background: var(--panel-surface);
-  box-shadow: 0 16px 38px rgba(62, 31, 15, 0.14);
+  box-shadow: 0 16px 38px color-mix(in srgb, var(--admin-tone-shadow, rgb(62, 31, 15)) 14%, transparent);
 }
 
 .profile-menu[hidden] {
@@ -390,7 +390,7 @@ html.is-panel-modal-open body {
   flex: 0 0 32px;
   place-items: center;
   border-radius: 50%;
-  background: var(--panel-coffee);
+  background: var(--admin-tone-solid, var(--panel-coffee));
   color: var(--panel-surface);
   font-weight: 700;
 }
@@ -444,7 +444,7 @@ html.is-panel-modal-open body {
 .ui-skeleton {
   overflow: hidden;
   border-radius: 8px;
-  background: linear-gradient(90deg, rgba(90, 47, 29, 0.06), rgba(255, 250, 243, 0.82), rgba(90, 47, 29, 0.06));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--admin-tone-ink, rgb(90, 47, 29)) 6%, transparent), color-mix(in srgb, var(--admin-tone-surface, rgb(255, 250, 243)) 82%, transparent), color-mix(in srgb, var(--admin-tone-ink, rgb(90, 47, 29)) 6%, transparent));
   background-size: 220% 100%;
   animation: panel-skeleton 1.25s ease-in-out infinite;
 }

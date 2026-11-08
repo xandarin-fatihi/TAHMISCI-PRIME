@@ -10,19 +10,20 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/app-icons/yonetici/favicon-32.png">
   <link rel="icon" type="image/png" sizes="48x48" href="/assets/app-icons/yonetici/favicon-48.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/app-icons/yonetici/apple-touch-icon-180.png">
-  <link rel="stylesheet" href="styles/admin.css?v=20260831-panel-access">
-  <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20260801-phase2">
-  <link rel="stylesheet" href="styles/admin-compact.css?v=20260809-prephase6-shift-layout">
-  <link rel="stylesheet" href="styles/admin-components.css?v=20260827-stock-workspace">
-  <link rel="stylesheet" href="styles/notifications.css?v=20260920-notification-center-v1">
-  <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260816-account-notifications">
+  <link rel="stylesheet" href="styles/admin.css?v=20261108-ready-shuffle-v2">
+  <link rel="stylesheet" href="/shared/styles/panel-foundation.css?v=20261108-admin-palettes">
+  <link rel="stylesheet" href="styles/admin-compact.css?v=20261108-admin-palettes">
+  <link rel="stylesheet" href="styles/admin-components.css?v=20261108-preview-widths">
+  <link rel="stylesheet" href="styles/notifications.css?v=20261108-admin-palettes">
+  <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20261108-admin-palettes">
+  <link rel="stylesheet" href="styles/admin-themes.css?v=20261108-admin-layout">
   <meta name="tahmisci-lazy-style" content="/shared/styles/account-security.css">
   <meta name="tahmisci-lazy-script" content="/shared/scripts/account-security.js">
   <script src="/shared/scripts/category-icons.js?v=20260714"></script>
   <script src="/shared/scripts/save-coordinator.js?v=20260801-phase1-fix1"></script>
-  <script src="/shared/scripts/menu-design-schema.js?v=20260802-prephase4-design-chain"></script>
-  <script src="scripts/app.js?v=20260920-notification-center-v1" defer></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260920-notification-center-v1" defer></script>
+  <script src="/shared/scripts/menu-design-schema.js?v=20261108-emerald-throne"></script>
+  <script src="scripts/app.js?v=20261108-theme-restore" defer></script>
+  <script src="/shared/scripts/pwa-client.js?v=20261108-install-once" defer></script>
 </head>
 <body>
   <section class="login-screen" id="loginScreen">
@@ -42,7 +43,7 @@
   <main class="admin-shell" id="panelShell" hidden>
     <aside class="sidebar" id="sidebarPanel">
       <button class="brand-block sidebar-logo-toggle" id="sidebarToggle" type="button" aria-label="Kenar çubuğunu kapat" title="Kenar çubuğunu kapat" aria-expanded="true" aria-controls="sidebarPanel">
-        <img class="admin-brand-logo" src="/assets/brand/logo-primary.png" alt="Tahmisçi Coffee & Roastery">
+        <img class="admin-brand-logo" src="/assets/app-icons/menu/icon-192.png" alt="Tahmisçi Coffee & Roastery">
         <span class="brand-copy"><span class="eyebrow">Tahmisçi</span><span class="brand-title">Yönetici Paneli</span></span>
       </button>
       <div class="sidebar-scroll-region" tabindex="0" aria-label="Panel navigasyonu ve hızlı listeler">
@@ -71,35 +72,20 @@
         <a href="#bulkPriceCard" data-panel-section="bulkPrice"><svg aria-hidden="true"><use href="#panel-icon-price"/></svg><span class="panel-nav-label">Toplu Fiyat Güncelleme</span></a>
         <a href="#dataImportCenter" data-panel-section="dataCenter"><svg aria-hidden="true"><use href="#panel-icon-import"/></svg><span class="panel-nav-label">Excel Veri Merkezi</span></a>
         <a href="#recipeEditorCard" data-panel-section="recipe"><svg aria-hidden="true"><use href="#panel-icon-recipe"/></svg><span class="panel-nav-label">Reçete Düzenleme</span></a>
-        <a href="#siteEditorCard" data-panel-section="site"><svg aria-hidden="true"><use href="#panel-icon-site"/></svg><span class="panel-nav-label">Site</span></a>
         <a href="#staffAccessCard" data-panel-section="staffAccess"><svg aria-hidden="true"><use href="#panel-icon-staff"/></svg><span class="panel-nav-label">Personel</span></a>
-        <a href="#mudavimCard" data-panel-section="mudavim"><svg aria-hidden="true"><use href="#panel-icon-mudavim"/></svg><span class="panel-nav-label">Müdavim</span></a>
+        <a href="#mudavimCard" data-panel-section="mudavim" hidden><svg aria-hidden="true"><use href="#panel-icon-mudavim"/></svg><span class="panel-nav-label">Müdavim</span></a>
         <a href="#feedbackCard" data-panel-section="feedback"><svg aria-hidden="true"><use href="#panel-icon-feedback"/></svg><span class="panel-nav-label">Dilek & Şikayet</span></a>
-        <a href="#panelSettingsCard" data-panel-section="settings"><svg aria-hidden="true"><use href="#panel-icon-settings"/></svg><span class="panel-nav-label">Ayarlar</span></a>
       </nav>
       <div class="mini-stats" id="miniStats" hidden></div>
-      <div class="side-section">
-        <div class="section-title">
-          <h2>Kategoriler</h2>
-          <button id="addCategoryButton" type="button">+ Ekle</button>
-        </div>
-        <div class="category-list" id="categoryList"></div>
-      </div>
-      <div class="side-section">
-        <div class="section-title">
-          <h2>Ürünler</h2>
-          <button id="addProductButton" type="button">+ Ürün</button>
-        </div>
-        <div class="product-list" id="productList"></div>
-      </div>
       </div>
       <div class="admin-profile-wrap">
-        <button class="sidebar-profile profile-menu-trigger" id="adminProfileButton" type="button" aria-label="Yönetici profil menüsü" aria-haspopup="menu" aria-expanded="false">
-          <span aria-hidden="true">Y</span>
-          <div><strong>Yönetici</strong><small>Tahmisçi paneli</small></div>
+        <button class="sidebar-profile profile-menu-trigger" id="adminProfileButton" type="button" aria-label="Yönetici profil menüsü" aria-haspopup="menu" aria-controls="adminProfileMenu" aria-expanded="false">
+          <span data-admin-profile-avatar aria-hidden="true">Y</span>
+          <div><strong data-admin-profile-name>Yönetici</strong><small>Tahmisçi paneli</small></div>
         </button>
         <div class="profile-menu admin-profile-menu" id="adminProfileMenu" role="menu" hidden>
-          <div class="profile-popover-head"><span aria-hidden="true">Y</span><div><strong>Yönetici</strong><small>Yönetici hesabı</small></div></div>
+          <div class="profile-popover-head"><span data-admin-profile-avatar aria-hidden="true">Y</span><div><strong data-admin-profile-name>Yönetici</strong><small>Yönetici hesabı</small></div></div>
+          <button type="button" role="menuitem" data-admin-profile-action="profile">Profil Düzenle</button>
           <button type="button" role="menuitem" data-admin-profile-action="settings">Ayarlar</button>
           <button type="button" role="menuitem" data-admin-profile-action="logout" data-profile-action="logout">Çıkış yap</button>
         </div>
@@ -370,17 +356,67 @@
 
       <section class="content-grid" id="contentGrid">
         <div class="editor-column">
+          <section class="section-panel" id="adminProfileCard" data-section-panel="profile" hidden>
+            <form class="panel-card admin-profile-card" id="adminProfileForm">
+              <header class="admin-profile-hero">
+                <span class="admin-profile-avatar" data-admin-profile-avatar aria-hidden="true">Y</span>
+                <div><h2 data-admin-profile-name>Yönetici</h2><p>Panelde görünen adını ve profil fotoğrafını düzenle.</p></div>
+              </header>
+              <fieldset id="adminProfileFields" disabled>
+                <div class="form-grid two">
+                  <label><span>Görünen ad</span><input id="adminProfileName" type="text" maxlength="80" autocomplete="name" required></label>
+                  <label><span>Profil fotoğrafı</span><input id="adminProfilePhoto" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="adminProfilePhotoHint"><small id="adminProfilePhotoHint">JPG, PNG veya WebP · En fazla 5 MB</small></label>
+                </div>
+                <label class="toggle-row admin-profile-remove" id="adminProfileRemoveRow" hidden>
+                  <input id="adminProfileRemovePhoto" type="checkbox"><span>Mevcut fotoğrafı kaldır</span>
+                </label>
+                <div class="admin-profile-actions">
+                  <button type="submit" class="ui-button ui-button--primary">Profili Kaydet</button>
+                </div>
+              </fieldset>
+              <p class="admin-profile-message" id="adminProfileMessage" role="status"></p>
+            </form>
+          </section>
           <section class="section-panel settings-dashboard" id="panelSettingsCard" data-section-panel="settings">
             <div class="panel-card settings-preferences-card">
-              <div class="card-head">
-                <div>
-                  <p class="eyebrow">Yalnızca Bu Cihaz</p>
-                  <h3>Ayarlar</h3>
-                </div>
-              </div>
               <div class="settings-accordion-stack">
                 <details class="settings-accordion" open>
-                  <summary><span>1</span><strong>Bu Cihazdaki Panel Davranışı</strong><i aria-hidden="true"></i></summary>
+                  <summary><span>1</span><strong>Görünüm</strong><i aria-hidden="true"></i></summary>
+                  <div class="settings-accordion-body admin-appearance">
+                    <h4>Yönetici paneli temaları</h4>
+                    <p>Tema bu tarayıcıdaki yönetici paneline uygulanır.</p>
+                    <fieldset class="admin-appearance-options" id="adminAppearanceOptions">
+                      <legend>Hazır panel temaları</legend>
+                      <label class="admin-appearance-option" data-appearance-choice="classic">
+                        <input type="radio" name="adminAppearance" value="classic" checked>
+                        <span class="admin-appearance-swatch" aria-hidden="true"><i></i><i></i><i></i></span>
+                        <span><strong>Tahmisçi Klasik</strong><small>Kahve ve bej</small></span>
+                      </label>
+                      <label class="admin-appearance-option" data-appearance-choice="witch-espresso">
+                        <input type="radio" name="adminAppearance" value="witch-espresso">
+                        <span class="admin-appearance-swatch" aria-hidden="true"><i></i><i></i><i></i></span>
+                        <span><strong>Cadının Espressosu</strong><small>Mürdüm, lavanta ve altın</small></span>
+                      </label>
+                      <label class="admin-appearance-option" data-appearance-choice="snow-village">
+                        <input type="radio" name="adminAppearance" value="snow-village">
+                        <span class="admin-appearance-swatch" aria-hidden="true"><i></i><i></i><i></i></span>
+                        <span><strong>Karlı Noel Köyü</strong><small>Buz mavisi ve gece laciverti</small></span>
+                      </label>
+                      <label class="admin-appearance-option" data-appearance-choice="gingerbread">
+                        <input type="radio" name="adminAppearance" value="gingerbread">
+                        <span class="admin-appearance-swatch" aria-hidden="true"><i></i><i></i><i></i></span>
+                        <span><strong>Tarçınlı Noel</strong><small>Kurabiye, tarçın ve karamelli krem</small></span>
+                      </label>
+                    </fieldset>
+                    <div class="admin-appearance-actions">
+                      <output id="adminAppearanceStatus" aria-live="polite"></output>
+                      <button class="ui-button ui-button--primary" id="applyAdminAppearance" type="button" disabled>Temayı Uygula</button>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="settings-accordion">
+                  <summary><span>2</span><strong>Bu Cihazdaki Panel Davranışı</strong><i aria-hidden="true"></i></summary>
                   <div class="settings-accordion-body settings-list-form">
                     <label class="settings-toggle-row"><span><strong>Sayfa yenilenince son sekmede kal</strong><small>Yalnızca bu tarayıcıda son bulunduğunuz sekme açık kalır.</small></span><input id="settingsLastSectionToggle" type="checkbox"></label>
                     <label class="settings-toggle-row"><span><strong>Kenar çubuğu varsayılan açık</strong><small>Yalnızca bu cihazda panel açılış tercihini saklar.</small></span><input id="settingsSidebarDefaultOpen" type="checkbox"></label>
@@ -395,8 +431,8 @@
                   </div>
                 </details>
 
-                <details class="settings-accordion">
-                  <summary><span>2</span><strong>Site Bilgileri</strong><i aria-hidden="true"></i></summary>
+                <details class="settings-accordion" hidden>
+                  <summary><span>3</span><strong>Site Bilgileri</strong><i aria-hidden="true"></i></summary>
                   <div class="settings-accordion-body">
                     <div class="settings-grid two">
                       <label><span>Kafe adı</span><input id="siteCafeName" type="text"></label>
@@ -711,45 +747,100 @@
                 <span class="menu-accordion-chevron" aria-hidden="true"></span>
               </summary>
               <div class="menu-accordion-body">
-                <section class="menu-control-group">
-                  <h4>Tema &amp; renkler</h4>
-                  <div class="form-grid menu-color-grid">
-                    <label><span>Ana arka plan</span><input id="bgColor" type="color"></label>
-                    <label><span>Karanlık tema</span><input id="darkBgColor" type="color"></label>
-                    <label><span>Vurgu rengi</span><input id="accentColor" type="color"></label>
-                    <label><span>Yazı rengi</span><input id="textColor" type="color"></label>
-                    <label><span>Buton yazı rengi</span><input id="buttonTextColor" type="color"></label>
-                    <label><span>Varsayılan kart rengi</span><input id="productCardColor" type="color"></label>
+                <fieldset class="menu-theme-mode">
+                  <legend>Tema türü</legend>
+                  <label><input type="radio" name="menuThemeMode" value="ready"><span><strong>Hazır Temalar</strong><small>Noel, Cadılar Bayramı ve özel günler</small></span></label>
+                  <label><input type="radio" name="menuThemeMode" value="custom" checked><span><strong>Özelleştirilebilir Temalar</strong><small>Aydınlık ve karanlık görünümleri düzenle</small></span></label>
+                </fieldset>
+                <div class="menu-theme-history">
+                  <button class="ui-button ui-button--secondary ui-button--sm" id="menuRestorePreviousTheme" type="button" disabled>Önceki temaya dön</button>
+                  <small class="menu-theme-note" id="menuThemeHistoryStatus" role="status">Son tema seçimi bu tarayıcıda saklanır.</small>
+                </div>
+                <section class="menu-control-group" id="menuReadyThemePanel" aria-labelledby="menuReadyThemeHeading" hidden>
+                  <h4 id="menuReadyThemeHeading">Hazır Temalar</h4>
+                  <div class="menu-theme-columns">
+                    <label class="menu-theme-preset"><span>Açılış düzeni</span><select id="menuReadyThemePlayback"><option value="fixed">Sabit</option><option value="shuffle">Karışık</option></select></label>
+                    <label class="menu-theme-preset" id="menuReadyFixedTheme"><span>Sabit tema</span><select id="menuReadyTheme"><option value="">Tema seçin</option></select></label>
                   </div>
+                  <div id="menuReadyShufflePanel" hidden>
+                    <h4>Karışık listede gösterilecek temalar</h4>
+                    <div class="menu-theme-columns" id="menuReadyThemePool"></div>
+                    <small class="menu-theme-note">İşaretli temalar sayfa yenilendikçe karışık sırayla açılır. Liste boşsa sabit tema kullanılır.</small>
+                  </div>
+                  <small class="menu-theme-note">Hazır tema kullanılırken menüde görünüm düğmesi gizlenir.</small>
                 </section>
-
-                <section class="menu-control-group">
-                  <h4>Arka plan</h4>
-                  <div class="form-grid menu-background-grid">
-                    <label>
-                      <span>Arka plan tipi</span>
-                      <select id="menuBgType">
+                <div id="menuCustomThemePanel">
+                <div class="menu-theme-columns">
+                  <section class="menu-control-group menu-theme-column" aria-labelledby="menuThemePresetLightHeading">
+                    <h4 id="menuThemePresetLightHeading">Aydınlık tema</h4>
+                    <label class="menu-theme-preset"><span>İmza ve renk paleti</span><select id="menuThemePresetLight"><option value="">Tema seçin</option></select><small id="menuThemePresetLightState" hidden></small></label>
+                    <div class="form-grid menu-color-grid">
+                      <label><span>Ana arka plan rengi</span><input id="bgColor" type="color"></label>
+                      <label><span>Vurgu rengi</span><input id="accentColor" type="color"></label>
+                      <label><span>Yazı rengi</span><input id="textColor" type="color"></label>
+                      <label><span>Buton zemini</span><input id="buttonColor" type="color"></label>
+                      <label><span>Buton yazısı</span><input id="buttonTextColor" type="color"></label>
+                      <label><span>Tüm alt butonları boya</span><input id="useThemeButtons" type="checkbox"></label>
+                    </div>
+                    <div class="form-grid menu-background-grid">
+                      <label><span>Arka plan tipi</span><select id="menuBgType">
                         <option value="solid">Düz renk</option>
-                        <option value="gradient">Gradient</option>
+                        <option value="gradient">Renk geçişi</option>
                         <option value="image">Görsel</option>
-                      </select>
-                    </label>
-                    <label><span>Gradient başlangıç</span><input id="menuGradientStart" type="color"></label>
-                    <label><span>Gradient bitiş</span><input id="menuGradientEnd" type="color"></label>
-                    <label><span>Gradient açı</span><input id="menuGradientAngle" type="number" min="0" max="360" step="1"></label>
-                  </div>
-                  <div class="form-grid menu-media-grid">
-                    <label><span>Görsel linki</span><input id="menuBgUrl" type="url" placeholder="https://..."></label>
-                    <label>
-                      <span>Overlay opaklığı</span>
-                      <span class="menu-range-control"><input id="menuOverlay" type="range" min="0" max="0.85" step="0.05"><output id="menuOverlayValue">0%</output></span>
-                    </label>
-                  </div>
-                  <div class="asset-row menu-asset-row">
-                    <label class="file-button"><span>Bilgisayardan arka plan yükle</span><input id="menuBgFile" type="file" accept="image/*"></label>
-                    <button class="line-action" id="clearMenuBg" type="button">Arka plan görselini sil</button>
+                      </select></label>
+                      <label><span>Geçiş açısı</span><input id="menuGradientAngle" type="number" min="0" max="360" step="1"></label>
+                      <label><span>Geçiş başlangıcı</span><input id="menuGradientStart" type="color"></label>
+                      <label><span>Geçiş bitişi</span><input id="menuGradientEnd" type="color"></label>
+                    </div>
+                    <div class="form-grid menu-media-grid">
+                      <label><span>Görsel adresi</span><input id="menuBgUrl" type="text" placeholder="https://…"></label>
+                      <label><span>Görsel karartma</span><span class="menu-range-control"><input id="menuOverlay" type="range" min="0" max="0.85" step="0.05"><output id="menuOverlayValue">15%</output></span></label>
+                    </div>
+                    <div class="asset-row menu-asset-row">
+                      <label class="file-button"><span>Arka plan görseli yükle</span><input id="menuBgFile" type="file" accept="image/*"></label>
+                      <button class="line-action" id="clearMenuBg" type="button">Arka plan görselini sil</button>
+                    </div>
+                  </section>
+                  <section class="menu-control-group menu-theme-column" aria-labelledby="menuThemePresetDarkHeading">
+                    <h4 id="menuThemePresetDarkHeading">Karanlık tema</h4>
+                    <label class="menu-theme-preset"><span>İmza ve renk paleti</span><select id="menuThemePresetDark"><option value="">Tema seçin</option></select><small id="menuThemePresetDarkState" hidden></small></label>
+                    <div class="form-grid menu-color-grid">
+                      <label><span>Ana arka plan rengi</span><input id="darkBgColor" type="color"></label>
+                      <label><span>Vurgu rengi</span><input id="darkAccentColor" type="color"></label>
+                      <label><span>Yazı rengi</span><input id="darkTextColor" type="color"></label>
+                      <label><span>Buton zemini</span><input id="darkButtonColor" type="color"></label>
+                      <label><span>Buton yazısı</span><input id="darkButtonTextColor" type="color"></label>
+                      <label><span>Tüm alt butonları boya</span><input id="darkUseThemeButtons" type="checkbox"></label>
+                    </div>
+                    <div class="form-grid menu-background-grid">
+                      <label><span>Arka plan tipi</span><select id="darkMenuBgType">
+                        <option value="solid">Düz renk</option>
+                        <option value="gradient">Renk geçişi</option>
+                        <option value="image">Görsel</option>
+                      </select></label>
+                      <label><span>Geçiş açısı</span><input id="darkMenuGradientAngle" type="number" min="0" max="360" step="1"></label>
+                      <label><span>Geçiş başlangıcı</span><input id="darkMenuGradientStart" type="color"></label>
+                      <label><span>Geçiş bitişi</span><input id="darkMenuGradientEnd" type="color"></label>
+                    </div>
+                    <div class="form-grid menu-media-grid">
+                      <label><span>Görsel adresi</span><input id="darkMenuBgUrl" type="text" placeholder="https://…"></label>
+                      <label><span>Görsel karartma</span><span class="menu-range-control"><input id="darkMenuOverlay" type="range" min="0" max="0.85" step="0.05"><output id="darkMenuOverlayValue">15%</output></span></label>
+                    </div>
+                    <div class="asset-row menu-asset-row">
+                      <label class="file-button"><span>Arka plan görseli yükle</span><input id="darkMenuBgFile" type="file" accept="image/*"></label>
+                      <button class="line-action" id="clearDarkMenuBg" type="button">Arka plan görselini sil</button>
+                    </div>
+                  </section>
+                </div>
+                <section class="menu-control-group">
+                  <h4>Ortak kart ve sosyal ikon ayarları</h4>
+                  <div class="form-grid menu-color-grid">
+                    <label><span>Varsayılan kart rengi</span><input id="productCardColor" type="color"></label>
+                    <label><span>Sosyal ikon rengi</span><input id="socialIconColor" type="color"></label>
+                    <label><span>Sosyal ikon boyutu</span><span class="menu-range-control"><input id="socialIconSize" type="range" min="18" max="64"><output id="socialIconSizeValue"></output></span></label>
                   </div>
                 </section>
+                </div>
               </div>
             </details>
 
@@ -820,12 +911,14 @@
                   <section class="banner-upload-card">
                     <div>
                       <strong>Video yükleme</strong>
-                      <span>MP4, WebM, MOV veya OGG dosyaları.</span>
+                      <span>MP4 veya WebM dosyaları.</span>
                     </div>
                     <label class="file-button">
                       <span>Cihazdan video yükle</span>
-                      <input id="bannerVideoFile" type="file" accept="video/mp4,video/webm,video/ogg,video/quicktime,video/x-m4v,.mp4,.webm,.ogv,.ogg,.mov,.m4v" multiple>
+                      <input aria-describedby="bannerVideoLimit" id="bannerVideoFile" type="file" accept="video/mp4,video/webm,.mp4,.webm" multiple>
+                      <small id="bannerVideoLimit">MP4 veya WebM · dosya başına en fazla 50 MB</small>
                     </label>
+                    <label><span>Video adresi</span><input id="bannerVideoUrl" type="text" placeholder="/assets/videos/..."></label>
                     <button class="line-action" id="clearBannerVideo" type="button">Tüm videoları sil</button>
                     <div class="banner-media-list" id="bannerVideoList"></div>
                   </section>
@@ -1006,6 +1099,18 @@
           </section>
 
           <section class="section-panel category-editor-panel" id="categoryEditorCard" data-section-panel="category">
+            <div class="panel-card category-selection-card">
+              <div class="category-selection-head">
+                <div><h2>Kategoriler</h2><p>Düzenlemek istediğin kategoriyi seç.</p></div>
+                <div class="category-selection-actions">
+                  <div class="category-search-field">
+                    <input id="categorySearch" type="search" autocomplete="off" placeholder="Kategori ara" aria-label="Kategori ara" aria-controls="categoryList">
+                  </div>
+                  <button class="ui-button ui-button--primary" id="addCategoryButton" type="button">+ Kategori Ekle</button>
+                </div>
+              </div>
+              <div class="category-list" id="categoryList" aria-label="Düzenlenecek kategoriyi seç"></div>
+            </div>
             <details class="panel-card category-accordion" open>
               <summary class="category-accordion-head">
                 <span class="category-step">1</span>
@@ -1070,8 +1175,15 @@
                     <input id="categoryGradientAngle" type="number" min="0" max="360" step="1">
                   </label>
                   <label class="category-field-wide">
-                    <span>Görsel linki</span>
-                    <input id="categoryImageUrl" type="url" placeholder="https://...">
+                    <span>Kategori görseli adresi</span>
+                    <input id="categoryImageUrl" type="text" placeholder="https://… veya /media/…" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label>
+                    <span>Görsel yerleşimi</span>
+                    <select id="categoryImageLayout">
+                      <option value="right">Kartın sağında</option>
+                      <option value="cover">Tüm karta yay</option>
+                    </select>
                   </label>
                   <label class="category-overlay-field">
                     <span>Overlay opaklığı</span>
@@ -1081,10 +1193,13 @@
                 <div class="category-media-row">
                   <div class="image-preview" id="categoryImagePreview"></div>
                   <label class="file-button">
-                    <span>Kategori görseli yükle</span>
+                    <span>Bilgisayardan görsel seç</span>
                     <input id="categoryImageFile" type="file" accept="image/*">
                   </label>
                   <button class="line-action" id="clearCategoryImage" type="button">Kategori görselini sil</button>
+                  <button class="line-action" id="applyCategoryArtwork" type="button" disabled>Hazır kategori görseline dön</button>
+                  <button class="line-action" id="applyAllCategoryArtwork" type="button" disabled>Hazır görselleri toplu ekle</button>
+                  <button class="line-action" id="clearAllCategoryArtwork" type="button" disabled>Hazır görselleri kaldır</button>
                 </div>
               </div>
             </details>
@@ -1300,6 +1415,12 @@
                     </label>
                     <button class="line-action" id="clearProductImage" type="button">Ürün görselini sil</button>
                   </div>
+                  <label><span>Görsel oranı</span><select id="productImageAspect">
+                    <option value="landscape">16:9</option><option value="square">1:1</option><option value="source">Kaynak oranı</option>
+                  </select></label>
+                  <label><span>Görsel yerleşimi</span><select id="productImageFit">
+                    <option value="contain">Sığdır</option><option value="cover">Kırp</option>
+                  </select></label>
                   <div class="image-preview" id="productImagePreview"></div>
 
                   <div class="detail-grid product-detail-grid">
@@ -1931,7 +2052,7 @@
                 <div class="feedback-list" id="feedbackList"></div>
               </div>
             </div>
-            <aside class="panel-card feedback-mudavim-card" id="feedbackMudavimSummary" aria-label="Müdavim yorumları"></aside>
+            <aside class="panel-card feedback-mudavim-card" id="feedbackMudavimSummary" aria-label="Müdavim yorumları" hidden></aside>
           </section>
 
           <section class="panel-card section-panel" id="jsonCard" data-section-panel="json">
@@ -1962,8 +2083,8 @@
         <path d="M7.4 10s1.75-2.65 4.6-2.65S16.6 10 16.6 10s-1.75 2.65-4.6 2.65S7.4 10 7.4 10Z"></path>
         <circle cx="12" cy="10" r="1.35"></circle>
       </svg>
-      <span class="global-preview-trigger__dot" data-global-preview-status-dot data-state="current" aria-hidden="true"></span>
-      <span class="global-preview-trigger__status" data-global-preview-status-text>Canlı önizleme durumu: Güncel</span>
+      <span class="global-preview-trigger__dot" data-global-preview-status-dot data-state="idle" aria-hidden="true"></span>
+      <span class="global-preview-trigger__status" data-global-preview-status-text>Canlı önizleme durumu: Kapalı</span>
     </button>
 
     <aside
@@ -1980,7 +2101,7 @@
           <h2 data-global-preview-heading tabindex="-1">Önizleme bulunmuyor</h2>
         </div>
         <div class="global-preview-drawer__actions">
-          <span class="live-preview-panel__status" data-global-preview-status-badge data-state="current">Güncel</span>
+          <span class="live-preview-panel__status" data-global-preview-status-badge data-state="idle" role="status">Kapalı</span>
           <button
             class="global-preview-drawer__icon-button"
             type="button"

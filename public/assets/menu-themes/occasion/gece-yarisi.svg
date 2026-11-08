@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 180" fill="none">
+  <defs><radialGradient id="night"><stop stop-color="#354365"/><stop offset="1" stop-color="#161e34"/></radialGradient></defs>
+  <path d="M0 0h240v180H0z" fill="url(#night)"/>
+  <path d="M12 12h216v156H12z" stroke="#dbb36c" stroke-opacity=".5"/>
+  <circle cx="120" cy="84" r="52" stroke="#e6bf77" stroke-width="1.5"/>
+  <circle cx="120" cy="84" r="45" stroke="#e6bf77" stroke-opacity=".4"/>
+  <path d="M120 39v8m0 75v8M75 84h8m75 0h8m-78-33 5 5m54 54 5 5m0-64-5 5m-54 54-5 5" stroke="#f2d59c" stroke-width="1.5"/>
+  <path d="M120 84V48m0 36 5-26" stroke="#fff0c4" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="120" cy="84" r="3.5" fill="#f5d9a4"/>
+  <path d="M46 39v18m-9-9h18m145-3v18m-9-9h18M52 110v13m-6.5-6.5h13m136-15v14m-7-7h14M60 32l5-4m122 88 5 7M35 89l7-3m164-3 6 4" stroke="#dfb875" stroke-linecap="round"/>
+  <text x="120" y="155" fill="#ffe7b1" text-anchor="middle" font-family="Georgia, serif" font-size="13" letter-spacing="4">00:00</text>
+</svg>

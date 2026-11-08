@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <defs>
+    <linearGradient id="mist" x2="1" y2="1">
+      <stop stop-color="#eafcff" stop-opacity=".83"/>
+      <stop offset=".28" stop-color="#a1e2ff" stop-opacity=".32"/>
+      <stop offset=".76" stop-color="#a1e2ff" stop-opacity="0"/>
+    </linearGradient>
+    <g id="frond">
+      <path d="M2 3C38 26 63 48 85 77s42 52 80 67
+        M19 15 17 38 9 53m8-20 13 12 4 13m-17-24-8 3
+        M32 24 48 13 69 14m-23 0 2-10m-6 12 12 11 17 2m-14-14 11-8
+        M44 35 40 62 25 79m15-20 15 11 8 17m-23-23-11-1m7 6-2 14
+        M60 51 79 39 106 44m-29-4 4-17 10-8m-12 16 17 1m-15 10 14 15 17 4m-19-11 12 1
+        M73 62 67 89 52 111m15-24 13 10 7 21m-19-20-11-3m4 6 1 15
+        M88 80 107 71 133 80m-25-8 5-15 18-5m-15 4 0-9m2 28 6 16 18 6
+        M102 97 99 119 85 140m13-17 14 8 4 15m-15-22-10-4
+        M119 115 136 110 152 120m-16-10 7-13m-12 14 0 13m9 7 15 0 15 5
+        M124 119 124 140 116 153m9-13 13 10m12-12 6 14 11 5"/>
+      <path d="M3 3 11 25 7 36M4 3 22 5 35 10M6 7 8 17m13-12 8-4m-8 15 4 9
+        M47 37 54 40m9 11 7 1m6 15 8-2m19 34 8-1m18 26 7-1" opacity=".65"/>
+    </g>
+  </defs>
+  <path d="M0 0h240v240H0z" fill="url(#mist)"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#72c0eb" stroke-opacity=".62" stroke-width="3.5">
+      <use href="#frond" transform="translate(0 1) scale(1.05)"/>
+      <use href="#frond" transform="translate(1 55) rotate(25) scale(.56)"/>
+      <use href="#frond" transform="translate(63 1) rotate(-25) scale(.64)"/>
+    </g>
+    <g stroke="#f0fcff" stroke-width="1.35">
+      <use href="#frond" transform="translate(0 1) scale(1.05)"/>
+      <use href="#frond" transform="translate(1 55) rotate(25) scale(.56)"/>
+      <use href="#frond" transform="translate(63 1) rotate(-25) scale(.64)"/>
+    </g>
+    <path d="m6 79 12 17-6 19 8 14m-9-18-8-3m12-14 13 1m45-87 19 8 16-6 19 6m-23-5 1-7m12 7 7 9"
+      stroke="#d8f6ff" stroke-opacity=".85"/>
+  </g>
+  <g fill="#effcff">
+    <circle cx="11" cy="29" r="2"/><circle cx="36" cy="31" r="1.5"/><circle cx="52" cy="17" r="1.8"/>
+    <circle cx="65" cy="67" r="1.2"/><circle cx="44" cy="81" r="1.6"/><circle cx="9" cy="122" r="1.8"/>
+    <circle cx="88" cy="33" r="1.8"/><circle cx="128" cy="21" r="1.2"/><circle cx="79" cy="101" r="1.5"/>
+    <circle cx="119" cy="117" r="2"/><circle cx="97" cy="143" r="1.2"/><circle cx="149" cy="61" r="1.5"/>
+    <circle cx="28" cy="139" r="1.5"/><circle cx="61" cy="135" r="1.8"/><circle cx="150" cy="143" r="1.2"/>
+  </g>
+</svg>

@@ -63,3 +63,38 @@ test("menü ve public bootstrap revizyon tabanlı ETag ile eski cevabı doğrula
   assert.notEqual(changed.headers.get("etag"), previousEtag);
   assert.ok(Number(changed.headers.get("x-publish-revision")) > 0);
 });
+
+test("menü yayını hazır seçimi ve özelleştirilen renkleri ayrı saklar", async () => {
+  const login = await fetch(`${baseUrl}/api/admin/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl },
+    body: JSON.stringify({ password: "Panel123456" })
+  });
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get("set-cookie").split(";")[0];
+  const before = await (await fetch(`${baseUrl}/api/menu`)).json();
+  const menuState = before.menuState;
+  Object.assign(menuState.settings, {
+    themeMode: "ready",
+    readyTheme: "reindeer-woods",
+    readyThemePlayback: "shuffle",
+    readyThemePool: ["reindeer-woods", "santa-post", "witch-espresso"],
+    seasonalConcept: "matcha-cilek",
+    bgColor: "#dae2cb"
+  });
+  const publish = async () => fetch(`${baseUrl}/api/menu`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Origin: baseUrl, Cookie: cookie },
+    body: JSON.stringify({ menuState })
+  });
+  for (const [mode, playback] of [["ready", "shuffle"], ["ready", "fixed"], ["custom", "fixed"]]) {
+    menuState.settings.themeMode = mode;
+    menuState.settings.readyThemePlayback = playback;
+    assert.equal((await publish()).status, 200);
+    const response = await (await fetch(`${baseUrl}/api/menu`)).json();
+    const settings = response.menuState.settings;
+    assert.deepEqual([settings.themeMode, settings.readyTheme, settings.readyThemePlayback], [mode, "reindeer-woods", playback]);
+    assert.deepEqual(settings.readyThemePool, ["reindeer-woods", "santa-post", "witch-espresso"]);
+    assert.deepEqual([settings.seasonalConcept, settings.bgColor], ["matcha-cilek", "#dae2cb"]);
+  }
+});

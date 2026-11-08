@@ -10,16 +10,19 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/app-icons/menu/favicon-32.png">
   <link rel="icon" type="image/png" sizes="48x48" href="/assets/app-icons/menu/favicon-48.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/app-icons/menu/apple-touch-icon-180.png">
-  <link rel="stylesheet" href="/qr-menu/styles/qr-menu.css?v=20260801-phase3">
+  <link rel="stylesheet" href="/qr-menu/styles/qr-menu.css?v=20261108-title-wrap">
   <link rel="stylesheet" href="/shared/styles/pwa-ui.css?v=20260816-account-notifications">
-  <script src="/shared/scripts/menu-design-schema.js?v=20260802-prephase4-schema" defer></script>
-  <script src="/shared/scripts/live-preview-receiver.js?v=20260801-phase3" defer></script>
-  <script src="/qr-menu/scripts/app.js?v=20260802-prephase4-schema" defer></script>
-  <script src="/shared/scripts/pwa-client.js?v=20260831-panel-access" defer></script>
+  <script src="/shared/scripts/menu-design-schema.js?v=20261108-emerald-throne" defer></script>
+  <script src="/shared/scripts/live-preview-receiver.js?v=20261108-preview-ack" defer></script>
+  <script src="/qr-menu/scripts/app.js?v=20261108-dialog-fit" defer></script>
+  <script src="/shared/scripts/pwa-client.js?v=20261108-install-once" defer></script>
 </head>
 <body class="alternative-home dark-mode">
   <div class="main-wrapper" id="home-page">
     <div class="container">
+      <div class="welcome-artwork" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
       <button class="about-link" type="button" data-action="about">Hakkımızda</button>
       <button class="theme-toggle" type="button" data-action="theme" aria-label="Tema değiştir">
         <svg class="theme-icon" id="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -83,23 +86,116 @@
       <nav class="category-tabs" id="categoryTabs" aria-label="Kategoriler"></nav>
     </header>
 
-    <section class="showcase-stage" id="showcaseStage" aria-label="Öne çıkan ürünler" hidden></section>
-    <main class="category-list" id="categoryList"></main>
-    <div class="empty-state" id="emptyState" hidden>Henüz veri aktarılmadı.</div>
+    <div class="menu-content" id="menuContent">
+      <section class="showcase-stage" id="showcaseStage" aria-label="Öne çıkan ürünler" hidden></section>
+      <main class="category-list" id="categoryList"></main>
+      <div class="empty-state" id="emptyState" hidden>Henüz veri aktarılmadı.</div>
+    </div>
 
     <div class="bottom-menu-bar" aria-label="Hızlı menü">
-      <button class="dock-button" id="popularDock" type="button" data-action="popular">Popüler Ürünler</button>
+      <button class="dock-button" id="popularDock" type="button" data-action="popular">
+        <svg class="dock-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="m15.4 2 1.9 5.5 5.8.2-4.6 3.5 1.6 5.6-4.7-3.3-4.8 3.3 1.7-5.6-4.6-3.5 5.8-.2Z"/>
+          <path d="m9.3 13.8-5.9 5.9m8.2-2.2-4.5 4.5m.4-10.2-5.8 5.8"/>
+        </svg>
+        <span>Popüler Ürünler</span>
+      </button>
       <button class="dock-home" type="button" data-action="menu-top">MENÜ</button>
-      <button class="dock-button" id="suggestDock" type="button" data-action="suggest">Öneri</button>
+      <button class="dock-button" id="suggestDock" type="button" data-action="suggest">
+        <svg class="dock-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M9 17v-1c0-1.6-3-2.6-3-6a6 6 0 1 1 12 0c0 3.4-3 4.4-3 6v1Zm1 3h4m-3 2h2m-1-20v1M3 5l2 2m-4 4h2m16 0h2m-2-4 2-2"/>
+          <path d="m10.5 10.5 1.5 1.6 1.5-1.6M12 12.1V17"/>
+        </svg>
+        <span>Öneri</span>
+      </button>
       <div class="menu-update-line" id="menuUpdateLine" hidden></div>
     </div>
   </section>
 
+  <template id="categoryFrostEffect">
+    <div class="category-effect category-effect--frost" data-category-effect="frost" aria-hidden="true">
+      <span class="category-frost-corner"></span>
+      <span class="category-frost-corner"></span>
+      <span class="category-frost-corner"></span>
+      <span class="category-frost-corner"></span>
+    </div>
+  </template>
+  <template id="categorySteamEffect">
+    <div class="category-effect category-effect--steam" data-category-effect="steam" aria-hidden="true">
+      <span class="category-steam-wisp"></span>
+      <span class="category-steam-wisp"></span>
+      <span class="category-steam-wisp"></span>
+      <span class="category-steam-wisp"></span>
+      <span class="category-steam-wisp"></span>
+    </div>
+  </template>
+  <template id="categoryAccentEffect">
+    <div class="category-effect category-effect--accent" aria-hidden="true">
+      <svg class="category-effect-particle" viewBox="0 0 24 24" focusable="false"><use/></svg>
+      <svg class="category-effect-particle" viewBox="0 0 24 24" focusable="false"><use/></svg>
+      <svg class="category-effect-particle" viewBox="0 0 24 24" focusable="false"><use/></svg>
+      <svg class="category-effect-particle" viewBox="0 0 24 24" focusable="false"><use/></svg>
+      <svg class="category-effect-particle" viewBox="0 0 24 24" focusable="false"><use/></svg>
+    </div>
+  </template>
+  <svg class="category-effect-symbols" width="0" height="0" aria-hidden="true" focusable="false">
+    <symbol id="suggest-icon-drink" viewBox="0 0 24 24">
+      <path d="M5 9h13v5a5 5 0 0 1-5 5h-3a5 5 0 0 1-5-5V9Zm13 1h2a2 2 0 0 1 0 4h-2M4 21h15"/>
+    </symbol>
+    <symbol id="suggest-icon-dessert" viewBox="0 0 24 24">
+      <path d="M4 12 15 6l5 6v7H4v-7Zm0 0h16M4 15.5h16M15 6V3"/>
+    </symbol>
+    <symbol id="suggest-icon-cold" viewBox="0 0 24 24">
+      <path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M9 5l3 3 3-3M9 19l3-3 3 3"/>
+    </symbol>
+    <symbol id="suggest-icon-hot" viewBox="0 0 24 24">
+      <path d="M6 12h12v3a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5v-3Zm12 1h2a2 2 0 0 1 0 4h-2M8 9c-2-2 2-3 0-5m4 5c-2-2 2-3 0-5m4 5c-2-2 2-3 0-5"/>
+    </symbol>
+    <symbol id="category-effect-bean" viewBox="0 0 24 24">
+      <path d="M5 19c-3-3-2-8 1-12s8-5 12-2c4 3 3 8 0 12s-9 5-13 2Z" fill="#895438" stroke="#eab98b" stroke-width="1.2"/>
+      <path d="M6 19c0-4 5-4 6-8 1-3 2-5 5-6" fill="none" stroke="#f2c797" stroke-width="1.5" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="category-effect-sugar" viewBox="0 0 24 24">
+      <g fill="#fff9ec" stroke="#bba8a1" stroke-width=".65">
+        <circle cx="4.5" cy="7" r="1.6"/><circle cx="10" cy="4.5" r="1.2"/><circle cx="17" cy="6" r="1.4"/>
+        <circle cx="9" cy="11" r="2"/><circle cx="19" cy="13" r="1.8"/><circle cx="5" cy="17" r="1.2"/>
+        <circle cx="13.5" cy="17" r="1.35"/><circle cx="17.5" cy="21" r="1.25"/>
+      </g>
+    </symbol>
+    <symbol id="category-effect-bubbles" viewBox="0 0 24 24">
+      <g fill="#96e6ef" fill-opacity=".74" stroke="#398aa8" stroke-width="1.2">
+        <circle cx="7" cy="16" r="4"/><circle cx="16" cy="9" r="5.4"/><circle cx="4" cy="5" r="2"/>
+      </g>
+      <path d="M13 8c.4-1.2 1.1-1.8 2.4-2.1m-10 9.6 .6-.6" stroke="#edfeff" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="category-effect-candy" viewBox="0 0 24 24">
+      <path d="m4 3 6 3-4 4zm16 18-6-3 4-4z" fill="#df9dad" stroke="#903f60" stroke-width="1.1" stroke-linejoin="round"/>
+      <circle cx="12" cy="12" r="6.2" fill="#c4678a" stroke="#f3b8c7" stroke-width="1.2"/>
+      <path d="M8 10c2-3 6-2 7 1 1 2-1 4-3 4-2 0-2-3 0-3" fill="none" stroke="#fff2dd" stroke-width="1.25" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="category-effect-bag" viewBox="0 0 24 24">
+      <path d="M6 3h12l1.5 16c.1 1.1-.7 2-1.8 2H6.3c-1.1 0-1.9-.9-1.8-2Z" fill="#c58d55" stroke="#7e4e30" stroke-width="1.2" stroke-linejoin="round"/>
+      <path d="M6 7h12M5 18h14" stroke="#f3cb95" stroke-width="1.3"/>
+      <path d="M9 13c1-2 4-3 5-1s-1 4-3 4-3-1-2-3Z" fill="#7e4e30"/>
+    </symbol>
+    <symbol id="category-effect-cone" viewBox="0 0 24 24">
+      <path d="M7 12h10l-4.3 9a.8.8 0 0 1-1.4 0Z" fill="#d49b5b" stroke="#875937" stroke-width="1.1"/>
+      <path d="m9 15 5 3m1-3-4 3" stroke="#f5d5a0" stroke-width=".9"/>
+      <path d="M7 13a2 2 0 0 1-.4-3.9 5.5 5.5 0 0 1 10.8 0A2 2 0 0 1 17 13Z" fill="#f6c4da" stroke="#a85c87" stroke-width="1.1"/>
+      <path d="m10 7 .5-.7m3.4 1.1 .9.6" stroke="#fff7df" stroke-linecap="round" stroke-width="1.25"/>
+    </symbol>
+    <symbol id="category-effect-spark" viewBox="0 0 24 24">
+      <path d="M12 2c1.7 6.8 3.2 8.3 10 10-6.8 1.7-8.3 3.2-10 10-1.7-6.8-3.2-8.3-10-10 6.8-1.7 8.3-3.2 10-10Z" fill="#ffe1a8" stroke="#997353" stroke-width="1.1" stroke-linejoin="round"/>
+    </symbol>
+  </svg>
+
   <div class="modal-overlay" id="aboutModal" aria-hidden="true">
     <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
-      <button class="close-btn" type="button" data-action="close-about" aria-label="Kapat">&times;</button>
-      <h3 id="aboutTitle">MARKA HİKAYEMİZ</h3>
-      <div class="about-copy">
+      <header class="about-head">
+        <h3 id="aboutTitle">MARKA HİKAYEMİZ</h3>
+        <button class="close-btn" type="button" data-action="close-about" aria-label="Kapat">&times;</button>
+      </header>
+      <div class="about-copy" tabindex="0" role="region" aria-label="Marka hikayesi">
         <p>Kurtuluş Savaşı'nın ardından büyük dedem Hüseyin Tünaydın, 1926'da Torbalı'da kahve çekirdeklerini zeytin odununda kavurup taş dibekte döverek satmaya başladı. Kahvesinin kokusu kısa sürede köyleri sardı ve herkes "Tahmisçi Hüseyin Efendi"nin kahvesini içmeden gününü tamamlamaz oldu.</p>
         <p>Bu ustalık dolu mesleği dedem Ahmet Zeki Tünaydın devraldı. 1957'den itibaren aynı özenle sürdürdü; kahveyi bir içecekten çok bir kültür, bir sabır ve ustalık işi olarak gördü. Daha sonra babam Mustafa Aygün Tünaydın ve kardeşleri bu geleneği yaşattı.</p>
         <p>Bugün ben, hem dedemden hem babamdan öğrendiğim bu ilkelerle, geçmişin emek dolu zanaatini yeni nesil kahve anlayışıyla birleştiriyorum. Her fincanda dört neslin emeği, dürüstlüğü ve tutkusu var.</p>

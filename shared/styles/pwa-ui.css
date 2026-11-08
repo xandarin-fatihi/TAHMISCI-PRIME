@@ -40,11 +40,11 @@ html[data-pwa-app] body {
   align-items: center;
   gap: 12px;
   padding: 10px 12px 10px 14px;
-  border: 1px solid rgba(90, 47, 29, 0.24);
+  border: 1px solid color-mix(in srgb, var(--admin-tone-line, rgb(90, 47, 29)) 24%, transparent);
   border-radius: 14px;
-  background: #fffaf3;
-  color: #2c1609;
-  box-shadow: 0 14px 36px rgba(61, 31, 16, 0.2);
+  background: var(--admin-tone-surface, #fffaf3);
+  color: var(--admin-tone-ink, #2c1609);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--admin-tone-shadow, rgb(61, 31, 16)) 20%, transparent);
   font-family: "Tahmisci Poppins", Poppins, Inter, system-ui, sans-serif;
   font-size: 12px;
   line-height: 1.35;
@@ -52,18 +52,18 @@ html[data-pwa-app] body {
 }
 
 .pwa-notice--offline {
-  border-color: rgba(185, 80, 45, 0.38);
-  background: #fff2e7;
+  border-color: color-mix(in srgb, var(--admin-tone-line-strong, rgb(185, 80, 45)) 38%, transparent);
+  background: var(--admin-tone-soft, #fff2e7);
 }
 
 .pwa-notice--install {
-  border-color: rgba(85, 107, 47, .32);
-  background: #f6f3e8;
+  border-color: color-mix(in srgb, var(--admin-tone-line-strong, rgb(85, 107, 47)) 32%, transparent);
+  background: var(--admin-tone-soft, #f6f3e8);
 }
 
 .pwa-notice--push-intro {
-  border-color: rgba(90, 47, 29, .3);
-  background: #fff8ee;
+  border-color: color-mix(in srgb, var(--admin-tone-line-strong, rgb(90, 47, 29)) 30%, transparent);
+  background: var(--admin-tone-surface, #fff8ee);
 }
 
 .pwa-notice__copy {
@@ -79,7 +79,7 @@ html[data-pwa-app] body {
 }
 
 .pwa-notice__copy span {
-  color: #806b5b;
+  color: var(--admin-tone-muted, #806b5b);
 }
 
 .pwa-notice__action,
@@ -97,23 +97,23 @@ html[data-pwa-app] body {
 .pwa-notice__action {
   flex: 0 0 auto;
   padding: 0 14px;
-  background: #5a2f1d;
-  color: #fffaf3;
+  background: var(--admin-tone-solid-deep, #5a2f1d);
+  color: var(--admin-tone-on-solid, #fffaf3);
 }
 
 .pwa-notice__secondary {
   flex: 0 0 auto;
   padding: 0 13px;
-  border: 1px solid rgba(90, 47, 29, .2);
-  background: #fffaf3;
-  color: #5a2f1d;
+  border: 1px solid color-mix(in srgb, var(--admin-tone-line, rgb(90, 47, 29)) 20%, transparent);
+  background: var(--admin-tone-surface, #fffaf3);
+  color: var(--admin-tone-link, #5a2f1d);
 }
 
 .pwa-notice__close {
   flex: 0 0 40px;
   padding: 0;
   background: transparent;
-  color: #5a2f1d;
+  color: var(--admin-tone-link, #5a2f1d);
   font-size: 24px;
   line-height: 1;
 }
@@ -121,13 +121,13 @@ html[data-pwa-app] body {
 .pwa-notice__action:hover,
 .pwa-notice__secondary:hover,
 .pwa-notice__close:hover {
-  box-shadow: 0 6px 16px rgba(61, 31, 16, 0.16);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--admin-tone-shadow, rgb(61, 31, 16)) 16%, transparent);
 }
 
 .pwa-notice__action:focus-visible,
 .pwa-notice__secondary:focus-visible,
 .pwa-notice__close:focus-visible {
-  outline: 3px solid rgba(185, 80, 45, 0.38);
+  outline: 3px solid color-mix(in srgb, var(--admin-tone-accent, rgb(185, 80, 45)) 38%, transparent);
   outline-offset: 2px;
 }
 
@@ -143,18 +143,18 @@ html[data-pwa-app] body {
   display: grid;
   place-items: center;
   padding: calc(env(safe-area-inset-top, 0px) + 24px) 18px calc(env(safe-area-inset-bottom, 0px) + 24px);
-  background: #fbf6ee;
-  color: #2c1609;
+  background: var(--admin-tone-canvas, #fbf6ee);
+  color: var(--admin-tone-ink, #2c1609);
   font-family: "Tahmisci Poppins", Poppins, Inter, system-ui, sans-serif;
 }
 
 .pwa-offline-card {
   width: min(440px, 100%);
   padding: 28px;
-  border: 1px solid rgba(90, 47, 29, 0.18);
+  border: 1px solid color-mix(in srgb, var(--admin-tone-line, rgb(90, 47, 29)) 18%, transparent);
   border-radius: 18px;
-  background: #fffaf3;
-  box-shadow: 0 16px 38px rgba(61, 31, 16, 0.12);
+  background: var(--admin-tone-surface, #fffaf3);
+  box-shadow: 0 16px 38px color-mix(in srgb, var(--admin-tone-shadow, rgb(61, 31, 16)) 12%, transparent);
   text-align: center;
 }
 
@@ -172,7 +172,7 @@ html[data-pwa-app] body {
 
 .pwa-offline-card p {
   margin: 0;
-  color: #806b5b;
+  color: var(--admin-tone-muted, #806b5b);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -186,8 +186,8 @@ html[data-pwa-app] body {
   justify-content: center;
   border: 0;
   border-radius: 10px;
-  background: #5a2f1d;
-  color: #fffaf3;
+  background: var(--admin-tone-solid-deep, #5a2f1d);
+  color: var(--admin-tone-on-solid, #fffaf3);
   font: 700 13px "Tahmisci Poppins", Poppins, Inter, system-ui, sans-serif;
   text-decoration: none;
   cursor: pointer;

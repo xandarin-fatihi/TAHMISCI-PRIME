@@ -6,10 +6,23 @@
   const FEEDBACK_STORAGE_KEY = "tahmisci.feedback.items.v1";
   const BACKEND_URL_KEY = "tahmisci.backend.url";
   const THEME_KEY = "tahmisci.menu.theme";
+  const SPECIAL_THEME_KEY = "tahmisci.menu.special-theme";
   const CHANNEL_NAME = "tahmisci-menu-updates";
   const MEDIA_DB_NAME = "tahmisci.media.v1";
   const MEDIA_STORE_NAME = "files";
   const MEDIA_REF_PREFIX = "media:";
+  const IS_LOCAL_MENU = ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+  const IS_ADMIN_PREVIEW = new URLSearchParams(window.location.search).get("preview") === "admin";
+  const CATEGORY_EFFECTS = {
+    SOGUKLAR: "frost",
+    SICAKLAR: "steam",
+    "TURK KAHVELERI": "bean",
+    "TATLI & SANDWICH": "sugar",
+    MESRUBAT: "bubbles",
+    "KASA ONU": "candy",
+    "PAKETLI URUN": "bag",
+    DONDURMA: "cone"
+  };
   const DESIGN_SCHEMA = window.TahmisciMenuDesignSchema;
   if (!DESIGN_SCHEMA || typeof DESIGN_SCHEMA.normalizeMenuState !== "function") {
     throw new Error("Tahmisci ortak menu tasarim semasi yuklenemedi.");
@@ -69,6 +82,12 @@
     serverEventVersion: 0,
     serverAuthoritative: false,
     previewDraftApplied: false,
+    preferredThemeMode: "dark",
+    specialThemeChoices: [],
+    specialTheme: null,
+    specialThemeStarted: false,
+    seasonalConcept: null,
+    themeTextColor: "",
     eventSourceWarningShown: false,
     dataSource: "bootstrap"
   };
@@ -85,7 +104,7 @@
     setupLiveUpdates();
     setupAdminPreviewBridge();
     await hydrateMenuFromBackend({ reason: "ilk yukleme" });
-    if (isPreviewMode()) {
+    if (isPreviewMode() && !isWelcomePreview() && !state.previewDraftApplied) {
       openMenu();
       applyPreviewCategory();
     }
@@ -100,9 +119,13 @@
       const draft = message.data;
       const pricing = message.pricing || draft.pricing;
       if (applyMenuSnapshot(Object.assign({}, draft, { pricing }), { source: "preview" })) {
+        const firstDraft = !state.previewDraftApplied;
         state.previewDraftApplied = true;
-        openMenu();
-        applyPreviewCategory();
+        if (!isWelcomePreview()) {
+          if (!els.menu.classList.contains("is-open")) openMenu();
+          if (firstDraft) applyPreviewCategory();
+        }
+        message.confirmApplied?.();
       }
     });
   }
@@ -111,6 +134,7 @@
     els.body = document.body;
     els.home = document.getElementById("home-page");
     els.menu = document.getElementById("menu-page");
+    els.menuContent = document.getElementById("menuContent");
     els.categoryTabs = document.getElementById("categoryTabs");
     els.categoryList = document.getElementById("categoryList");
     els.showcaseStage = document.getElementById("showcaseStage");
@@ -162,6 +186,13 @@
     });
 
     document.addEventListener("keydown", (event) => {
+      if (event.key === "Tab" && els.aboutModal.classList.contains("is-open")) {
+        const [close, copy] = els.aboutModal.querySelectorAll("button, [tabindex='0']");
+        if (event.shiftKey ? document.activeElement !== copy : document.activeElement !== close) {
+          event.preventDefault();
+          (event.shiftKey ? copy : close).focus();
+        }
+      }
       if (event.key === "Escape") {
         closeSheet();
         toggleAbout(false);
@@ -296,6 +327,9 @@
         return false;
       } finally {
         state.menuRefreshPromise = null;
+        if (requestId === state.backendRequestId && serverEventVersion !== state.serverEventVersion) {
+          void hydrateMenuFromBackend({ reason: "sse-invalidation" });
+        }
       }
     })();
     return state.menuRefreshPromise;
@@ -473,6 +507,8 @@
       image: product.image || product.img || "",
       imageUrl: product.imageUrl || "",
       imageOverlay: Number(product.imageOverlay || 0),
+      imageAspect: product.imageAspect,
+      imageFit: product.imageFit,
       cardColor: product.cardColor || "",
       style: normalizeStyle(product.style || {
         color: product.cardColor || "",
@@ -918,19 +954,73 @@
   }
 
   function applyStoredTheme() {
-    const storedTheme = safeLocalGet(THEME_KEY);
-    const shouldUseDark = storedTheme !== "light";
-    document.body.classList.toggle("dark-mode", shouldUseDark);
-    safeLocalSet(THEME_KEY, shouldUseDark ? "dark" : "light");
-    updateThemeIcons();
+    state.preferredThemeMode = safeLocalGet(THEME_KEY) === "light" ? "light" : "dark";
+    safeLocalSet(THEME_KEY, state.preferredThemeMode);
   }
 
   function toggleTheme() {
-    document.body.classList.toggle("dark-mode");
-    safeLocalSet(THEME_KEY, document.body.classList.contains("dark-mode") ? "dark" : "light");
+    if (state.data.settings.themeMode === "ready") return;
+    state.preferredThemeMode = state.preferredThemeMode === "dark" ? "light" : "dark";
+    safeLocalSet(THEME_KEY, state.preferredThemeMode);
     applySettings();
     renderMenu();
-    updateThemeIcons();
+  }
+
+  function updateSpecialTheme(settings) {
+    const shuffle = settings.readyThemePlayback === "shuffle";
+    const pool = shuffle && settings.readyThemePool.length ? settings.readyThemePool : [settings.readyTheme];
+    const choices = settings.themeMode === "ready" ? pool.filter(Boolean) : [];
+    const previous = state.specialThemeChoices;
+    if (choices.length === previous.length && choices.every((id, index) => id === previous[index])) return;
+
+    state.specialThemeChoices = choices;
+    if (!choices.length) {
+      state.specialTheme = null;
+      return;
+    }
+
+    const newChoice = IS_ADMIN_PREVIEW && previous.length && choices.find(id => !previous.includes(id));
+    let selected = newChoice || choices.find(id => id === state.specialTheme) || choices[0];
+    if (!IS_ADMIN_PREVIEW) {
+      try {
+        if (shuffle) selected = selectShuffledReadyTheme(choices, selected);
+        else window.sessionStorage.setItem(SPECIAL_THEME_KEY, selected);
+      } catch (_error) {
+        if (shuffle && !state.specialThemeStarted) selected = choices[Math.floor(Math.random() * choices.length)];
+      }
+    }
+    state.specialTheme = selected;
+    state.specialThemeStarted = true;
+  }
+
+  function selectShuffledReadyTheme(choices, selected) {
+    const stored = window.sessionStorage.getItem(SPECIAL_THEME_KEY) || "";
+    const saved = stored.startsWith("{") ? JSON.parse(stored) : { current: stored.split(":").pop() };
+    const pool = choices.join("|");
+    let remaining = saved.pool === pool && Array.isArray(saved.remaining)
+      ? saved.remaining.filter(id => choices.includes(id))
+      : choices.filter(id => id !== saved.current);
+    if (!state.specialThemeStarted) {
+      if (!isMenuReload() && choices.includes(saved.current)) {
+        selected = saved.current;
+      } else {
+        if (!remaining.length) remaining = choices;
+        const candidates = remaining.length > 1 ? remaining.filter(id => id !== saved.current) : remaining;
+        selected = candidates[Math.floor(Math.random() * candidates.length)];
+      }
+    }
+    window.sessionStorage.setItem(SPECIAL_THEME_KEY, JSON.stringify({
+      current: selected, pool, remaining: remaining.filter(id => id !== selected)
+    }));
+    return selected;
+  }
+
+  function isMenuReload() {
+    try {
+      return window.parent.performance.getEntriesByType("navigation")[0]?.type === "reload";
+    } catch (_error) {
+      return performance.getEntriesByType("navigation")[0]?.type === "reload";
+    }
   }
 
   function updateThemeIcons() {
@@ -939,7 +1029,8 @@
       icon.dataset.theme = dark ? "light" : "dark";
       const button = icon.closest("button");
       if (button) {
-        const label = dark ? "Açık temaya geç" : "Koyu temaya geç";
+        button.disabled = state.data.settings.themeMode === "ready";
+        const label = button.disabled ? "Hazır tema etkin" : (dark ? "Açık temaya geç" : "Koyu temaya geç");
         button.setAttribute("aria-label", label);
         button.title = label;
       }
@@ -955,21 +1046,30 @@
   function applySettings() {
     const settings = state.data.settings || DESIGN_SCHEMA.DEFAULT_SETTINGS;
     const root = document.documentElement;
-    const isDark = document.body.classList.contains("dark-mode");
-    const menuBackground = buildMenuBackground(settings, isDark);
+    updateSpecialTheme(settings);
+    const readyTheme = DESIGN_SCHEMA.getReadyTheme(state.specialTheme);
+    const mode = readyTheme ? (readyTheme.night ? "dark" : "light") : state.preferredThemeMode;
+    const readyPalette = readyTheme?.palettes?.[mode] || readyTheme;
+    const isDark = mode === "dark";
+    document.body.classList.toggle("dark-mode", isDark);
+    updateThemeIcons();
+    const menuBackground = readyPalette?.background || buildMenuBackground(settings, isDark);
     const fonts = normalizeFonts(settings.fonts);
     const typography = normalizeTypography(settings.typography);
-    root.style.setProperty("--bg-color", isDark ? "#140905" : settings.bgColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.bgColor);
-    root.style.setProperty("--dark-bg-color", "#140905");
-    root.style.setProperty("--accent-color", isDark ? "#EFE1D0" : settings.accentColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.accentColor);
-    root.style.setProperty("--text-color", isDark ? "#F8E9D2" : settings.textColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.textColor);
-    root.style.setProperty("--btn-text", settings.buttonTextColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.buttonTextColor);
+    root.style.setProperty("--bg-color", readyPalette?.background || (isDark ? settings.darkBgColor : settings.bgColor));
+    root.style.setProperty("--dark-bg-color", settings.darkBgColor);
+    root.style.setProperty("--accent-color", readyPalette?.accent || (isDark ? settings.darkAccentColor : settings.accentColor));
+    state.themeTextColor = readyPalette?.text || (isDark ? settings.darkTextColor : settings.textColor);
+    root.style.setProperty("--text-color", state.themeTextColor);
+    const buttonColor = readyPalette?.button || (isDark ? settings.darkButtonColor : settings.buttonColor);
+    const buttonText = readyPalette?.buttonText || (isDark ? settings.darkButtonTextColor : settings.buttonTextColor);
+    root.style.setProperty("--theme-button-color", buttonColor);
+    root.style.setProperty("--btn-text", buttonText);
     root.style.setProperty("--card-bg", isDark ? "rgba(33,17,10,0.92)" : settings.cardColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.cardColor);
     root.style.setProperty("--product-card-bg", isDark ? "#21110A" : settings.productCardColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.productCardColor);
     root.style.setProperty("--category-card-bg", isDark ? "#2A160D" : settings.categoryCardColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.categoryCardColor);
-    root.style.setProperty("--social-icon-color", isDark ? "#EFE1D0" : settings.socialIconColor || settings.accentColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.socialIconColor);
+    root.style.setProperty("--social-icon-color", settings.socialIconColor || settings.accentColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.socialIconColor);
     root.style.setProperty("--social-icon-size", `${clamp(Number(settings.socialIconSize || DESIGN_SCHEMA.DEFAULT_SETTINGS.socialIconSize), 18, 64)}px`);
-    root.style.setProperty("--menu-header-bg", buildMenuHeaderBackground(settings, isDark));
     root.style.setProperty("--title-font", fonts.title);
     root.style.setProperty("--category-font", fonts.category);
     root.style.setProperty("--product-font", fonts.product);
@@ -982,11 +1082,65 @@
 
     if (els.menu) {
       els.menu.style.background = menuBackground;
+      const conceptId = isDark ? settings.darkSeasonalConcept : settings.seasonalConcept;
+      const concept = readyTheme || DESIGN_SCHEMA.getSeasonalConcept(conceptId);
+      const palette = concept?.palettes?.[mode];
+      state.seasonalConcept = palette || concept || null;
+      els.actionSheet.style.setProperty("--action-sheet-surface", state.seasonalConcept?.surface || "");
+      const collection = concept?.collection || "noel";
+      const compact = Boolean(palette && !concept.backgroundArt);
+      const art = concept && !compact
+        ? `url("${concept.backgroundArt || `/assets/menu-themes/${collection}/${concept.id}.webp`}")`
+        : "";
+      const welcomeArt = collection === "daily" ? "" : art;
+      const signature = welcomeArt ? null : DESIGN_SCHEMA.getSeasonalConcept("tahmisci-imza").palettes[mode];
+      const welcomeTheme = welcomeArt ? concept.id : "tahmisci-imza";
+      for (const element of [els.home, els.feedbackModal]) {
+        element.dataset.welcomeTheme = welcomeTheme;
+        element.style.setProperty("--bg-color", signature?.background || "");
+        element.style.setProperty("--accent-color", signature?.accent || "");
+        element.style.setProperty("--text-color", signature?.text || "");
+        element.style.setProperty("--theme-button-color", signature?.button || "");
+        element.style.setProperty("--btn-text", signature?.buttonText || "");
+      }
+      els.home.toggleAttribute("data-illustrated-theme", Boolean(welcomeArt));
+      if (welcomeArt) {
+        els.home.dataset.welcomeFrame = collection;
+      } else {
+        delete els.home.dataset.welcomeFrame;
+      }
+      els.home.style.setProperty("--seasonal-art", welcomeArt);
+      els.feedbackModal.style.setProperty("--feedback-surface", signature?.surface || palette?.surface || concept?.surface || "");
+      if (concept) {
+        els.menu.dataset.seasonal = concept.id;
+        els.menu.dataset.seasonalCollection = collection;
+        els.menu.toggleAttribute("data-compact-theme", compact);
+        if (compact) {
+          els.menu.style.removeProperty("--seasonal-art");
+        } else {
+          els.menu.style.setProperty("--seasonal-art", art);
+        }
+        const accentTabs = concept.night || (concept.backgroundArt && isDark);
+        els.menu.style.setProperty("--seasonal-selected", accentTabs ? "var(--accent-color)" : buttonColor);
+        els.menu.style.setProperty("--seasonal-selected-text", accentTabs ? "var(--bg-color)" : buttonText);
+      } else {
+        delete els.menu.dataset.seasonal;
+        delete els.menu.dataset.seasonalCollection;
+        els.menu.removeAttribute("data-compact-theme");
+        for (const variable of ["--seasonal-art", "--seasonal-selected", "--seasonal-selected-text"]) {
+          els.menu.style.removeProperty(variable);
+        }
+      }
+      els.menu.querySelector(".menu-header")?.classList.toggle("has-large-title", typography.menuTitle >= 40);
     }
-    applyBoxBackground(els.popularDock, settings.bottomActions && settings.bottomActions.popular, settings.accentColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.accentColor);
-    applyBoxBackground(els.suggestDock, settings.bottomActions && settings.bottomActions.suggest, settings.accentColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.accentColor);
-    applyDockButtonText(els.popularDock);
-    applyDockButtonText(els.suggestDock);
+    const useThemeButtons = Boolean(readyTheme) || (isDark ? settings.darkUseThemeButtons : settings.useThemeButtons);
+    applyBoxBackground(els.menu.querySelector(".dock-home"), null, buttonColor);
+    applyDockButtonText(els.menu.querySelector(".dock-home"));
+    applyBoxBackground(els.popularDock, useThemeButtons ? null : settings.bottomActions.popular, buttonColor);
+    applyBoxBackground(els.suggestDock, useThemeButtons ? null : settings.bottomActions.suggest, buttonColor);
+    const sideButtonText = useThemeButtons ? buttonText : settings.buttonTextColor;
+    applyDockButtonText(els.popularDock, sideButtonText);
+    applyDockButtonText(els.suggestDock, sideButtonText);
     renderMenuUpdateLine(settings.menuUpdateDate);
   }
 
@@ -1008,7 +1162,7 @@
     document.body.classList.add("menu-open");
     renderShowcaseStage();
     startShowcaseRotation();
-    window.setTimeout(() => els.menu.scrollTo({ top: 0, behavior: "smooth" }), 0);
+    window.setTimeout(() => els.menuContent.scrollTo({ top: 0, behavior: "smooth" }), 0);
   }
 
   function isPreviewMode() {
@@ -1018,6 +1172,10 @@
     } catch (error) {
       return false;
     }
+  }
+
+  function isWelcomePreview() {
+    return new URLSearchParams(window.location.search).get("view") === "home";
   }
 
   function previewCategoryId() {
@@ -1043,21 +1201,32 @@
 
   function scrollMenuTop() {
     closeSheet();
+    playCategoryEffect();
     state.activeCategory = "all";
     state.openCategoryId = "";
     renderMenu();
-    els.menu.scrollTo({ top: 0, behavior: "smooth" });
+    els.menuContent.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function toggleAbout(show) {
+    if (els.aboutModal.classList.contains("is-open") === show) return;
     els.aboutModal.classList.toggle("is-open", Boolean(show));
     els.aboutModal.setAttribute("aria-hidden", show ? "false" : "true");
+    if (show) {
+      els.aboutModal.querySelector(".about-copy").scrollTop = 0;
+      els.aboutModal.querySelector("[data-action='close-about']").focus();
+    } else {
+      document.querySelector("[data-action='about']").focus({ preventScroll: true });
+    }
   }
 
   function renderMenu() {
     renderTabs();
     renderShowcaseStage();
     renderCategories();
+    if (els.actionSheet.dataset.sheetKind === "popular" && els.actionSheet.classList.contains("is-open")) {
+      showPopularProducts();
+    }
   }
 
   function showcaseProducts() {
@@ -1157,6 +1326,15 @@
     return missing.length > 0;
   }
 
+  function showcaseVideoMarkup(media, centerCrop = false) {
+    return `
+      <div class="showcase-video-toolbar">
+        <div class="showcase-video-label"><span aria-hidden="true">✦</span> Tahmisçi’den bir kare</div>
+      </div>
+      <div class="showcase-video-frame${centerCrop ? " is-center-cropped" : ""}">${media}</div>
+    `;
+  }
+
   function renderShowcaseStage() {
     if (!els.showcaseStage) return;
     const banner = normalizeBanner(state.data.settings && state.data.settings.banner);
@@ -1165,7 +1343,8 @@
       els.showcaseStage.hidden = false;
       els.showcaseStage.classList.toggle("is-video", banner.mode === "video");
       els.showcaseStage.style.removeProperty("--showcase-image");
-      els.showcaseStage.innerHTML = `<div class="showcase-loading">Medya hazırlanıyor...</div>`;
+      const loading = `<div class="showcase-loading">Medya hazırlanıyor...</div>`;
+      els.showcaseStage.innerHTML = banner.mode === "video" ? showcaseVideoMarkup(loading) : loading;
       return;
     }
 
@@ -1177,11 +1356,39 @@
     if (banner.mode === "video" && resolvedBannerVideo) {
       state.showcaseIndex %= videos.length;
       const videoSource = normalizeBannerVideoSource(resolvedBannerVideo);
+      const centerCrop = state.showcaseIndex === 0 && videoSource.type !== "iframe";
       els.showcaseStage.hidden = false;
       els.showcaseStage.style.removeProperty("--showcase-image");
-      els.showcaseStage.innerHTML = videoSource.type === "iframe"
+      const currentVideo = els.showcaseStage.querySelector("video, iframe");
+      if (currentVideo?.getAttribute("src") === videoSource.src
+        && els.showcaseStage.dataset.videoCount === String(videos.length)
+        && currentVideo.parentElement.classList.contains("is-center-cropped") === centerCrop) return;
+      els.showcaseStage.dataset.videoCount = String(videos.length);
+      const media = videoSource.type === "iframe"
         ? `<iframe class="showcase-video-embed" src="${escapeAttribute(videoSource.src)}" title="BANNER video" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe>`
-        : `<video class="showcase-video" src="${escapeAttribute(videoSource.src)}" autoplay muted loop playsinline preload="metadata"></video>`;
+        : `<video class="showcase-video" src="${escapeAttribute(videoSource.src)}" autoplay muted playsinline controls preload="metadata"></video>`;
+      els.showcaseStage.innerHTML = showcaseVideoMarkup(media, centerCrop);
+      if (videos.length > 1) {
+        const next = document.createElement("button");
+        next.type = "button";
+        next.className = "showcase-next-video";
+        next.setAttribute("aria-label", "Sonraki banner videosu");
+        next.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>`;
+        next.addEventListener("click", () => {
+          state.showcaseIndex = (state.showcaseIndex + 1) % videos.length;
+          renderShowcaseStage();
+          els.showcaseStage.querySelector(".showcase-next-video")?.focus({ preventScroll: true });
+        });
+        els.showcaseStage.querySelector(".showcase-video-toolbar").append(next);
+      }
+      const video = els.showcaseStage.querySelector("video");
+      if (video) {
+        video.loop = videos.length === 1;
+        video.addEventListener("ended", () => {
+          state.showcaseIndex = (state.showcaseIndex + 1) % videos.length;
+          renderShowcaseStage();
+        }, { once: true });
+      }
       return;
     }
 
@@ -1313,11 +1520,10 @@
     if (state.showcaseTimer) return;
     state.showcaseTimer = window.setInterval(() => {
       const banner = normalizeBanner(state.data.settings && state.data.settings.banner);
-      const count = banner.mode === "video"
-        ? bannerVideoItems(banner).length
-        : banner.mode === "images" && banner.images.length
-          ? banner.images.length
-          : showcaseProducts().length;
+      if (banner.mode === "video") return;
+      const count = banner.mode === "images" && banner.images.length
+        ? banner.images.length
+        : showcaseProducts().length;
       if (!count || count < 2) return;
       state.showcaseIndex = (state.showcaseIndex + 1) % count;
       renderShowcaseStage();
@@ -1364,11 +1570,42 @@
       card.classList.add("is-open");
     }
     const isDark = document.body.classList.contains("dark-mode");
-    const categoryFallback = isDark ? "#2A160D" : state.data.settings.categoryCardColor;
-    applyBoxBackground(card, themedCategoryStyle(category.style, isDark), category.color || categoryFallback);
+    const defaultCategoryColor = DESIGN_SCHEMA.DEFAULT_SETTINGS.categoryCardColor.toLowerCase();
+    const useSeasonalSurface = state.seasonalConcept && !category.color && !category.style.color
+      && category.style.type === "gradient" && category.style.gradientStart.toLowerCase() === defaultCategoryColor
+      && category.style.gradientEnd.toLowerCase() === "#e5e7eb" && category.style.gradientAngle === 135;
+    const categoryFallback = category.color || (isDark ? "#2A160D" : state.data.settings.categoryCardColor);
+    const image = category.style.type === "image" ? category.style.imageUrl || category.style.image : "";
+    const sideImage = image && DESIGN_SCHEMA.categoryImageLayout(category.style) === "right";
+    const coverImage = image && category.style.imageLayout === "cover";
+    const surface = category.style.color || state.seasonalConcept?.category || categoryFallback;
+    const solidStyle = { type: "solid", color: surface };
+    const cardStyle = sideImage || useSeasonalSurface ? solidStyle : category.style;
+    applyBoxBackground(card, cardStyle, categoryFallback);
+    if (sideImage) {
+      const artwork = DESIGN_SCHEMA.categoryArtworkForImage(image) || DESIGN_SCHEMA.categoryArtworkForName(category.name);
+      card.classList.add("cat-card--illustrated");
+      card.style.setProperty("--category-art-tint", artwork?.tint || "var(--accent-color)");
+      card.style.setProperty("--category-art-opacity", 1 - category.style.overlay);
+    } else if (coverImage) {
+      card.classList.add("cat-card--image-cover");
+      card.style.setProperty("--category-cover-surface", surface);
+    } else if (!image) {
+      const theme = DESIGN_SCHEMA.categoryArtworkForName(category.name);
+      if (theme) {
+        card.classList.add("cat-card--framed");
+        card.style.setProperty("--category-frame-tint", theme.tint);
+        if (state.seasonalConcept?.categoryBorder) {
+          card.style.setProperty("--category-frame-accent", state.seasonalConcept.categoryBorder);
+        }
+        card.style.setProperty("--category-frame-fill", card.style.background);
+        card.style.removeProperty("background");
+      }
+    }
 
     const button = document.createElement("button");
     button.className = "cat-button";
+    button.style.color = readableCardText(coverImage ? solidStyle : cardStyle, categoryFallback);
     button.type = "button";
     button.dataset.categoryToggle = category.id;
     button.innerHTML = `
@@ -1376,6 +1613,7 @@
         <h3>${category.iconMark ? `<span aria-hidden="true">${escapeHTML(category.iconMark)}</span> ` : ""}${escapeHTML(category.name)}</h3>
         <span>${visibleProducts(category).length} ürün</span>
       </div>
+      ${sideImage ? `<img class="category-artwork" src="${escapeAttribute(image)}" alt="" loading="lazy" decoding="async">` : ""}
       <div class="arrow-icon" aria-hidden="true">▼</div>
     `;
 
@@ -1405,14 +1643,26 @@
     card.className = "product-item";
     card.id = `product-${product.id}`;
     const isDark = document.body.classList.contains("dark-mode");
-    const productFallback = isDark ? "#21110A" : state.data.settings.productCardColor;
-    applyBoxBackground(card, themedBoxStyle(product.style, isDark, "#21110A", "#2A160D"), product.cardColor || productFallback);
+    const globalProductColor = state.data.settings.productCardColor;
+    const defaultProductColor = DESIGN_SCHEMA.DEFAULT_SETTINGS.productCardColor.toLowerCase();
+    const productFallback = product.cardColor || (isDark ? "#21110A" : globalProductColor);
+    const paletteProductColor = state.seasonalConcept?.product || state.seasonalConcept?.surface;
+    const defaultCardColors = [product.cardColor, product.style.color]
+      .every(color => !color || color.toLowerCase() === defaultProductColor);
+    const useThemeProduct = paletteProductColor && defaultCardColors
+      && (state.specialTheme || globalProductColor.toLowerCase() === defaultProductColor)
+      && product.style.type === "gradient" && product.style.gradientStart.toLowerCase() === defaultProductColor
+      && product.style.gradientEnd.toLowerCase() === "#e5e7eb" && product.style.gradientAngle === 145;
+    const productStyle = useThemeProduct ? { type: "solid", color: paletteProductColor } : product.style;
+    card.classList.toggle("product-item--themed", Boolean(useThemeProduct));
+    applyBoxBackground(card, productStyle, productFallback);
+    card.style.color = readableCardText(productStyle, productFallback);
 
     const imageSrc = productDisplayImage(product, category, index);
     const isThemeLogo = isThemeLogoImage(imageSrc);
     card.innerHTML = `
       ${product.popular ? `<div class="popular-star" aria-label="Popüler ürün">★</div>` : ""}
-      <div class="prod-img${isThemeLogo ? " is-theme-logo-frame" : ""}">
+      <div class="prod-img${isThemeLogo ? " is-theme-logo-frame" : ""}" data-image-aspect="${escapeAttribute(product.imageAspect)}" data-image-fit="${escapeAttribute(product.imageFit)}">
         <img class="${isThemeLogo ? "is-theme-logo" : ""}" src="${escapeAttribute(imageSrc)}" alt="${escapeAttribute(product.name)}" loading="lazy">
         <span class="media-overlay" style="background: rgba(0,0,0,${clamp(Number(product.imageOverlay || 0), 0, 0.85)})"></span>
       </div>
@@ -1428,6 +1678,15 @@
     `;
 
     const img = card.querySelector("img");
+    if (product.imageAspect === "source") {
+      const setRatio = () => {
+        if (img.naturalWidth && img.naturalHeight) {
+          img.parentElement.style.setProperty("--source-image-aspect", clamp(img.naturalWidth / img.naturalHeight, 0.75, 2));
+        }
+      };
+      img.addEventListener("load", setRatio);
+      if (img.complete) setRatio();
+    }
     img.addEventListener("error", () => {
       img.classList.add("image-fallback", "is-theme-logo");
       const frame = img.closest(".prod-img");
@@ -1467,18 +1726,47 @@
     state.activeCategory = categoryId || "all";
     state.openCategoryId = openAfterClick && categoryId !== "all" ? categoryId : "";
     renderMenu();
+    playCategoryEffect(state.openCategoryId);
     window.setTimeout(() => {
       const target = categoryId === "all" ? null : document.getElementById(`category-${categoryId}`);
       if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
-      else els.menu.scrollTo({ top: 0, behavior: "smooth" });
+      else els.menuContent.scrollTo({ top: 0, behavior: "smooth" });
     }, 0);
   }
 
   function toggleCategory(categoryId) {
-    state.openCategoryId = state.openCategoryId === categoryId ? "" : categoryId;
     const card = document.getElementById(`category-${categoryId}`);
     if (!card) return;
-    card.classList.toggle("is-open", state.openCategoryId === categoryId);
+    const isOpening = card.classList.toggle("is-open");
+    if (isOpening) state.openCategoryId = categoryId;
+    else if (state.openCategoryId === categoryId) state.openCategoryId = "";
+    playCategoryEffect(isOpening ? categoryId : "");
+  }
+
+  function playCategoryEffect(categoryId) {
+    els.menu.querySelector(".category-effect")?.remove();
+    if (!categoryId || (!IS_LOCAL_MENU && window.matchMedia("(prefers-reduced-motion: reduce)").matches)) return;
+
+    const category = getCategory(categoryId);
+    if (!category) return;
+    const name = normalizeText(category.name).trim().replace(/\s+/g, " ");
+    const effectType = CATEGORY_EFFECTS[name] || "spark";
+    const templates = { frost: "categoryFrostEffect", steam: "categorySteamEffect" };
+    const template = document.getElementById(templates[effectType] || "categoryAccentEffect");
+    if (!template) return;
+
+    const effect = template.content.firstElementChild.cloneNode(true);
+    effect.classList.toggle("category-effect--local", IS_LOCAL_MENU);
+    effect.dataset.categoryEffect = effectType;
+    effect.querySelectorAll("use").forEach((particle) => {
+      particle.setAttribute("href", `#category-effect-${effectType}`);
+    });
+    const removeEffect = (event) => {
+      if (event.target === effect) effect.remove();
+    };
+    effect.addEventListener("animationend", removeEffect);
+    effect.addEventListener("animationcancel", removeEffect);
+    els.menu.append(effect);
   }
 
   function handleSearch() {
@@ -1534,6 +1822,7 @@
 
   function showPopularProducts() {
     const popular = flattenProducts().filter(({ product }) => product.popular);
+    els.actionSheet.dataset.sheetKind = "popular";
     els.sheetTitle.textContent = "Popüler Ürünler";
 
     if (!popular.length) {
@@ -1550,22 +1839,24 @@
   }
 
   function showSuggestStart() {
-    els.sheetTitle.textContent = "Öneri";
-    els.sheetBody.innerHTML = `
-      <div class="choice-grid">
-        <button class="choice-btn" type="button" data-action="suggest-drink">İçecek</button>
-        <button class="choice-btn" type="button" data-action="suggest-dessert">Tatlı</button>
-      </div>
-    `;
+    els.actionSheet.dataset.sheetKind = "suggestion";
+    renderSuggestionChoices("Öneri", [["drink", "İçecek"], ["dessert", "Tatlı"]]);
     openSheet();
   }
 
   function showDrinkTemperatureChoices() {
-    els.sheetTitle.textContent = "İçecek Seçimi";
+    renderSuggestionChoices("İçecek Seçimi", [["cold", "Soğuk"], ["hot", "Sıcak"]]);
+  }
+
+  function renderSuggestionChoices(title, options) {
+    els.sheetTitle.textContent = title;
     els.sheetBody.innerHTML = `
       <div class="choice-grid">
-        <button class="choice-btn" type="button" data-action="suggest-cold">Soğuk</button>
-        <button class="choice-btn" type="button" data-action="suggest-hot">Sıcak</button>
+        ${options.map(([choice, label]) => `
+          <button class="choice-btn" type="button" data-action="suggest-${choice}">
+            <svg class="choice-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24"><use href="#suggest-icon-${choice}"/></svg>
+            <span>${label}</span>
+          </button>`).join("")}
       </div>
     `;
   }
@@ -1591,11 +1882,9 @@
     const priceLine = priceSummary(picked.product);
     els.sheetBody.innerHTML = `
       <div class="recommendation-card">
-        <div>
-          <h3>${escapeHTML(picked.product.name)}</h3>
-          <p>${escapeHTML(picked.category.name)}</p>
-          <p>${escapeHTML(priceLine)}</p>
-        </div>
+        <p class="recommendation-category">${escapeHTML(picked.category.name)}</p>
+        <h3>${escapeHTML(picked.product.name)}</h3>
+        <p class="recommendation-price">${escapeHTML(priceLine)}</p>
       </div>
     `;
   }
@@ -1672,20 +1961,20 @@
       : favorite
         ? "favori"
         : "puanlama";
-    await saveFeedbackItem({
+    const sent = await saveFeedbackItem({
       type,
       text: text || (type === "favori" ? "Favori içecek bildirimi" : "Puanlama kaydı"),
       favorite,
       rating
     });
     if (els.feedbackText) els.feedbackText.value = "";
-    setFeedbackStatus("Gönderildi, teşekkür ederiz.");
+    setFeedbackStatus(sent ? "Gönderildi, teşekkür ederiz." : "Mesaj bu cihazda kaydedildi. Sunucuya gönderilemedi.");
   }
 
   async function submitFavoriteDrink() {
     const favorite = (els.favoriteDrinkInput && els.favoriteDrinkInput.value || "").trim();
     if (!favorite) return;
-    await saveFeedbackItem({
+    const sent = await saveFeedbackItem({
       type: "favori",
       text: "Favori içecek bildirimi",
       favorite,
@@ -1694,7 +1983,7 @@
     els.favoriteDrinkInput.value = "";
     updateFavoriteSendButton();
     hideFavoriteSuggestions();
-    setFeedbackStatus("Favori içeceğiniz kaydedildi.");
+    setFeedbackStatus(sent ? "Favori içeceğiniz gönderildi." : "Favori içeceğiniz bu cihazda kaydedildi. Sunucuya gönderilemedi.");
   }
 
   async function saveFeedbackItem(item) {
@@ -1709,7 +1998,7 @@
           method: "POST",
           body: { feedback: payload }
         });
-        return;
+        return true;
       } catch (error) {
         console.warn("Geri bildirim backend'e gonderilemedi, yerel kayit kullaniliyor.", error);
       }
@@ -1718,6 +2007,7 @@
     const items = readFeedbackItems();
     items.push(payload);
     safeLocalSet(FEEDBACK_STORAGE_KEY, JSON.stringify(items));
+    return false;
   }
 
   function readFeedbackItems() {
@@ -1805,14 +2095,11 @@
   }
 
   function buildMenuBackground(settings, isDark) {
-    const bg = settings.menuBackground || DESIGN_SCHEMA.DEFAULT_SETTINGS.menuBackground;
+    const bg = isDark ? settings.darkMenuBackground : settings.menuBackground;
     const solidColor = isDark ? settings.darkBgColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.darkBgColor : settings.bgColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.bgColor;
-    if (bg.type === "image" && (bg.imageUrl || bg.image || settings.menuBackgroundImage)) {
-      const image = bg.imageUrl || bg.image || settings.menuBackgroundImage;
-      return `linear-gradient(rgba(0,0,0,${bg.overlay}),rgba(0,0,0,${bg.overlay})), url("${image}") center / cover, ${solidColor}`;
-    }
-    if (isDark) {
-      return "radial-gradient(circle at 18% 12%, rgba(111,90,75,0.18), transparent 34%), radial-gradient(circle at 82% 76%, rgba(239,225,208,0.08), transparent 38%), linear-gradient(145deg, #140905 0%, #180B06 52%, #2A160D 100%)";
+    const image = bg.imageUrl || bg.image || (!isDark && settings.menuBackgroundImage);
+    if (bg.type === "image" && image) {
+      return `linear-gradient(rgba(0,0,0,${bg.overlay}),rgba(0,0,0,${bg.overlay})), url("${cssUrl(image)}") center / cover, ${solidColor}`;
     }
     if (bg.type === "gradient") {
       return `linear-gradient(${bg.gradientAngle}deg, ${bg.gradientStart}, ${bg.gradientEnd})`;
@@ -1820,28 +2107,17 @@
     return solidColor;
   }
 
-  function buildMenuHeaderBackground(settings, isDark) {
-    const bg = settings.menuBackground || DESIGN_SCHEMA.DEFAULT_SETTINGS.menuBackground;
-    if (isDark) {
-      return "linear-gradient(145deg, rgba(20,9,5,0.96), rgba(33,17,10,0.92), rgba(42,22,13,0.86))";
-    }
-    if (bg.type === "gradient") {
-      return `linear-gradient(${bg.gradientAngle}deg, ${bg.gradientStart}, ${bg.gradientEnd})`;
-    }
-    return settings.bgColor || DESIGN_SCHEMA.DEFAULT_SETTINGS.bgColor;
-  }
-
   function applyBoxBackground(element, style, fallbackColor) {
     if (!element) return;
     const image = style && (style.imageUrl || style.image);
     const type = style && style.type || (image ? "image" : "gradient");
     if (type === "image" && image) {
-      element.style.background = `linear-gradient(rgba(0,0,0,${style.overlay}),rgba(0,0,0,${style.overlay})), url("${image}") center / cover, ${style.color || fallbackColor}`;
+      element.style.background = `linear-gradient(rgba(0,0,0,${style.overlay}),rgba(0,0,0,${style.overlay})), url("${cssUrl(image)}") center / cover, ${style.color || fallbackColor}`;
       element.style.setProperty("--card-overlay", style.overlay || 0);
       return;
     }
     if (type === "gradient" && style && (style.gradientStart || style.gradientEnd)) {
-      element.style.background = `linear-gradient(${style.gradientAngle || 145}deg, ${style.gradientStart || fallbackColor}, ${style.gradientEnd || fallbackColor})`;
+      element.style.background = `linear-gradient(${style.gradientAngle ?? 145}deg, ${style.gradientStart || fallbackColor}, ${style.gradientEnd || fallbackColor})`;
       element.style.setProperty("--card-overlay", style.overlay || 0);
       return;
     }
@@ -1849,48 +2125,40 @@
     element.style.setProperty("--card-overlay", style && style.overlay || 0);
   }
 
-  function themedBoxStyle(style, isDark, gradientStart, gradientEnd) {
-    if (!isDark) return style;
-    const image = style && (style.imageUrl || style.image);
-    if (image) {
-      return Object.assign({}, style, {
-        overlay: Math.max(Number(style.overlay || 0), 0.18)
-      });
-    }
-    return {
-      type: "gradient",
-      color: gradientStart,
-      image: "",
-      imageUrl: "",
-      gradientStart,
-      gradientEnd,
-      gradientAngle: style && style.gradientAngle || 145,
-      overlay: 0.08
-    };
+  function readableCardText(style, fallbackColor) {
+    if (style?.type === "image" && (style.imageUrl || style.image)) return "";
+    const colors = style?.type === "gradient"
+      ? [style.gradientStart || fallbackColor, style.gradientEnd || fallbackColor]
+      : [style?.color || fallbackColor];
+    const backgrounds = colors.map(hexLuminance);
+    const textLuminance = hexLuminance(state.themeTextColor);
+    if (textLuminance === null || backgrounds.includes(null)) return "";
+
+    const worstContrast = (foreground) => Math.min(...backgrounds.map((background) =>
+      (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05)
+    ));
+    const currentContrast = worstContrast(textLuminance);
+    if (currentContrast >= 4.5) return "";
+    const blackContrast = worstContrast(0);
+    const whiteContrast = worstContrast(1);
+    if (Math.max(blackContrast, whiteContrast) <= currentContrast) return "";
+    return blackContrast >= whiteContrast ? "#000000" : "#ffffff";
   }
 
-  function themedCategoryStyle(style, isDark) {
-    const image = style && (style.imageUrl || style.image);
-    if (image) {
-      return isDark
-        ? Object.assign({}, style, { overlay: Math.max(Number(style.overlay || 0), 0.24) })
-        : Object.assign({}, style, { overlay: Math.min(Number(style.overlay || 0), 0.08) });
-    }
-    return {
-      type: "gradient",
-      color: isDark ? "#21110A" : "#EFE1D0",
-      image: "",
-      imageUrl: "",
-      gradientStart: isDark ? "#21110A" : "#F7EFE4",
-      gradientEnd: isDark ? "#2A160D" : "#EFE1D0",
-      gradientAngle: style && style.gradientAngle || 135,
-      overlay: isDark ? 0.08 : 0
-    };
+  function hexLuminance(value) {
+    const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value);
+    if (!match) return null;
+    const hex = match[1].length === 3 ? match[1].replace(/./g, (digit) => digit + digit) : match[1];
+    const [red, green, blue] = [0, 2, 4].map((offset) => {
+      const channel = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
   }
 
-  function applyDockButtonText(element) {
+  function applyDockButtonText(element, color = "var(--btn-text)") {
     if (!element) return;
-    element.style.color = "#ffffff";
+    element.style.color = color;
     element.style.textShadow = "0 1px 5px rgba(0,0,0,0.42)";
   }
 

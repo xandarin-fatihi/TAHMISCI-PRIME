@@ -1,0 +1,189 @@
+/* Seasonal palettes for the admin document. Public menu previews run in their own iframe. */
+:root[data-admin-appearance] {
+  --panel-canvas: var(--admin-tone-canvas);
+  --panel-surface: var(--admin-tone-surface);
+  --panel-surface-soft: var(--admin-tone-soft);
+  --panel-ink: var(--admin-tone-ink);
+  --panel-muted: var(--admin-tone-muted);
+  --panel-line: var(--admin-tone-line);
+  --panel-coffee: var(--admin-tone-link);
+  --panel-accent: var(--admin-tone-accent);
+  --panel-focus: color-mix(in srgb, var(--admin-tone-accent) 55%, transparent);
+  --panel-shadow: 0 8px 24px color-mix(in srgb, var(--admin-tone-shadow) 17%, transparent);
+  --panel-danger-soft: color-mix(in srgb, var(--panel-surface) 85%, var(--panel-danger));
+  --panel-success-soft: color-mix(in srgb, var(--panel-surface) 86%, var(--panel-success));
+  --panel-warning-soft: color-mix(in srgb, var(--panel-surface) 82%, var(--panel-warning));
+  --admin-tone-on-solid: #fff8ed;
+  --admin-tone-danger-solid: #912f45;
+  --admin-tone-success-solid: #275e4d;
+  --admin-tone-warning-solid: #8a551c;
+  color-scheme: var(--admin-tone-scheme, light);
+  scrollbar-color: var(--admin-tone-line-strong) var(--panel-canvas);
+}
+
+:root[data-admin-appearance="witch-espresso"] {
+  --admin-chart-1: #be81d1;
+  --admin-chart-2: #8753a2;
+  --admin-chart-3: #edbd81;
+  --admin-chart-4: #c77fa5;
+  --admin-chart-5: #ead0ed;
+  --admin-tone-scheme: dark;
+  --admin-tone-canvas: #201422;
+  --admin-tone-surface: #2e2034;
+  --admin-tone-soft: #382740;
+  --admin-tone-raised: #46304e;
+  --admin-tone-highlight: #68446b;
+  --admin-tone-ink: #fcf0fb;
+  --admin-tone-muted: #d9bdd9;
+  --admin-tone-link: #ecc7f3;
+  --admin-tone-accent: #edbd81;
+  --admin-tone-solid: #683d76;
+  --admin-tone-solid-deep: #45214d;
+  --admin-tone-line: #594060;
+  --admin-tone-line-strong: #9e77a8;
+  --admin-tone-shadow: #100818;
+  --admin-sidebar: #321a3a;
+  --admin-sidebar-ink: #fae4fa;
+  --admin-sidebar-active: #794783;
+  --admin-sidebar-art: url("/assets/menu-themes/halloween/witch-espresso.webp");
+  --panel-danger: #ffb0b9;
+  --panel-success: #a6e0c1;
+  --panel-warning: #ffd59d;
+}
+
+:root[data-admin-appearance="snow-village"] {
+  --admin-chart-1: #294b6f;
+  --admin-chart-2: #4a749a;
+  --admin-chart-3: #69958f;
+  --admin-chart-4: #94b4d3;
+  --admin-chart-5: #c6d9eb;
+  --admin-tone-canvas: #e5eff7;
+  --admin-tone-surface: #f9fcff;
+  --admin-tone-soft: #ebf4fc;
+  --admin-tone-raised: #daeafa;
+  --admin-tone-highlight: #c1d8ee;
+  --admin-tone-ink: #183149;
+  --admin-tone-muted: #435e76;
+  --admin-tone-link: #235377;
+  --admin-tone-accent: #2f638c;
+  --admin-tone-solid: #315f86;
+  --admin-tone-solid-deep: #234563;
+  --admin-tone-line: #b8cde0;
+  --admin-tone-line-strong: #789bb8;
+  --admin-tone-shadow: #162e4a;
+  --admin-sidebar: #213f5b;
+  --admin-sidebar-ink: #eff8ff;
+  --admin-sidebar-active: #3a6b91;
+  --admin-sidebar-art: url("/assets/menu-themes/noel/snow-village.webp");
+  --panel-danger: #943951;
+  --panel-success: #28624e;
+  --panel-warning: #775118;
+}
+
+:root[data-admin-appearance="gingerbread"] {
+  --admin-chart-1: #803d29;
+  --admin-chart-2: #b16037;
+  --admin-chart-3: #677a49;
+  --admin-chart-4: #d49961;
+  --admin-chart-5: #edc69c;
+  --admin-tone-canvas: #f5e2c8;
+  --admin-tone-surface: #fff4e3;
+  --admin-tone-soft: #fbe9d1;
+  --admin-tone-raised: #f2d9ba;
+  --admin-tone-highlight: #e9c59d;
+  --admin-tone-ink: #422419;
+  --admin-tone-muted: #704f3e;
+  --admin-tone-link: #824020;
+  --admin-tone-accent: #944825;
+  --admin-tone-solid: #8a4329;
+  --admin-tone-solid-deep: #65351f;
+  --admin-tone-line: #d9b594;
+  --admin-tone-line-strong: #a87550;
+  --admin-tone-shadow: #402418;
+  --admin-sidebar: #62331f;
+  --admin-sidebar-ink: #fff0d6;
+  --admin-sidebar-active: #9a5232;
+  --admin-sidebar-art: url("/assets/menu-themes/noel/gingerbread.webp");
+  --panel-danger: #973749;
+  --panel-success: #3f653b;
+  --panel-warning: #775019;
+}
+
+[data-appearance-choice="witch-espresso"] .admin-appearance-swatch i:first-child { background: #321a3a; }
+[data-appearance-choice="witch-espresso"] .admin-appearance-swatch i:nth-child(2) { background: #794783; }
+[data-appearance-choice="witch-espresso"] .admin-appearance-swatch i:nth-child(3) { background: #edbd81; }
+[data-appearance-choice="snow-village"] .admin-appearance-swatch i:first-child { background: #213f5b; }
+[data-appearance-choice="snow-village"] .admin-appearance-swatch i:nth-child(2) { background: #789bb8; }
+[data-appearance-choice="snow-village"] .admin-appearance-swatch i:nth-child(3) { background: #ebf4fc; }
+[data-appearance-choice="gingerbread"] .admin-appearance-swatch i:first-child { background: #65351f; }
+[data-appearance-choice="gingerbread"] .admin-appearance-swatch i:nth-child(2) { background: #9a5232; }
+[data-appearance-choice="gingerbread"] .admin-appearance-swatch i:nth-child(3) { background: #f2d9ba; }
+
+:root[data-admin-appearance] .admin-shell[data-active-section] .sidebar {
+  border-right-color: var(--admin-tone-line-strong);
+  background:
+    linear-gradient(180deg, var(--admin-sidebar) 0 69%, color-mix(in srgb, var(--admin-sidebar) 86%, transparent) 83%, color-mix(in srgb, var(--admin-sidebar) 40%, transparent) 100%),
+    var(--admin-sidebar-art) center bottom / 100% auto no-repeat,
+    var(--admin-sidebar);
+}
+
+:root[data-admin-appearance] .admin-shell .brand-block {
+  border-color: color-mix(in srgb, var(--admin-sidebar-ink) 25%, transparent);
+}
+
+:root[data-admin-appearance] .admin-shell .brand-block :is(.brand-title, .eyebrow),
+:root[data-admin-appearance] .admin-shell[data-active-section] .sidebar .panel-nav a {
+  color: var(--admin-sidebar-ink);
+}
+
+:root[data-admin-appearance] .admin-shell .sidebar-logo-toggle:hover,
+:root[data-admin-appearance] .admin-shell[data-active-section] .sidebar .panel-nav a:is(:hover, :focus-visible) {
+  background: color-mix(in srgb, var(--admin-sidebar) 78%, var(--admin-sidebar-ink));
+  color: var(--admin-sidebar-ink);
+}
+
+:root[data-admin-appearance] .admin-shell[data-active-section] .sidebar .panel-nav a.is-active {
+  border-color: color-mix(in srgb, var(--admin-sidebar-ink) 58%, var(--admin-sidebar));
+  background: var(--admin-sidebar-active);
+  color: var(--admin-sidebar-ink);
+}
+
+:root[data-admin-appearance] .admin-shell[data-active-section] .workspace {
+  background: var(--panel-canvas);
+}
+
+:root[data-admin-appearance] .admin-shell[data-active-section] .topbar {
+  border-bottom-color: var(--panel-line);
+  background: transparent;
+}
+
+:root[data-admin-appearance] :is(.admin-shell, .login-screen) :is(input, textarea)::placeholder {
+  color: var(--panel-muted);
+  opacity: 1;
+}
+
+:root[data-admin-appearance] .overview-status-dot.is-open {
+  background: var(--panel-success);
+}
+
+:root[data-admin-appearance] :is(.admin-shell, .login-screen, .global-preview-drawer, .admin-notification-panel) {
+  accent-color: var(--admin-tone-accent);
+}
+
+:root[data-admin-appearance] .admin-shell .topbar-save-button,
+:root[data-admin-appearance] .global-preview-trigger {
+  background: var(--admin-tone-solid);
+  color: var(--admin-tone-on-solid);
+}
+
+:root[data-admin-appearance] .admin-shell .topbar-save-button:disabled {
+  background: var(--panel-surface-soft);
+  color: var(--panel-muted);
+  border-color: var(--panel-line);
+}
+
+:root[data-admin-appearance] .global-preview-trigger:disabled {
+  background: var(--panel-surface-soft);
+  color: var(--panel-muted);
+  border-color: var(--panel-line);
+}

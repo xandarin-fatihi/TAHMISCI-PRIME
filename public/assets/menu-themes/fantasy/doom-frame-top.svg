@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 390 52" preserveAspectRatio="none" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <defs>
+    <g id="vine">
+      <path stroke="#b3a176" stroke-opacity=".6" d="M4 45V15A11 11 0 0 1 15 4h69M7 36V16a9 9 0 0 1 9-9h48"/>
+      <path stroke="#a2a17b" stroke-opacity=".7" d="M7 32c3-12 10-17 19-19 11-3 19 2 30-2M13 23c7 0 11 3 16 2m-6-11c5-6 10-6 17-5m2 3c3 4 9 5 14 2"/>
+      <path fill="#7e9472" fill-opacity=".55" d="M11 28q-1-7 7-10-1 7-7 10Zm8-8q6-3 10 3-7 2-10-3Zm8-7q4-6 11-5-4 6-11 5Zm14 0q8-1 12 3-8 3-12-3Z"/>
+      <path stroke="#b3a176" stroke-opacity=".5" d="M7 39q6-9 5-16m52-14 4 1 5-1"/>
+    </g>
+  </defs>
+  <use href="#vine"/>
+  <use href="#vine" transform="translate(390 0) scale(-1 1)"/>
+  <g stroke="#c5af80" stroke-opacity=".72" stroke-width=".9">
+    <path transform="translate(36 10) rotate(-25)" d="M-5 1h10v5H-5zM-1 6v7h2V6m-4-4v3m6-3v3"/>
+    <circle cx="354" cy="18" r="7"/>
+    <circle cx="354" cy="18" r="5.2" opacity=".55"/>
+    <path d="m354 14 .9 2.7 2.9.1-2.3 1.7.8 2.7-2.3-1.6-2.3 1.6.8-2.7-2.3-1.7 2.9-.1z"/>
+  </g>
+</svg>

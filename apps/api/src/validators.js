@@ -2,6 +2,7 @@
 // Developer: Uzeyir | System Key: xandar | API validation marker
 
 const { validatePricingCatalog, validateProductPricing } = require("./pricing");
+const { getSeasonalConcept, getReadyTheme } = require("../../../shared/scripts/menu-design-schema");
 
 const MAX_STATE_BYTES = 7_500_000;
 const MAX_SITE_STATE_BYTES = 750_000;
@@ -10,7 +11,7 @@ const RESOURCE_KEY_PATTERN = /(url|href|src|image|video|maps|instagram|tiktok|wh
 const DESIGN_STYLE_TYPES = new Set(["solid", "gradient", "image"]);
 const BANNER_MODES = new Set(["random", "products", "images", "video"]);
 const DESIGN_COLOR_KEYS = [
-  "bgColor", "darkBgColor", "accentColor", "textColor", "buttonTextColor",
+  "bgColor", "darkBgColor", "darkAccentColor", "darkTextColor", "accentColor", "textColor", "buttonTextColor", "buttonColor", "darkButtonColor", "darkButtonTextColor",
   "cardColor", "productCardColor", "categoryCardColor", "socialIconColor"
 ];
 const TYPOGRAPHY_LIMITS = Object.freeze({
@@ -104,12 +105,38 @@ function validateDesignSettings(value) {
     return "menuUpdateDate metin olmali ve 160 karakteri gecmemeli.";
   }
 
+  for (const key of ["seasonalConcept", "darkSeasonalConcept"]) {
+    if (value[key] !== undefined && value[key] !== "" && !getSeasonalConcept(value[key])) {
+      return key + " bilinen bir tema kimliği olmalı.";
+    }
+  }
+  if (value.themeMode !== undefined && !["custom", "ready"].includes(value.themeMode)) {
+    return "themeMode custom veya ready olmalı.";
+  }
+  for (const key of ["readyTheme", "readyAlternateTheme"]) {
+    if (value[key] !== undefined && value[key] !== "" && !getReadyTheme(value[key])) {
+      return key + " bilinen bir hazır tema kimliği olmalı.";
+    }
+  }
+  if (value.readyThemePlayback !== undefined && !["fixed", "shuffle"].includes(value.readyThemePlayback)) {
+    return "readyThemePlayback fixed veya shuffle olmalı.";
+  }
+  if (value.readyThemePool !== undefined && (!Array.isArray(value.readyThemePool)
+    || value.readyThemePool.some((id) => !getReadyTheme(id)))) {
+    return "readyThemePool bilinen hazır tema kimliklerinden oluşmalı.";
+  }
+
   const fontsError = validateFonts(value.fonts);
   if (fontsError) return fontsError;
   const typographyError = validateTypography(value.typography);
   if (typographyError) return typographyError;
   const backgroundError = validateDesignStyle(value.menuBackground, "menuBackground");
   if (backgroundError) return backgroundError;
+  const darkBackgroundError = validateDesignStyle(value.darkMenuBackground, "darkMenuBackground");
+  if (darkBackgroundError) return darkBackgroundError;
+  for (const key of ["useThemeButtons", "darkUseThemeButtons"]) {
+    if (value[key] !== undefined && typeof value[key] !== "boolean") return `${key} boolean olmali.`;
+  }
 
   if (value.bottomActions !== undefined) {
     if (!isRecord(value.bottomActions)) return "bottomActions nesne olmali.";
@@ -147,10 +174,14 @@ function validateCategoryDesign(category) {
   for (const key of ["image", "imageUrl"]) {
     if (category[key] !== undefined && !isSafeMediaResource(category[key])) return `Kategori ${key} adresi guvensiz.`;
   }
+  const layout = category.style?.imageLayout;
+  if (layout !== undefined && layout !== "right" && layout !== "cover") return "Kategori gorsel yerlesimi gecersiz.";
   return validateDesignStyle(category.style, "Kategori style");
 }
 
 function validateProductDesign(product) {
+  if (product.imageAspect !== undefined && !["landscape", "square", "source"].includes(product.imageAspect)) return "Urun imageAspect gecersiz.";
+  if (product.imageFit !== undefined && !["contain", "cover"].includes(product.imageFit)) return "Urun imageFit gecersiz.";
   if (product.cardColor !== undefined && !isSafeCssValue(product.cardColor, true)) return "Urun kart rengi gecersiz.";
   for (const key of ["image", "imageUrl", "img"]) {
     if (product[key] !== undefined && !isSafeMediaResource(product[key])) return `Urun ${key} adresi guvensiz.`;

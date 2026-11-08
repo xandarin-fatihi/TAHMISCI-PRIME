@@ -525,7 +525,7 @@ test("Faz 3-4 global canlı önizleme tekil, lazy ve bölüm geçmişi ayrılmı
   assert.doesNotMatch(source, /window\.innerHeight|this\.stage\.style\.height/);
   const panelRule = componentCss.match(/\.live-preview-panel\s*\{([^}]+)\}/);
   assert.ok(panelRule, "önizleme paneli stili bulunmalı");
-  assert.match(panelRule[1], /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
+  assert.match(panelRule[1], /grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/);
   assert.doesNotMatch(panelRule[1], /auto\s+auto/);
   const stageRule = componentCss.match(/\.live-preview-panel__stage\s*\{([^}]+)\}/);
   assert.ok(stageRule, "cihaz sahnesi stili bulunmalı");

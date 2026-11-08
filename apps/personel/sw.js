@@ -2,7 +2,7 @@
 importScripts("/shared/scripts/pwa-release.js");
 self.TAHMISCI_PWA_CONFIG = Object.freeze({
   appId: "personel",
-  version: self.TAHMISCI_PWA_RELEASE.id,
+  version: self.TAHMISCI_PWA_RELEASE.id + "-preview-ack",
   scopePath: "/personel/",
   offlineUrl: "/personel/offline.html",
   offlineAssets: [
@@ -18,7 +18,7 @@ self.TAHMISCI_PWA_CONFIG = Object.freeze({
     "/personel/notifications.js?v=20260920-notification-center-v1",
     "/shared/styles/panel-foundation.css",
     "/shared/scripts/save-coordinator.js",
-    "/shared/scripts/live-preview-receiver.js",
+    "/shared/scripts/live-preview-receiver.js?v=20261108-preview-ack",
     "/shared/scripts/pwa-client.js?v=20260920-notification-center-v1",
     "/assets/fonts/poppins-regular.ttf",
     "/assets/fonts/poppins-semibold.ttf",

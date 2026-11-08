@@ -116,6 +116,41 @@ test("ortak tasarım normalizasyonu idempotent ve fingerprint kararlıdır", () 
   assert.equal(input.settings.designPresetVersion, "tahmisci-20260522a", "salt-okunur migrasyon girdiyi değiştirmemeli");
 });
 
+test("eski özel seçim hazır temaya taşınır ve imza paleti ayrı kalır", () => {
+  const migrated = designSchema.normalizeSettings({
+    seasonalConcept: "matcha-cilek",
+    darkSeasonalConcept: "reindeer-woods",
+    bgColor: "#dae2cb"
+  });
+  assert.equal(migrated.themeMode, "ready");
+  assert.equal(migrated.readyTheme, "reindeer-woods");
+  assert.equal(migrated.seasonalConcept, "matcha-cilek");
+  assert.equal(migrated.darkSeasonalConcept, "");
+  assert.deepEqual(designSchema.normalizeSettings(migrated), migrated);
+
+  const custom = designSchema.projectSettings({
+    ...migrated,
+    themeMode: "custom",
+    readyThemePlayback: "shuffle",
+    readyThemePool: ["reindeer-woods", "santa-post", "witch-espresso"]
+  });
+  assert.equal(custom.themeMode, "custom");
+  assert.equal(custom.readyTheme, "reindeer-woods");
+  assert.equal(custom.readyThemePlayback, "shuffle");
+  assert.deepEqual(custom.readyThemePool, ["reindeer-woods", "santa-post", "witch-espresso"]);
+  assert.equal(custom.seasonalConcept, "matcha-cilek");
+  assert.equal(custom.bgColor, "#dae2cb");
+});
+
+test("eski ikinci hazır tema karışık listeye taşınır", () => {
+  const settings = designSchema.normalizeSettings({
+    themeMode: "ready", readyTheme: "santa-post", readyAlternateTheme: "reindeer-woods"
+  });
+  assert.equal(settings.readyThemePlayback, "shuffle");
+  assert.deepEqual(settings.readyThemePool, ["santa-post", "reindeer-woods"]);
+  assert.deepEqual(designSchema.normalizeSettings(settings), settings);
+});
+
 test("preview draft normalizasyonu renk, banner, kategori ve ürün tasarımını korur", () => {
   const draft = legacyMenu("tahmisci-20260722-beige-brown");
   draft.settings.socialIconSize = 42;
@@ -185,4 +220,24 @@ test("admin tasarım snapshot'ı içerik ve gizli alanları kopyalamaz", () => {
   assert.equal(serialized.includes("199"), false);
   assert.equal(serialized.includes("passwordHash"), false);
   assert.equal(serialized.includes("/media/product-image"), false);
+});
+
+test("koyu tema renkleri ve ürün görsel yerleşimi tasarım varsayılanından geri yüklenir", () => {
+  const menu = legacyMenu();
+  menu.settings.darkAccentColor = "#ffd080";
+  menu.settings.darkTextColor = "#faf1dd";
+  const product = menu.categories[0].products[0];
+  product.imageAspect = "square";
+  product.imageFit = "cover";
+
+  const snapshot = designSchema.createDesignSnapshot(menu);
+  const restored = designSchema.applyDesignSnapshot(legacyMenu(), snapshot);
+  assert.equal(restored.settings.darkAccentColor, "#ffd080");
+  assert.equal(restored.settings.darkTextColor, "#faf1dd");
+  assert.equal(restored.categories[0].products[0].imageAspect, "square");
+  assert.equal(restored.categories[0].products[0].imageFit, "cover");
+
+  const factory = designSchema.applyDesignSnapshot(menu, designSchema.createFactoryDesignSnapshot(menu));
+  assert.equal(factory.categories[0].products[0].imageAspect, "landscape");
+  assert.equal(factory.categories[0].products[0].imageFit, "contain");
 });

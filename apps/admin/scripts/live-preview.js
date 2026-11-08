@@ -24,15 +24,14 @@
   });
   const SECTION_ALIASES = Object.freeze({ shipments: "shipment", shifts: "shift", workforceTasks: "tasks" });
   const PREVIEW_SECTIONS = new Set(Object.values(SECTION_CONFIG).map((item) => item.section));
+  const phoneGeometry = (sourceWidth, sourceHeight) => Object.freeze({
+    sourceWidth, sourceHeight, outerWidth: sourceWidth + 24, outerHeight: sourceHeight + 40,
+    viewportX: 12, viewportY: 20
+  });
   const DEVICE_GEOMETRY = Object.freeze({
-    mobile: Object.freeze({
-      sourceWidth: 390,
-      sourceHeight: 844,
-      outerWidth: 414,
-      outerHeight: 884,
-      viewportX: 12,
-      viewportY: 20
-    }),
+    "mobile-320": phoneGeometry(320, 568),
+    mobile: phoneGeometry(390, 844),
+    "mobile-430": phoneGeometry(430, 932),
     desktop: Object.freeze({
       sourceWidth: 1440,
       sourceHeight: 900,
@@ -61,13 +60,14 @@
   }
 
   const STATUS_LABELS = Object.freeze({
+    idle: "Kapalı",
     preparing: "Hazırlanıyor",
     connecting: "Bağlanıyor",
     draft: "Taslak gösteriliyor",
     current: "Güncel",
     published: "Yayınlandı",
     "token-expired": "Token süresi doldu",
-    origin: "Origin doğrulanamadı",
+    origin: "Önizleme adresi doğrulanamadı",
     backend: "Backend bağlantısı yok",
     error: "Önizleme hatası",
     unavailable: "Bu bölüm için önizleme bulunmuyor"
@@ -105,16 +105,28 @@
     return normalizeOrigin(`${window.location.protocol}//${publicHost}${port}`);
   }
 
-  function routeFor(source, section, session) {
+  function routeFor(source, section, session, view) {
     const origin = session.publicOrigin || publicOrigin();
     const params = new URLSearchParams({
       preview: "admin",
       section: safePreviewSection(section),
       previewToken: session.token
     });
+    if (source === "menu" && view === "home") params.set("view", "home");
     return source === "menu"
       ? `${origin}/?${params.toString()}`
       : `${origin}/personel/?${params.toString()}`;
+  }
+
+  function resolvePreviewOrigin(configuredOrigin, allowedOrigins) {
+    const target = new URL(normalizeOrigin(configuredOrigin) || publicOrigin() || window.location.origin);
+    const parent = new URL(window.location.origin);
+    const loopback = new Set(["localhost", "127.0.0.1", "[::1]"]);
+    if (loopback.has(parent.hostname) && loopback.has(target.hostname)
+      && target.protocol === parent.protocol && target.port === parent.port && allowedOrigins.has(parent.origin)) {
+      return parent.origin;
+    }
+    return target.origin;
   }
 
   async function previewToken(mode, options = {}) {
@@ -139,7 +151,7 @@
         mode,
         expiresAt,
         allowedOrigins,
-        publicOrigin: normalizeOrigin(result.publicOrigin) || publicOrigin()
+        publicOrigin: resolvePreviewOrigin(result.publicOrigin, allowedOrigins)
       };
       if (generation === previewTokenGeneration) previewTokens.set(mode, session);
       return session;
@@ -206,8 +218,7 @@
         historyIndex: -1,
         publishedSnapshot: null,
         source: config.source,
-        device: readStoredDevice(),
-        status: "current",
+        status: "idle",
         justPublished: false
       });
     }
@@ -271,7 +282,8 @@
       this.allowedSources = sourcesForSection(this.section);
       this.historyState = historyState(this.config);
       this.source = this.allowedSources.includes(this.historyState.source) ? this.historyState.source : this.config.source;
-      this.device = ["mobile", "desktop"].includes(this.historyState.device) ? this.historyState.device : readStoredDevice();
+      this.view = "menu";
+      this.device = isPreviewDevice(options.device) ? options.device : readStoredDevice();
       this.onStatus = typeof options.onStatus === "function" ? options.onStatus : null;
       this.onDevice = typeof options.onDevice === "function" ? options.onDevice : null;
       this.refreshCallback = typeof options.refresh === "function" ? options.refresh : null;
@@ -285,6 +297,9 @@
       this.appliedGeometryDevice = "";
       this.lastScaleLayout = "";
       this.navigationId = 0;
+      this.nextDraftId = 0;
+      this.pendingDraftId = null;
+      this.frameLoaded = false;
       this.statusKey = "preparing";
       this.sessionToken = "";
       this.sessionMode = "";
@@ -308,6 +323,21 @@
       this.target.classList.add("live-preview-controller-host");
       this.target.innerHTML = `
         <section class="live-preview-panel" data-live-preview-panel>
+          <div class="live-preview-device-tools">
+            <div class="live-preview-panel__segmented" role="group" aria-label="Önizleme cihazı">
+              <button type="button" data-preview-device="mobile-320">320 px</button>
+              <button type="button" data-preview-device="mobile">390 px</button>
+              <button type="button" data-preview-device="mobile-430">430 px</button>
+              <button type="button" data-preview-device="desktop">Masaüstü</button>
+            </div>
+            <div class="live-preview-device-tools__details">
+              <div class="live-preview-panel__segmented live-preview-views" data-preview-view-group role="group" aria-label="Önizleme ekranı">
+                <button type="button" data-preview-view="home">Giriş ekranı</button>
+                <button type="button" data-preview-view="menu">Menü</button>
+              </div>
+              <small data-preview-device-note></small>
+            </div>
+          </div>
           <div class="live-preview-panel__stage" data-preview-stage>
             <div class="live-preview-device-fit" data-preview-device-fit>
               <div class="live-preview-device" data-preview-device-shell data-device="mobile">
@@ -344,14 +374,6 @@
                 <button type="button" data-preview-source="menu">Menü</button>
                 <button type="button" data-preview-source="personel">Personel</button>
               </div>
-            </section>
-            <section class="live-preview-settings__section">
-              <h3>Cihaz</h3>
-              <div class="live-preview-panel__segmented" role="group" aria-label="Önizleme cihazı">
-                <button type="button" data-preview-device="mobile" aria-label="Mobil önizleme">Mobil</button>
-                <button type="button" data-preview-device="desktop" aria-label="Masaüstü önizleme">Masaüstü</button>
-              </div>
-              <small class="live-preview-settings__note" data-preview-device-note></small>
             </section>
             <section class="live-preview-settings__section">
               <h3>Geçmiş işlemleri</h3>
@@ -446,6 +468,7 @@
       }
       const sourceButton = event.target.closest("[data-preview-source]");
       const deviceButton = event.target.closest("[data-preview-device]");
+      const viewButton = event.target.closest("[data-preview-view]");
       if (sourceButton && this.allowedSources.includes(sourceButton.dataset.previewSource)) {
         this.source = sourceButton.dataset.previewSource;
         this.historyState.source = this.source;
@@ -453,12 +476,16 @@
         this.navigate();
         return;
       }
-      if (deviceButton && ["mobile", "desktop"].includes(deviceButton.dataset.previewDevice)) {
+      if (deviceButton && isPreviewDevice(deviceButton.dataset.previewDevice)) {
         this.device = deviceButton.dataset.previewDevice;
-        this.historyState.device = this.device;
         writeStoredDevice(this.device);
         this.syncControls();
-        this.queueDraft();
+        return;
+      }
+      if (viewButton && this.source === "menu" && viewButton.dataset.previewView !== this.view) {
+        this.view = viewButton.dataset.previewView;
+        this.syncControls();
+        this.navigate();
         return;
       }
       if (event.target.closest("[data-preview-undo]")) this.undo();
@@ -470,18 +497,9 @@
     handleFrameLoad() {
       if (this.destroyed || !this.sessionToken || !this.frame || this.frame.hidden) return;
       window.clearTimeout(this.loadTimer);
-      this.setLoading(false);
-      this.setError(false);
-      this.setStatus("connecting");
-      this.syncEmptyState();
+      this.frameLoaded = true;
       this.syncFrameScale();
       this.queueDraft(true);
-      window.clearTimeout(this.ackTimer);
-      this.ackTimer = window.setTimeout(() => {
-        if (!this.destroyed && this.statusKey === "connecting") {
-          this.setError(true, "backend", "Önizleme alıcısı yanıt vermedi.");
-        }
-      }, 6000);
     }
 
     update(options = {}) {
@@ -501,12 +519,11 @@
       const nextSource = this.allowedSources.includes(requestedSource) ? requestedSource : this.allowedSources[0];
       const routeChanged = sectionChanged || nextSource !== this.source;
       this.source = nextSource;
+      if (routeChanged) this.view = "menu";
       this.historyState.source = nextSource;
       this.refreshCallback = typeof options.refresh === "function" ? options.refresh : this.refreshCallback;
       if (options.settingsButton) this.settingsButton = options.settingsButton;
-      if (historyChanged && ["mobile", "desktop"].includes(this.historyState.device)) this.device = this.historyState.device;
-      if (["mobile", "desktop"].includes(options.device)) this.device = options.device;
-      this.historyState.device = this.device;
+      if (isPreviewDevice(options.device)) this.device = options.device;
       this.seedHistory();
       this.syncControls();
       this.syncEmptyState();
@@ -531,12 +548,15 @@
         button.classList.toggle("is-active", selected);
         button.setAttribute("aria-pressed", String(selected));
       });
+      this.panel.querySelector("[data-preview-view-group]").hidden = this.source !== "menu";
+      this.panel.querySelectorAll("[data-preview-view]").forEach((button) => {
+        const selected = button.dataset.previewView === this.view;
+        button.classList.toggle("is-active", selected);
+        button.setAttribute("aria-pressed", String(selected));
+      });
       if (this.deviceNote) {
         const geometry = DEVICE_GEOMETRY[this.device] || DEVICE_GEOMETRY.mobile;
-        this.deviceNote.textContent = `${geometry.sourceWidth} × ${geometry.sourceHeight} gerçek viewport`;
-      }
-      if (!["preparing", "connecting", "error", "token-expired", "origin", "backend", "published"].includes(this.statusKey)) {
-        this.setStatus(isDraft(this.section) ? "draft" : "current");
+        this.deviceNote.textContent = `${geometry.sourceWidth} × ${geometry.sourceHeight} px`;
       }
       this.updateHistoryControls();
       this.syncFrameScale();
@@ -562,7 +582,7 @@
       }
       if (this.destroyed || navigationId !== this.navigationId) return;
 
-      const url = routeFor(this.source, this.section, session);
+      const url = routeFor(this.source, this.section, session, this.view);
       const parsedUrl = new URL(url);
       const targetOrigin = parsedUrl.origin;
       const adminOrigin = normalizeOrigin(window.location.origin);
@@ -582,12 +602,13 @@
       this.route.textContent = `${safeUrl.pathname}${safeUrl.search}`;
       this.frame.hidden = false;
       this.frame.src = url;
+      this.setLoading(true, "Bağlanıyor");
       this.setStatus("connecting");
       window.clearTimeout(this.loadTimer);
       this.loadTimer = window.setTimeout(() => {
         if (this.destroyed || navigationId !== this.navigationId) return;
         this.setLoading(false);
-        this.setError(true, "backend", "Önizleme route’u zamanında yüklenemedi.");
+        this.setError(true, "error", "Önizleme sayfası zamanında yüklenemedi.");
       }, 9000);
       window.clearTimeout(this.expiryTimer);
       const renewalToken = session.token;
@@ -605,6 +626,8 @@
       window.clearTimeout(this.expiryTimer);
       this.sessionToken = "";
       this.origin = "";
+      this.frameLoaded = false;
+      this.pendingDraftId = null;
       this.allowedOrigins = new Set();
       if (this.frame) this.frame.hidden = true;
       if (this.route) this.route.textContent = "";
@@ -678,7 +701,7 @@
       if (this.appliedGeometryDevice === this.device) return;
       this.appliedGeometryDevice = this.device;
       this.lastScaleLayout = "";
-      this.deviceShell.dataset.device = this.device;
+      this.deviceShell.dataset.device = this.device === "desktop" ? "desktop" : "mobile";
       this.deviceShell.style.width = `${geometry.outerWidth}px`;
       this.deviceShell.style.height = `${geometry.outerHeight}px`;
       this.deviceShell.style.setProperty("--preview-viewport-x", `${geometry.viewportX}px`);
@@ -711,13 +734,14 @@
         this.syncDeviceVisibility();
         return;
       }
+      this.setLoading(false);
       this.setStatus(kind);
       if (this.empty) this.empty.hidden = true;
       const title = this.error.querySelector("[data-preview-error-title]");
       const detail = this.error.querySelector("[data-preview-error-detail]");
       const titles = {
         "token-expired": "Token süresi doldu",
-        origin: "Origin doğrulanamadı",
+        origin: "Önizleme adresi doğrulanamadı",
         backend: "Backend bağlantısı yok",
         error: "Önizleme yüklenemedi"
       };
@@ -771,19 +795,32 @@
     }
 
     postDraft() {
-      if (this.destroyed || !this.frame || !this.frame.contentWindow || !this.origin || !this.sessionToken) return;
+      if (this.destroyed || !this.frameLoaded || !this.frame?.contentWindow || !this.origin || !this.sessionToken) return;
       if (!this.allowedOrigins.has(this.origin) || !this.allowedOrigins.has(normalizeOrigin(window.location.origin))) {
         this.setError(true, "origin", "Önizleme mesajı izinli origin dışına gönderilemez.");
         return;
       }
       const payload = snapshot(this.section);
-      if (!payload.menuState && !payload.recipeState && !payload.stockState) return;
+      if (this.source === "menu" && !payload.menuState) {
+        this.setError(true, "error", "Menü verisi alınamadı.");
+        return;
+      }
       const draft = isDraft(this.section);
       if (draft) this.historyState.justPublished = false;
+      const requestId = ++this.nextDraftId;
+      this.pendingDraftId = requestId;
+      this.setStatus("connecting");
+      window.clearTimeout(this.ackTimer);
+      this.ackTimer = window.setTimeout(() => {
+        if (this.pendingDraftId !== requestId) return;
+        this.pendingDraftId = null;
+        this.setError(true, "error", "Önizleme sayfası veriyi doğrulamadı.");
+      }, 6000);
       this.frame.contentWindow.postMessage({
         type: MESSAGE_TYPE,
         schemaVersion: SCHEMA_VERSION,
         previewSession: this.sessionToken,
+        requestId,
         scope: this.source === "menu" ? "menu" : this.section,
         data: this.source === "menu" ? payload.menuState : payload,
         source: this.source,
@@ -791,8 +828,6 @@
         section: this.section,
         draft
       }, this.origin);
-      this.setStatus(draft ? "draft" : this.historyState.justPublished ? "published" : "current");
-      this.syncEmptyState();
     }
 
     seedHistory() {
@@ -863,7 +898,6 @@
       const currentHash = fingerprint(relevantSnapshot(current, this.section));
       const publishedHash = fingerprint(relevantSnapshot(published, this.section));
       this.historyState.justPublished = !isDraft(this.section) && currentHash === publishedHash;
-      this.setStatus(this.historyState.justPublished ? "published" : "draft");
       this.updateHistoryControls();
       this.queueDraft(true);
     }
@@ -922,7 +956,7 @@
       this.config = null;
       this.instance = null;
       this.isOpen = false;
-      this.statusKey = "current";
+      this.statusKey = "idle";
       this.handleTriggerClick = () => this.toggle();
       this.handleCloseClick = () => this.close();
       this.handleSettingsClick = () => {
@@ -1049,7 +1083,7 @@
         state.justPublished = false;
         state.status = "current";
         pendingPublishedSnapshot = null;
-        this.setStatus("current");
+        this.setStatus("idle");
       }
     }
 
@@ -1062,9 +1096,7 @@
         this.setStatus(this.instance.statusKey);
         return;
       }
-      const state = historyState(this.config);
-      const next = isDraft(this.config.section) ? "draft" : state.justPublished ? "published" : "current";
-      this.setStatus(next);
+      this.setStatus(this.isOpen ? "preparing" : "idle");
     }
 
     setStatus(status) {
@@ -1199,6 +1231,8 @@
   function handlePreviewMessage(event) {
     const instance = globalDrawer && globalDrawer.instance;
     if (!validIncomingMessage(event, instance)) return;
+    if (instance.pendingDraftId === null || event.data.requestId !== instance.pendingDraftId) return;
+    instance.pendingDraftId = null;
     window.clearTimeout(instance.ackTimer);
     if (event.data.type === ERROR_TYPE) {
       const kind = event.data.code === "token-expired" ? "token-expired" : "error";
@@ -1208,6 +1242,7 @@
     instance.setLoading(false);
     instance.setError(false);
     instance.setStatus(event.data.draft ? "draft" : instance.historyState.justPublished ? "published" : "current");
+    instance.syncEmptyState();
     if (!event.data.draft) instance.historyState.justPublished = false;
   }
 
@@ -1297,7 +1332,8 @@
 
   function readStoredDevice() {
     try {
-      return window.localStorage.getItem(DEVICE_STORAGE_KEY) === "desktop" ? "desktop" : "mobile";
+      const device = window.localStorage.getItem(DEVICE_STORAGE_KEY);
+      return isPreviewDevice(device) ? device : "mobile";
     } catch (_error) {
       return "mobile";
     }
@@ -1305,8 +1341,12 @@
 
   function writeStoredDevice(device) {
     try {
-      window.localStorage.setItem(DEVICE_STORAGE_KEY, device === "desktop" ? "desktop" : "mobile");
+      window.localStorage.setItem(DEVICE_STORAGE_KEY, device);
     } catch (_error) {}
+  }
+
+  function isPreviewDevice(device) {
+    return Object.prototype.hasOwnProperty.call(DEVICE_GEOMETRY, device);
   }
 
   function normalizeOrigin(value) {

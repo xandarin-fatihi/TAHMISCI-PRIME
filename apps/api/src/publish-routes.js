@@ -1,13 +1,23 @@
 "use strict";
 
+const crypto = require("node:crypto");
+
 const {
   validateMenuState,
   validateRecipeCatalog,
   validateRecipeState,
   validateSiteState
 } = require("./validators");
-const { reconcileRecipeCatalog } = require("./store/migrations");
-const { migratePricingSystem } = require("./pricing");
+const { migrateStore, reconcileRecipeCatalog } = require("./store/migrations");
+const { migratePricingSystem, serializeLegacyMenuState } = require("./pricing");
+
+function publishedMenuFingerprint(menuState, pricing) {
+  const canonicalJson = JSON.stringify({ menuState, pricing }, (_key, value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, value[key]]));
+  });
+  return crypto.createHash("sha256").update(canonicalJson).digest("hex");
+}
 
 class IdempotentReplay extends Error {
   constructor(response) {
@@ -73,6 +83,11 @@ function registerPublishRoutes(options) {
             createdAt: updatedAt
           }, 5000);
           response = { ok: true, requestId, revision, updatedAt, changedScopes };
+          if (changedScopes.includes("menu")) {
+            const canonical = migrateStore(data);
+            const menu = serializeLegacyMenuState(canonical.menuState, canonical.pricing);
+            response.menuFingerprint = publishedMenuFingerprint(menu, canonical.pricing);
+          }
           data.idempotencyRequests = appendLimited(data.idempotencyRequests, {
             scope: "admin_publish",
             requestId,
@@ -223,4 +238,4 @@ function invalid(message) {
   return error;
 }
 
-module.exports = { registerPublishRoutes };
+module.exports = { publishedMenuFingerprint, registerPublishRoutes };

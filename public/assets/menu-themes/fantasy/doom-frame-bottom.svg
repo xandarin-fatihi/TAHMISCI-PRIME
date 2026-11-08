@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 390 52" preserveAspectRatio="none" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <defs>
+    <g id="vine">
+      <path stroke="#b3a176" stroke-opacity=".6" d="M4 8v29a11 11 0 0 0 11 11h69M7 16v20a9 9 0 0 0 9 9h48"/>
+      <path stroke="#a2a17b" stroke-opacity=".7" d="M7 20c4 11 11 17 20 18 10 2 19-2 30 3M13 29c7 1 11-3 16-2m-6 11c5 6 10 6 17 5m2-5c3-4 9-5 14-2"/>
+      <path fill="#7e9472" fill-opacity=".55" d="M11 23q-1 7 7 10-1-7-7-10Zm8 8q6 3 10-3-7-2-10 3Zm8 7q4 6 11 5-4-6-11-5Zm14-1q8 1 12-3-8-3-12 3Z"/>
+      <path stroke="#b3a176" stroke-opacity=".5" d="M7 13q6 9 5 16m52 14 4-1 5 1"/>
+    </g>
+  </defs>
+  <use href="#vine"/>
+  <use href="#vine" transform="translate(390 0) scale(-1 1)"/>
+  <path stroke="#b3a176" stroke-opacity=".62" d="M32 33q4-1 6-5 1 4 6 5-5 1-6 6-2-5-6-6Z"/>
+  <g stroke="#a7bfaa" stroke-opacity=".76" stroke-width=".9">
+    <circle cx="354" cy="34" r="7"/>
+    <circle cx="354" cy="34" r="5.3" opacity=".55"/>
+    <path d="m354 30 3.7 6.6h-7.4zM354 27v1m-6 9 1-.5m11 .5-1-.5"/>
+  </g>
+</svg>

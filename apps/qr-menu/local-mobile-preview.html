@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="tr">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tahmisçi · Mobil Menü Önizlemesi</title>
+<style>
+  html { color-scheme: dark; }
+  body { margin: 0; background: #171b19; color: #e8efe9; font: 14px system-ui, sans-serif; }
+  main { box-sizing: border-box; height: 100dvh; display: grid; grid-template-rows: auto auto minmax(0, 1fr); justify-items: center; gap: 8px; padding: 8px; }
+  p { margin: 0; text-align: center; }
+  .preview-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 16px; }
+  nav, [role="group"] { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+  nav a, button { color: inherit; background: transparent; border: 1px solid #55615a; padding: 6px 10px; border-radius: 8px; text-decoration: none; font: inherit; cursor: pointer; }
+  nav a[aria-current="page"], button[aria-pressed="true"] { background: #34453a; }
+  .preview-stage { display: grid; place-items: center; width: 100%; min-height: 0; overflow: hidden; }
+  .preview-phone { position: relative; }
+  iframe { position: absolute; inset: 0 auto auto 0; transform-origin: top left; border: 0; border-radius: 16px; background: #140905; outline: 1px solid #55615a; }
+</style>
+<main>
+  <p>Tahmisçi QR menü · Dikey telefon önizlemesi</p>
+  <div class="preview-controls">
+    <nav aria-label="Önizleme ekranı">
+      <a href="?view=home" data-view="home">Giriş ekranı</a>
+      <a href="?view=menu" data-view="menu">Menü</a>
+    </nav>
+    <div role="group" aria-label="Önizleme genişliği">
+      <button type="button" data-width="320">320 px</button>
+      <button type="button" data-width="390">390 px</button>
+      <button type="button" data-width="430">430 px</button>
+    </div>
+  </div>
+  <div class="preview-stage">
+    <div class="preview-phone"><iframe title="Tahmisçi QR menü, dikey telefon görünümü" hidden></iframe></div>
+  </div>
+</main>
+<script src="/qr-menu/scripts/local-mobile-preview.js?v=20261108-preview-widths" defer></script>
+</html>

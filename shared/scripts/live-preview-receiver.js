@@ -90,13 +90,20 @@
     if (!message || typeof message !== "object" || message.type !== MESSAGE_TYPE) return;
     if (!previewSession || message.previewSession !== previewSession) return;
     if (!validDraftMessage(message)) {
-      acknowledge(ERROR_TYPE, { code: "invalid-payload", message: "Geçersiz önizleme verisi." });
+      acknowledge(ERROR_TYPE, { requestId: message.requestId, code: "invalid-payload", message: "Geçersiz önizleme verisi." });
       return;
     }
 
     window.__TAHMISCI_PREVIEW_DRAFT__ = message.data;
-    document.dispatchEvent(new CustomEvent(MESSAGE_TYPE, { detail: message }));
+    let applied = false;
+    const detail = Object.assign({}, message, { confirmApplied: () => { applied = true; } });
+    document.dispatchEvent(new CustomEvent(MESSAGE_TYPE, { detail }));
+    if (Number.isSafeInteger(message.requestId) && message.source === "menu" && !applied) {
+      acknowledge(ERROR_TYPE, { requestId: message.requestId, message: "Menü verisi önizlemeye uygulanamadı." });
+      return;
+    }
     acknowledge(READY_TYPE, {
+      requestId: message.requestId,
       section: message.section || message.scope,
       draft: Boolean(message.draft),
       status: message.draft ? "draft" : "current"

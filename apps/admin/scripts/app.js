@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
   "use strict";
   // Developer: Uzeyir | System Key: xandar | Admin panel runtime marker
 
@@ -19,6 +19,7 @@
   }
 
   const STORAGE_KEY = "tahmisci.menu.state.v1";
+  const PREVIOUS_MENU_THEME_KEY = "tahmisci.admin.previous-menu-theme.v1";
   const SITE_STORAGE_KEY = "tahmisci.site.state.v1";
   const FEEDBACK_STORAGE_KEY = "tahmisci.feedback.items.v1";
   const RECIPE_STORAGE_KEY = "tahmisci.recipe.state.v1";
@@ -26,6 +27,7 @@
   const BACKEND_URL_KEY = "tahmisci.backend.url";
   const LAST_ACTIVE_SECTION_KEY = "tahmisci.admin.lastActiveSection";
   const PANEL_THEME_KEY = "tahmisci.panel.theme";
+  const ADMIN_APPEARANCE_KEY = "tahmisci.admin.appearance";
   const PANEL_LAYOUT_KEY = "tahmisci.panel.layout";
   const PANEL_SETTINGS_KEY = "tahmisci.admin.settings.v1";
   const PANEL_SETTINGS_DEFAULT_KEY = "tahmisci.admin.settings.default.v1";
@@ -150,12 +152,13 @@
     staffAccess: "Personel",
     mudavim: "Müdavim",
     feedback: "Dilek & Şikayet",
-    settings: "Ayarlar"
+    settings: "Ayarlar",
+    profile: "Profil Düzenle"
   };
   const PANEL_MODULES = Object.freeze({
     menuOutput: false,
-    site: true,
-    mudavim: true
+    site: false,
+    mudavim: false
   });
   const DISABLED_PANEL_SECTIONS = new Set(
     Object.entries(PANEL_MODULES).filter(([, enabled]) => !enabled).map(([section]) => section)
@@ -215,6 +218,24 @@
     { id: "contact", label: { tr: "İletişim", en: "Contact" }, url: "#contact", icon: "fas fa-phone", visible: true, order: 3 }
   ];
   const memoryStore = {};
+  const MENU_THEME_PRESETS = Object.freeze({
+    light: Object.freeze([
+      { id: "classic-cream", name: "Klasik Krem", colors: ["#F7EFE4", "#FFF9F1", "#4A2414", "#B77945", "#2A160D"] },
+      { id: "minimal-white", name: "Minimal Beyaz", colors: ["#F7F7F5", "#FFFFFF", "#36312D", "#8B7564", "#22211F"] },
+      { id: "natural-green", name: "Doğal Yeşil", colors: ["#F3F4EA", "#FCFCF5", "#415238", "#7D9163", "#283020"] },
+      { id: "modern-ice", name: "Modern Buz", colors: ["#F1F5F8", "#FBFDFE", "#274B6A", "#6992B8", "#18324A"] },
+      { id: "warm-terracotta", name: "Sıcak Terracotta", colors: ["#FFF1E8", "#FFF9F4", "#8F422A", "#C77750", "#4A261B"] },
+      { id: "christmas-light", name: "Noel · Kış Sabahı", colors: ["#FFF7E9", "#E2EFDF", "#24563D", "#B78648", "#19362B"], buttonColor: "#9C263D", buttonText: "#FFF8ED" }
+    ]),
+    dark: Object.freeze([
+      { id: "espresso", name: "Espresso", colors: ["#140905", "#21110A", "#F3DFC6", "#C58B5B", "#F8E9D2"] },
+      { id: "charcoal", name: "Kömür", colors: ["#141414", "#222222", "#EFE9DF", "#AA9780", "#F4F1EC"] },
+      { id: "midnight-navy", name: "Gece Laciverti", colors: ["#0C1622", "#142536", "#E4EDF6", "#7198C2", "#EFF6FC"] },
+      { id: "forest-night", name: "Orman Gecesi", colors: ["#0F1913", "#18271D", "#E3EDDB", "#7F9F6B", "#EEF5E9"] },
+      { id: "burgundy-night", name: "Bordo Gece", colors: ["#241014", "#34181E", "#F5E4E4", "#B97983", "#FAEEEE"] },
+      { id: "christmas-dark", name: "Noel · Çam Gecesi", colors: ["#0D231C", "#1C3829", "#F1CB83", "#C78665", "#FFF3DB"], buttonColor: "#802840", buttonText: "#FFF6E6" }
+    ])
+  });
   const FONT_OPTIONS = [
     ["Tahmisci Magnolia", BRAND_TITLE_FONT],
     ["Tahmisci Poppins", BRAND_BODY_FONT],
@@ -393,6 +414,8 @@
   };
 
   const state = {
+    adminProfile: null,
+    adminProfileLoading: null,
     data: null,
     recipes: null,
     recipeCatalog: [],
@@ -588,6 +611,7 @@
     state.panelConfig = loadPanelConfig();
     populateFontSelects();
     applyPanelTheme();
+    bindAdminAppearance();
     applyPanelLayout();
     bindLogin();
 
@@ -609,12 +633,13 @@
     const ids = [
       "loginScreen", "loginForm", "passwordInput", "loginError", "panelShell", "miniStats",
       "sidebarPanel", "sidebarToggle", "adminSidebarOverlay", "adminProfileButton", "adminProfileMenu", "settingsToggle", "settingsMenu", "workspaceTitle",
+      "adminProfileForm", "adminProfileFields", "adminProfileName", "adminProfilePhoto", "adminProfileRemoveRow", "adminProfileRemovePhoto", "adminProfileMessage",
       "adminNotificationTrigger", "adminNotificationBadge", "adminNotificationOverlay", "adminNotificationDrawer", "adminNotificationClose",
       "adminNotificationTitle", "adminNotificationSummary", "adminNotificationCategory", "adminNotificationReadAll", "adminNotificationArchiveRead", "adminNotificationMessage",
       "adminNotificationList", "adminNotificationLoadMore", "adminNotificationSettings", "adminNotificationPreferences",
       "adminNotificationPush", "adminNotificationTest", "adminNotificationSavePreferences", "adminNotificationHealth",
       "adminNotificationClearArchive", "adminNotificationManageEmail", "adminNotificationDevices", "adminNotificationDevicesRefresh",
-      "overviewGrid", "contentGrid", "categoryList", "productList", "saveState", "saveChangesButton", "panelThemeToggle", "addCategoryButton",
+      "overviewGrid", "contentGrid", "categoryList", "categorySearch", "saveState", "saveChangesButton", "panelThemeToggle", "addCategoryButton",
       "menuOutputCard", "menuOutputTemplateName", "menuOutputCanvaLink", "menuOutputOpenCanva", "menuOutputSaveTemplate",
       "menuOutputUpdateTemplate", "menuOutputDuplicateTemplate", "menuOutputDeleteTemplate", "menuOutputSetDefaultTemplate",
       "menuOutputTemplateList", "menuOutputReset", "menuOutputExportPng", "menuOutputExportJpg", "menuOutputExportPdf",
@@ -625,8 +650,9 @@
       "menuOutputPreview", "menuOutputStatus", "menuOutputPreviewStage", "menuOutputCanvasShell",
       "menuOutputZoomOut", "menuOutputZoomIn", "menuOutputZoomValue", "menuOutputFitPreview", "menuOutputZoomActual",
       "menuOutputGridToggle", "menuOutputSafeAreaToggle", "menuOutputFullscreen",
-      "addProductButton", "resetButton", "saveDefaultButton", "defaultChoiceModal", "mobilePanelToggle", "bgColor", "darkBgColor", "accentColor",
-      "textColor", "buttonTextColor", "productCardColor", "socialIconColor", "socialIconSize",
+      "resetButton", "saveDefaultButton", "defaultChoiceModal", "mobilePanelToggle", "bgColor", "darkBgColor", "darkAccentColor", "darkTextColor", "accentColor",
+      "textColor", "buttonTextColor", "buttonColor", "darkButtonColor", "darkButtonTextColor", "useThemeButtons", "darkUseThemeButtons",
+      "darkMenuBgType", "darkMenuGradientStart", "darkMenuGradientEnd", "darkMenuGradientAngle", "darkMenuBgUrl", "darkMenuOverlay", "darkMenuBgFile", "clearDarkMenuBg", "productCardColor", "socialIconColor", "socialIconSize",
       "socialIconSizeValue", "menuBgType", "menuGradientStart",
       "menuGradientEnd", "menuGradientAngle", "menuBgUrl", "menuOverlay", "menuBgFile",
       "clearMenuBg", "menuUpdateDate", "titleFont", "categoryFont", "productFont",
@@ -644,8 +670,9 @@
       "bannerImageFile", "clearBannerImages", "bannerImageList", "bannerImages", "bannerProductCategory",
       "bannerProductSearch", "bannerProductList", "categoryEditorTitle", "deleteCategoryButton", "categoryName",
       "categoryActive", "categoryIconKey", "categoryStyleType", "categoryColor", "categoryGradientStart", "categoryGradientEnd",
-      "categoryGradientAngle", "categoryImageUrl", "categoryOverlay", "categoryImageFile",
-      "clearCategoryImage", "categoryImagePreview", "bulkProductImageUrl", "applyBulkProductImage",
+      "categoryGradientAngle", "categoryImageUrl", "categoryImageLayout", "categoryOverlay", "categoryImageFile",
+      "clearCategoryImage", "categoryImagePreview", "applyCategoryArtwork", "applyAllCategoryArtwork", "clearAllCategoryArtwork",
+      "bulkProductImageUrl", "applyBulkProductImage",
       "bulkProductImageFile", "clearBulkProductImage", "bulkProductStyleType", "bulkProductColor",
       "bulkProductGradientStart", "bulkProductGradientEnd", "bulkProductGradientAngle",
       "applyBulkProductStyle", "productEditorCard", "productCategoryTabs", "productQuickList", "productDetailsAccordion",
@@ -654,7 +681,7 @@
       "sizePriceFields", "priceK", "priceO", "priceB", "singleDoublePriceFields", "priceSingle", "priceDouble", "productStock",
       "productKind", "productTemperature", "productPopular", "productActive", "productStyleType", "productColor",
       "productGradientStart", "productGradientEnd", "productGradientAngle", "productImageUrl",
-      "productImageOverlay", "productImageFile", "clearProductImage", "productImagePreview", "productCalories",
+      "productImageOverlay", "productImageAspect", "productImageFit", "productImageFile", "clearProductImage", "productImagePreview", "productCalories",
       "productAllergens", "productIngredients", "productContentMode", "productRecipeId", "productRecipeSize",
       "productRecipeLinkStatus", "recipeCategorySelect", "recipeProductSelect",
       "addRecipeCategoryButton", "addRecipeProductButton", "addRecipeSizeButton", "deleteRecipeCategoryButton",
@@ -713,7 +740,10 @@
     ["titleFont", "categoryFont", "productFont", "siteTitleFont", "siteBodyFont", "menuOutputTitleFont", "menuOutputBodyFont", "menuOutputPriceFont"].forEach((id) => {
       const select = els[id];
       if (!select) return;
-      select.innerHTML = FONT_OPTIONS.map(([label, value]) => (
+      const options = ["titleFont", "categoryFont", "productFont"].includes(id)
+        ? [...FONT_OPTIONS.filter(([label]) => ["Tahmisci Magnolia", "Tahmisci Poppins", "Playfair Display", "Merriweather", "Cinzel"].includes(label)), ["Sistem — Sans-serif", "Arial, sans-serif"], ["Sistem — Serif", "Georgia, serif"], ["Sistem — Eş aralıklı", "monospace"]]
+        : FONT_OPTIONS;
+      select.innerHTML = options.map(([label, value]) => (
         `<option value="${escapeAttribute(value)}">${escapeHTML(label)}</option>`
       )).join("");
     });
@@ -736,6 +766,36 @@
     const nextTheme = document.body.dataset.panelTheme === "dark" ? "light" : "dark";
     safeLocalSet(PANEL_THEME_KEY, nextTheme);
     applyPanelTheme(nextTheme);
+  }
+
+  function bindAdminAppearance() {
+    const options = document.getElementById("adminAppearanceOptions");
+    const apply = document.getElementById("applyAdminAppearance");
+    const status = document.getElementById("adminAppearanceStatus");
+    const radios = Array.from(options.querySelectorAll('input[name="adminAppearance"]'));
+    const root = document.documentElement;
+    const selected = () => radios.find((radio) => radio.checked)?.value || "classic";
+
+    function applyAppearance(value) {
+      const radio = radios.find((item) => item.value === value) || radios[0];
+      if (radio.value === "classic") delete root.dataset.adminAppearance;
+      else root.dataset.adminAppearance = radio.value;
+      radio.checked = true;
+      status.textContent = "Etkin tema · " + radio.closest("label").querySelector("strong").textContent;
+      apply.disabled = true;
+    }
+
+    const saved = safeLocalGet(ADMIN_APPEARANCE_KEY);
+    // Move the previous forest preset to the winter palette for existing users.
+    applyAppearance(saved === "noel" ? "snow-village" : saved);
+    options.addEventListener("change", () => {
+      apply.disabled = selected() === (root.dataset.adminAppearance || "classic");
+    });
+    apply.addEventListener("click", () => {
+      const value = selected();
+      safeLocalSet(ADMIN_APPEARANCE_KEY, value);
+      applyAppearance(value);
+    });
   }
 
   function applyPanelLayout(layout) {
@@ -777,12 +837,13 @@
     try {
       els.loginScreen.hidden = true;
       els.loginScreen.style.display = "none";
-      els.panelShell.hidden = false;
-      els.panelShell.style.display = "grid";
-      setSidebarCollapsed(defaultSidebarCollapsed());
       state.data = loadData();
       state.recipes = loadRecipeData();
       state.site = loadSiteData();
+      await loadSectionScope("menu", { force: true });
+      els.panelShell.hidden = false;
+      els.panelShell.style.display = "grid";
+      setSidebarCollapsed(defaultSidebarCollapsed());
       ensureSelection();
       ensureRecipeSelection();
       setActiveSection(resolveInitialActiveSection(), { collapseSidebar: false, render: false });
@@ -799,6 +860,7 @@
       renderActiveSection(state.activeSection);
       await Promise.allSettled([
         hydrateAdminCoreFromBackend(),
+        loadAdminProfile(),
         ensureSectionData(state.activeSection)
       ]);
       applyInitialAdminNavigationTarget();
@@ -832,12 +894,22 @@
     if (state.bound) return;
     state.bound = true;
 
+    const mudavimLink = document.querySelector('.panel-nav [data-panel-section="mudavim"]');
+    if (mudavimLink) mudavimLink.hidden = !PANEL_MODULES.mudavim;
+
     els.sidebarToggle.addEventListener("click", toggleSidebar);
     if (els.adminSidebarOverlay) {
       els.adminSidebarOverlay.addEventListener("click", () => setSidebarCollapsed(true, { persist: false, restoreFocus: true }));
     }
     if (els.adminProfileButton) els.adminProfileButton.addEventListener("click", toggleAdminProfileMenu);
     if (els.adminProfileMenu) els.adminProfileMenu.addEventListener("click", handleAdminProfileAction);
+    els.adminProfileForm.addEventListener("submit", saveAdminProfile);
+    els.adminProfilePhoto.addEventListener("change", () => {
+      if (els.adminProfilePhoto.files.length) els.adminProfileRemovePhoto.checked = false;
+    });
+    els.adminProfileRemovePhoto.addEventListener("change", () => {
+      if (els.adminProfileRemovePhoto.checked) els.adminProfilePhoto.value = "";
+    });
     bindAdminNotificationEvents();
     document.addEventListener("click", closeAdminProfileMenuFromOutside);
     document.addEventListener("keydown", handleAdminShellKeydown);
@@ -860,7 +932,7 @@
     if (els.overviewGrid) els.overviewGrid.addEventListener("click", handleOverviewAction);
     bindDataImportCenterEvents();
     els.addCategoryButton.addEventListener("click", addCategory);
-    els.addProductButton.addEventListener("click", addProduct);
+    els.categorySearch.addEventListener("input", renderCategoryChoices);
     if (els.resetButton) els.resetButton.addEventListener("click", (event) => openDefaultChoiceModal(state.activeSection === "settings" ? "system" : "menu", event.currentTarget));
     if (els.saveDefaultButton) els.saveDefaultButton.addEventListener("click", saveAdminMenuDefault);
     if (els.saveAdminMenuDefaultButton) els.saveAdminMenuDefaultButton.addEventListener("click", saveAdminMenuDefault);
@@ -878,16 +950,8 @@
       const category = selectedCategory();
       state.selectedProductId = category && category.products[0] ? category.products[0].id : "";
       state.allowEmptyProductSelection = false;
-      setActiveSection("category", { collapseSidebar: true, render: false });
       renderActiveSection("category");
-    });
-    els.productList.addEventListener("click", (event) => {
-      const row = event.target.closest("[data-product-id]");
-      if (!row) return;
-      state.selectedProductId = row.dataset.productId;
-      state.allowEmptyProductSelection = false;
-      setActiveSection("product", { collapseSidebar: true, render: false });
-      renderActiveSection("product");
+      els.categoryList.querySelector("[aria-pressed='true']")?.focus({ preventScroll: true });
     });
     els.productCategoryTabs.addEventListener("click", handleProductCategoryTabs);
     els.productQuickList.addEventListener("click", handleProductQuickList);
@@ -987,7 +1051,8 @@
     if (els.staffActivityTabs) els.staffActivityTabs.addEventListener("click", handleStaffActivityTabClick);
 
     [
-      "bgColor", "darkBgColor", "accentColor", "textColor", "buttonTextColor",
+      "bgColor", "darkBgColor", "darkAccentColor", "darkTextColor", "accentColor", "textColor", "buttonTextColor", "buttonColor", "darkButtonColor", "darkButtonTextColor", "useThemeButtons", "darkUseThemeButtons",
+      "darkMenuBgType", "darkMenuGradientStart", "darkMenuGradientEnd", "darkMenuGradientAngle", "darkMenuBgUrl", "darkMenuOverlay",
       "productCardColor", "socialIconColor", "socialIconSize", "menuBgType", "menuGradientStart", "menuGradientEnd",
       "menuGradientAngle", "menuBgUrl", "menuOverlay", "menuUpdateDate",
       "titleFont", "categoryFont", "productFont", "menuTitleSize", "categoryTitleSize",
@@ -1003,6 +1068,8 @@
       els[id].addEventListener("input", updateSettingsFromForm);
       els[id].addEventListener("change", updateSettingsFromForm);
     });
+
+    bindMenuThemePresets();
 
     if (els.bannerProductList) {
       els.bannerProductList.addEventListener("change", updateSettingsFromForm);
@@ -1065,7 +1132,7 @@
 
     [
       "categoryName", "categoryActive", "categoryIconKey", "categoryStyleType", "categoryColor", "categoryGradientStart",
-      "categoryGradientEnd", "categoryGradientAngle", "categoryImageUrl", "categoryOverlay"
+      "categoryGradientEnd", "categoryGradientAngle", "categoryOverlay"
     ].forEach((id) => {
       els[id].addEventListener("input", updateCategoryFromForm);
       els[id].addEventListener("change", updateCategoryFromForm);
@@ -1075,17 +1142,29 @@
       "productName", "productCategory", "productDesc",
       "productStock", "productKind", "productTemperature", "productPopular", "productActive",
       "productStyleType", "productColor", "productGradientStart", "productGradientEnd", "productGradientAngle",
-      "productImageUrl", "productImageOverlay", "productCalories", "productAllergens",
+      "productImageUrl", "productImageOverlay", "productImageAspect", "productImageFit", "productCalories", "productAllergens",
       "productIngredients", "productContentMode", "productRecipeId", "productRecipeSize"
     ].forEach((id) => {
       els[id].addEventListener("input", updateProductFromForm);
       els[id].addEventListener("change", updateProductFromForm);
     });
 
-    els.menuBgFile.addEventListener("change", (event) => readImage(event.target, (dataUrl) => {
-      state.data.settings.menuBackground.image = dataUrl;
-      state.data.settings.menuBackground.imageUrl = "";
-      els.menuBgUrl.value = "";
+    els.darkMenuBgFile.addEventListener("change", (event) => uploadMenuImage(event.target, (src) => {
+      els.darkMenuBgType.value = "image";
+      els.darkMenuBgUrl.value = src;
+      updateSettingsFromForm();
+    }));
+    els.clearDarkMenuBg.addEventListener("click", () => {
+      els.darkMenuBgUrl.value = "";
+      updateSettingsFromForm();
+    });
+    els.menuBgFile.addEventListener("change", (event) => uploadMenuImage(event.target, (src) => {
+      state.data.settings.menuBackground.image = "";
+      state.data.settings.menuBackground.imageUrl = src;
+      state.data.settings.menuBackground.type = "image";
+      state.data.settings.menuBackgroundImage = src;
+      els.menuBgType.value = "image";
+      els.menuBgUrl.value = src;
       saveAndRender();
     }));
     els.clearMenuBg.addEventListener("click", () => {
@@ -1094,11 +1173,12 @@
       state.data.settings.menuBackgroundImage = "";
       saveAndRender();
     });
-    els.popularImageFile.addEventListener("change", (event) => readImage(event.target, (dataUrl) => {
-      state.data.settings.bottomActions.popular.image = dataUrl;
-      state.data.settings.bottomActions.popular.imageUrl = "";
+    els.popularImageFile.addEventListener("change", (event) => uploadMenuImage(event.target, (src) => {
+      state.data.settings.bottomActions.popular.image = "";
+      state.data.settings.bottomActions.popular.imageUrl = src;
       state.data.settings.bottomActions.popular.type = "image";
-      els.popularImageUrl.value = "";
+      els.popularBoxType.value = "image";
+      els.popularImageUrl.value = src;
       saveAndRender();
     }));
     els.clearPopularImage.addEventListener("click", () => {
@@ -1106,11 +1186,12 @@
       state.data.settings.bottomActions.popular.imageUrl = "";
       saveAndRender();
     });
-    els.suggestImageFile.addEventListener("change", (event) => readImage(event.target, (dataUrl) => {
-      state.data.settings.bottomActions.suggest.image = dataUrl;
-      state.data.settings.bottomActions.suggest.imageUrl = "";
+    els.suggestImageFile.addEventListener("change", (event) => uploadMenuImage(event.target, (src) => {
+      state.data.settings.bottomActions.suggest.image = "";
+      state.data.settings.bottomActions.suggest.imageUrl = src;
       state.data.settings.bottomActions.suggest.type = "image";
-      els.suggestImageUrl.value = "";
+      els.suggestBoxType.value = "image";
+      els.suggestImageUrl.value = src;
       saveAndRender();
     }));
     els.clearSuggestImage.addEventListener("click", () => {
@@ -1148,36 +1229,76 @@
         saveAndRender();
       });
     }
-    els.categoryImageFile.addEventListener("change", (event) => readImage(event.target, (dataUrl) => {
+    els.categoryImageUrl.addEventListener("change", () => {
       const category = selectedCategory();
       if (!category) return;
-      category.style.image = dataUrl;
-      category.style.imageUrl = "";
-      category.style.type = "image";
-      category.image = dataUrl;
+      setCategoryImage(category, els.categoryImageUrl.value.trim());
       saveAndRender();
-    }));
+    });
+    els.categoryImageLayout.addEventListener("change", () => {
+      const category = selectedCategory();
+      if (!category) return;
+      category.style.imageLayout = els.categoryImageLayout.value;
+      saveAndRender();
+    });
+    els.categoryImageFile.addEventListener("change", async (event) => {
+      const category = selectedCategory();
+      if (!category) return;
+      const input = event.currentTarget;
+      input.disabled = true;
+      try {
+        await uploadMenuImage(input, (src) => {
+          if (!state.data.categories.includes(category)) return;
+          setCategoryImage(category, src);
+          saveAndRender();
+        });
+      } finally {
+        input.disabled = false;
+      }
+    });
     els.clearCategoryImage.addEventListener("click", () => {
       const category = selectedCategory();
       if (!category) return;
-      category.style.image = "";
-      category.style.imageUrl = "";
-      category.image = "";
+      setCategoryImage(category, "");
+      saveAndRender();
+    });
+    els.applyCategoryArtwork.addEventListener("click", () => {
+      const category = selectedCategory();
+      const artwork = MENU_DESIGN_SCHEMA.categoryArtworkForName(category?.name);
+      if (!artwork) return;
+      applyCategoryArtwork(category, artwork);
+      saveAndRender();
+    });
+    els.applyAllCategoryArtwork.addEventListener("click", () => {
+      const categories = categoriesEligibleForArtwork();
+      if (!categories.length) return;
+      for (const category of categories) {
+        applyCategoryArtwork(category, MENU_DESIGN_SCHEMA.categoryArtworkForName(category.name));
+      }
+      saveAndRender();
+    });
+    els.clearAllCategoryArtwork.addEventListener("click", () => {
+      const categories = categoriesWithBuiltInArtwork();
+      if (!categories.length) return;
+      for (const category of categories) setCategoryImage(category, "");
       saveAndRender();
     });
     els.applyBulkProductImage.addEventListener("click", applyBulkProductImageUrl);
-    els.bulkProductImageFile.addEventListener("change", (event) => readImage(event.target, (dataUrl) => {
-      applyBulkProductImage(dataUrl, true);
+    els.bulkProductImageFile.addEventListener("change", (event) => uploadMenuImage(event.target, (src) => {
+      applyBulkProductImage(src, false);
     }));
     els.clearBulkProductImage.addEventListener("click", clearBulkProductImages);
     els.applyBulkProductStyle.addEventListener("click", applyBulkProductStyle);
-    els.productImageFile.addEventListener("change", (event) => readImage(event.target, (dataUrl) => {
+    els.productImageFile.addEventListener("change", (event) => {
       const product = selectedProduct();
       if (!product) return;
-      product.image = dataUrl;
-      product.imageUrl = "";
-      saveAndRender();
-    }));
+      uploadMenuImage(event.target, (src) => {
+        product.image = "";
+        product.imageUrl = src;
+        if (selectedProduct() === product) els.productImageUrl.value = src;
+        saveAndRender();
+      });
+    });
     els.clearProductImage.addEventListener("click", () => {
       const product = selectedProduct();
       if (!product) return;
@@ -1322,11 +1443,82 @@
     const action = event.target.closest("[data-admin-profile-action]");
     if (!action) return;
     closeAdminProfileMenu();
-    if (action.dataset.adminProfileAction === "settings") {
-      setActiveSection("settings", { collapseSidebar: true });
+    const section = action.dataset.adminProfileAction;
+    if (section === "settings" || section === "profile") {
+      setActiveSection(section, { collapseSidebar: true });
+      if (section === "profile" && !state.adminProfile) void loadAdminProfile();
       return;
     }
-    if (action.dataset.adminProfileAction === "logout") logoutAdminSession();
+    if (section === "logout") logoutAdminSession();
+  }
+
+  function loadAdminProfile() {
+    if (state.adminProfileLoading) return state.adminProfileLoading;
+    els.adminProfileMessage.textContent = "Profil yükleniyor…";
+    state.adminProfileLoading = backendRequest("/api/admin/profile")
+      .then(({ profile }) => {
+        renderAdminProfile(profile);
+        els.adminProfileMessage.textContent = "";
+      })
+      .catch((error) => {
+        els.adminProfileMessage.textContent = error.message || "Profil yüklenemedi.";
+      })
+      .finally(() => { state.adminProfileLoading = null; });
+    return state.adminProfileLoading;
+  }
+
+  function renderAdminProfile(profile) {
+    state.adminProfile = profile;
+    const name = profile.name || "Yönetici";
+    document.querySelectorAll("[data-admin-profile-name]").forEach((element) => {
+      element.textContent = name;
+    });
+    document.querySelectorAll("[data-admin-profile-avatar]").forEach((element) => {
+      if (profile.avatarUrl) {
+        const image = document.createElement("img");
+        image.src = profile.avatarUrl;
+        image.alt = "";
+        element.replaceChildren(image);
+      } else {
+        element.textContent = Array.from(name)[0].toLocaleUpperCase("tr-TR");
+      }
+    });
+    els.adminProfileName.value = name;
+    els.adminProfilePhoto.value = "";
+    els.adminProfileRemovePhoto.checked = false;
+    els.adminProfileRemoveRow.hidden = !profile.avatarUrl;
+    els.adminProfileFields.disabled = false;
+  }
+
+  async function saveAdminProfile(event) {
+    event.preventDefault();
+    if (!state.adminProfile || els.adminProfileFields.disabled) return;
+    const name = els.adminProfileName.value.trim();
+    const file = els.adminProfilePhoto.files[0];
+    const removePhoto = els.adminProfileRemovePhoto.checked;
+    if (!name) {
+      els.adminProfileMessage.textContent = "Görünen adı gir.";
+      els.adminProfileName.focus();
+      return;
+    }
+    if (file && (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024)) {
+      els.adminProfileMessage.textContent = "En fazla 5 MB boyutunda JPG, PNG veya WebP seç.";
+      return;
+    }
+    els.adminProfileFields.disabled = true;
+    els.adminProfileMessage.textContent = "Profil kaydediliyor…";
+    try {
+      const body = { name };
+      if (file) body.avatarUrl = (await uploadMediaFile(file, "image")).src;
+      else if (removePhoto) body.avatarUrl = "";
+      const { profile } = await backendRequest("/api/admin/profile", { method: "PATCH", body });
+      renderAdminProfile(profile);
+      els.adminProfileMessage.textContent = "Profil kaydedildi.";
+    } catch (error) {
+      els.adminProfileMessage.textContent = error.message || "Profil kaydedilemedi.";
+    } finally {
+      els.adminProfileFields.disabled = false;
+    }
   }
 
   function toggleSidebar() {
@@ -1505,6 +1697,7 @@
   function resolveHashSection() {
     const hash = window.location.hash ? decodeURIComponent(window.location.hash.slice(1)) : "";
     if (!hash) return "";
+    if (DISABLED_PANEL_SECTIONS.has(hash)) return "overview";
     const normalizedHash = normalizePanelSection(hash);
     if (normalizedHash) return normalizedHash;
     const directLink = Array.from(document.querySelectorAll("[data-panel-section]"))
@@ -1512,7 +1705,8 @@
     if (directLink) return normalizePanelSection(directLink.dataset.panelSection);
     const target = document.getElementById(hash);
     if (!target) return "";
-    return normalizePanelSection(target.dataset.sectionPanel || target.closest("[data-section-panel]")?.dataset.sectionPanel);
+    const section = target.dataset.sectionPanel || target.closest("[data-section-panel]")?.dataset.sectionPanel;
+    return DISABLED_PANEL_SECTIONS.has(section) ? "overview" : normalizePanelSection(section);
   }
 
   function normalizePanelSection(section) {
@@ -2167,7 +2361,7 @@
     }
     if (section === "settings") {
       return Promise.all([
-        loadStyleOnce("accountSecurity", "/shared/styles/account-security.css?v=20260827-performance"),
+        loadStyleOnce("accountSecurity", "/shared/styles/account-security.css?v=20261108-admin-palettes"),
         loadScriptOnce("accountSecurity", "/shared/scripts/account-security.js?v=20260827-performance")
       ]);
     }
@@ -2234,7 +2428,8 @@
       } else if (scope === "menu") {
         const result = await backendRequest("/api/menu", { skipToken: true, noDedupe: Boolean(options.force) });
         syncPublishRevision(result);
-        if (hasMenuContent(result.menuState) && !state.dirtyMenu && !state.saving && !state.pendingPublishVerification) {
+        if (!Array.isArray(result.menuState?.categories)) throw new Error("Yayınlanmış menü verisi yüklenemedi.");
+        if (!state.dirtyMenu && !state.saving && !state.pendingPublishVerification) {
           state.data = normalizeState(result.menuState);
           if (result.pricing && typeof result.pricing === "object") state.data.pricing = cloneData(result.pricing);
           safeLocalSet(STORAGE_KEY, JSON.stringify(state.data));
@@ -2328,7 +2523,7 @@
       previewTrigger.setAttribute("aria-busy", "true");
       try {
         await loadSectionScope("menu");
-        await loadScriptOnce("livePreview", "scripts/live-preview.js?v=20260827-performance");
+        await loadScriptOnce("livePreview", "scripts/live-preview.js?v=20261108-preview-widths");
         window.TahmisciLivePreview?.toggle?.();
       } catch (error) {
         updateSaveControls(error.message || "Canlı önizleme yüklenemedi");
@@ -3583,6 +3778,7 @@
       publishResult: cloneData(publishResult || {}),
       requestId,
       acceptedAt: new Date().toISOString(),
+      expectedMenuFingerprint: String(publishResult?.menuFingerprint || ""),
       expectedDesignFingerprint: expectedMenuState ? MENU_DESIGN_SCHEMA.designFingerprint(expectedMenuState) : "",
       lastError: ""
     };
@@ -3593,7 +3789,13 @@
     if (!pending) return { ok: true, unchanged: true, revision: state.publishRevision };
 
     try {
-      const readback = await backendRequest("/api/menu", { skipToken: true });
+      const readback = await backendRequest("/api/menu", { skipToken: true, noDedupe: true });
+      const readbackRevision = Number(readback.publishRevision);
+      const acceptedRevision = Number(pending.publishResult.revision);
+      if (!Number.isSafeInteger(readbackRevision) || !Number.isSafeInteger(acceptedRevision) || readbackRevision < acceptedRevision
+        || !pending.expectedMenuFingerprint || readback.menuFingerprint !== pending.expectedMenuFingerprint) {
+        throw createPublishVerificationError("Yayın kabul edildi ancak menü, ürün ve fiyat verileri geri okumada doğrulanamadı. Yeniden doğrulayabilirsiniz.");
+      }
       syncPublishRevision(readback);
       const canonicalMenuState = readback && readback.menuState;
       const validMenuState = Boolean(canonicalMenuState
@@ -3680,13 +3882,16 @@
   function createPublishSnapshot() {
     const changes = {};
     const fingerprints = {};
-    if (state.dirtyMenu) changes.menuState = cloneData(state.data);
+    if (state.dirtyMenu) {
+      changes.menuState = cloneData(state.data);
+      if (changes.menuState.pricing === null) delete changes.menuState.pricing;
+    }
     if (state.dirtyRecipes) {
       changes.recipeState = cloneData(state.recipes);
       changes.recipeCatalog = cloneData(state.recipeCatalog);
     }
     if (state.dirtySite) changes.siteState = cloneData(state.site);
-    Object.keys(changes).forEach((key) => { fingerprints[key] = JSON.stringify(changes[key]); });
+    Object.keys(changes).forEach((key) => { fingerprints[key] = JSON.stringify(key === "menuState" ? state.data : changes[key]); });
     return {
       changes,
       fingerprints,
@@ -4152,7 +4357,9 @@
 
   function ensureSelection() {
     if (!state.data.categories.length) {
-      state.data.categories.push(makeCategory("Yeni Kategori"));
+      state.selectedCategoryId = "";
+      state.selectedProductId = "";
+      return;
     }
     if (!state.selectedCategoryId || !state.data.categories.some((category) => category.id === state.selectedCategoryId)) {
       state.selectedCategoryId = state.data.categories[0].id;
@@ -4201,7 +4408,7 @@
     if (active === "overview") renderStats();
     else if (active === "bulkPrice") renderBulkPriceTools();
     else if (["menu", "banner", "category", "product"].includes(active)) {
-      renderLists();
+      if (active === "category") renderCategoryChoices();
       renderForms();
     } else if (active === "recipe") renderRecipeEditor();
     else if (active === "staffAccess") renderStaffAccess();
@@ -4226,7 +4433,7 @@
     ensureRecipeSelection();
     renderStats();
     renderBulkPriceTools();
-    renderLists();
+    renderCategoryChoices();
     renderForms();
     renderRecipeEditor();
     renderStaffAccess();
@@ -4302,16 +4509,17 @@
     const distribution = overviewCategoryDistribution(distributionCategories, productCount);
     const conicGradient = distribution.length
       ? `conic-gradient(${distribution.map((item) => `${item.color} ${item.start.toFixed(2)}% ${item.end.toFixed(2)}%`).join(", ")})`
-      : "conic-gradient(#e7d8ca 0 100%)";
+      : "conic-gradient(var(--panel-line, #e7d8ca) 0 100%)";
     const updateDate = summary && summary.updatedAt || state.data.settings.menuUpdateDate || state.site.updatedAt || new Date().toISOString();
     const updates = [
       { icon: "menu", title: "Menü verisi güncel", meta: `${formatOverviewNumber(productCount)} ürün · ${formatOverviewTime(updateDate)}` },
       { icon: "categories", title: "Kategoriler hazır", meta: `${formatOverviewNumber(categoryCount)} aktif yapı` },
-      { icon: "recipe", title: "Reçeteler eşitlendi", meta: `${formatOverviewNumber(recipeStats.products)} reçete ürünü` },
-      { icon: "active", title: "Müdavim hesapları", meta: `${formatOverviewNumber(summary ? summary.mudavimMembers : state.mudavimMembers.length)} kayıt` }
+      { icon: "recipe", title: "Reçeteler eşitlendi", meta: `${formatOverviewNumber(recipeStats.products)} reçete ürünü` }
     ];
-    const trend = overviewVisitTrend();
-    const mudavimMemberCount = summary ? Number(summary.mudavimMembers || 0) : state.mudavimMembers.length;
+    if (PANEL_MODULES.mudavim) {
+      updates.push({ icon: "active", title: "Müdavim hesapları", meta: `${formatOverviewNumber(summary ? summary.mudavimMembers : state.mudavimMembers.length)} kayıt` });
+    }
+    const trend = PANEL_MODULES.mudavim ? overviewVisitTrend() : null;
 
     els.overviewGrid.innerHTML = `
       <div class="overview-dashboard">
@@ -4368,12 +4576,12 @@
           </article>
         </div>
 
-        <div class="overview-bottom-grid">
+        ${trend ? `<div class="overview-bottom-grid">
           <article class="overview-panel overview-trend-panel">
             <header><div><h3>Ziyaretçi Trendi</h3><small>Müdavim ziyaret kayıtlarının son 7 günü</small></div><strong>${formatOverviewNumber(trend.total)} ziyaret</strong></header>
             <div class="overview-chart-wrap">
               <svg class="overview-trend-chart" viewBox="0 0 700 190" role="img" aria-label="Son yedi günlük ziyaretçi trendi">
-                <defs><linearGradient id="overviewTrendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b7773d" stop-opacity=".35"/><stop offset="1" stop-color="#b7773d" stop-opacity=".02"/></linearGradient></defs>
+                <defs><linearGradient id="overviewTrendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--panel-accent, #b7773d)" stop-opacity=".35"/><stop offset="1" stop-color="var(--panel-accent, #b7773d)" stop-opacity=".02"/></linearGradient></defs>
                 <path class="overview-chart-grid" d="M28 45H672M28 95H672M28 145H672"/>
                 <polygon class="overview-chart-area" points="${trend.area}"/>
                 <polyline class="overview-chart-line" points="${trend.points}"/>
@@ -4383,17 +4591,7 @@
             </div>
           </article>
 
-          <!-- PASIF_MUDAVIM_MODULU_BASLANGIC
-          <article class="overview-panel overview-members-panel">
-            <header><h3>Müdavim Özeti</h3><button type="button" data-overview-section="mudavim">Tümünü Gör</button></header>
-            <div class="overview-member-metrics">
-              <div><span>Toplam Müdavim</span><strong>${formatOverviewNumber(mudavimMemberCount)}</strong><small>Kayıtlı üye</small></div>
-              <div><span>Son 7 Gün</span><strong>${formatOverviewNumber(trend.total)}</strong><small>Ziyaret kaydı</small></div>
-              <div><span>Toplam Ziyaret</span><strong>—</strong><small>Loyalty sonraki aşamada</small></div>
-            </div>
-          </article>
-          PASIF_MUDAVIM_MODULU_BITIS -->
-        </div>
+        </div>` : ""}
       </div>
     `;
     if (els.miniStats) {
@@ -4438,7 +4636,7 @@
       const percent = totalProducts ? (item.count / totalProducts) * 100 : 0;
       const start = cursor;
       cursor += percent;
-      return { ...item, percent, start, end: cursor, color: colors[index % colors.length] };
+      return { ...item, percent, start, end: cursor, color: `var(--admin-chart-${index + 1}, ${colors[index]})` };
     });
   }
 
@@ -5172,6 +5370,8 @@
 
   function renderFeedbackMudavimSummary(items) {
     if (!els.feedbackMudavimSummary) return;
+    els.feedbackMudavimSummary.hidden = !PANEL_MODULES.mudavim;
+    if (!PANEL_MODULES.mudavim) return;
     const mudavimItems = items.filter(isMudavimFeedback);
     const rated = mudavimItems.filter((item) => Number(item.rating || 0) > 0);
     const average = rated.length
@@ -6324,32 +6524,45 @@
     }).format(date);
   }
 
-  function renderLists() {
-    els.categoryList.innerHTML = state.data.categories.map((category) => `
-      <button class="nav-row${category.id === state.selectedCategoryId ? " is-active" : ""}" type="button" data-category-id="${escapeAttribute(category.id)}">
+  function renderCategoryChoices() {
+    const search = normalizeText(els.categorySearch.value).trim();
+    const categories = state.data.categories.filter((category) => normalizeText(category.name).includes(search));
+    els.categoryList.innerHTML = categories.map((category) => `
+      <button class="nav-row${category.id === state.selectedCategoryId ? " is-active" : ""}" type="button" data-category-id="${escapeAttribute(category.id)}" aria-pressed="${category.id === state.selectedCategoryId}">
         <strong>${category.active ? "" : "Gizli · "}${escapeHTML(category.name)}</strong>
         <small>${category.products.length} ürün</small>
       </button>
-    `).join("");
-
-    const category = selectedCategory();
-    els.productList.innerHTML = category && category.products.length
-      ? category.products.map((product) => `
-        <button class="nav-row${product.id === state.selectedProductId ? " is-active" : ""}" type="button" data-product-id="${escapeAttribute(product.id)}">
-          <strong>${product.popular ? "★ " : ""}${product.stock === "sold-out" || !product.active ? "Gizli · " : ""}${escapeHTML(product.name)}</strong>
-          <small>${escapeHTML(priceSummary(product))}</small>
-        </button>
-      `).join("")
-      : `<div class="nav-row"><strong>Ürün yok</strong><small>+ Ürün ile ekleyin</small></div>`;
+    `).join("") || `<p class="category-selection-empty">${search ? "Aramaya uygun kategori bulunamadı." : "Henüz kategori eklenmedi."}</p>`;
   }
 
   function renderForms() {
     const settings = state.data.settings;
+    renderMenuThemeMode(settings);
     els.bgColor.value = toColor(settings.bgColor, DEFAULT_SETTINGS.bgColor);
     els.darkBgColor.value = toColor(settings.darkBgColor, DEFAULT_SETTINGS.darkBgColor);
+    els.darkAccentColor.value = toColor(settings.darkAccentColor, DEFAULT_SETTINGS.darkAccentColor);
+    els.darkTextColor.value = toColor(settings.darkTextColor, DEFAULT_SETTINGS.darkTextColor);
     els.accentColor.value = toColor(settings.accentColor, DEFAULT_SETTINGS.accentColor);
     els.textColor.value = toColor(settings.textColor, DEFAULT_SETTINGS.textColor);
-    els.buttonTextColor.value = toColor(settings.buttonTextColor, DEFAULT_SETTINGS.buttonTextColor);
+    for (const key of ["buttonTextColor", "buttonColor", "darkButtonColor", "darkButtonTextColor"]) {
+      els[key].value = toColor(settings[key], DEFAULT_SETTINGS[key]);
+    }
+    els.useThemeButtons.checked = settings.useThemeButtons;
+    els.darkUseThemeButtons.checked = settings.darkUseThemeButtons;
+    for (const [mode, id] of [["Light", settings.seasonalConcept], ["Dark", settings.darkSeasonalConcept]]) {
+      const activeConcept = MENU_DESIGN_SCHEMA.getSeasonalConcept(id);
+      const label = document.getElementById("menuThemePreset" + mode + "State");
+      label.hidden = !activeConcept;
+      label.textContent = activeConcept ? "Seçili tema · " + activeConcept.name : "";
+    }
+    const darkBackground = settings.darkMenuBackground;
+    els.darkMenuBgType.value = darkBackground.type;
+    els.darkMenuGradientStart.value = toColor(darkBackground.gradientStart, DEFAULT_SETTINGS.darkBgColor);
+    els.darkMenuGradientEnd.value = toColor(darkBackground.gradientEnd, DEFAULT_SETTINGS.darkBgColor);
+    els.darkMenuGradientAngle.value = darkBackground.gradientAngle;
+    els.darkMenuBgUrl.value = darkBackground.imageUrl || darkBackground.image || "";
+    els.darkMenuOverlay.value = darkBackground.overlay;
+    document.getElementById("darkMenuOverlayValue").textContent = `${Math.round(darkBackground.overlay * 100)}%`;
     els.productCardColor.value = toColor(settings.productCardColor, DEFAULT_SETTINGS.productCardColor);
     if (els.socialIconColor) els.socialIconColor.value = toColor(settings.socialIconColor, DEFAULT_SETTINGS.socialIconColor);
     if (els.socialIconSize) els.socialIconSize.value = clamp(Number(settings.socialIconSize || DEFAULT_SETTINGS.socialIconSize), 18, 64);
@@ -6382,6 +6595,14 @@
     renderBannerSettingsForm(settings.banner);
 
     const category = selectedCategory();
+    els.deleteCategoryButton.disabled = !category;
+    const artwork = MENU_DESIGN_SCHEMA.categoryArtworkForName(category?.name);
+    els.applyCategoryArtwork.disabled = !artwork ||
+      (category.style.type === "image" && category.style.imageUrl === artwork.image
+        && MENU_DESIGN_SCHEMA.categoryImageLayout(category.style) === "right");
+    els.applyAllCategoryArtwork.disabled = categoriesEligibleForArtwork().length === 0;
+    els.clearAllCategoryArtwork.disabled = categoriesWithBuiltInArtwork().length === 0;
+    if (!category) els.categoryEditorTitle.textContent = "Düzenlemek için kategori ekleyin";
     if (category) {
       els.categoryEditorTitle.textContent = `${category.name} kategorisi`;
       els.categoryName.value = category.name;
@@ -6392,7 +6613,8 @@
       els.categoryGradientStart.value = toColor(category.style.gradientStart, DEFAULT_SETTINGS.categoryCardColor);
       els.categoryGradientEnd.value = toColor(category.style.gradientEnd, "#E5E7EB");
       els.categoryGradientAngle.value = category.style.gradientAngle;
-      els.categoryImageUrl.value = category.style.imageUrl || "";
+      els.categoryImageUrl.value = category.style.imageUrl || category.style.image || "";
+      els.categoryImageLayout.value = MENU_DESIGN_SCHEMA.categoryImageLayout(category.style);
       els.categoryOverlay.value = category.style.overlay;
       els.bulkProductStyleType.value = "solid";
       els.bulkProductColor.value = toColor(settings.productCardColor, DEFAULT_SETTINGS.productCardColor);
@@ -6447,6 +6669,8 @@
     els.productGradientAngle.value = product.style.gradientAngle;
     els.productImageUrl.value = product.imageUrl || "";
     els.productImageOverlay.value = product.imageOverlay;
+    els.productImageAspect.value = product.imageAspect;
+    els.productImageFit.value = product.imageFit;
     renderImagePreview(els.productImagePreview, product.imageUrl || product.image, "Ürün görseli yok");
     els.productCalories.value = product.details.calories;
     els.productAllergens.value = product.details.allergens;
@@ -9417,22 +9641,28 @@
 
   function renderMenuUiSummary(settings) {
     if (!settings) return;
+    const shuffleCount = settings.themeMode === "ready" && settings.readyThemePlayback === "shuffle"
+      ? settings.readyThemePool.length : 0;
+    const readyId = shuffleCount ? settings.readyThemePool[0] : settings.readyTheme;
+    const ready = settings.themeMode === "ready" ? MENU_DESIGN_SCHEMA.getReadyTheme(readyId) : null;
+    const palette = ready?.palettes?.[ready.night ? "dark" : "light"] || ready;
     const swatches = [
-      [els.menuSummaryTheme, settings.bgColor],
+      [els.menuSummaryTheme, palette?.background || settings.bgColor],
       [els.menuSummaryDark, settings.darkBgColor],
-      [els.menuSummaryAccent, settings.accentColor],
-      [els.menuSummaryText, settings.textColor],
-      [els.menuSummaryCard, settings.productCardColor]
+      [els.menuSummaryAccent, palette?.accent || settings.accentColor],
+      [els.menuSummaryText, palette?.text || settings.textColor],
+      [els.menuSummaryCard, palette?.product || palette?.surface || settings.productCardColor]
     ];
     swatches.forEach(([element, value]) => {
       if (element) element.style.backgroundColor = toColor(value, "#F4EBDC");
     });
     if (els.menuSummaryThemeText) {
       const labels = { solid: "Düz renk", gradient: "Gradient", image: "Görsel" };
-      els.menuSummaryThemeText.textContent = labels[settings.menuBackground.type] || "Aydınlık";
+      els.menuSummaryThemeText.textContent = shuffleCount
+        ? `Karışık · ${shuffleCount} tema` : ready?.name || labels[settings.menuBackground.type] || "Aydınlık";
     }
     if (els.menuSummaryAccentText) {
-      els.menuSummaryAccentText.textContent = toColor(settings.accentColor, DEFAULT_SETTINGS.accentColor).toUpperCase();
+      els.menuSummaryAccentText.textContent = toColor(palette?.accent || settings.accentColor, DEFAULT_SETTINGS.accentColor).toUpperCase();
     }
     if (els.menuOverlayValue) els.menuOverlayValue.textContent = `${Math.round(Number(settings.menuBackground.overlay || 0) * 100)}%`;
     const popular = normalizeStyle(settings.bottomActions.popular);
@@ -9556,17 +9786,26 @@
   async function appendBannerFiles(input, listName, kind) {
     const files = Array.from(input.files || []);
     if (!files.length) return;
-    const banner = normalizeBanner(state.data.settings.banner);
     try {
+      if (kind === "video" && files.some((file) => file.size > 50 * 1024 * 1024)) {
+        throw new Error("Her banner videosu en fazla 50 MB olabilir.");
+      }
       const mediaItems = [];
       for (const file of files) {
-        mediaItems.push(await storeMediaFile(file, kind));
+        mediaItems.push(await storeMediaFile(file, kind, kind === "video" ? "/api/media/banner" : "/api/media"));
+      }
+      const banner = normalizeBanner(state.data.settings.banner);
+      if (kind === "video" && !banner.videos.length && (banner.videoUrl || banner.video)) {
+        banner.videos.push({ src: banner.videoUrl || banner.video, kind: "video" });
       }
       banner[listName].push(...mediaItems);
-      banner.video = "";
-      banner.videoUrl = "";
+      if (kind === "video") {
+        banner.video = "";
+        banner.videoUrl = "";
+      }
       banner.mode = kind === "video" ? "video" : "images";
       state.data.settings.banner = banner;
+      renderBannerSettingsForm(banner);
       saveAndRender();
     } catch (error) {
       console.error("Banner medyası yüklenemedi:", error);
@@ -9594,6 +9833,7 @@
     }
     if (kind === "images" && !banner.images.length && banner.mode === "images") banner.mode = "random";
     state.data.settings.banner = banner;
+    renderBannerSettingsForm(banner);
     saveAndRender();
   }
 
@@ -9645,13 +9885,174 @@
     }
   }
 
+  function renderMenuThemeMode(settings) {
+    const ready = settings.themeMode === "ready";
+    const shuffle = settings.readyThemePlayback === "shuffle";
+    document.querySelector(`[name="menuThemeMode"][value="${ready ? "ready" : "custom"}"]`).checked = true;
+    document.getElementById("menuReadyThemePanel").hidden = !ready;
+    document.getElementById("menuCustomThemePanel").hidden = ready;
+    document.getElementById("menuReadyTheme").value = settings.readyTheme;
+    document.getElementById("menuReadyThemePlayback").value = settings.readyThemePlayback;
+    document.getElementById("menuReadyFixedTheme").hidden = shuffle;
+    document.getElementById("menuReadyShufflePanel").hidden = !shuffle;
+    for (const input of document.querySelectorAll("#menuReadyThemePool input")) {
+      input.checked = settings.readyThemePool.includes(input.value);
+    }
+    syncPreviousMenuThemeButton(settings);
+  }
+
+  function menuThemeSnapshot(settings) {
+    const snapshot = MENU_DESIGN_SCHEMA.projectSettings(settings);
+    delete snapshot.banner;
+    delete snapshot.menuUpdateDate;
+    return snapshot;
+  }
+
+  function syncPreviousMenuThemeButton(settings) {
+    const previous = readStoredJSON(PREVIOUS_MENU_THEME_KEY);
+    document.getElementById("menuRestorePreviousTheme").disabled = !previous
+      || JSON.stringify(previous) === JSON.stringify(menuThemeSnapshot(settings));
+  }
+
+  function changeMenuTheme(change, save = saveAndRender) {
+    const previous = menuThemeSnapshot(state.data.settings);
+    change();
+    save();
+    if (JSON.stringify(previous) !== JSON.stringify(menuThemeSnapshot(state.data.settings))) {
+      safeLocalSet(PREVIOUS_MENU_THEME_KEY, JSON.stringify(previous));
+    }
+    document.getElementById("menuThemeHistoryStatus").textContent = "Son tema seçimi bu tarayıcıda saklanır.";
+    syncPreviousMenuThemeButton(state.data.settings);
+  }
+
+  function restorePreviousMenuTheme() {
+    const previous = readStoredJSON(PREVIOUS_MENU_THEME_KEY);
+    if (!previous || document.getElementById("menuRestorePreviousTheme").disabled) return;
+    const current = menuThemeSnapshot(state.data.settings);
+    Object.assign(state.data.settings, menuThemeSnapshot(previous));
+    safeLocalSet(PREVIOUS_MENU_THEME_KEY, JSON.stringify(current));
+    saveAndRender();
+    document.getElementById("menuThemeHistoryStatus").textContent = "Önceki tema taslağa alındı. Yayınlamak için Kaydet ve Yayınla’yı kullan.";
+  }
+
+  function bindMenuThemePresets() {
+    const readySelect = document.getElementById("menuReadyTheme");
+    const playback = document.getElementById("menuReadyThemePlayback");
+    const pool = document.getElementById("menuReadyThemePool");
+    document.getElementById("menuRestorePreviousTheme").addEventListener("click", restorePreviousMenuTheme);
+    for (const [key, label] of [["fantasy", "Fantastik Temalar"], ["coffee", "Kahve Çerçeveleri"], ["occasion", "Özel günler"], ["noel", "Noel"], ["halloween", "Cadılar Bayramı"]]) {
+      const group = document.createElement("optgroup");
+      group.label = label;
+      const checklist = document.createElement("fieldset");
+      checklist.className = "menu-ready-theme-options";
+      const legend = document.createElement("legend");
+      legend.textContent = label;
+      checklist.append(legend);
+      for (const concept of MENU_DESIGN_SCHEMA.SEASONAL_CONCEPTS) {
+        if ((concept.collection || "noel") !== key) continue;
+        group.append(new Option(concept.name, concept.id));
+        const row = document.createElement("label");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.value = concept.id;
+        row.append(box, concept.name);
+        checklist.append(row);
+      }
+      readySelect.append(group);
+      pool.append(checklist);
+    }
+    document.querySelectorAll('[name="menuThemeMode"]').forEach((input) => {
+      input.addEventListener("change", () => changeMenuTheme(() => {
+        state.data.settings.themeMode = input.value;
+      }));
+    });
+    readySelect.addEventListener("change", () => changeMenuTheme(() => {
+      state.data.settings.readyTheme = readySelect.value;
+    }));
+    playback.addEventListener("change", () => changeMenuTheme(() => {
+      const settings = state.data.settings;
+      settings.readyThemePlayback = playback.value;
+      if (playback.value === "fixed" && !settings.readyTheme) {
+        settings.readyTheme = settings.readyThemePool[0] || "";
+      }
+    }));
+    pool.addEventListener("change", () => changeMenuTheme(() => {
+      state.data.settings.readyThemePool = Array.from(pool.querySelectorAll("input:checked"), (box) => box.value);
+    }));
+    for (const mode of ["light", "dark"]) {
+      const dark = mode === "dark";
+      const select = document.getElementById(dark ? "menuThemePresetDark" : "menuThemePresetLight");
+      const setting = dark ? "darkSeasonalConcept" : "seasonalConcept";
+      const collection = document.createElement("optgroup");
+      collection.label = "Tahmisçi İmza";
+      for (const concept of MENU_DESIGN_SCHEMA.SEASONAL_CONCEPTS) {
+        if (concept.collection === "daily") collection.append(new Option(concept.name, concept.id));
+      }
+      select.append(collection);
+      select.add(new Option("İmza temasını kaldır", "clear-seasonal"));
+      for (const preset of MENU_THEME_PRESETS[mode]) select.add(new Option(preset.name, preset.id));
+      select.addEventListener("change", () => {
+        const id = select.value;
+        select.value = "";
+        if (id === "clear-seasonal") {
+          if (state.data.settings[setting]) {
+            changeMenuTheme(() => { state.data.settings[setting] = ""; });
+          }
+          return;
+        }
+        const concept = MENU_DESIGN_SCHEMA.getSeasonalConcept(id);
+        const preset = MENU_THEME_PRESETS[mode].find((item) => item.id === id);
+        if (!concept && !preset) return;
+        const palette = concept?.palettes?.[mode] || concept;
+        const [background, surface, primary, , text] = preset?.colors ||
+          [palette.background, palette.surface, palette.accent, null, palette.text];
+        const fields = dark ? {
+          background: els.darkBgColor, accent: els.darkAccentColor, text: els.darkTextColor,
+          button: els.darkButtonColor, buttonText: els.darkButtonTextColor, allButtons: els.darkUseThemeButtons,
+          type: els.darkMenuBgType, start: els.darkMenuGradientStart, end: els.darkMenuGradientEnd, angle: els.darkMenuGradientAngle
+        } : {
+          background: els.bgColor, accent: els.accentColor, text: els.textColor,
+          button: els.buttonColor, buttonText: els.buttonTextColor, allButtons: els.useThemeButtons,
+          type: els.menuBgType, start: els.menuGradientStart, end: els.menuGradientEnd, angle: els.menuGradientAngle
+        };
+        changeMenuTheme(() => {
+          fields.background.value = background;
+          fields.accent.value = primary;
+          fields.text.value = text;
+          fields.button.value = palette?.button || preset?.buttonColor || primary;
+          fields.buttonText.value = palette?.buttonText || preset?.buttonText || (dark ? background : "#ffffff");
+          fields.allButtons.checked = true;
+          fields.type.value = "gradient";
+          fields.start.value = background;
+          fields.end.value = surface;
+          fields.angle.value = "150";
+          state.data.settings[setting] = concept?.id || "";
+        }, updateSettingsFromForm);
+      });
+    }
+  }
+
   function updateSettingsFromForm() {
     const settings = state.data.settings;
     settings.bgColor = els.bgColor.value;
     settings.darkBgColor = els.darkBgColor.value;
+    settings.darkAccentColor = els.darkAccentColor.value;
+    settings.darkTextColor = els.darkTextColor.value;
     settings.accentColor = els.accentColor.value;
     settings.textColor = els.textColor.value;
-    settings.buttonTextColor = els.buttonTextColor.value;
+    for (const key of ["buttonTextColor", "buttonColor", "darkButtonColor", "darkButtonTextColor"]) {
+      settings[key] = els[key].value;
+    }
+    settings.useThemeButtons = els.useThemeButtons.checked;
+    settings.darkUseThemeButtons = els.darkUseThemeButtons.checked;
+    settings.darkMenuBackground = normalizeStyle({
+      type: els.darkMenuBgType.value,
+      gradientStart: els.darkMenuGradientStart.value,
+      gradientEnd: els.darkMenuGradientEnd.value,
+      gradientAngle: Number(els.darkMenuGradientAngle.value),
+      imageUrl: els.darkMenuBgUrl.value.trim(),
+      overlay: Number(els.darkMenuOverlay.value)
+    }, DEFAULT_SETTINGS.darkMenuBackground);
     settings.productCardColor = els.productCardColor.value;
     if (els.socialIconColor) settings.socialIconColor = els.socialIconColor.value;
     if (els.socialIconSize) settings.socialIconSize = clamp(Number(els.socialIconSize.value || DEFAULT_SETTINGS.socialIconSize), 18, 64);
@@ -9717,6 +10118,42 @@
     saveSiteSettings();
   }
 
+  function categoriesEligibleForArtwork() {
+    return state.data.categories.filter((category) => {
+      const style = category.style;
+      return category.active && MENU_DESIGN_SCHEMA.categoryArtworkForName(category.name)
+        && !category.image && !category.color && !style.image && !style.imageUrl && !style.color
+        && style.type === "gradient" && style.gradientStart.toLowerCase() === DEFAULT_SETTINGS.categoryCardColor.toLowerCase()
+        && style.gradientEnd.toLowerCase() === "#e5e7eb" && style.gradientAngle === 135;
+    });
+  }
+
+  function categoriesWithBuiltInArtwork() {
+    return state.data.categories.filter(({ style }) =>
+      MENU_DESIGN_SCHEMA.categoryArtworkForImage(style.imageUrl || style.image)
+    );
+  }
+
+  function setCategoryImage(category, src, layout = MENU_DESIGN_SCHEMA.categoryImageLayout(category.style)) {
+    category.style.imageLayout = layout;
+    category.style.image = "";
+    category.style.imageUrl = src;
+    category.image = src;
+    if (src) category.style.type = "image";
+    else if (category.style.type === "image") category.style.type = category.style.color ? "solid" : "gradient";
+    if (selectedCategory() === category) {
+      els.categoryImageUrl.value = src;
+      els.categoryStyleType.value = category.style.type;
+      els.categoryImageLayout.value = layout;
+    }
+  }
+
+  function applyCategoryArtwork(category, artwork) {
+    setCategoryImage(category, artwork.image, "right");
+    category.style.overlay = 0;
+    if (selectedCategory() === category) els.categoryOverlay.value = "0";
+  }
+
   function updateCategoryFromForm() {
     const category = selectedCategory();
     if (!category) return;
@@ -9725,14 +10162,17 @@
     category.iconKey = normalizeCategoryIconKey(els.categoryIconKey && els.categoryIconKey.value, category.name);
     category.icon = CATEGORY_ICON_REGISTRY.getIconClass(category.iconKey);
     category.style.type = els.categoryStyleType.value;
-    category.style.color = els.categoryColor.value;
-    category.color = category.style.color;
+    const currentColor = toColor(category.style.color || state.data.settings.categoryCardColor, DEFAULT_SETTINGS.categoryCardColor);
+    if (els.categoryColor.value !== currentColor) {
+      category.style.color = els.categoryColor.value;
+      category.color = category.style.color;
+    }
     category.style.gradientStart = els.categoryGradientStart.value;
     category.style.gradientEnd = els.categoryGradientEnd.value;
     category.style.gradientAngle = Number(els.categoryGradientAngle.value || 145);
-    category.style.imageUrl = els.categoryImageUrl.value.trim();
+    const image = els.categoryImageUrl.value.trim();
+    if (image !== (category.style.imageUrl || category.style.image || "")) setCategoryImage(category, image);
     category.style.overlay = Number(els.categoryOverlay.value || 0);
-    category.image = category.style.imageUrl || category.style.image || "";
     saveAndRender();
   }
 
@@ -9776,6 +10216,8 @@
     product.style.gradientAngle = Number(els.productGradientAngle.value || 145);
     product.imageUrl = els.productImageUrl.value.trim();
     product.imageOverlay = Number(els.productImageOverlay.value || 0);
+    product.imageAspect = els.productImageAspect.value;
+    product.imageFit = els.productImageFit.value;
     product.details.calories = els.productCalories.value.trim();
     product.details.allergens = els.productAllergens.value.trim();
     product.manualContent = els.productIngredients.value.trim();
@@ -9824,6 +10266,7 @@
         product.imageUrl = "";
       } else {
         product.imageUrl = src;
+        if (selectedProduct() === product) els.productImageUrl.value = src;
         product.image = "";
       }
     });
@@ -9863,6 +10306,7 @@
     state.data.categories.push(category);
     state.selectedCategoryId = category.id;
     state.selectedProductId = "";
+    els.categorySearch.value = "";
     saveAndRender();
   }
 
@@ -10007,7 +10451,6 @@
   function showDefaultChoiceModal() {
     if (!els.defaultChoiceModal) return;
     els.defaultChoiceModal.hidden = false;
-    syncAdminModalLock();
     const first = els.defaultChoiceModal.querySelector("button:not([hidden]):not(:disabled)");
     window.setTimeout(() => first && first.focus(), 30);
   }
@@ -10015,7 +10458,6 @@
   function closeDefaultChoiceModal() {
     if (state.defaultOperationBusy) return;
     if (els.defaultChoiceModal) els.defaultChoiceModal.hidden = true;
-    syncAdminModalLock();
     const trigger = state.defaultModalTrigger;
     state.defaultModalTrigger = null;
     if (trigger && typeof trigger.focus === "function") window.setTimeout(() => trigger.focus(), 20);
@@ -10268,6 +10710,19 @@
     return product.active !== false && product.stock !== "sold-out";
   }
 
+  async function uploadMenuImage(input, onUploaded) {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const media = await uploadMediaFile(file, "image");
+      onUploaded(media.src);
+    } catch (error) {
+      void adminNotice(error.message || "Görsel yüklenemedi.", { title: "Görsel yüklenemedi" });
+    } finally {
+      input.value = "";
+    }
+  }
+
   function readImage(input, callback) {
     const file = input.files && input.files[0];
     if (!file) return;
@@ -10328,9 +10783,9 @@
     return state.mediaDbPromise;
   }
 
-  async function storeMediaFile(file, kind) {
+  async function storeMediaFile(file, kind, endpoint) {
     if (backendBaseUrl() && window.fetch) {
-      return uploadMediaFile(file, kind);
+      return uploadMediaFile(file, kind, endpoint);
     }
 
     const db = await openMediaDb();
@@ -10360,8 +10815,8 @@
     };
   }
 
-  async function uploadMediaFile(file, kind) {
-    const result = await backendRequest("/api/media", {
+  async function uploadMediaFile(file, kind, endpoint = "/api/media") {
+    const result = await backendRequest(endpoint, {
       method: "POST",
       rawBody: file,
       headers: {

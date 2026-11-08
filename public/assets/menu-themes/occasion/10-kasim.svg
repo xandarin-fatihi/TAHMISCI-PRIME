@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 180" fill="none">
+  <defs>
+    <radialGradient id="ground" cx=".63" cy=".35" r=".78">
+      <stop stop-color="#5a4e4a"/>
+      <stop offset="1" stop-color="#272527"/>
+    </radialGradient>
+    <linearGradient id="petal" x2="0" y2="1">
+      <stop stop-color="#fffdf4"/>
+      <stop offset="1" stop-color="#c9bbb0"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#ground)" d="M0 0h240v180H0z"/>
+  <path stroke="#c4a49a" stroke-opacity=".45" d="M8 10h224v160H8z"/>
+  <circle cx="143" cy="70" r="48" stroke="#d5b8aa" stroke-width="1.4"/>
+  <circle cx="143" cy="70" r="42" stroke="#d5b8aa" stroke-opacity=".32"/>
+  <path d="M143 26v8m0 72v8m-44-44h8m72 0h8M112 39l5 5m52 52 5 5m0-62-5 5m-52 52-5 5" stroke="#dac6b9" stroke-width="1.5"/>
+  <path d="m143 70-23-1m23 1 14-29" stroke="#f3ddce" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="143" cy="70" r="3.5" fill="#f3ddce"/>
+  <path d="M77 150C63 120 64 87 52 61m15 54c-8-14-21-14-25-21 13 1 22 5 25 21m-4-14c6-14 12-16 17-19-1 10-8 15-17 19" stroke="#9aab8a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m45 64-6-5 2-7-5-6 5-3 2-8 8 3 7-4 4 6 8 1-1 8 4 6-6 4-2 8-9 2-9-2Z" fill="url(#petal)" stroke="#eee2d6"/>
+  <path d="m43 48 8 6-4-12m9 14 4-13m-4 16 8-9m-20 9 9 2" stroke="#b9aaa1" stroke-opacity=".7"/>
+  <text x="144" y="140" fill="#fff2e5" text-anchor="middle" font-family="Georgia, serif" font-size="19" letter-spacing="3">09.05</text>
+  <text x="144" y="156" fill="#d9c4ba" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" letter-spacing="2">1881 – 1938</text>
+</svg>

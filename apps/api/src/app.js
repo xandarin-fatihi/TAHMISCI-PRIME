@@ -28,7 +28,7 @@ const { registerProcurementRoutes, resolveActorFromRequest } = require("./procur
 const { hasCapability: hasProcurementCapability } = require("./procurement-service");
 const { createProcurementDocumentService } = require("./procurement-documents");
 const { createProcurementImageProcessor } = require("./procurement-image-processor");
-const { registerPublishRoutes } = require("./publish-routes");
+const { publishedMenuFingerprint, registerPublishRoutes } = require("./publish-routes");
 const { registerPricingRoutes } = require("./pricing-routes");
 const { registerDataImportRoutes } = require("./data-import-routes");
 const { registerCatalogCleanupRoutes } = require("./catalog-cleanup-routes");
@@ -130,7 +130,10 @@ const staticOptions = {
 const cspAllowedOrigins = config.allowedOrigins.filter((origin) => origin && origin !== "*");
 const normalJsonParser = express.json({ limit: config.apiJsonLimitBytes, strict: true });
 const imageMediaParser = express.raw({ type: () => true, limit: "15mb" });
-const videoMediaParser = express.raw({ type: () => true, limit: "120mb" });
+const MAX_BANNER_VIDEO_BYTES = 50 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 120 * 1024 * 1024;
+const videoMediaParser = express.raw({ type: () => true, limit: MAX_VIDEO_BYTES });
+const bannerVideoMediaParser = express.raw({ type: () => true, limit: MAX_BANNER_VIDEO_BYTES });
 
 app.disable("x-powered-by");
 app.set("trust proxy", config.trustProxy);
@@ -506,6 +509,44 @@ app.get("/api/admin/me", requireAdminOrMainRequestOrigin, auth.requireAdmin, (re
     role: "admin",
     ...auth.sessionInfoFromPayload(req.admin)
   });
+});
+
+function publicAdminProfile(admin) {
+  return {
+    name: String(admin?.name || "").trim() || "Yönetici",
+    avatarUrl: validAdminAvatar(admin?.avatarUrl) ? admin.avatarUrl : ""
+  };
+}
+
+function validAdminAvatar(value) {
+  return typeof value === "string" && /^\/media\/[a-z0-9._-]+\.(?:jpe?g|png|webp)$/i.test(value);
+}
+
+app.get("/api/admin/profile", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  try {
+    const data = req.storeSnapshot || await store.read();
+    res.set("Cache-Control", "no-store").json({ ok: true, profile: publicAdminProfile(data.admin) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/admin/profile", requireAdminRequestOrigin, auth.requireAdmin, async (req, res, next) => {
+  try {
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const avatarUrl = req.body?.avatarUrl;
+    if (!name || name.length > 80 || (avatarUrl !== undefined && avatarUrl !== "" && !validAdminAvatar(avatarUrl))) {
+      return res.status(400).json({ ok: false, message: "Geçerli bir görünen ad ve profil fotoğrafı seç." });
+    }
+    const data = await store.update((snapshot) => {
+      snapshot.admin.name = name;
+      if (avatarUrl !== undefined) snapshot.admin.avatarUrl = avatarUrl;
+      return snapshot;
+    });
+    res.json({ ok: true, profile: publicAdminProfile(data.admin) });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/api/admin/mudavim/members", requireAdminRequestOrigin, auth.requireAdmin, (req, res) => {
@@ -1715,7 +1756,7 @@ app.put("/api/menu", requireAdminRequestOrigin, auth.requireAdmin, async (req, r
 
 app.post("/api/admin/products/import-excel", requireAdminRequestOrigin, auth.requireAdmin, retiredExcelImportHandler);
 
-app.post("/api/media", requireAdminRequestOrigin, auth.requireAdmin, uploadLimiter, parseMediaUploadBody, async (req, res, next) => {
+app.post(["/api/media", "/api/media/banner"], requireAdminRequestOrigin, auth.requireAdmin, uploadLimiter, parseMediaUploadBody, async (req, res, next) => {
   try {
     const file = validateMediaUpload(req);
     await fs.mkdir(config.mediaDir, { recursive: true });
@@ -3807,7 +3848,10 @@ function cloneJson(value) {
 }
 
 function broadcastMenuUpdate(_menuState, updatedAt, _pricing, revision, catalogRevision = 0) {
-  broadcastScopeInvalidation(sseClients, "menu", "menu", { updatedAt, revision });
+  broadcastScopeInvalidation(sseClients, "menu", "menu", {
+    updatedAt,
+    revision: Math.max(Number(revision) || 0, Date.parse(updatedAt || "") || 0)
+  });
   publishAuthenticatedEvent({
     topic: "catalog",
     type: "menu.updated",
@@ -4215,10 +4259,12 @@ function broadcastScopeInvalidation(clients, scope, event, options = {}) {
 
 function buildMenuApiPayload(data) {
   const revisions = data && data.revisions || {};
+  const menuState = serializeLegacyMenuState(data.menuState, data.pricing);
   return {
     ok: true,
-    menuState: serializeLegacyMenuState(data.menuState, data.pricing),
+    menuState,
     pricing: data.pricing,
+    menuFingerprint: publishedMenuFingerprint(menuState, data.pricing),
     revision: Math.max(0, Number(revisions.pricing || 0)),
     publishRevision: Math.max(0, Number(revisions.publish || 0)),
     catalogRevision: Math.max(0, Number(revisions.catalog || revisions.dataImportCatalog || 0)),
@@ -5042,9 +5088,9 @@ function shuffle(values) {
 }
 
 function parseMediaUploadBody(req, res, next) {
-  return String(req.header("X-Media-Kind") || "").toLowerCase() === "video"
-    ? videoMediaParser(req, res, next)
-    : imageMediaParser(req, res, next);
+  const isVideo = String(req.header("X-Media-Kind") || "").toLowerCase() === "video";
+  const parser = !isVideo ? imageMediaParser : req.path === "/api/media/banner" ? bannerVideoMediaParser : videoMediaParser;
+  return parser(req, res, next);
 }
 
 function validateMediaUpload(req) {
@@ -5064,10 +5110,11 @@ function validateMediaUpload(req) {
   const contentType = String(req.get("content-type") || "application/octet-stream").split(";")[0].trim().toLowerCase();
   const originalName = decodeHeaderValue(req.header("X-File-Name")) || (kind === "image" ? "image" : "video");
   const ext = mediaExtension(kind, contentType, originalName);
-  const maxBytes = kind === "image" ? 15 * 1024 * 1024 : 120 * 1024 * 1024;
+  const maxBytes = kind === "image" ? 15 * 1024 * 1024
+    : req.path === "/api/media/banner" ? MAX_BANNER_VIDEO_BYTES : MAX_VIDEO_BYTES;
 
   if (body.length > maxBytes) {
-    const error = new Error(kind === "image" ? "Gorsel en fazla 15 MB olabilir." : "Video en fazla 120 MB olabilir.");
+    const error = new Error(kind === "image" ? "Gorsel en fazla 15 MB olabilir." : `Video en fazla ${maxBytes / (1024 * 1024)} MB olabilir.`);
     error.status = 413;
     throw error;
   }

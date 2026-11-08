@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#1b0d07">
+  <title>Tahmisçi Stok Takip / Sipariş Demo</title>
+  <link rel="icon" type="image/png" href="/assets/brand/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="stok-demo.css">
+  <script src="stok-demo-data.js" defer></script>
+  <script src="stok-demo.js" defer></script>
+</head>
+<body>
+  <div class="demo-shell">
+    <aside class="demo-sidebar" aria-label="Demo gezinme">
+      <a class="brand" href="./" aria-label="Tahmisçi Stok Takip Demo">
+        <img src="/assets/brand/logo-primary.png" alt="Tahmisçi">
+        <span>
+          <small>TAHMİSÇİ</small>
+          <strong>Stok Takip / Sipariş</strong>
+        </span>
+      </a>
+
+      <nav class="demo-nav" aria-label="Görünüm seçimi">
+        <button class="nav-item is-active" type="button" data-view="admin">Admin Demo</button>
+        <button class="nav-item" type="button" data-view="staff">Personel Demo</button>
+      </nav>
+
+      <section class="sidebar-card">
+        <span>Excel mantığı</span>
+        <p>Her Excel sayfası kategori, her satır stok ürünü olarak tasarlanmıştır.</p>
+      </section>
+    </aside>
+
+    <main class="demo-main">
+      <header class="demo-topbar">
+        <div>
+          <p class="eyebrow">İzole Demo Modül</p>
+          <h1>Stok Takip / Sipariş</h1>
+          <p class="lead">Menü ve reçete sistemine dokunmadan, stok hareketleri ve sipariş önerileri için çalışan demo arayüzü.</p>
+        </div>
+        <div class="topbar-actions">
+          <a class="ghost-btn" href="../../docs/features/stok-takip-siparis-demo.md" target="_blank" rel="noopener">Dokümantasyon</a>
+          <button class="primary-btn" type="button" data-action="open-order-summary">Sipariş Listesi</button>
+        </div>
+      </header>
+
+      <section class="summary-grid" id="summaryGrid" aria-label="Stok özeti"></section>
+
+      <section class="demo-toolbar" aria-label="Stok filtreleri">
+        <label class="search-field">
+          <span>Ürün ara</span>
+          <input id="stockSearch" type="search" autocomplete="off" placeholder="Ürün adı, kategori veya marka ara">
+        </label>
+        <div class="category-filter" id="categoryFilter" aria-label="Kategori filtreleri"></div>
+      </section>
+
+      <section class="workspace-grid">
+        <div class="stock-section">
+          <div class="section-head">
+            <div>
+              <h2 id="viewTitle">Admin Stok Paneli</h2>
+              <p id="viewSubtitle">Kartlardan stok girişi, çıkışı, sarf ve detay işlemleri yapılabilir.</p>
+            </div>
+            <span class="pill" id="visibleCount">0 ürün</span>
+          </div>
+          <div class="product-grid" id="productGrid"></div>
+          <div class="empty-state" id="emptyState" hidden>
+            <strong>Sonuç bulunamadı.</strong>
+            <span>Arama veya kategori filtresini temizleyin.</span>
+          </div>
+        </div>
+
+        <aside class="side-panel" id="adminSidePanel">
+          <section class="panel-card">
+            <div class="panel-title">
+              <h2>Sipariş Önerileri</h2>
+              <span id="suggestionCount">0</span>
+            </div>
+            <div class="order-list" id="orderSuggestions"></div>
+            <button class="primary-btn full" type="button" data-action="open-order-summary">Seçilenlerle sipariş listesi oluştur</button>
+          </section>
+
+          <section class="panel-card">
+            <div class="panel-title">
+              <h2>Bildirim Ayarları</h2>
+              <small>Mock UI</small>
+            </div>
+            <div class="notification-box" id="notificationSettings"></div>
+          </section>
+
+          <section class="panel-card">
+            <div class="panel-title">
+              <h2>Son Hareketler</h2>
+            </div>
+            <div class="movement-list" id="movementList"></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="stockModal" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <button class="modal-close" type="button" data-action="close-modal" aria-label="Kapat">×</button>
+      <h2 id="modalTitle">Stok İşlemi</h2>
+      <p id="modalProduct" class="modal-subtitle"></p>
+      <form id="stockForm">
+        <label>
+          <span>Miktar</span>
+          <input id="modalQuantity" name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Örn. 3">
+        </label>
+        <label id="reasonField" hidden>
+          <span>Sarf sebebi</span>
+          <textarea id="modalReason" name="reason" rows="3" placeholder="Örn. raftan kullanıldı, döküldü / zayi oldu"></textarea>
+        </label>
+        <label>
+          <span>İşlem notu <small>opsiyonel</small></span>
+          <textarea id="modalNote" name="note" rows="3" placeholder="Kısa not ekleyin"></textarea>
+        </label>
+        <p class="form-error" id="formError" aria-live="polite"></p>
+        <button class="primary-btn full" type="submit" id="modalSubmit">Onayla</button>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="orderModal" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="orderModalTitle">
+      <button class="modal-close" type="button" data-action="close-order-modal" aria-label="Kapat">×</button>
+      <h2 id="orderModalTitle">Demo Sipariş Özeti</h2>
+      <p class="modal-subtitle">Gerçek sipariş gönderimi yoktur; seçilen ürünler demo liste olarak hazırlanır.</p>
+      <div class="order-summary-list" id="orderSummaryList"></div>
+      <button class="primary-btn full" type="button" data-action="close-order-modal">Kapat</button>
+    </section>
+  </div>
+</body>
+</html>
